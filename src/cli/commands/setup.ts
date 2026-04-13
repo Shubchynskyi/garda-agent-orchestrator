@@ -4,6 +4,7 @@ import { SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
 import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
+import { buildProfileAwareExecuteTaskNextCommand } from '../../validators/task-command';
 import {
     acquireSourceRoot,
     bold,
@@ -249,7 +250,7 @@ export function printSetupHandoff(snapshot: StatusSnapshot): void {
     console.log('     explicitly confirm active agent files, update live project rules,');
     console.log('     ask about specialist skills, and then run the code-level agent-init gate.');
     console.log('  3. After the agent-init gate passes, you can execute tasks, for example:');
-    console.log(`     ${green('Execute task T-001 depth=2')}`);
+    console.log(`     ${green(buildProfileAwareExecuteTaskNextCommand(snapshot.bundlePath))}`);
 }
 
 export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
@@ -267,7 +268,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push('     explicitly confirm active agent files, update live project rules,');
     lines.push('     ask about specialist skills, and then run the code-level agent-init gate.');
     lines.push('  3. After the agent-init gate passes, you can execute tasks, for example:');
-    lines.push('     Execute task T-001 depth=2');
+    lines.push(`     ${buildProfileAwareExecuteTaskNextCommand(snapshot.bundlePath)}`);
     return lines.join('\n');
 }
 

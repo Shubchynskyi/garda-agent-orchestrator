@@ -33,7 +33,7 @@ function makeReadyStatusSnapshot(): Record<string, unknown> {
         liveVersionError: null,
         agentInitStateError: null,
         commandsRulePath: '/tmp/test/commands.md',
-        recommendedNextCommand: 'Execute task T-001 depth=2',
+        recommendedNextCommand: 'Execute task T-001',
         parityResult: {
             isSourceCheckout: false,
             isStale: false,

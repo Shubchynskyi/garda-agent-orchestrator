@@ -42,6 +42,38 @@ function seedBundleIdentity(bundlePath: string, packageName: string, cliEntrypoi
     writeStatusFixtureFile(path.join(bundlePath, cliEntrypoint), '// cli\n');
 }
 
+function writeProfilesConfig(bundlePath: string, profileConfig: { active_profile: string; depth: number }) {
+    const profilesConfigPath = path.join(bundlePath, 'live', 'config', 'profiles.json');
+    fs.mkdirSync(path.dirname(profilesConfigPath), { recursive: true });
+    writeStatusFixtureFile(
+        profilesConfigPath,
+        JSON.stringify(
+            {
+                version: 1,
+                active_profile: profileConfig.active_profile,
+                built_in_profiles: {
+                    [profileConfig.active_profile]: {
+                        description: `${profileConfig.active_profile} profile`,
+                        depth: profileConfig.depth,
+                        review_policy: {},
+                        token_economy: {
+                            enabled: true,
+                            strip_examples: true,
+                            strip_code_blocks: true,
+                            scoped_diffs: true,
+                            compact_reviewer_output: true
+                        },
+                        skills: {}
+                    }
+                },
+                user_profiles: {}
+            },
+            null,
+            2
+        )
+    );
+}
+
 function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options: Record<string, unknown> = {}) {
     const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
     const runtimePath = path.join(bundlePath, 'runtime');
@@ -258,7 +290,34 @@ test('getStatusSnapshot marks workspace ready only after AGENT_INIT_PROMPT initi
         assert.equal(snapshot.agentInitializationComplete, true);
         assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.agentInitializationPendingReason, null);
-        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 depth=2');
+        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot recommends profile depth in next command when profile is configured', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeProfilesConfig(bundlePath, { active_profile: 'fast', depth: 3 });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 depth=3 (profile: fast)');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -674,7 +733,7 @@ test('formatStatusSnapshotCompact emits single line when ready', () => {
         liveVersionError: null as null,
         agentInitStateError: null as null,
         commandsRulePath: '/tmp/test/commands.md',
-        recommendedNextCommand: 'Execute task T-001 depth=2',
+        recommendedNextCommand: 'Execute task T-001',
         parityResult: {
             isSourceCheckout: false,
             isStale: false,

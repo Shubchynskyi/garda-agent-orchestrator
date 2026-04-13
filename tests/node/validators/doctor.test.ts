@@ -230,7 +230,7 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
 
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.includes('Doctor: PASS'));
-    assert.ok(output.includes('Next: Execute task T-001 depth=2'));
+    assert.ok(output.includes('Next: Execute task T-001'));
 });
 
 test('formatDoctorResult includes timeline completeness warnings', () => {

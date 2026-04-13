@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import { resolveBundleNameForTarget, resolveInitAnswersRelativePathForTarget } from '../../core/constants';
 import { runAgentInit } from '../../lifecycle/agent-init';
 import { getStatusSnapshot } from '../../validators/status';
+import { buildProfileAwareNextLine } from '../../validators/task-command';
 import {
     bold,
     normalizePathValue,
@@ -36,7 +37,7 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
 
 export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>): string {
     if (result.readyForTasks) {
-        return 'Next: Execute task T-001 depth=2';
+        return buildProfileAwareNextLine(result.bundleRoot || '');
     }
 
     const blockers: string[] = [];

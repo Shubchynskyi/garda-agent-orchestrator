@@ -26,6 +26,7 @@ import {
     evaluateProtectedControlPlaneManifest,
     type ProtectedControlPlaneManifestEvidence
 } from '../gates/helpers';
+import { buildProfileAwareNextLine } from './task-command';
 import {
     readUpdateSentinel,
     readUninstallSentinel,
@@ -740,7 +741,10 @@ export function formatDoctorResult(result: DoctorResult): string {
         lines.push('');
     }
 
-    if (result.passed) { lines.push('Doctor: PASS'); lines.push('Next: Execute task T-001 depth=2'); }
+    if (result.passed) {
+        lines.push('Doctor: PASS');
+        lines.push(buildProfileAwareNextLine(getBundlePath(result.targetRoot)));
+    }
     else { lines.push('Doctor: FAIL'); lines.push('Resolve listed issues and rerun doctor.'); }
     return lines.join('\n');
 }

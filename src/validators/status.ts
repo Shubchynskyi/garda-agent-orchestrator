@@ -33,6 +33,7 @@ import {
     formatToxinSummaryLines,
     type ToxinStatusSummary
 } from '../runtime/toxin-metrics';
+import { buildProfileAwareExecuteTaskNextCommand } from './task-command';
 
 type InitAnswers = ReturnType<typeof validateInitAnswers>;
 
@@ -203,7 +204,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         || protectedManifestEvidence.status === 'MISSING';
     var readyForTasks = agentInitializationComplete && !parityResult.isStale && compliancePassed && protectedManifestOk;
     var recommendedNextCommand = 'npx garda-agent-orchestrator setup';
-    if (readyForTasks) recommendedNextCommand = 'Execute task T-001 depth=2';
+    if (readyForTasks) recommendedNextCommand = buildProfileAwareExecuteTaskNextCommand(bundlePath);
     else if (parityResult.isStale && parityResult.remediation) recommendedNextCommand = parityResult.remediation;
     else if (primaryInitializationComplete && agentInitializationPendingReason !== null)
         recommendedNextCommand = 'Give your agent "'+path.join(bundlePath,'AGENT_INIT_PROMPT.md')+'" and complete the agent-init flow';

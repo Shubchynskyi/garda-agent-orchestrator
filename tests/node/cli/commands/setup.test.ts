@@ -323,7 +323,48 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Next stage: launch your agent'));
     assert.ok(text.includes('CLAUDE.md, AGENTS.md'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md'));
-    assert.ok(text.includes('Execute task T-001 depth=2'));
+    assert.ok(text.includes('Execute task T-001'));
+});
+
+test('buildSetupHandoffText uses profile-aware next task command', () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-handoff-profile-'));
+    try {
+        const bundlePath = path.join(workspace, 'garda-agent-orchestrator');
+        const profilesPath = path.join(bundlePath, 'live', 'config', 'profiles.json');
+        fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
+        fs.writeFileSync(
+            profilesPath,
+            JSON.stringify({
+                version: 1,
+                active_profile: 'strict',
+                built_in_profiles: {
+                    strict: {
+                        description: 'Strict profile',
+                        depth: 3,
+                        review_policy: {},
+                        token_economy: {
+                            enabled: true,
+                            strip_examples: true,
+                            strip_code_blocks: true,
+                            scoped_diffs: true,
+                            compact_reviewer_output: true
+                        },
+                        skills: {}
+                    }
+                },
+                user_profiles: {}
+            }, null, 2),
+            'utf8'
+        );
+
+        const text = buildSetupHandoffText({
+            bundlePath,
+            activeAgentFiles: 'CLAUDE.md'
+        } as unknown as StatusSnapshot);
+        assert.ok(text.includes('Execute task T-001 depth=3 (profile: strict)'));
+    } finally {
+        fs.rmSync(workspace, { recursive: true, force: true });
+    }
 });
 
 test('buildSetupHandoffText omits active agent files when null', () => {
