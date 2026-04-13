@@ -83,7 +83,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
     } else {
         formatKeyValueOutput(mergedUpdateResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
-            'currentVersion', 'latestVersion', 'updateAvailable',
+            'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
@@ -149,7 +149,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
     } else {
         formatKeyValueOutput(mergedUpdateGitResult, [
             'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
-            'currentVersion', 'latestVersion', 'updateAvailable',
+            'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
@@ -215,7 +215,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
     } else {
         formatKeyValueOutput(mergedCheckResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
-            'currentVersion', 'latestVersion', 'updateAvailable',
+            'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
             'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);

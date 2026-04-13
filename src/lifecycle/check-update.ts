@@ -19,9 +19,10 @@ import {
     getTimestamp,
     removePathRecursive,
     removeUpdateSentinel,
+    readdirRecursiveFiles,
+    restoreSyncedItemsFromBackup,
     writeSyncBackupMetadata,
     writeUpdateSentinel,
-    restoreSyncedItemsFromBackup,
     validateTargetRoot,
     withLifecycleOperationLockAsync
 } from './common';
@@ -113,6 +114,9 @@ interface CheckUpdateResult {
     currentVersion: string;
     latestVersion: string | null;
     updateAvailable: boolean;
+    versionDiffDetected: boolean;
+    contentDriftDetected: boolean;
+    driftedSyncItems: string[];
     applyRequested: boolean;
     noPrompt: boolean;
     dryRun: boolean;
@@ -155,6 +159,104 @@ function toObjectRecord(value: unknown): Record<string, unknown> | null {
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function listRelativeFiles(directoryPath: string): string[] {
+    return readdirRecursiveFiles(directoryPath)
+        .map((filePath) => path.relative(directoryPath, filePath).replace(/\\/g, '/'))
+        .sort();
+}
+
+function areFilesEquivalent(leftPath: string, rightPath: string): boolean {
+    const leftStats = fs.lstatSync(leftPath);
+    const rightStats = fs.lstatSync(rightPath);
+
+    if (leftStats.isSymbolicLink() || rightStats.isSymbolicLink()) {
+        return leftStats.isSymbolicLink()
+            && rightStats.isSymbolicLink()
+            && fs.readlinkSync(leftPath) === fs.readlinkSync(rightPath);
+    }
+
+    if (!leftStats.isFile() || !rightStats.isFile()) {
+        return false;
+    }
+
+    if (leftStats.size !== rightStats.size) {
+        return false;
+    }
+
+    return fs.readFileSync(leftPath).equals(fs.readFileSync(rightPath));
+}
+
+function areDirectoriesEquivalent(
+    sourceDirectory: string,
+    destinationDirectory: string,
+    options: { allowExtraDestinationFiles: boolean }
+): boolean {
+    if (!fs.existsSync(destinationDirectory) || !fs.lstatSync(destinationDirectory).isDirectory()) {
+        return false;
+    }
+
+    const sourceFiles = listRelativeFiles(sourceDirectory);
+    const destinationFiles = listRelativeFiles(destinationDirectory);
+    const destinationFileSet = new Set(destinationFiles);
+
+    for (const relativeFile of sourceFiles) {
+        if (!destinationFileSet.has(relativeFile)) {
+            return false;
+        }
+
+        if (!areFilesEquivalent(
+            path.join(sourceDirectory, relativeFile),
+            path.join(destinationDirectory, relativeFile)
+        )) {
+            return false;
+        }
+    }
+
+    if (!options.allowExtraDestinationFiles && sourceFiles.length !== destinationFiles.length) {
+        return false;
+    }
+
+    return true;
+}
+
+function doesSyncItemMatchSource(sourceRoot: string, deployedBundleRoot: string, item: string): boolean {
+    const sourceItemPath = path.join(sourceRoot, item);
+    if (!fs.existsSync(sourceItemPath)) {
+        return true;
+    }
+
+    const deployedItemPath = path.join(deployedBundleRoot, item);
+    if (!fs.existsSync(deployedItemPath)) {
+        return false;
+    }
+
+    const sourceStats = fs.lstatSync(sourceItemPath);
+    const deployedStats = fs.lstatSync(deployedItemPath);
+    if (sourceStats.isDirectory() !== deployedStats.isDirectory()) {
+        return false;
+    }
+
+    if (sourceStats.isDirectory()) {
+        return areDirectoriesEquivalent(sourceItemPath, deployedItemPath, {
+            allowExtraDestinationFiles: item.toLowerCase() === 'src'
+        });
+    }
+
+    return areFilesEquivalent(sourceItemPath, deployedItemPath);
+}
+
+function detectSyncSurfaceDrift(sourceRoot: string, deployedBundleRoot: string): string[] {
+    const driftedItems: string[] = [];
+
+    for (const item of BUNDLE_SYNC_ITEMS) {
+        if (!doesSyncItemMatchSource(sourceRoot, deployedBundleRoot, item)) {
+            driftedItems.push(item);
+        }
+    }
+
+    return driftedItems;
 }
 
 let resolvedNpmInvocation: NpmInvocation | null = null;
@@ -550,6 +652,9 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         currentVersion,
         latestVersion: null,
         updateAvailable: false,
+        versionDiffDetected: false,
+        contentDriftDetected: false,
+        driftedSyncItems: [],
         applyRequested: apply,
         noPrompt,
         dryRun,
@@ -593,7 +698,12 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         result.latestVersion = latestVersion;
 
         const comparison = compareVersionStrings(currentVersion, latestVersion);
-        result.updateAvailable = comparison < 0;
+        result.versionDiffDetected = comparison < 0;
+        if (comparison === 0 && source.sourceType === 'path') {
+            result.driftedSyncItems = detectSyncSurfaceDrift(source.sourceRoot, deployedBundleRoot);
+            result.contentDriftDetected = result.driftedSyncItems.length > 0;
+        }
+        result.updateAvailable = result.versionDiffDetected || result.contentDriftDetected;
         result.checkUpdateResult = result.updateAvailable ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE';
 
         if (result.updateAvailable && apply) {

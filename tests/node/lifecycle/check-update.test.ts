@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { runCheckUpdate } from '../../../src/lifecycle/check-update';
-import { removePathRecursive, getUpdateSentinelPath } from '../../../src/lifecycle/common';
+import { BUNDLE_SYNC_ITEMS, removePathRecursive, getUpdateSentinelPath } from '../../../src/lifecycle/common';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -18,13 +18,50 @@ function findRepoRoot() {
     throw new Error('Cannot find repo root');
 }
 
-function setupCheckUpdateWorkspace(repoRoot: string, deployedVersion: string) {
+function copyPathRecursive(sourcePath: string, destinationPath: string) {
+    const stats = fs.lstatSync(sourcePath);
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    if (stats.isDirectory()) {
+        fs.mkdirSync(destinationPath, { recursive: true });
+        for (const entry of fs.readdirSync(sourcePath)) {
+            copyPathRecursive(path.join(sourcePath, entry), path.join(destinationPath, entry));
+        }
+        return;
+    }
+    fs.copyFileSync(sourcePath, destinationPath);
+}
+
+function seedBundleSyncSurface(sourceRoot: string, bundleRoot: string) {
+    for (const item of BUNDLE_SYNC_ITEMS) {
+        const sourceItemPath = path.join(sourceRoot, item);
+        if (!fs.existsSync(sourceItemPath)) {
+            continue;
+        }
+        copyPathRecursive(sourceItemPath, path.join(bundleRoot, item));
+    }
+}
+
+function createSourcePathFixture(repoRoot: string): string {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-checkupdate-source-'));
+    seedBundleSyncSurface(repoRoot, sourceRoot);
+    return sourceRoot;
+}
+
+function setupCheckUpdateWorkspace(
+    repoRoot: string,
+    deployedVersion: string,
+    options: { syncSurfaceFrom?: string | null } = {}
+) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-checkupdate-'));
     const bundle = path.join(tmpDir, 'garda-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });
 
+    if (options.syncSurfaceFrom) {
+        seedBundleSyncSurface(options.syncSurfaceFrom, bundle);
+    }
+
     // Write a specific VERSION
-    fs.writeFileSync(path.join(bundle, 'VERSION'), deployedVersion || '1.0.0');
+    fs.writeFileSync(path.join(bundle, 'VERSION'), `${deployedVersion || '1.0.0'}\n`, 'utf8');
 
     // Create runtime dir
     fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
@@ -37,7 +74,9 @@ describe('runCheckUpdate', () => {
 
     it('detects UP_TO_DATE when versions match', async () => {
         const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
+            syncSurfaceFrom: repoRoot
+        });
         try {
             // Point to local repo as the "remote"
             const result = await runCheckUpdate({
@@ -51,6 +90,7 @@ describe('runCheckUpdate', () => {
 
             assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
             assert.equal(result.updateAvailable, false);
+            assert.equal(result.contentDriftDetected, false);
             assert.equal(result.currentVersion, currentVersion);
             assert.equal(result.trustPolicy, 'overridden');
             assert.equal(result.trustOverrideUsed, true);
@@ -85,7 +125,9 @@ describe('runCheckUpdate', () => {
 
     it('can acquire update source from an npm package spec', async () => {
         const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
+            syncSurfaceFrom: repoRoot
+        });
         try {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
@@ -101,6 +143,61 @@ describe('runCheckUpdate', () => {
             assert.equal(result.updateAvailable, false);
             assert.equal(result.currentVersion, currentVersion);
         } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('treats same-version local source drift as update available and applies refresh', async () => {
+        const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
+        const sourceRoot = createSourcePathFixture(repoRoot);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
+            syncSurfaceFrom: sourceRoot
+        });
+
+        try {
+            fs.appendFileSync(
+                path.join(sourceRoot, 'template', 'docs', 'agent-rules', '80-task-workflow.md'),
+                '\n<!-- same-version refresh sentinel -->\n',
+                'utf8'
+            );
+
+            const probeResult = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceRoot,
+                noPrompt: true,
+                dryRun: true,
+                apply: false,
+                trustOverride: true
+            });
+
+            assert.equal(probeResult.currentVersion, currentVersion);
+            assert.equal(probeResult.latestVersion, currentVersion);
+            assert.equal(probeResult.versionDiffDetected, false);
+            assert.equal(probeResult.contentDriftDetected, true);
+            assert.ok(probeResult.driftedSyncItems.includes('template'));
+            assert.equal(probeResult.updateAvailable, true);
+            assert.equal(probeResult.checkUpdateResult, 'UPDATE_AVAILABLE');
+
+            let updateRunnerCalled = false;
+            const applyResult = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner: () => {
+                    updateRunnerCalled = true;
+                }
+            });
+
+            assert.ok(updateRunnerCalled, 'same-version local refresh must execute lifecycle runner');
+            assert.equal(applyResult.updateApplied, true);
+            assert.equal(applyResult.checkUpdateResult, 'UPDATED');
+            assert.ok(applyResult.syncedItems.includes('template'));
+        } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
@@ -390,7 +487,9 @@ describe('runCheckUpdate', () => {
 
     it('accepts signal option without error on sourcePath flow (T-061)', async () => {
         const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
+            syncSurfaceFrom: repoRoot
+        });
         try {
             const ac = new AbortController();
             const result = await runCheckUpdate({
@@ -410,7 +509,9 @@ describe('runCheckUpdate', () => {
 
     it('accepts onProgress option without error (T-061)', async () => {
         const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
+            syncSurfaceFrom: repoRoot
+        });
         try {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
