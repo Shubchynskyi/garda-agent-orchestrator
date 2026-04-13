@@ -1,0 +1,15 @@
+{
+  "id": "sql-review",
+  "name": "SQL Review",
+  "pack": "data-database",
+  "summary": "Reviews SQL statements and data-access code for correctness, safety, null handling, join semantics, parameterization, and maintainability.",
+  "tags": ["sql", "database", "review", "correctness", "safety"],
+  "aliases": ["sql-review", "query-review", "sql-correctness", "data-access-review"],
+  "stack_signals": ["*.sql", "db/", "sql/", "queries/", "repositories/", "schema.prisma", "knexfile.*", "ormconfig.*", "sequelize/", "typeorm/", "dal/", "drizzle/"],
+  "task_signals": ["query", "join", "SQL review", "data access", "parameterized query", "null handling", "transaction", "pagination", "raw SQL", "aggregation"],
+  "changed_path_signals": ["db/", "sql/", "queries/", "repositories/", "models/", "entities/", "dal/", "schema/", "**/*.sql", "**/raw-query*", "**/query-builder*"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 82,
+  "autoload": "suggest"
+}

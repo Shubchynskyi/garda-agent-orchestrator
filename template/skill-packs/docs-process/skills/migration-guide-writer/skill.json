@@ -1,0 +1,15 @@
+{
+  "id": "migration-guide-writer",
+  "name": "Migration Guide Writer",
+  "pack": "docs-process",
+  "summary": "Authors structured migration guides with ordered upgrade steps, compatibility matrices, verification checkpoints, and rollback boundaries for version transitions and breaking changes.",
+  "tags": ["docs", "migration", "upgrade", "breaking-change", "versioning"],
+  "aliases": ["migration-guide", "upgrade-guide", "migration-doc", "version-upgrade-guide"],
+  "stack_signals": ["CHANGELOG.md", "UPGRADE.md", "MIGRATION.md", "docs/migrations/", "docs/upgrade/", "docs/release-notes/", "migrations/"],
+  "task_signals": ["migration guide", "upgrade guide", "breaking change", "upgrade steps", "version migration", "migration document", "upgrade path", "deprecation"],
+  "changed_path_signals": ["docs/migrations/", "docs/upgrade/", "UPGRADE.md", "MIGRATION.md", "CHANGELOG.md", "config/", "schema/", "db/migrations/", "scripts/migrate*"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 76,
+  "autoload": "suggest"
+}

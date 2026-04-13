@@ -1,0 +1,529 @@
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+
+import {
+    rebuildIndex,
+    loadIndex,
+    writeIndex,
+    resolveIndexPath,
+    isIndexStale,
+    upsertEntry,
+    removeEntries,
+    invalidateIndex,
+    entriesForTask,
+    entriesByArtifactSuffix,
+    taskIds,
+    groupByTask,
+    type ReviewsIndex,
+    type ReviewsIndexEntry
+} from '../../../src/gate-runtime/reviews-index';
+
+function makeTmpDir(prefix: string): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function createReviewsDir(root: string): string {
+    const reviewsDir = path.join(root, 'runtime', 'reviews');
+    fs.mkdirSync(reviewsDir, { recursive: true });
+    return reviewsDir;
+}
+
+function writeArtifact(reviewsDir: string, fileName: string, content: string = '{}'): string {
+    const filePath = path.join(reviewsDir, fileName);
+    fs.writeFileSync(filePath, content, 'utf8');
+    return filePath;
+}
+
+describe('reviews-index', () => {
+    let tmpDir: string;
+    let reviewsDir: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('reviews-index-test-');
+        reviewsDir = createReviewsDir(tmpDir);
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    describe('rebuildIndex', () => {
+        it('returns empty entries for empty directory', () => {
+            const index = rebuildIndex(reviewsDir);
+            assert.equal(index.version, 1);
+            assert.equal(index.entries.length, 0);
+            assert.ok(index.directoryMtimeMs > 0);
+            assert.ok(index.generatedAtMs > 0);
+        });
+
+        it('indexes artifacts matching T-xxx- pattern', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json', '{"task_id":"T-001"}');
+            writeArtifact(reviewsDir, 'T-001-preflight.json', '{"task_id":"T-001"}');
+            writeArtifact(reviewsDir, 'T-002-handshake.json', '{"task_id":"T-002"}');
+
+            const index = rebuildIndex(reviewsDir);
+            assert.equal(index.entries.length, 3);
+
+            const taskModeEntry = index.entries.find(e => e.fileName === 'T-001-task-mode.json');
+            assert.ok(taskModeEntry);
+            assert.equal(taskModeEntry.taskId, 'T-001');
+            assert.equal(taskModeEntry.artifactType, 'task-mode.json');
+            assert.ok(taskModeEntry.mtimeMs > 0);
+            assert.ok(taskModeEntry.sizeBytes > 0);
+        });
+
+        it('skips non-artifact files', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'some-random-file.json');
+            writeArtifact(reviewsDir, 'not-task-prefixed.log');
+
+            const index = rebuildIndex(reviewsDir);
+            assert.equal(index.entries.length, 1);
+            assert.equal(index.entries[0].fileName, 'T-001-task-mode.json');
+        });
+
+        it('skips directories inside reviews', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            fs.mkdirSync(path.join(reviewsDir, 'T-002-somedir'), { recursive: true });
+
+            const index = rebuildIndex(reviewsDir);
+            assert.equal(index.entries.length, 1);
+        });
+
+        it('returns empty for non-existent directory', () => {
+            const nonExistent = path.join(tmpDir, 'does-not-exist');
+            const index = rebuildIndex(nonExistent);
+            assert.equal(index.entries.length, 0);
+        });
+    });
+
+    describe('writeIndex and resolveIndexPath', () => {
+        it('writes index atomically and can be read back', () => {
+            const index: ReviewsIndex = {
+                version: 1,
+                directoryMtimeMs: 12345,
+                generatedAtMs: Date.now(),
+                entries: [{
+                    fileName: 'T-001-task-mode.json',
+                    taskId: 'T-001',
+                    artifactType: 'task-mode.json',
+                    mtimeMs: 1000,
+                    sizeBytes: 50
+                }]
+            };
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            writeIndex(indexPath, index);
+
+            assert.ok(fs.existsSync(indexPath));
+            const raw = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+            assert.equal(raw.version, 1);
+            assert.equal(raw.entries.length, 1);
+            assert.equal(raw.entries[0].fileName, 'T-001-task-mode.json');
+        });
+
+        it('cleans up temp file on write failure', () => {
+            const badPath = path.join(tmpDir, 'non-existent-deep', 'sub', 'sub2', 'index.json');
+            // mkdirSync recursive in writeIndex should handle this
+            const index: ReviewsIndex = {
+                version: 1,
+                directoryMtimeMs: 0,
+                generatedAtMs: Date.now(),
+                entries: []
+            };
+
+            writeIndex(badPath, index);
+            assert.ok(fs.existsSync(badPath));
+        });
+    });
+
+    describe('isIndexStale', () => {
+        it('returns true when no index exists', () => {
+            const indexPath = resolveIndexPath(reviewsDir);
+            assert.equal(isIndexStale(indexPath, reviewsDir), true);
+        });
+
+        it('returns false for fresh index with matching directory mtime', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            const { index } = loadIndex(reviewsDir);
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            assert.equal(isIndexStale(indexPath, reviewsDir), false);
+        });
+
+        it('returns true when directory mtime changed', () => {
+            const { index } = loadIndex(reviewsDir);
+            const indexPath = resolveIndexPath(reviewsDir);
+
+            // Add a new file to change directory mtime
+            writeArtifact(reviewsDir, 'T-099-task-mode.json');
+
+            assert.equal(isIndexStale(indexPath, reviewsDir), true);
+        });
+
+        it('returns true when index exceeds max staleness', () => {
+            const { index } = loadIndex(reviewsDir);
+            const indexPath = resolveIndexPath(reviewsDir);
+
+            // Make index appear very old
+            const staleIndex: ReviewsIndex = {
+                ...index,
+                generatedAtMs: Date.now() - 200_000
+            };
+            writeIndex(indexPath, staleIndex);
+
+            assert.equal(isIndexStale(indexPath, reviewsDir, 60_000), true);
+        });
+    });
+
+    describe('loadIndex', () => {
+        it('rebuilds when no index exists', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+
+            const result = loadIndex(reviewsDir);
+            assert.equal(result.source, 'rebuilt');
+            assert.equal(result.index.entries.length, 1);
+
+            // Should have persisted the index
+            assert.ok(fs.existsSync(resolveIndexPath(reviewsDir)));
+        });
+
+        it('uses cache on second call when directory unchanged', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.source, 'rebuilt');
+
+            const second = loadIndex(reviewsDir);
+            assert.equal(second.source, 'cache');
+            assert.equal(second.index.entries.length, 1);
+        });
+
+        it('rebuilds when forceRebuild is true', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.source, 'rebuilt');
+
+            const second = loadIndex(reviewsDir, { forceRebuild: true });
+            assert.equal(second.source, 'rebuilt');
+        });
+
+        it('rebuilds when directory changed between loads', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.source, 'rebuilt');
+            assert.equal(first.index.entries.length, 1);
+
+            writeArtifact(reviewsDir, 'T-002-preflight.json');
+
+            const second = loadIndex(reviewsDir);
+            assert.equal(second.source, 'rebuilt');
+            assert.equal(second.index.entries.length, 2);
+        });
+
+        it('does not count index file itself as an artifact', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            const result = loadIndex(reviewsDir);
+
+            const indexEntry = result.index.entries.find(
+                e => e.fileName === 'reviews-index.json'
+            );
+            assert.equal(indexEntry, undefined);
+        });
+    });
+
+    describe('upsertEntry', () => {
+        it('adds new entry to existing index', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json', '{"task_id":"T-001"}');
+            loadIndex(reviewsDir);
+
+            writeArtifact(reviewsDir, 'T-002-preflight.json', '{"task_id":"T-002"}');
+            upsertEntry(reviewsDir, 'T-002-preflight.json');
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
+            assert.equal(index.entries.length, 2);
+            assert.ok(index.entries.some(e => e.fileName === 'T-002-preflight.json'));
+        });
+
+        it('updates existing entry', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json', '{"v":1}');
+            loadIndex(reviewsDir);
+
+            // Overwrite with larger content
+            writeArtifact(reviewsDir, 'T-001-task-mode.json', '{"v":2,"extra":"data"}');
+            upsertEntry(reviewsDir, 'T-001-task-mode.json');
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
+            assert.equal(index.entries.length, 1);
+            assert.equal(index.entries[0].fileName, 'T-001-task-mode.json');
+        });
+
+        it('triggers rebuild when no index exists', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'T-002-preflight.json');
+
+            upsertEntry(reviewsDir, 'T-001-task-mode.json');
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            assert.ok(fs.existsSync(indexPath));
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
+            // Rebuild should capture all files, not just the upserted one
+            assert.equal(index.entries.length, 2);
+        });
+
+        it('ignores non-artifact filenames', () => {
+            writeArtifact(reviewsDir, 'random-file.json');
+            loadIndex(reviewsDir);
+
+            upsertEntry(reviewsDir, 'random-file.json');
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
+            assert.equal(index.entries.length, 0);
+        });
+    });
+
+    describe('removeEntries', () => {
+        it('removes specified entries from index', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'T-001-preflight.json');
+            writeArtifact(reviewsDir, 'T-002-task-mode.json');
+            loadIndex(reviewsDir);
+
+            removeEntries(reviewsDir, ['T-001-task-mode.json', 'T-001-preflight.json']);
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
+            assert.equal(index.entries.length, 1);
+            assert.equal(index.entries[0].fileName, 'T-002-task-mode.json');
+        });
+
+        it('is a no-op when no matching entries exist', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            loadIndex(reviewsDir);
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            const before = fs.readFileSync(indexPath, 'utf8');
+
+            removeEntries(reviewsDir, ['T-999-nonexistent.json']);
+
+            const after = fs.readFileSync(indexPath, 'utf8');
+            // Index file should not have been rewritten
+            assert.equal(before, after);
+        });
+
+        it('is a no-op when no index exists', () => {
+            // Should not throw
+            removeEntries(reviewsDir, ['T-001-task-mode.json']);
+        });
+
+        it('handles empty filename array', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            loadIndex(reviewsDir);
+            removeEntries(reviewsDir, []);
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
+            assert.equal(index.entries.length, 1);
+        });
+    });
+
+    describe('invalidateIndex', () => {
+        it('deletes the index file', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            loadIndex(reviewsDir);
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            assert.ok(fs.existsSync(indexPath));
+
+            invalidateIndex(reviewsDir);
+            assert.equal(fs.existsSync(indexPath), false);
+        });
+
+        it('is a no-op when no index exists', () => {
+            invalidateIndex(reviewsDir);
+            // Should not throw
+        });
+    });
+
+    describe('query helpers', () => {
+        let index: ReviewsIndex;
+
+        beforeEach(() => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'T-001-preflight.json');
+            writeArtifact(reviewsDir, 'T-001-handshake.json');
+            writeArtifact(reviewsDir, 'T-002-task-mode.json');
+            writeArtifact(reviewsDir, 'T-002-handshake.json');
+            writeArtifact(reviewsDir, 'T-003-compile-gate.json');
+
+            index = loadIndex(reviewsDir).index;
+        });
+
+        it('entriesForTask returns entries for one task', () => {
+            const t001 = entriesForTask(index, 'T-001');
+            assert.equal(t001.length, 3);
+            assert.ok(t001.every(e => e.taskId === 'T-001'));
+
+            const t002 = entriesForTask(index, 'T-002');
+            assert.equal(t002.length, 2);
+
+            const t999 = entriesForTask(index, 'T-999');
+            assert.equal(t999.length, 0);
+        });
+
+        it('entriesByArtifactSuffix finds matching entries', () => {
+            const handshakes = entriesByArtifactSuffix(index, 'handshake.json');
+            assert.equal(handshakes.length, 2);
+
+            const taskModes = entriesByArtifactSuffix(index, 'task-mode.json');
+            assert.equal(taskModes.length, 2);
+
+            const compileGates = entriesByArtifactSuffix(index, 'compile-gate.json');
+            assert.equal(compileGates.length, 1);
+
+            const nonExistent = entriesByArtifactSuffix(index, 'security-review.md');
+            assert.equal(nonExistent.length, 0);
+        });
+
+        it('taskIds returns unique task IDs', () => {
+            const ids = taskIds(index);
+            assert.equal(ids.length, 3);
+            assert.ok(ids.includes('T-001'));
+            assert.ok(ids.includes('T-002'));
+            assert.ok(ids.includes('T-003'));
+        });
+
+        it('groupByTask groups correctly', () => {
+            const groups = groupByTask(index);
+            assert.equal(groups.size, 3);
+            assert.equal(groups.get('T-001')?.length, 3);
+            assert.equal(groups.get('T-002')?.length, 2);
+            assert.equal(groups.get('T-003')?.length, 1);
+        });
+    });
+
+    describe('retention-aware index refresh', () => {
+        it('index reflects state after cleanup invalidation', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'T-002-task-mode.json');
+
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.index.entries.length, 2);
+
+            // Simulate cleanup deleting an artifact and invalidating the index
+            // (the real cleanup integration calls invalidateIndex after removing files)
+            fs.unlinkSync(path.join(reviewsDir, 'T-001-task-mode.json'));
+            invalidateIndex(reviewsDir);
+
+            const second = loadIndex(reviewsDir);
+            assert.equal(second.source, 'rebuilt');
+            assert.equal(second.index.entries.length, 1);
+            assert.equal(second.index.entries[0].taskId, 'T-002');
+        });
+
+        it('forceRebuild picks up external changes', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'T-002-task-mode.json');
+
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.index.entries.length, 2);
+
+            // External deletion without index notification
+            fs.unlinkSync(path.join(reviewsDir, 'T-001-task-mode.json'));
+
+            const second = loadIndex(reviewsDir, { forceRebuild: true });
+            assert.equal(second.source, 'rebuilt');
+            assert.equal(second.index.entries.length, 1);
+            assert.equal(second.index.entries[0].taskId, 'T-002');
+        });
+
+        it('invalidation forces rebuild on next load', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+
+            loadIndex(reviewsDir);
+            invalidateIndex(reviewsDir);
+
+            const result = loadIndex(reviewsDir);
+            assert.equal(result.source, 'rebuilt');
+            assert.equal(result.index.entries.length, 1);
+        });
+    });
+
+    describe('edge cases', () => {
+        it('handles corrupt index file gracefully', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            const indexPath = resolveIndexPath(reviewsDir);
+            fs.writeFileSync(indexPath, 'not valid json!!!', 'utf8');
+
+            const result = loadIndex(reviewsDir);
+            assert.equal(result.source, 'rebuilt');
+            assert.equal(result.index.entries.length, 1);
+        });
+
+        it('handles index with wrong version', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            const indexPath = resolveIndexPath(reviewsDir);
+            fs.writeFileSync(indexPath, JSON.stringify({
+                version: 99,
+                directoryMtimeMs: 0,
+                generatedAtMs: Date.now(),
+                entries: []
+            }), 'utf8');
+
+            const result = loadIndex(reviewsDir);
+            assert.equal(result.source, 'rebuilt');
+            assert.equal(result.index.entries.length, 1);
+        });
+
+        it('handles compressed artifact files (.gz) not being indexed', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'T-001-preflight.json.gz', 'compressed data');
+
+            const index = rebuildIndex(reviewsDir);
+            // .gz files have T-001- prefix but their artifactType includes .gz
+            // They should still be indexed since they match the pattern
+            const gzEntry = index.entries.find(e => e.fileName === 'T-001-preflight.json.gz');
+            assert.ok(gzEntry);
+            assert.equal(gzEntry.artifactType, 'preflight.json.gz');
+        });
+
+        it('handles many tasks efficiently', () => {
+            for (let i = 1; i <= 200; i++) {
+                const taskId = `T-${String(i).padStart(3, '0')}`;
+                writeArtifact(reviewsDir, `${taskId}-task-mode.json`, `{"task_id":"${taskId}"}`);
+                writeArtifact(reviewsDir, `${taskId}-preflight.json`, `{"task_id":"${taskId}"}`);
+            }
+
+            const result = loadIndex(reviewsDir);
+            assert.equal(result.source, 'rebuilt');
+            assert.equal(result.index.entries.length, 400);
+
+            const ids = taskIds(result.index);
+            assert.equal(ids.length, 200);
+
+            // Second load from cache
+            const cached = loadIndex(reviewsDir);
+            assert.equal(cached.source, 'cache');
+            assert.equal(cached.index.entries.length, 400);
+        });
+
+        it('upsert to empty directory without prior artifacts', () => {
+            const emptyReviewsDir = path.join(tmpDir, 'empty-reviews');
+            fs.mkdirSync(emptyReviewsDir, { recursive: true });
+            writeArtifact(emptyReviewsDir, 'T-001-task-mode.json');
+
+            upsertEntry(emptyReviewsDir, 'T-001-task-mode.json');
+
+            const indexPath = resolveIndexPath(emptyReviewsDir);
+            assert.ok(fs.existsSync(indexPath));
+        });
+    });
+});

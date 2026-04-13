@@ -1,0 +1,15 @@
+{
+  "id": "llm-app-basics",
+  "name": "LLM App Basics",
+  "pack": "ai-agentic",
+  "summary": "Production foundations for LLM-powered apps: prompt architecture, structured outputs, guardrails, model fallback, cost/latency budgets, and deterministic runtime behavior.",
+  "tags": ["ai", "llm", "prompts", "guardrails", "structured-output", "production"],
+  "aliases": ["llm-basics", "llm-app", "prompt-architecture", "llm-production"],
+  "stack_signals": ["openai", "anthropic", "langchain", "litellm", "llamaindex", "ai-sdk", "model_config", "prompt_template", "guardrail", "output_schema"],
+  "task_signals": ["prompt", "completion", "model config", "structured output", "guardrail", "moderation", "token budget", "model fallback", "llm integration", "response parsing"],
+  "changed_path_signals": ["src/prompts/", "src/llm/", "src/ai/", "src/models/", "src/guardrails/", "lib/prompts/", "prompts/", "config/models.*", "**/prompt-template.*", "**/model-config.*", "**/output-schema.*"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 76,
+  "autoload": "suggest"
+}

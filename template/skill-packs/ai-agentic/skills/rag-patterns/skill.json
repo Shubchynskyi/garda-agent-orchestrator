@@ -1,0 +1,15 @@
+{
+  "id": "rag-patterns",
+  "name": "RAG Patterns",
+  "pack": "ai-agentic",
+  "summary": "Production retrieval-augmented generation: corpus ingestion, chunking strategy, embedding pipelines, vector store tuning, retrieval ranking, context packing, grounding/citation, staleness management, and retrieval-vs-answer quality evaluation.",
+  "tags": ["ai", "rag", "retrieval", "embeddings", "vector-search", "chunking", "reranking"],
+  "aliases": ["rag", "retrieval-augmented-generation", "vector-search", "semantic-search", "document-retrieval"],
+  "stack_signals": ["pinecone", "weaviate", "qdrant", "chromadb", "milvus", "pgvector", "faiss", "langchain/retrievers", "llamaindex", "opensearch-knn", "elasticsearch-knn", "embedding_model", "vector_store", "chunk_config", "reranker"],
+  "task_signals": ["retrieval", "embedding", "chunking", "vector search", "semantic search", "reranking", "ingestion pipeline", "document index", "citation", "grounding", "corpus", "knowledge base", "context window packing"],
+  "changed_path_signals": ["src/retrieval/", "src/rag/", "src/embeddings/", "src/ingestion/", "src/chunking/", "src/vectorstore/", "src/indexer/", "src/reranker/", "lib/retrieval/", "lib/rag/", "config/embedding*", "config/vector*", "pipelines/ingest*", "**/chunk*.*", "**/retriever*.*", "**/rerank*.*"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 80,
+  "autoload": "suggest"
+}

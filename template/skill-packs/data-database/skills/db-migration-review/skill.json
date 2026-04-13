@@ -1,0 +1,15 @@
+{
+  "id": "db-migration-review",
+  "name": "DB Migration Review",
+  "pack": "data-database",
+  "summary": "Reviews database schema migrations for safety, backward compatibility, lock risk, and rollback feasibility before merge.",
+  "tags": ["database", "migration", "schema", "review", "safety"],
+  "aliases": ["migration-review", "schema-migration", "db-schema-review", "migration-safety"],
+  "stack_signals": ["migrations/", "db/migrate/", "flyway/", "liquibase/", "alembic/", "prisma/migrations/", "drizzle/", "knex/migrations/", "sequelize/migrations/", "typeorm/migrations/", "django/migrations/", "schema.prisma", "flyway.conf", "liquibase.properties"],
+  "task_signals": ["migration", "backfill", "schema change", "alter table", "add column", "drop column", "rename column", "add index", "data migration", "expand-contract", "rolling deploy"],
+  "changed_path_signals": ["migrations/", "db/migrate/", "db/", "schema/", "alembic/versions/", "prisma/migrations/", "**/migration.*", "**/migrate.*", "flyway/sql/", "liquibase/changelog/", "**/backfill*", "**/seed*"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 91,
+  "autoload": "suggest"
+}

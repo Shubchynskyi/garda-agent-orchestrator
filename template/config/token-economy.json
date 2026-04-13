@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "enabled_depths": [
+    1,
+    2
+  ],
+  "strip_examples": true,
+  "strip_code_blocks": true,
+  "scoped_diffs": true,
+  "compact_reviewer_output": true,
+  "fail_tail_lines": 50
+}

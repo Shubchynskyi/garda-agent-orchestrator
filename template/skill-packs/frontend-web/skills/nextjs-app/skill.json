@@ -1,0 +1,15 @@
+{
+  "id": "nextjs-app",
+  "name": "Next.js App",
+  "pack": "frontend-web",
+  "summary": "Guides correct server/client component boundaries, data-fetching strategies, routing conventions, caching semantics, and deployment-safe changes in Next.js App Router and Pages Router projects.",
+  "tags": ["frontend", "nextjs", "react", "app-router", "ssr", "rsc"],
+  "aliases": ["next", "nextjs", "next.js", "next app router", "next pages router"],
+  "stack_signals": ["next.config.js", "next.config.mjs", "next.config.ts", "next-env.d.ts", "app/layout.tsx", "app/layout.jsx", "pages/_app.tsx", "pages/_app.jsx", ".next/"],
+  "task_signals": ["route handler", "server component", "client component", "server action", "metadata", "middleware", "ISR", "revalidate", "app router", "pages router", "SSR", "SSG", "RSC", "layout", "data fetching", "streaming", "generateStaticParams", "generateMetadata"],
+  "changed_path_signals": ["app/", "pages/", "middleware.ts", "middleware.js", "next.config.*", "app/**/route.ts", "app/**/route.js", "app/**/layout.tsx", "app/**/page.tsx", "app/**/loading.tsx", "app/**/error.tsx", "public/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 84,
+  "autoload": "suggest"
+}

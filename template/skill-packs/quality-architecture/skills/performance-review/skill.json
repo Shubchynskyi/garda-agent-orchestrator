@@ -1,0 +1,15 @@
+{
+  "id": "performance-review",
+  "name": "Performance Review",
+  "pack": "quality-architecture",
+  "summary": "Reviews code changes for latency regressions, concurrency bottlenecks, caching misuse, payload bloat, and fan-out risks, requiring measurement evidence before approval.",
+  "tags": ["performance", "review", "latency", "caching", "concurrency", "profiling"],
+  "aliases": ["perf-review", "latency-review", "performance-audit", "perf-audit", "hot-path-review"],
+  "stack_signals": ["k6.js", "artillery.yml", "artillery.yaml", "locustfile.py", "bench/", "benchmarks/", "perf/", ".clinic/", "pprof/", "flamegraph/", "webpack-bundle-analyzer", "lighthouse/", "src/cache/", "src/caching/", "redis.conf", "varnish.vcl", "nginx.conf", "docker-compose.yml"],
+  "task_signals": ["latency", "throughput", "slow", "performance", "p99", "p95", "response time", "hot path", "cache", "concurrency", "bottleneck", "fan-out", "payload size", "backpressure", "queue depth", "rate limit", "benchmark", "load test", "profiling"],
+  "changed_path_signals": ["src/cache/", "src/caching/", "src/queue/", "src/worker/", "src/middleware/", "services/", "handlers/", "controllers/", "bench/", "benchmarks/", "perf/", "k6/", "load-tests/", "**/pool.*", "**/batch.*", "**/stream.*", "**/buffer.*", "**/throttle.*", "**/rate-limit.*"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 86,
+  "autoload": "suggest"
+}

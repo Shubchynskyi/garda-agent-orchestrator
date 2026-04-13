@@ -1,0 +1,7 @@
+{
+  "id": "frontend-web",
+  "label": "Frontend Web",
+  "description": "Optional non-React web frontend skills and focused UI review skills.",
+  "tags": ["frontend", "web", "ui"],
+  "recommended_for": ["Web frontends", "SPA frameworks", "UI polish"]
+}

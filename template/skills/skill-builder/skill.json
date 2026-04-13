@@ -1,0 +1,11 @@
+{
+  "id": "skill-builder",
+  "name": "Skill Builder",
+  "summary": "Create and wire live-only specialist skills using the shared skill.json plus SKILL.md contract.",
+  "tags": ["core", "builder", "skills"],
+  "aliases": ["add new skill", "create skill", "extend review pipeline"],
+  "references": ["authoring-principles.md", "frontmatter-guide.md", "skill-template.md", "wiring-checklist.md"],
+  "cost_hint": "medium",
+  "priority": 90,
+  "autoload": "manual"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "dependency-review",
+  "name": "Dependency Review",
+  "summary": "Independent dependency risk review for manifest, lockfile, and package upgrade changes.",
+  "tags": ["core", "review", "dependency"],
+  "aliases": ["dependency review", "package review", "lockfile review"],
+  "references": ["dependency-review-checklist.md"],
+  "cost_hint": "medium",
+  "priority": 96,
+  "autoload": "required_when_preflight_requires"
+}

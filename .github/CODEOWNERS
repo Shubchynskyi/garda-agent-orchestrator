@@ -1,0 +1,53 @@
+# CODEOWNERS - PR-time governance complement to local protected-path enforcement
+#
+# GitHub evaluates CODEOWNERS on every pull request and requires approval
+# from the listed owners before the PR can merge (when branch protection
+# is configured - see docs/branch-protection.md).
+#
+# Paths mirror the orchestrator's local protected-path enforcement
+# (see docs/orchestrator-work-and-isolation.md § Protected Control-Plane
+# Paths) so that the same files guarded at task-completion time are also
+# guarded at PR-merge time.
+#
+# This checkout uses the repository owner handle below. Forks should replace
+# it with the actual team or user handles that own the protected paths.
+
+# -- Orchestrator runtime and control plane --
+runtime/                                   @Shubchynskyi
+garda-agent-orchestrator/runtime/        @Shubchynskyi
+live/docs/agent-rules/                     @Shubchynskyi
+garda-agent-orchestrator/live/docs/agent-rules/ @Shubchynskyi
+live/config/                               @Shubchynskyi
+garda-agent-orchestrator/live/config/    @Shubchynskyi
+live/skills/                               @Shubchynskyi
+garda-agent-orchestrator/live/skills/    @Shubchynskyi
+
+# -- Source checkout roots (when repo is the orchestrator) --
+src/                                       @Shubchynskyi
+garda-agent-orchestrator/src/            @Shubchynskyi
+bin/                                       @Shubchynskyi
+garda-agent-orchestrator/bin/            @Shubchynskyi
+dist/                                      @Shubchynskyi
+garda-agent-orchestrator/dist/           @Shubchynskyi
+template/                                  @Shubchynskyi
+garda-agent-orchestrator/template/       @Shubchynskyi
+
+# -- CI / GitHub Actions workflows --
+.github/workflows/                         @Shubchynskyi
+
+# -- Security-sensitive files --
+SECURITY.md                                @Shubchynskyi
+.gitleaks.toml                             @Shubchynskyi
+
+# -- Agent entrypoints and bridges --
+.github/copilot-instructions.md            @Shubchynskyi
+.github/agents/                            @Shubchynskyi
+.agents/                                   @Shubchynskyi
+CLAUDE.md                                  @Shubchynskyi
+AGENTS.md                                  @Shubchynskyi
+GEMINI.md                                  @Shubchynskyi
+
+# -- Package metadata --
+package.json                               @Shubchynskyi
+package-lock.json                          @Shubchynskyi
+tsconfig*.json                             @Shubchynskyi

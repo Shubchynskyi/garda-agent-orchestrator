@@ -1,0 +1,7 @@
+{
+  "id": "quality-architecture",
+  "label": "Quality and Architecture",
+  "description": "Optional testing, review, and architecture skills.",
+  "tags": ["quality", "architecture", "review"],
+  "recommended_for": ["Cross-module changes", "quality work", "review-intensive tasks"]
+}

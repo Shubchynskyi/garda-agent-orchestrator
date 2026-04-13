@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "retention_mode": "full",
+  "compress_after_days": 7,
+  "compression_format": "gzip",
+  "preserve_gate_receipts": true,
+  "gate_receipt_suffixes": [
+    "-task-mode.json",
+    "-preflight.json",
+    "-compile-gate.json",
+    "-completion-gate.json",
+    "-rule-pack.json",
+    "-handshake.json"
+  ],
+  "privacy_notice": "Mode 'none' deletes review artifacts after task completion, reducing forensic reproducibility. Mode 'summary' keeps only gate receipts and strips detailed diff/context artifacts. Mode 'full' preserves everything subject to age/count retention."
+}

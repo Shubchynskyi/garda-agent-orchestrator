@@ -1,0 +1,11 @@
+{
+  "code": true,
+  "db": true,
+  "security": true,
+  "refactor": true,
+  "api": false,
+  "test": false,
+  "performance": false,
+  "infra": false,
+  "dependency": true
+}

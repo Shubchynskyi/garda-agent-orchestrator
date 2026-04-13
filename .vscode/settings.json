@@ -1,0 +1,26 @@
+{
+  "files.exclude": {
+    "**/garda-agent-orchestrator": true,
+    "**/dist": true,
+    "**/.node-build": true,
+    "**/.scripts-build": true,
+    "**/node_modules": true,
+    "**/runtime": true
+  },
+  "search.exclude": {
+    "**/garda-agent-orchestrator": true,
+    "**/dist": true,
+    "**/.node-build": true,
+    "**/.scripts-build": true,
+    "**/node_modules": true,
+    "**/runtime": true
+  },
+  "files.watcherExclude": {
+    "**/garda-agent-orchestrator": true,
+    "**/dist": true,
+    "**/.node-build": true,
+    "**/.scripts-build": true,
+    "**/node_modules": true,
+    "**/runtime": true
+  }
+}

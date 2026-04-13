@@ -1,0 +1,11 @@
+{
+  "id": "code-review",
+  "name": "Code Review",
+  "summary": "Independent runtime code review with strict pass/fail verdict and auditable evidence.",
+  "tags": ["core", "review", "code"],
+  "aliases": ["code review", "review this diff", "review before merge"],
+  "references": ["code-review-checklist.md"],
+  "cost_hint": "medium",
+  "priority": 100,
+  "autoload": "required_when_preflight_requires"
+}

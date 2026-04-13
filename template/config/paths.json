@@ -1,0 +1,90 @@
+{
+  "metrics_path": "garda-agent-orchestrator/runtime/metrics.jsonl",
+  "runtime_roots": [
+    "src/",
+    "app/",
+    "apps/",
+    "backend/",
+    "frontend/",
+    "web/",
+    "api/",
+    "services/",
+    "packages/"
+  ],
+  "fast_path_roots": [
+    "frontend/",
+    "web/",
+    "ui/",
+    "mobile/",
+    "apps/"
+  ],
+  "fast_path_allowed_regexes": [
+    "^.+\\.(ts|tsx|js|jsx|vue|svelte|css|scss|sass|less|html)$",
+    "^.+\\.(svg|png|jpg|jpeg|webp|ico)$"
+  ],
+  "fast_path_sensitive_regexes": [
+    "(^|/)(auth|security|payment|checkout|webhook|token|jwt|guard|middleware|service|repository|query|migration|sql|datasource)(/|\\.|$)"
+  ],
+  "sql_or_migration_regexes": [
+    "\\.sql$",
+    "(^|/)(db|database|migrations?|schema)(/|$)"
+  ],
+  "triggers": {
+    "db": [
+      "(^|/)(db|database|migrations?|schema)(/|$)",
+      "\\.sql$",
+      "(Repository|Dao|Specification|Query|Migration)[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$",
+      "(typeorm|prisma|flyway|liquibase|alembic|knex|sequelize)"
+    ],
+    "security": [
+      "(^|/)(auth|security|oauth|jwt|token|rbac|acl|keycloak|okta|saml|openid|mfa|crypt|encryption|certificate|secret|vault|webhook|payment|checkout|billing)(/|\\.|$)"
+    ],
+    "refactor": [
+      "\\.(java|kt|kts|groovy|ts|tsx|js|jsx|cjs|mjs|cs|go|py|rb|php|rs|ps1|psm1|sh)$",
+      "(Config|Settings|Options|Schema|Contract|Dto|DTO)[^/]*\\.(java|kt|ts|tsx|js|jsx|py|go|cs|rb|php|json|ya?ml|toml|xml)$",
+      "(^|/)(config|configs?|schemas?|contracts?)(/|$)",
+      "(^|/)[^/]*(config|settings|paths)[^/]*\\.(json|ya?ml|toml|xml)$"
+    ],
+    "api": [
+      "(^|/)(controllers?|routes?|handlers?|endpoints?|graphql)(/|\\.|$)",
+      "(Request|Response|Dto|DTO|Contract|Schema)[^/]*\\.(java|kt|ts|tsx|js|jsx|py|go|cs|rb|php)$",
+      "(^|/)(openapi|swagger)\\.(ya?ml|json)$"
+    ],
+    "dependency": [
+      "(^|/)pom\\.xml$",
+      "(^|/)build\\.gradle(\\.kts)?$",
+      "(^|/)settings\\.gradle(\\.kts)?$",
+      "(^|/)package\\.json$",
+      "(^|/)package-lock\\.json$",
+      "(^|/)pnpm-lock\\.yaml$",
+      "(^|/)yarn\\.lock$",
+      "(^|/)requirements(\\.txt|-dev\\.txt)?$",
+      "(^|/)poetry\\.lock$",
+      "(^|/)pyproject\\.toml$",
+      "(^|/)go\\.mod$",
+      "(^|/)go\\.sum$",
+      "(^|/)Cargo\\.toml$",
+      "(^|/)Cargo\\.lock$",
+      "(^|/)composer\\.json$",
+      "(^|/)Gemfile(\\.lock)?$"
+    ],
+    "infra": [
+      "(^|/)Dockerfile(\\..+)?$",
+      "(^|/)docker-compose(\\.[^/]+)?\\.ya?ml$",
+      "(^|/)(terraform|infra|infrastructure|helm|k8s|kubernetes)(/|$)",
+      "(^|/)\\.github/workflows/"
+    ],
+    "test": [
+      "/src/test/",
+      "(^|/)(__tests__|tests?)/",
+      "\\.(spec|test)\\.(ts|tsx|js|jsx|java|kt|go|py|rb|php)$"
+    ],
+    "performance": [
+      "(Cache|Redis|Elasticsearch|Search|Query|Benchmark|Profil(e|ing))[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$",
+      "(^|/)(performance|perf|benchmark)/"
+    ]
+  },
+  "code_like_regexes": [
+    "\\.(java|kt|kts|groovy|ts|tsx|js|jsx|cjs|mjs|cs|go|py|rb|php|rs)$"
+  ]
+}

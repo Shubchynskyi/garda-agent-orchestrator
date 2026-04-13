@@ -1,0 +1,15 @@
+{
+  "id": "frontend-accessibility",
+  "name": "Frontend Accessibility",
+  "pack": "frontend-web",
+  "summary": "Reviews and hardens web UI components for keyboard operability, semantic correctness, ARIA contract compliance, focus management, and assistive-technology compatibility.",
+  "tags": ["frontend", "accessibility", "a11y", "wcag", "aria", "keyboard"],
+  "aliases": ["a11y", "accessibility", "accessibility review", "wcag review", "screen reader"],
+  "stack_signals": ["src/components/", "src/ui/", "src/design-system/", "src/primitives/", "app/components/", "components/"],
+  "task_signals": ["keyboard", "aria", "screen reader", "focus", "accessible", "wcag", "a11y", "tab order", "live region", "skip link"],
+  "changed_path_signals": ["src/components/", "src/pages/", "src/ui/", "src/design-system/", "app/routes/", "app/pages/", "**/*.a11y.test.*", "**/*.accessibility.*", "src/primitives/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 82,
+  "autoload": "suggest"
+}

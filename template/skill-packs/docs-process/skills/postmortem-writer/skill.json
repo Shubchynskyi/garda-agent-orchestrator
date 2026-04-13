@@ -1,0 +1,15 @@
+{
+  "id": "postmortem-writer",
+  "name": "Postmortem Writer",
+  "pack": "docs-process",
+  "summary": "Produces blameless engineering incident postmortems with impact assessment, timeline, root-cause analysis, contributing factors, and tracked corrective actions.",
+  "tags": ["docs", "incident", "postmortem", "sre", "ops", "reliability"],
+  "aliases": ["postmortem", "incident postmortem", "post-incident review", "incident report", "PIR"],
+  "stack_signals": ["docs/postmortems/", "docs/incidents/", "postmortems/", "incidents/", "docs/sre/", "on-call/", "status-page/"],
+  "task_signals": ["postmortem", "incident report", "root cause", "post-incident", "outage review", "incident timeline", "corrective action", "contributing factor"],
+  "changed_path_signals": ["docs/postmortems/", "docs/incidents/", "postmortems/", "incidents/", "on-call/", "docs/sre/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 74,
+  "autoload": "suggest"
+}

@@ -1,0 +1,31 @@
+# Gitleaks configuration for Garda Agent Orchestrator.
+# Extends the built-in ruleset with project-specific allowlists.
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+title = "Garda Agent Orchestrator — gitleaks config"
+
+# Use the default built-in rules; they cover AWS keys, GCP credentials,
+# GitHub/GitLab tokens, generic high-entropy secrets, private keys, etc.
+# Only project-specific tuning is added below.
+
+# ── Global allowlist ─────────────────────────────────────────────────────────
+# Paths and patterns that are known to produce false positives in this repo.
+[allowlist]
+description = "Project-wide false-positive suppressions"
+
+# Generated runtime artifacts and the intentional redaction fixture are not secrets.
+paths = [
+  '''testResults\.xml''',
+  '''runtime/.*''',
+  '''garda-agent-orchestrator/runtime/.*''',
+  '''\.node-build/.*''',
+  '''tests/node/core/redaction\.test\.ts''',
+  '''node_modules/.*''',
+]
+
+# Placeholder tokens used in documentation and templates.
+regexTarget = "line"
+regexes = [
+  '''EXAMPLE[_-]?(?:TOKEN|KEY|SECRET|PASSWORD)''',
+  '''(?i)placeholder|changeme|dummy|fake[-_]?secret''',
+]

@@ -1,0 +1,7 @@
+{
+  "id": "java-spring",
+  "label": "Java Spring",
+  "description": "Optional Spring Boot and Java service delivery skills.",
+  "tags": ["java", "spring", "backend"],
+  "recommended_for": ["Spring Boot services", "Java monoliths", "Java API tasks"]
+}

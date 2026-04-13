@@ -1,0 +1,127 @@
+# Scheduled smoke matrix for Garda Agent Orchestrator.
+# Runs the cross-platform lifecycle smoke suite on a weekly schedule to detect
+# runner image drift, Node.js default-version changes, and other environment
+# regressions even when no pushes or PRs are active.
+name: Scheduled Smoke
+
+on:
+  schedule:
+    # Weekly: every Sunday at 04:15 UTC.
+    - cron: '15 4 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  smoke:
+    name: Smoke / ${{ matrix.os }} / Node ${{ matrix.node-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+        node-version: [24]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Build
+        run: npm run build
+
+      - name: Build staged node-foundation test graph
+        run: npm run build:node-foundation
+
+      - name: Pack and install smoke test
+        run: node --test .node-build/tests/node/packaging/pack-smoke.test.js
+
+      - name: Lifecycle smoke (cross-platform E2E install → update → uninstall)
+        id: lifecycle-smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SMOKE_DIR="$(mktemp -d)"
+          echo "smoke_dir=$SMOKE_DIR" >> "$GITHUB_OUTPUT"
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          CLI="node ${GITHUB_WORKSPACE}/bin/garda.js"
+
+          echo "::group::1. Setup (built source checkout)"
+          GIT_URL="file://${GITHUB_WORKSPACE}"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            GIT_URL="file:///${GITHUB_WORKSPACE//\\//}"
+          fi
+          $CLI setup --target-root "$SMOKE_DIR" --no-prompt --assistant-language "English" --assistant-brevity "concise" --source-of-truth "Antigravity" --enforce-no-auto-commit false --claude-orchestrator-full-access false --token-economy-enabled true --active-agent-files ".antigravity/rules.md"
+          echo "::endgroup::"
+
+          echo "::group::2. Update (git clone flow)"
+          $CLI update git --target-root "$SMOKE_DIR" --repo-url "$GIT_URL" --branch "$BRANCH_NAME" --no-prompt --trust-override
+          echo "::endgroup::"
+
+          echo "::group::3. Doctor"
+          $CLI doctor --target-root "$SMOKE_DIR"
+          echo "::endgroup::"
+
+          echo "::group::4. Uninstall"
+          $CLI uninstall --target-root "$SMOKE_DIR" --no-prompt
+          echo "::endgroup::"
+
+          rm -rf "$SMOKE_DIR"
+          echo "Lifecycle smoke PASSED on $RUNNER_OS"
+
+      # ── Failure forensics ────────────────────────────────────────────────────
+      - name: Collect smoke failure evidence
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p smoke-failure-evidence
+
+          for log in "$HOME"/.npm/_logs/*.log; do
+            [ -f "$log" ] && cp "$log" smoke-failure-evidence/ || true
+          done
+
+          [ -d dist ] && cp -r dist smoke-failure-evidence/dist || true
+          [ -f bin/garda.js ] && cp bin/garda.js smoke-failure-evidence/ || true
+
+          SMOKE_DIR="${{ steps.lifecycle-smoke.outputs.smoke_dir }}"
+          if [ -n "$SMOKE_DIR" ] && [ -d "$SMOKE_DIR" ]; then
+            if [ -d "$SMOKE_DIR/garda-agent-orchestrator/runtime" ]; then
+              cp -r "$SMOKE_DIR/garda-agent-orchestrator/runtime" smoke-failure-evidence/smoke-runtime
+            fi
+            if [ -d "$SMOKE_DIR/garda-agent-orchestrator/live/config" ]; then
+              cp -r "$SMOKE_DIR/garda-agent-orchestrator/live/config" smoke-failure-evidence/smoke-config
+            fi
+            for f in "$SMOKE_DIR"/.antigravity/rules.md "$SMOKE_DIR"/.agents/workflows/start-task.md; do
+              [ -f "$f" ] && cp "$f" smoke-failure-evidence/ || true
+            done
+          fi
+
+          {
+            echo "runner_os=$RUNNER_OS"
+            echo "node_version=$(node --version 2>/dev/null || echo 'unavailable')"
+            echo "npm_version=$(npm --version 2>/dev/null || echo 'unavailable')"
+            echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 'unavailable')"
+            echo "smoke_dir=$SMOKE_DIR"
+          } > smoke-failure-evidence/runner-env.txt
+
+      - name: Upload smoke failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failure-evidence-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: smoke-failure-evidence/
+          retention-days: 15
+          if-no-files-found: ignore

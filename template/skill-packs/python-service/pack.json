@@ -1,0 +1,7 @@
+{
+  "id": "python-service",
+  "label": "Python Service",
+  "description": "Optional Python service and API skills.",
+  "tags": ["python", "backend", "api"],
+  "recommended_for": ["Python APIs", "workers", "service repositories"]
+}

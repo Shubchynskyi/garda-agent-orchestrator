@@ -1,0 +1,15 @@
+{
+  "id": "evals-design",
+  "name": "Evals Design",
+  "pack": "ai-agentic",
+  "summary": "Design, structure, and review evaluation suites for LLM and agent systems with rubrics, golden datasets, and shipping thresholds.",
+  "tags": ["ai", "evals", "llm-quality", "benchmarks", "agent-testing"],
+  "aliases": ["evals", "llm-evals", "eval-suite", "model-evaluation"],
+  "stack_signals": ["evals/", "benchmarks/", "scorecard", "judge", "promptfoo", "braintrust", "langsmith", "deepeval"],
+  "task_signals": ["evaluation suite", "judge model", "golden dataset", "pass/fail rubric", "benchmark", "regression eval", "eval scorecard", "shipping threshold"],
+  "changed_path_signals": ["evals/", "eval/", "benchmarks/", "datasets/", "fixtures/prompts/", "scorecards/", "judges/", "experiments/"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 80,
+  "autoload": "suggest"
+}

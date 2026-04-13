@@ -1,0 +1,600 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-events';
+import { coerceIntLike } from '../../gate-runtime/token-telemetry';
+import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult } from '../../gate-runtime/budget-preflight';
+import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
+import { parseTimestamp, getOutputTelemetryFromPayload } from '../../gates/task-events-summary';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface TokenContribution {
+    label: string;
+    estimated_saved_tokens: number;
+    raw_token_count_estimate: number;
+}
+
+export interface TaskStatsResult {
+    task_id: string;
+    events_count: number;
+    first_event_utc: string | null;
+    last_event_utc: string | null;
+    wall_clock_seconds: number | null;
+    gate_pass_count: number;
+    gate_fail_count: number;
+    path_mode: string | null;
+    required_reviews: string[];
+    changed_files_count: number;
+    changed_lines_total: number;
+    requested_depth: number | null;
+    effective_depth: number | null;
+    depth_escalated: boolean;
+    budget_forecast: BudgetForecast | null;
+    budget_comparison: BudgetComparisonResult | null;
+    token_economy: TokenEconomySummary;
+}
+
+export interface TokenEconomySummary {
+    total_estimated_saved_tokens: number;
+    total_raw_token_count_estimate: number;
+    savings_percent: number | null;
+    breakdown: TokenContribution[];
+    visible_summary_line: string | null;
+}
+
+export interface AggregateStatsResult {
+    tasks_analyzed: number;
+    total_events: number;
+    total_wall_clock_seconds: number;
+    total_gate_pass: number;
+    total_gate_fail: number;
+    total_estimated_saved_tokens: number;
+    total_raw_token_count_estimate: number;
+    aggregate_savings_percent: number | null;
+    per_task: TaskStatsResult[];
+}
+
+// ---------------------------------------------------------------------------
+// Review context labels (kept local to avoid coupling)
+// ---------------------------------------------------------------------------
+
+const REVIEW_CONTEXT_LABELS: Record<string, string> = {
+    code: 'code review context',
+    db: 'DB review context',
+    security: 'security review context',
+    refactor: 'refactor review context',
+    api: 'API review context',
+    test: 'test review context',
+    performance: 'performance review context',
+    infra: 'infra review context',
+    dependency: 'dependency review context'
+};
+
+// Gate outcome event types used for pass/fail counting.
+const GATE_PASS_EVENTS = new Set([
+    'RULE_PACK_LOADED',
+    'PREFLIGHT_CLASSIFIED',
+    'COMPILE_GATE_PASSED',
+    'REVIEW_GATE_PASSED',
+    'REVIEW_GATE_PASSED_WITH_OVERRIDE',
+    'DOC_IMPACT_ASSESSED',
+    'COMPLETION_GATE_PASSED'
+]);
+
+const GATE_FAIL_EVENTS = new Set([
+    'RULE_PACK_LOAD_FAILED',
+    'PREFLIGHT_FAILED',
+    'COMPILE_GATE_FAILED',
+    'REVIEW_GATE_FAILED',
+    'DOC_IMPACT_ASSESSMENT_FAILED',
+    'COMPLETION_GATE_FAILED'
+]);
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function safeReadJson(filePath: string): Record<string, unknown> | null {
+    try {
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
+        return JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+}
+
+function getReviewContextSummary(payload: Record<string, unknown> | null | undefined): TokenContribution | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const ruleContext = payload.rule_context as Record<string, unknown> | null | undefined;
+    if (!ruleContext || typeof ruleContext !== 'object') return null;
+    const summary = ruleContext.summary as Record<string, unknown> | null | undefined;
+    if (!summary || typeof summary !== 'object') return null;
+    const savedTokens = coerceIntLike(summary.estimated_saved_tokens);
+    if (savedTokens == null || savedTokens <= 0) return null;
+    const rawTokenEstimate = coerceIntLike(summary.original_token_count_estimate);
+    const reviewType = String(payload.review_type || '').trim().toLowerCase();
+    return {
+        label: REVIEW_CONTEXT_LABELS[reviewType] || 'review context',
+        estimated_saved_tokens: savedTokens,
+        raw_token_count_estimate: rawTokenEstimate != null && rawTokenEstimate > 0 ? rawTokenEstimate : 0
+    };
+}
+
+function resolveArtifactPathForRead(pathValue: unknown, repoRoot: string | null): string | null {
+    if (pathValue == null) return null;
+    const text = String(pathValue).trim();
+    if (!text) return null;
+    if (repoRoot) {
+        try {
+            return resolvePathInsideRepo(text, repoRoot, { allowMissing: true });
+        } catch {
+            return null;
+        }
+    }
+    if (path.isAbsolute(text)) return path.resolve(text);
+    return null;
+}
+
+function readJsonArtifact(pathValue: unknown, repoRoot: string | null): Record<string, unknown> | null {
+    const resolvedPath = resolveArtifactPathForRead(pathValue, repoRoot);
+    if (!resolvedPath) return null;
+    try {
+        if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) return null;
+        return JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+    } catch {
+        return null;
+    }
+}
+
+function getCommandOutputLabel(eventType: string): string {
+    const normalized = String(eventType || '').trim().toUpperCase();
+    if (normalized.startsWith('COMPILE_GATE_')) return 'compile gate output';
+    if (normalized.startsWith('REVIEW_GATE_')) return 'review gate output';
+    return 'gate output';
+}
+
+// ---------------------------------------------------------------------------
+// Core: build stats for a single task
+// ---------------------------------------------------------------------------
+
+export function buildTaskStats(
+    taskId: string,
+    repoRoot: string,
+    eventsRoot?: string | null,
+    reviewsRoot?: string | null
+): TaskStatsResult {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    const safeTaskId = assertValidTaskId(taskId);
+    const resolvedEventsRoot = eventsRoot
+        ? resolvePathInsideRepo(eventsRoot, resolvedRepoRoot, { allowMissing: true }) || eventsRoot
+        : joinOrchestratorPath(resolvedRepoRoot, path.join('runtime', 'task-events'));
+    const resolvedReviewsRoot = reviewsRoot
+        ? resolvePathInsideRepo(reviewsRoot, resolvedRepoRoot, { allowMissing: true }) || reviewsRoot
+        : joinOrchestratorPath(resolvedRepoRoot, path.join('runtime', 'reviews'));
+
+    const taskEventFile = path.join(resolvedEventsRoot, `${safeTaskId}.jsonl`);
+
+    // Parse events
+    const events: Record<string, unknown>[] = [];
+    if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
+        forEachJsonlLine(taskEventFile, (line: string) => {
+            try {
+                const event = JSON.parse(line);
+                if (event != null) events.push(event);
+            } catch {
+                // skip parse errors
+            }
+        });
+    }
+
+    events.sort((a, b) => {
+        const ta = parseTimestamp(a.timestamp_utc);
+        const tb = parseTimestamp(b.timestamp_utc);
+        return ta.getTime() - tb.getTime();
+    });
+
+    // Timestamps
+    const firstDate = events.length > 0 ? parseTimestamp(events[0].timestamp_utc) : null;
+    const lastDate = events.length > 0 ? parseTimestamp(events[events.length - 1].timestamp_utc) : null;
+    const firstUtc = firstDate && firstDate.getTime() > 0 ? firstDate.toISOString() : null;
+    const lastUtc = lastDate && lastDate.getTime() > 0 ? lastDate.toISOString() : null;
+
+    let wallClockSeconds: number | null = null;
+    if (firstDate && lastDate && firstDate.getTime() > 0 && lastDate.getTime() > 0) {
+        wallClockSeconds = Math.round((lastDate.getTime() - firstDate.getTime()) / 1000);
+    }
+
+    // Gate pass/fail counts
+    let gatePassCount = 0;
+    let gateFail = 0;
+    for (const event of events) {
+        const eventType = String(event.event_type || '');
+        if (GATE_PASS_EVENTS.has(eventType)) gatePassCount += 1;
+        if (GATE_FAIL_EVENTS.has(eventType)) gateFail += 1;
+    }
+
+    // Preflight data
+    let pathMode: string | null = null;
+    let requiredReviews: string[] = [];
+    let changedFilesCount = 0;
+    let changedLinesTotal = 0;
+
+    const preflightPath = path.join(resolvedReviewsRoot, `${safeTaskId}-preflight.json`);
+    const preflight = safeReadJson(preflightPath);
+    if (preflight) {
+        pathMode = typeof preflight.mode === 'string' ? preflight.mode : null;
+        if (preflight.required_reviews && typeof preflight.required_reviews === 'object') {
+            const rr = preflight.required_reviews as Record<string, unknown>;
+            requiredReviews = Object.entries(rr).filter(([, v]) => v === true).map(([k]) => k);
+        }
+        if (Array.isArray(preflight.changed_files)) {
+            changedFilesCount = preflight.changed_files.length;
+        }
+        const metrics = preflight.metrics as Record<string, unknown> | null | undefined;
+        if (metrics && typeof metrics === 'object') {
+            changedLinesTotal = Number(metrics.changed_lines_total) || 0;
+        }
+    }
+
+    // Depth and budget forecast from preflight
+    let requestedDepth: number | null = null;
+    let effectiveDepth: number | null = null;
+    let depthEscalated = false;
+    let budgetForecast: BudgetForecast | null = null;
+
+    if (preflight) {
+        const bf = preflight.budget_forecast as Record<string, unknown> | null | undefined;
+        if (bf && typeof bf === 'object') {
+            budgetForecast = bf as unknown as BudgetForecast;
+            requestedDepth = typeof bf.requested_depth === 'number' ? bf.requested_depth : null;
+            effectiveDepth = typeof bf.effective_depth === 'number' ? bf.effective_depth : null;
+            depthEscalated = bf.depth_escalated === true;
+        }
+        const de = preflight.depth_escalation as Record<string, unknown> | null | undefined;
+        if (de && typeof de === 'object') {
+            if (requestedDepth == null && typeof de.requested_depth === 'number') {
+                requestedDepth = de.requested_depth;
+            }
+            if (effectiveDepth == null && typeof de.effective_depth === 'number') {
+                effectiveDepth = de.effective_depth;
+            }
+            if (!depthEscalated && de.escalated === true) {
+                depthEscalated = true;
+            }
+        }
+    }
+
+    // Also check task-mode artifact for depth
+    const taskModePath = path.join(resolvedReviewsRoot, `${safeTaskId}-task-mode.json`);
+    const taskMode = safeReadJson(taskModePath);
+    if (taskMode) {
+        if (requestedDepth == null && typeof taskMode.requested_depth === 'number') {
+            requestedDepth = taskMode.requested_depth;
+        }
+        if (effectiveDepth == null && typeof taskMode.effective_depth === 'number') {
+            effectiveDepth = taskMode.effective_depth;
+        }
+        if (requestedDepth != null && effectiveDepth != null && effectiveDepth > requestedDepth) {
+            depthEscalated = true;
+        }
+    }
+
+    // Token economy
+    const tokenEconomy = buildTokenEconomy(events, resolvedRepoRoot, resolvedReviewsRoot, safeTaskId);
+
+    // Budget comparison
+    const budgetComparison = buildBudgetComparison(
+        safeTaskId,
+        budgetForecast,
+        tokenEconomy.total_estimated_saved_tokens,
+        tokenEconomy.total_raw_token_count_estimate
+    );
+
+    return {
+        task_id: safeTaskId,
+        events_count: events.length,
+        first_event_utc: firstUtc,
+        last_event_utc: lastUtc,
+        wall_clock_seconds: wallClockSeconds,
+        gate_pass_count: gatePassCount,
+        gate_fail_count: gateFail,
+        path_mode: pathMode,
+        required_reviews: requiredReviews,
+        changed_files_count: changedFilesCount,
+        changed_lines_total: changedLinesTotal,
+        requested_depth: requestedDepth,
+        effective_depth: effectiveDepth,
+        depth_escalated: depthEscalated,
+        budget_forecast: budgetForecast,
+        budget_comparison: budgetComparison,
+        token_economy: tokenEconomy
+    };
+}
+
+function buildTokenEconomy(
+    events: Record<string, unknown>[],
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string
+): TokenEconomySummary {
+    const breakdown: TokenContribution[] = [];
+    const seenKeys = new Set<string>();
+
+    function addContribution(key: string, contribution: TokenContribution): void {
+        if (contribution.estimated_saved_tokens <= 0 || seenKeys.has(key)) return;
+        seenKeys.add(key);
+        breakdown.push(contribution);
+    }
+
+    function normalizeArtifactKey(rawPath: string): string {
+        const resolved = resolveArtifactPathForRead(rawPath, repoRoot);
+        return resolved ? toPosix(resolved) : rawPath;
+    }
+
+    // Scan events for gate output telemetry
+    for (let i = 0; i < events.length; i += 1) {
+        const event = events[i];
+        const rawDetails = event && typeof event === 'object' ? event.details : null;
+        if (!rawDetails || typeof rawDetails !== 'object') continue;
+        const details = rawDetails as Record<string, unknown>;
+        const eventType = String(event.event_type || 'UNKNOWN');
+
+        let reviewEvidencePayload: Record<string, unknown> | null = null;
+
+        if (typeof details.review_evidence_path === 'string' && details.review_evidence_path.trim()) {
+            const artifact = readJsonArtifact(details.review_evidence_path, repoRoot);
+            if (artifact) {
+                reviewEvidencePayload = artifact;
+                const telemetry = getOutputTelemetryFromPayload(artifact);
+                if (telemetry) {
+                    const normalizedKey = normalizeArtifactKey(String(details.review_evidence_path));
+                    addContribution(`command-output:${normalizedKey}`, {
+                        label: getCommandOutputLabel(eventType),
+                        estimated_saved_tokens: telemetry.estimated_saved_tokens,
+                        raw_token_count_estimate: telemetry.raw_token_count_estimate
+                    });
+                }
+                collectReviewContextFromContainer(artifact, repoRoot, seenKeys, breakdown, normalizeArtifactKey);
+            }
+        }
+
+        if (!reviewEvidencePayload) {
+            const telemetry = getOutputTelemetryFromPayload(details);
+            if (telemetry) {
+                addContribution(`command-output:event:${i + 1}:${eventType}`, {
+                    label: getCommandOutputLabel(eventType),
+                    estimated_saved_tokens: telemetry.estimated_saved_tokens,
+                    raw_token_count_estimate: telemetry.raw_token_count_estimate
+                });
+            }
+            collectReviewContextFromContainer(details, repoRoot, seenKeys, breakdown, normalizeArtifactKey);
+        }
+    }
+
+    // Also scan review-context artifacts directly from reviews root
+    const reviewTypes = ['code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency'];
+    for (const rt of reviewTypes) {
+        const contextPath = path.join(reviewsRoot, `${taskId}-${rt}-review-context.json`);
+        const contextKey = `review-context:${toPosix(contextPath)}`;
+        if (seenKeys.has(contextKey)) continue;
+        const payload = safeReadJson(contextPath);
+        if (!payload) continue;
+        const summary = getReviewContextSummary(payload);
+        if (summary) {
+            addContribution(contextKey, summary);
+        }
+    }
+
+    const totalSaved = breakdown.reduce((sum, item) => sum + item.estimated_saved_tokens, 0);
+    const totalRaw = breakdown.reduce((sum, item) => sum + (item.raw_token_count_estimate || 0), 0);
+    const baselineKnown = breakdown.length > 0 && breakdown.every(item => (item.raw_token_count_estimate || 0) > 0);
+    const savingsPercent = baselineKnown && totalRaw > 0 ? Math.round((totalSaved * 100.0) / totalRaw) : null;
+
+    let visibleSummaryLine: string | null = null;
+    if (totalSaved > 0 && breakdown.length > 0) {
+        const parts = breakdown.map(item => `${item.estimated_saved_tokens} ${item.label}`).join(' + ');
+        if (savingsPercent != null) {
+            visibleSummaryLine = `Saved tokens: ~${totalSaved} (~${savingsPercent}%) (${parts}).`;
+        } else {
+            visibleSummaryLine = `Saved tokens: ~${totalSaved} (${parts}).`;
+        }
+    }
+
+    return {
+        total_estimated_saved_tokens: totalSaved,
+        total_raw_token_count_estimate: totalRaw,
+        savings_percent: savingsPercent,
+        breakdown,
+        visible_summary_line: visibleSummaryLine
+    };
+}
+
+function collectReviewContextFromContainer(
+    container: Record<string, unknown>,
+    repoRoot: string,
+    seenKeys: Set<string>,
+    breakdown: TokenContribution[],
+    normalizeKey?: (rawPath: string) => string
+): void {
+    if (!container || typeof container !== 'object') return;
+    const artifactEvidence = container.artifact_evidence as Record<string, unknown> | null | undefined;
+    const checked = artifactEvidence && Array.isArray((artifactEvidence as Record<string, unknown>).checked)
+        ? (artifactEvidence as Record<string, unknown>).checked as Record<string, unknown>[]
+        : [];
+    for (const entry of checked) {
+        if (!entry || typeof entry !== 'object' || !entry.review_context_path) continue;
+        const payload = readJsonArtifact(entry.review_context_path, repoRoot);
+        if (!payload) continue;
+        const summary = getReviewContextSummary(payload);
+        if (!summary) continue;
+        const rawPathStr = String(entry.review_context_path);
+        const normalizedPath = normalizeKey ? normalizeKey(rawPathStr) : rawPathStr;
+        const key = `review-context:${normalizedPath}`;
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        breakdown.push(summary);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Aggregate stats across multiple tasks
+// ---------------------------------------------------------------------------
+
+export function buildAggregateStats(
+    repoRoot: string,
+    eventsRoot?: string | null,
+    reviewsRoot?: string | null
+): AggregateStatsResult {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    const resolvedEventsRoot = eventsRoot
+        ? resolvePathInsideRepo(eventsRoot, resolvedRepoRoot, { allowMissing: true }) || eventsRoot
+        : joinOrchestratorPath(resolvedRepoRoot, path.join('runtime', 'task-events'));
+
+    // Discover task-id JSONL files
+    const taskIds: string[] = [];
+    if (fs.existsSync(resolvedEventsRoot) && fs.statSync(resolvedEventsRoot).isDirectory()) {
+        for (const entry of fs.readdirSync(resolvedEventsRoot)) {
+            if (entry === 'all-tasks.jsonl') continue;
+            const match = entry.match(/^(T-\d+)\.jsonl$/);
+            if (match) taskIds.push(match[1]);
+        }
+    }
+    taskIds.sort();
+
+    const perTask: TaskStatsResult[] = [];
+    for (const tid of taskIds) {
+        perTask.push(buildTaskStats(tid, resolvedRepoRoot, eventsRoot, reviewsRoot));
+    }
+
+    const totalEvents = perTask.reduce((sum, t) => sum + t.events_count, 0);
+    const totalWall = perTask.reduce((sum, t) => sum + (t.wall_clock_seconds || 0), 0);
+    const totalPass = perTask.reduce((sum, t) => sum + t.gate_pass_count, 0);
+    const totalFail = perTask.reduce((sum, t) => sum + t.gate_fail_count, 0);
+    const totalSaved = perTask.reduce((sum, t) => sum + t.token_economy.total_estimated_saved_tokens, 0);
+    const totalRaw = perTask.reduce((sum, t) => sum + t.token_economy.total_raw_token_count_estimate, 0);
+    const aggPercent = totalRaw > 0 ? Math.round((totalSaved * 100.0) / totalRaw) : null;
+
+    return {
+        tasks_analyzed: perTask.length,
+        total_events: totalEvents,
+        total_wall_clock_seconds: totalWall,
+        total_gate_pass: totalPass,
+        total_gate_fail: totalFail,
+        total_estimated_saved_tokens: totalSaved,
+        total_raw_token_count_estimate: totalRaw,
+        aggregate_savings_percent: aggPercent,
+        per_task: perTask
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Text formatters
+// ---------------------------------------------------------------------------
+
+function formatWallClock(seconds: number | null): string {
+    if (seconds == null || seconds <= 0) return '(unknown)';
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    if (minutes < 60) return `${minutes}m ${remainder}s`;
+    const hours = Math.floor(minutes / 60);
+    const remainMin = minutes % 60;
+    return `${hours}h ${remainMin}m ${remainder}s`;
+}
+
+export function formatTaskStatsText(stats: TaskStatsResult): string {
+    const lines: string[] = [];
+    lines.push(`Task: ${stats.task_id}`);
+    lines.push(`Events: ${stats.events_count}`);
+    if (stats.first_event_utc) lines.push(`Started: ${stats.first_event_utc}`);
+    if (stats.last_event_utc) lines.push(`Ended: ${stats.last_event_utc}`);
+    lines.push(`Duration: ${formatWallClock(stats.wall_clock_seconds)}`);
+    lines.push(`Gates: ${stats.gate_pass_count} passed, ${stats.gate_fail_count} failed`);
+    if (stats.path_mode) lines.push(`PathMode: ${stats.path_mode}`);
+    if (stats.requested_depth != null && stats.effective_depth != null) {
+        if (stats.depth_escalated) {
+            lines.push(`Depth: ${stats.requested_depth} -> ${stats.effective_depth} (escalated)`);
+        } else {
+            lines.push(`Depth: ${stats.effective_depth}`);
+        }
+    }
+    if (stats.required_reviews.length > 0) lines.push(`Reviews: ${stats.required_reviews.join(', ')}`);
+    lines.push(`ChangedFiles: ${stats.changed_files_count} (${stats.changed_lines_total} lines)`);
+
+    if (stats.budget_forecast) {
+        lines.push('');
+        lines.push('Budget Forecast:');
+        lines.push(`  Total forecast: ~${stats.budget_forecast.total_forecast_tokens} tokens`);
+        if (stats.budget_forecast.token_economy_active_for_depth) {
+            lines.push(`  Effective forecast: ~${stats.budget_forecast.effective_forecast_tokens} tokens`);
+        }
+    }
+
+    if (stats.budget_comparison && stats.budget_comparison.forecast_total_tokens > 0) {
+        lines.push(`  ${stats.budget_comparison.summary_line}`);
+    }
+
+    if (stats.token_economy.total_estimated_saved_tokens > 0) {
+        lines.push('');
+        lines.push('Token Economy:');
+        if (stats.token_economy.visible_summary_line) {
+            lines.push(`  ${stats.token_economy.visible_summary_line}`);
+        }
+        for (const item of stats.token_economy.breakdown) {
+            const rawNote = item.raw_token_count_estimate > 0
+                ? ` (raw ~${item.raw_token_count_estimate})`
+                : '';
+            lines.push(`  - ${item.label}: ~${item.estimated_saved_tokens} saved${rawNote}`);
+        }
+    } else {
+        lines.push('');
+        lines.push('Token Economy: no savings recorded');
+    }
+
+    return lines.join('\n');
+}
+
+export function formatAggregateStatsText(stats: AggregateStatsResult): string {
+    const lines: string[] = [];
+    lines.push('GARDA_STATS');
+    lines.push(`Tasks analyzed: ${stats.tasks_analyzed}`);
+    lines.push(`Total events: ${stats.total_events}`);
+    lines.push(`Total duration: ${formatWallClock(stats.total_wall_clock_seconds)}`);
+    lines.push(`Total gates: ${stats.total_gate_pass} passed, ${stats.total_gate_fail} failed`);
+
+    if (stats.total_estimated_saved_tokens > 0) {
+        const pctNote = stats.aggregate_savings_percent != null
+            ? ` (~${stats.aggregate_savings_percent}%)`
+            : '';
+        lines.push(`Total saved tokens: ~${stats.total_estimated_saved_tokens}${pctNote}`);
+        if (stats.total_raw_token_count_estimate > 0) {
+            lines.push(`Total raw tokens: ~${stats.total_raw_token_count_estimate}`);
+        }
+    } else {
+        lines.push('Total saved tokens: 0');
+    }
+
+    if (stats.per_task.length > 0) {
+        lines.push('');
+        lines.push('Per-task summary:');
+        for (const task of stats.per_task) {
+            const savedNote = task.token_economy.total_estimated_saved_tokens > 0
+                ? `, saved ~${task.token_economy.total_estimated_saved_tokens} tokens`
+                : '';
+            const durationNote = formatWallClock(task.wall_clock_seconds);
+            lines.push(`  ${task.task_id}: ${task.events_count} events, ${durationNote}${savedNote}`);
+        }
+    }
+
+    return lines.join('\n');
+}
+
+export function formatTaskStatsJson(stats: TaskStatsResult): string {
+    return JSON.stringify(stats, null, 2);
+}
+
+export function formatAggregateStatsJson(stats: AggregateStatsResult): string {
+    return JSON.stringify(stats, null, 2);
+}

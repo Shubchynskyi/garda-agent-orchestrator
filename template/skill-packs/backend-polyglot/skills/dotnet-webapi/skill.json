@@ -1,0 +1,15 @@
+{
+  "id": "dotnet-webapi",
+  "name": ".NET Web API",
+  "pack": "backend-polyglot",
+  "summary": "Production ASP.NET Core Web API architecture: routing, DI, middleware ordering, validation, auth boundaries, EF Core usage, error mapping, cancellation, observability, and graceful shutdown.",
+  "tags": ["dotnet", "csharp", "aspnetcore", "backend", "api", "webapi"],
+  "aliases": ["aspnet-api", "dotnet-api", "aspnetcore-api", "dotnet-webapi", "csharp-api"],
+  "stack_signals": ["*.csproj", "*.sln", "Program.cs", "appsettings.json", "appsettings.*.json", "global.json"],
+  "task_signals": ["controller", "minimal api", "endpoint", "middleware", "filter", "action", "DI", "service registration", "EF Core", "DbContext", "authorization", "authentication", "cancellation token", "health check", "graceful shutdown"],
+  "changed_path_signals": ["Controllers/", "Endpoints/", "Middleware/", "Filters/", "Services/", "Program.cs", "Startup.cs", "Models/", "Dtos/", "Extensions/", "Properties/launchSettings.json"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 80,
+  "autoload": "suggest"
+}

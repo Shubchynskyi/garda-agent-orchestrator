@@ -1,0 +1,15 @@
+{
+  "id": "adr-writer",
+  "name": "ADR Writer",
+  "pack": "docs-process",
+  "summary": "Produces structured Architecture Decision Records that capture context, options, tradeoffs, and consequences for non-trivial technical decisions.",
+  "tags": ["docs", "adr", "architecture", "decisions", "process"],
+  "aliases": ["adr", "architecture decision record", "decision record"],
+  "stack_signals": ["docs/adr/", "docs/decisions/", "decisions/", "adr/", "docs/architecture/decisions/"],
+  "task_signals": ["decision", "adr", "tradeoff", "architecture decision", "rfc", "design proposal", "change proposal", "evaluate options"],
+  "changed_path_signals": ["docs/adr/", "docs/decisions/", "decisions/", "adr/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 74,
+  "autoload": "suggest"
+}

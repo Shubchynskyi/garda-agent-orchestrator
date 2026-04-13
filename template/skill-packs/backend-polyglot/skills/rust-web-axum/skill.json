@@ -1,0 +1,15 @@
+{
+  "id": "rust-web-axum",
+  "name": "Rust Web Axum",
+  "pack": "backend-polyglot",
+  "summary": "Production Axum web service architecture: routing, extractors, typed state, Tower middleware, error mapping, async I/O on Tokio, and graceful shutdown.",
+  "tags": ["rust", "axum", "backend", "api", "tokio", "tower"],
+  "aliases": ["rust-axum", "axum", "rust-web", "axum-api"],
+  "stack_signals": ["Cargo.toml", "axum", "tokio", "tower", "tower-http"],
+  "task_signals": ["router", "extractor", "handler", "middleware", "endpoint", "state", "graceful shutdown", "tower layer"],
+  "changed_path_signals": ["src/main.rs", "src/lib.rs", "src/routes/", "src/handlers/", "src/state.rs", "src/error.rs", "src/middleware/", "src/models/", "Cargo.toml"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 78,
+  "autoload": "suggest"
+}

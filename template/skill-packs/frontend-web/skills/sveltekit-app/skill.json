@@ -1,0 +1,15 @@
+{
+  "id": "sveltekit-app",
+  "name": "SvelteKit App",
+  "pack": "frontend-web",
+  "summary": "Guides correct load-function boundaries, form actions, server/client module separation, routing conventions, adapter selection, and deployment-safe changes in SvelteKit projects.",
+  "tags": ["frontend", "sveltekit", "svelte", "ssr", "forms", "routing"],
+  "aliases": ["sveltekit", "svelte", "svelte kit", "sk"],
+  "stack_signals": ["svelte.config.js", "svelte.config.ts", "src/routes/", "src/app.html", "app.d.ts", "vite.config.ts", ".svelte-kit/"],
+  "task_signals": ["load function", "form action", "server route", "endpoint", "+page", "+layout", "+server", "hooks", "adapter", "invalidate", "enhance", "superforms", "progressive enhancement", "SSR", "prerender", "handle hook"],
+  "changed_path_signals": ["src/routes/", "src/routes/**/+page.svelte", "src/routes/**/+page.ts", "src/routes/**/+page.server.ts", "src/routes/**/+layout.svelte", "src/routes/**/+layout.ts", "src/routes/**/+layout.server.ts", "src/routes/**/+server.ts", "src/routes/**/+error.svelte", "src/hooks.server.ts", "src/hooks.client.ts", "src/hooks.server.js", "src/app.d.ts", "src/app.html", "svelte.config.*", "src/lib/", "src/params/", "src/lib/server/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 74,
+  "autoload": "suggest"
+}

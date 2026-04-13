@@ -1,0 +1,15 @@
+{
+  "id": "vue-app",
+  "name": "Vue App",
+  "pack": "frontend-web",
+  "summary": "Guides correct Composition API usage, reactivity contracts, component boundaries, state management, router integration, and safe production changes in Vue 3 applications.",
+  "tags": ["frontend", "vue", "composition-api", "pinia", "vue-router", "vite"],
+  "aliases": ["vue", "vue3", "vue.js", "vue app", "vue component"],
+  "stack_signals": ["vite.config.ts", "vite.config.js", "vite.config.mts", "vue.config.js", "vue.config.ts", "src/App.vue", "env.d.ts", "src/main.ts", "src/main.js"],
+  "task_signals": ["component", "composable", "pinia", "vue-router", "defineProps", "defineEmits", "ref", "reactive", "watch", "computed", "provide", "inject", "v-model", "slot", "directive", "route guard", "store"],
+  "changed_path_signals": ["src/components/", "src/views/", "src/composables/", "src/stores/", "src/router/", "src/plugins/", "src/directives/", "**/*.vue", "src/layouts/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 80,
+  "autoload": "suggest"
+}

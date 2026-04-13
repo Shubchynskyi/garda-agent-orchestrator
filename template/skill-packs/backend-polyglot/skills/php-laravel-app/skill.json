@@ -1,0 +1,15 @@
+{
+  "id": "php-laravel-app",
+  "name": "PHP Laravel App",
+  "pack": "backend-polyglot",
+  "summary": "Production Laravel architecture: route/controller boundaries, FormRequest validation, Eloquent query safety, middleware ordering, queues/jobs, policies, and deployment-safe artisan usage.",
+  "tags": ["php", "laravel", "backend", "api", "eloquent"],
+  "aliases": ["laravel", "laravel-app", "php-laravel", "lumen"],
+  "stack_signals": ["composer.json", "artisan", "app/Http/Kernel.php", "bootstrap/app.php", "config/app.php", "routes/web.php", "routes/api.php"],
+  "task_signals": ["controller", "eloquent", "migration", "middleware", "formrequest", "policy", "queue", "job", "event", "service provider", "blade", "route"],
+  "changed_path_signals": ["app/Http/Controllers/", "app/Models/", "app/Http/Middleware/", "app/Http/Requests/", "app/Policies/", "app/Jobs/", "app/Events/", "app/Providers/", "routes/", "config/", "database/migrations/", "resources/views/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 78,
+  "autoload": "suggest"
+}

@@ -1,0 +1,7 @@
+{
+  "id": "backend-polyglot",
+  "label": "Backend Polyglot",
+  "description": "Optional backend skills for non-Node/non-Python stacks and mixed-service repos.",
+  "tags": ["backend", "go", "rust", "dotnet", "php", "ruby"],
+  "recommended_for": ["Polyglot backends", "Go or Rust services", ".NET, PHP, or Ruby apps"]
+}

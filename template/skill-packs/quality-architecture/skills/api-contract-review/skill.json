@@ -1,0 +1,15 @@
+{
+  "id": "api-contract-review",
+  "name": "API Contract Review",
+  "pack": "quality-architecture",
+  "summary": "Reviews API and interface contracts for backward compatibility, schema correctness, and breaking-change risk before merge.",
+  "tags": ["api", "contract", "review", "compatibility", "schema"],
+  "aliases": ["api-review", "contract-review", "schema-review", "breaking-change-review"],
+  "stack_signals": ["openapi.yaml", "openapi.json", "swagger.json", "swagger.yaml", "*.proto", "schema.graphql", "api-types.ts", "api-client.ts"],
+  "task_signals": ["contract", "schema", "breaking change", "api review", "backward compatibility", "endpoint change", "response shape", "versioning"],
+  "changed_path_signals": ["openapi/", "api/", "proto/", "swagger/", "schemas/", "contracts/", "idl/", "**/api-types.*", "**/api-client.*"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 88,
+  "autoload": "suggest"
+}

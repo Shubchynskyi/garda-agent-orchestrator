@@ -1,0 +1,50 @@
+{
+  "id": "ruby-on-rails-app",
+  "name": "Ruby on Rails App",
+  "pack": "backend-polyglot",
+  "summary": "Rails controller/model/service architecture, Active Record safety, background jobs, strong parameters, authz policies, and deployment-safe migrations.",
+  "tags": ["ruby", "rails", "backend", "active-record", "api"],
+  "aliases": ["rails", "ror", "ruby-on-rails", "rails-app"],
+  "stack_signals": [
+    "Gemfile",
+    "Gemfile.lock",
+    "config/routes.rb",
+    "config/application.rb",
+    "bin/rails"
+  ],
+  "task_signals": [
+    "controller",
+    "active record",
+    "migration",
+    "model",
+    "background job",
+    "service object",
+    "mailer",
+    "policy",
+    "serializer",
+    "strong parameters",
+    "callback",
+    "concern",
+    "scaffold"
+  ],
+  "changed_path_signals": [
+    "app/controllers/",
+    "app/models/",
+    "app/jobs/",
+    "app/services/",
+    "app/policies/",
+    "app/serializers/",
+    "app/mailers/",
+    "app/views/",
+    "config/routes.rb",
+    "config/initializers/",
+    "db/migrate/",
+    "db/schema.rb",
+    "spec/",
+    "test/"
+  ],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 76,
+  "autoload": "suggest"
+}

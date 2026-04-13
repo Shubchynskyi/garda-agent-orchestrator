@@ -1,0 +1,7 @@
+{
+  "id": "docs-process",
+  "label": "Docs and Process",
+  "description": "Optional documentation and engineering-process skills.",
+  "tags": ["docs", "process"],
+  "recommended_for": ["Documentation work", "runbooks", "change communication"]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "refactor-playbook",
+  "name": "Refactor Playbook",
+  "pack": "quality-architecture",
+  "summary": "Guides behavior-preserving refactors through invariant locking, seam creation, disciplined decomposition order, and semantic/structural change separation.",
+  "tags": ["refactor", "quality", "code-structure", "decomposition", "legacy"],
+  "aliases": ["refactor-guide", "refactoring", "code-refactor", "extract-module", "decompose", "restructure"],
+  "stack_signals": ["src/", "lib/", "core/", "services/", "modules/", "legacy/", "shared/", "utils/", "helpers/", "common/"],
+  "task_signals": ["refactor", "extract", "decompose", "restructure", "split module", "reduce complexity", "decouple", "inline", "move method", "simplify", "consolidate", "technical debt", "untangle"],
+  "changed_path_signals": ["src/", "lib/", "core/", "services/", "modules/", "shared/", "utils/", "helpers/", "common/", "legacy/", "**/index.ts", "**/index.js", "**/mod.rs", "**/__init__.py"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 80,
+  "autoload": "suggest"
+}

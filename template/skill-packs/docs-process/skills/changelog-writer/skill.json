@@ -1,0 +1,15 @@
+{
+  "id": "changelog-writer",
+  "name": "Changelog Writer",
+  "pack": "docs-process",
+  "summary": "Produces audience-facing changelogs that group changes by impact, surface breaking changes and migrations, and link to relevant issues and PRs.",
+  "tags": ["docs", "changelog", "release", "versioning", "communication"],
+  "aliases": ["changelog", "release notes", "release changelog", "what changed", "version history"],
+  "stack_signals": ["CHANGELOG.md", "CHANGES.md", "HISTORY.md", "VERSION", "version.json", ".changeset/", ".changelog/", "docs/releases/", "release-notes/"],
+  "task_signals": ["changelog", "release notes", "what changed", "version bump", "breaking changes", "deprecation notice", "upgrade notes", "release summary"],
+  "changed_path_signals": ["CHANGELOG.md", "CHANGES.md", "VERSION", "package.json", "docs/releases/", "docs/upgrade/", ".changeset/", "release-notes/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 72,
+  "autoload": "suggest"
+}

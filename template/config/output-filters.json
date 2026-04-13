@@ -1,0 +1,338 @@
+{
+  "version": 2,
+  "passthrough_ceiling": {
+    "max_lines": 60,
+    "strategy": "tail"
+  },
+  "budget_profiles": {
+    "enabled": true,
+    "tiers": [
+      {
+        "label": "tight",
+        "max_tokens": 500,
+        "passthrough_ceiling_max_lines": 20,
+        "fail_tail_lines": 15,
+        "max_matches": 5,
+        "max_parser_lines": 6,
+        "truncate_line_max_chars": 160
+      },
+      {
+        "label": "moderate",
+        "max_tokens": 1500,
+        "passthrough_ceiling_max_lines": 40,
+        "fail_tail_lines": 30,
+        "max_matches": 10,
+        "max_parser_lines": 12,
+        "truncate_line_max_chars": 200
+      },
+      {
+        "label": "generous",
+        "max_tokens": null,
+        "passthrough_ceiling_max_lines": 60,
+        "fail_tail_lines": 50,
+        "max_matches": 16,
+        "max_parser_lines": 18,
+        "truncate_line_max_chars": 240
+      }
+    ]
+  },
+  "profiles": {
+    "compile_failure_console": {
+      "description": "Compact compile/build failures with parser degradation and configurable failure tail.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": {
+          "context_key": "command_filter_strategy"
+        },
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_failure_console_generic": {
+      "description": "Legacy alias for generic compile/build failure compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": "generic",
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_failure_console_maven": {
+      "description": "Tool-specific alias for Maven failure compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": "maven",
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_failure_console_gradle": {
+      "description": "Tool-specific alias for Gradle failure compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": "gradle",
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_failure_console_node": {
+      "description": "Tool-specific alias for Node build failure compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": "node",
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_failure_console_cargo": {
+      "description": "Tool-specific alias for Cargo failure compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": "cargo",
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_failure_console_dotnet": {
+      "description": "Tool-specific alias for dotnet failure compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": "dotnet",
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_failure_console_go": {
+      "description": "Tool-specific alias for Go failure compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "compile_failure_summary",
+        "strategy": "go",
+        "max_matches": 12,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "compile_success_console": {
+      "description": "Suppress raw compile stdout on green runs while retaining telemetry.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "drop_lines_matching",
+          "pattern": ".*"
+        }
+      ]
+    },
+    "test_failure_console": {
+      "description": "Compact test failures by surfacing failing test lines and failure tail only.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "test_failure_summary",
+        "max_matches": 16,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "test_success_console": {
+      "description": "Suppress raw test stdout on green runs while retaining telemetry.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "drop_lines_matching",
+          "pattern": ".*"
+        }
+      ]
+    },
+    "lint_failure_console": {
+      "description": "Compact lint/type-check failures by surfacing findings and failure tail only.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "lint_failure_summary",
+        "max_matches": 16,
+        "tail_count": {
+          "context_key": "fail_tail_lines"
+        }
+      }
+    },
+    "lint_success_console": {
+      "description": "Suppress raw lint stdout on green runs while retaining telemetry.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "drop_lines_matching",
+          "pattern": ".*"
+        }
+      ]
+    },
+    "review_gate_failure_console": {
+      "description": "Keep review-gate failures compact but auditable.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "review_gate_summary",
+        "max_lines": 18
+      }
+    },
+    "review_gate_success_console": {
+      "description": "Keep review-gate pass output short and deterministic.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "max_total_lines",
+          "max_lines": 4,
+          "strategy": "head"
+        }
+      ],
+      "parser": {
+        "type": "review_gate_summary",
+        "max_lines": 6
+      }
+    },
+    "review_gate_console": {
+      "description": "Legacy alias for failure-oriented review gate compaction.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "truncate_line_length",
+          "max_chars": 240
+        }
+      ],
+      "parser": {
+        "type": "review_gate_summary",
+        "max_lines": 18
+      }
+    },
+    "validation_success_console": {
+      "description": "Suppress verbose validation success output outside gate execution. Use --compact on status/doctor/verify/validate-manifest.",
+      "operations": [
+        {
+          "type": "strip_ansi"
+        },
+        {
+          "type": "drop_lines_matching",
+          "pattern": ".*"
+        }
+      ]
+    }
+  }
+}

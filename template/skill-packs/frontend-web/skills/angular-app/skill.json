@@ -1,0 +1,15 @@
+{
+  "id": "angular-app",
+  "name": "Angular App",
+  "pack": "frontend-web",
+  "summary": "Guides standalone-vs-NgModule detection, signals/RxJS boundaries, router guards, reactive forms, DI scopes, change detection strategy, and deployment-safe changes in production Angular applications.",
+  "tags": ["frontend", "angular", "typescript", "spa", "rxjs", "signals"],
+  "aliases": ["angular", "ng", "angular app", "angular standalone", "angular signals"],
+  "stack_signals": ["angular.json", "src/app/", "angular.workspace", "tsconfig.app.json", "ngsw-config.json", "src/main.ts"],
+  "task_signals": ["component", "service", "directive", "pipe", "guard", "resolver", "interceptor", "rxjs", "signal", "reactive form", "template-driven form", "lazy load", "standalone component", "NgModule", "change detection", "dependency injection", "route", "Angular"],
+  "changed_path_signals": ["src/app/", "angular.json", "app.routes.ts", "app.config.ts", "*.component.ts", "*.service.ts", "*.guard.ts", "*.interceptor.ts", "*.module.ts", "*.directive.ts", "*.pipe.ts", "*.component.html", "*.component.spec.ts"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 82,
+  "autoload": "suggest"
+}

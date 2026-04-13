@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "enforcement": "LOG_ONLY",
+  "require_manifest_match_before_task": true,
+  "refuse_on_preflight_drift": true,
+  "use_sandbox": true,
+  "same_user_limitation_notice": "Control-plane isolation is a practical hardening measure, not a security boundary. An agent running under the same OS user can bypass read-only file attributes, rewrite ACLs, or replace source files before running gates. Enable isolation mode to reduce accidental mutation, not to prevent a determined adversary."
+}

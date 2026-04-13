@@ -1,0 +1,807 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import {
+    EXIT_GATE_FAILURE
+} from '../../exit-codes';
+import {
+    DEFAULT_COMPILE_TIMEOUT_MS,
+    DEFAULT_GIT_TIMEOUT_MS,
+    spawnSyncWithTimeout
+} from '../../../core/subprocess';
+import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../../gate-runtime/token-telemetry';
+import { applyOutputFilterProfile } from '../../../gate-runtime/output-filters';
+import {
+    emitMandatoryImplementationStartedEventAsync,
+    emitMandatoryPreflightFailedEvent,
+    emitMandatoryPreflightStartedEvent
+} from '../../../gate-runtime/lifecycle-events';
+import {
+    appendMandatoryTaskEvent,
+    appendMandatoryTaskEventAsync,
+    assertValidTaskId
+} from '../../../gate-runtime/task-events';
+import { auditGateCommand } from '../../../gates/task-events-summary';
+import type { CommandCompactnessAudit } from '../../../gates/task-events-summary';
+import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../gate-runtime/budget-preflight';
+import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../gates/classify-change';
+import {
+    getCompileCommandProfile,
+    getCompileCommands,
+    getOutputStats,
+    getPreflightContext,
+    getWorkspaceSnapshot
+} from '../../../gates/compile-gate';
+import {
+    getWorkspaceSnapshotCached
+} from '../../../gates/workspace-snapshot-cache';
+import { loadIsolationModeConfig } from '../../../gates/isolation-mode';
+import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
+import {
+    collectTaskTimelineEventTypes,
+    getTaskModeEvidence,
+    getTaskModeEvidenceViolations,
+    parseTaskModeDepth
+} from '../../../gates/task-mode';
+import {
+    validateTaskPlan,
+    computeTaskPlanDigest,
+    isApprovedPlan,
+    detectPlanDrift
+} from '../../../schemas/task-plan';
+import type { PlanDriftResult } from '../../../schemas/task-plan';
+import {
+    getRulePackEvidence,
+    getRulePackEvidenceViolations
+} from '../../../gates/rule-pack';
+import * as gateHelpers from '../../../gates/helpers';
+import {
+    normalizeOptionalPath,
+    removeArtifactIfExists,
+    resolveDefaultMetricsPath,
+    resolveDefaultReviewsPath,
+    resolvePathForWrite,
+    resolvePreflightPath,
+    writeCompileEvidence,
+    writeJsonArtifact,
+    writeTextArtifact
+} from '../gates-artifacts';
+import {
+    formatCompileOutputEntry,
+    type OutputTelemetrySummary
+} from '../gates-formatter';
+import {
+    expandValueList,
+    parseBooleanOption,
+    parseIntOption
+} from '../gates-parser';
+import {
+    executeCommandAsync
+} from '../gates-subprocess';
+import { requireResolvedPath } from '../shared-command-utils';
+import {
+    getErrorMessage,
+    resolveOrchestratorRoot,
+    splitOutputLines,
+    appendMetricsIfEnabled,
+    resolveBudgetTokensFromForecast,
+    resolveOutputFiltersPath
+} from './gate-flow-helpers';
+
+type ClassificationResult = ReturnType<typeof classifyChange>;
+type CompileCommandProfile = ReturnType<typeof getCompileCommandProfile>;
+type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
+type PreflightContext = ReturnType<typeof getPreflightContext>;
+type CommandPolicyAudit = CommandCompactnessAudit;
+
+export interface ClassifyChangeCommandOptions {
+    repoRoot?: string;
+    changedFiles?: unknown;
+    includeUntracked?: unknown;
+    useStaged?: boolean;
+    taskIntent?: unknown;
+    fastPathMaxFiles?: unknown;
+    fastPathMaxChangedLines?: unknown;
+    performanceHeuristicMinLines?: unknown;
+    taskId?: unknown;
+    rulePackPath?: string;
+    outputPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+export interface CompileGateCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    taskModePath?: string;
+    rulePackPath?: string;
+    failTailLines?: unknown;
+    metricsPath?: string;
+    outputFiltersPath?: string;
+    compileEvidencePath?: string;
+    compileOutputPath?: string;
+    commandsPath?: string;
+    preflightPath?: string;
+    emitMetrics?: unknown;
+    allowPlanDrift?: unknown;
+    allowPlanDriftReason?: string;
+}
+
+function getClassificationRenameCount(repoRoot: string, detectionSource: string, changedFiles: string[]): number {
+    if (detectionSource === 'explicit_changed_files' && changedFiles.length === 0) {
+        return 0;
+    }
+
+    const args = ['-C', repoRoot, 'diff', '--name-status', '--diff-filter=ACMRTUXB'];
+    if (detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked') {
+        args.push('--cached');
+    } else {
+        args.push('HEAD');
+    }
+    if (detectionSource === 'explicit_changed_files' && changedFiles.length > 0) {
+        args.push('--', ...changedFiles);
+    }
+
+    const result = spawnSyncWithTimeout('git', args, {
+        cwd: repoRoot,
+        windowsHide: true,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+    });
+    if (result.error || result.status !== 0) {
+        return 0;
+    }
+
+    return splitOutputLines(result.stdout).filter((line) => /^R\d*\t/i.test(line)).length;
+}
+
+export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const resolvedTaskId = gateHelpers.resolveTaskId(options.taskId || '', options.outputPath || '');
+    if (resolvedTaskId) {
+        assertValidTaskId(resolvedTaskId);
+        emitMandatoryPreflightStartedEvent(orchestratorRoot, resolvedTaskId, {
+            task_intent: String(options.taskIntent || ''),
+            include_untracked: parseBooleanOption(options.includeUntracked, true),
+            use_staged: options.useStaged === true
+        });
+    }
+
+    try {
+    const explicitChangedFilesProvided = options.changedFiles !== undefined;
+    const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
+    const includeUntracked = parseBooleanOption(options.includeUntracked, true);
+    const detectionSource = explicitChangedFilesProvided
+        ? 'explicit_changed_files'
+        : (options.useStaged ? (includeUntracked ? 'git_staged_plus_untracked' : 'git_staged_only') : 'git_auto');
+    const workspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
+    const renameCount = getClassificationRenameCount(
+        repoRoot,
+        workspaceSnapshot.detection_source,
+        workspaceSnapshot.changed_files
+    );
+    const classificationConfig = getClassificationConfig(repoRoot);
+    const reviewCapabilities = getReviewCapabilities(repoRoot);
+    const result: ClassificationResult & { task_id?: string } = classifyChange({
+        normalizedFiles: workspaceSnapshot.changed_files,
+        taskIntent: String(options.taskIntent || ''),
+        fastPathMaxFiles: parseIntOption(options.fastPathMaxFiles, 2, 1),
+        fastPathMaxChangedLines: parseIntOption(options.fastPathMaxChangedLines, 40, 1),
+        performanceHeuristicMinLines: parseIntOption(options.performanceHeuristicMinLines, 120, 1),
+        changedLinesTotal: workspaceSnapshot.changed_lines_total,
+        additionsTotal: workspaceSnapshot.additions_total,
+        deletionsTotal: workspaceSnapshot.deletions_total,
+        renameCount,
+        detectionSource: workspaceSnapshot.detection_source,
+        classificationConfig,
+        reviewCapabilities
+    });
+
+    const protectedFilesSnapshot = gateHelpers.scanProtectedPathHashes(
+        repoRoot,
+        gateHelpers.getProtectedControlPlaneRoots(repoRoot)
+    );
+    const protectedFilesSnapshotSha256 = gateHelpers.computeProtectedSnapshotDigest(protectedFilesSnapshot);
+    const protectedManifestEvidence = gateHelpers.evaluateProtectedControlPlaneManifest(
+        repoRoot,
+        protectedFilesSnapshot
+    );
+    (result.triggers as any).protected_control_plane_snapshot_sha256 = protectedFilesSnapshotSha256;
+    (result.triggers as any).protected_control_plane_manifest_status = protectedManifestEvidence.status;
+    (result.triggers as any).protected_control_plane_manifest_path = protectedManifestEvidence.manifest_path;
+    (result.triggers as any).protected_control_plane_manifest_changed_files = protectedManifestEvidence.changed_files;
+
+    const isolationConfig = loadIsolationModeConfig(repoRoot);
+    (result.triggers as any).isolation_mode_enabled = isolationConfig.enabled;
+    (result.triggers as any).isolation_mode_enforcement = isolationConfig.enforcement;
+    (result.triggers as any).isolation_mode_use_sandbox = isolationConfig.use_sandbox;
+
+    const sandboxResolution = resolveIsolatedOrchestratorRoot(repoRoot);
+    (result.triggers as any).isolation_sandbox_active = sandboxResolution.using_sandbox;
+    (result.triggers as any).isolation_sandbox_resolved_root = gateHelpers.normalizePath(sandboxResolution.resolved_root);
+    (result.triggers as any).isolation_sandbox_reason = sandboxResolution.reason;
+
+    let isolationViolationMessage: string | null = null;
+    if (isolationConfig.enabled && isolationConfig.require_manifest_match_before_task) {
+        if (protectedManifestEvidence.status === 'MISSING') {
+            const msg = 'Control-plane isolation requires a trusted manifest, but none was found. Run setup/update/reinit to generate one.';
+            if (isolationConfig.enforcement === 'STRICT') {
+                isolationViolationMessage = msg;
+            }
+            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+        } else if (protectedManifestEvidence.status === 'INVALID') {
+            const msg = `Trusted control-plane manifest at '${gateHelpers.normalizePath(protectedManifestEvidence.manifest_path)}' is malformed. Re-run setup/update/reinit.`;
+            if (isolationConfig.enforcement === 'STRICT') {
+                isolationViolationMessage = msg;
+            }
+            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+        } else if (protectedManifestEvidence.status === 'DRIFT' && isolationConfig.refuse_on_preflight_drift) {
+            const msg = `Control-plane isolation detected drift in ${protectedManifestEvidence.changed_files.length} file(s) before task start: ${protectedManifestEvidence.changed_files.join(', ')}. Refresh the trusted manifest or disable isolation mode.`;
+            if (isolationConfig.enforcement === 'STRICT') {
+                isolationViolationMessage = msg;
+            }
+            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+        }
+    }
+    if (isolationViolationMessage) {
+        (result as any).isolation_mode_violation = isolationViolationMessage;
+    }
+
+    if (resolvedTaskId) {
+        result.task_id = resolvedTaskId;
+
+        const preflightErrors: string[] = [];
+        const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
+        preflightErrors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
+
+        const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
+            artifactPath: String(options.rulePackPath || '')
+        });
+        preflightErrors.push(...getRulePackEvidenceViolations(rulePackEvidence));
+
+        const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
+        const timelineErrors: string[] = [];
+        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        preflightErrors.push(...timelineErrors);
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('TASK_MODE_ENTERED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED. Run enter-task-mode before preflight.`
+            );
+        }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('RULE_PACK_LOADED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before preflight.`
+            );
+        }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before preflight.`
+            );
+        }
+        if (timelineErrors.length === 0 && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
+            preflightErrors.push(
+                `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before preflight.`
+            );
+        }
+        if (preflightErrors.length > 0) {
+            throw new Error(preflightErrors.join(' '));
+        }
+
+        if (isolationViolationMessage) {
+            throw new Error(`Control-plane isolation (STRICT) blocked preflight: ${isolationViolationMessage}`);
+        }
+    } else if (isolationViolationMessage) {
+        throw new Error(`Control-plane isolation (STRICT) blocked preflight: ${isolationViolationMessage}`);
+    }
+
+    if (resolvedTaskId) {
+        const taskModeForBudget = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
+        const requestedDepth = taskModeForBudget.requested_depth || 2;
+
+        let tokenEconomyEnabled = true;
+        let enabledDepths = [1, 2];
+        let baseStripExamples = true;
+        let baseStripCodeBlocks = true;
+        let baseScopedDiffs = true;
+        let baseCompactReviewerOutput = true;
+        const tokenEconomyPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
+        try {
+            if (fs.existsSync(tokenEconomyPath)) {
+                const teConfig = JSON.parse(fs.readFileSync(tokenEconomyPath, 'utf8')) as Record<string, unknown>;
+                if (typeof teConfig.enabled === 'boolean') tokenEconomyEnabled = teConfig.enabled;
+                if (Array.isArray(teConfig.enabled_depths)) enabledDepths = teConfig.enabled_depths as number[];
+                if (typeof teConfig.strip_examples === 'boolean') baseStripExamples = teConfig.strip_examples;
+                if (typeof teConfig.strip_code_blocks === 'boolean') baseStripCodeBlocks = teConfig.strip_code_blocks;
+                if (typeof teConfig.scoped_diffs === 'boolean') baseScopedDiffs = teConfig.scoped_diffs;
+                if (typeof teConfig.compact_reviewer_output === 'boolean') baseCompactReviewerOutput = teConfig.compact_reviewer_output;
+            }
+        } catch { /* use defaults */ }
+
+        const riskTriggers = {
+            db: !!result.triggers.db,
+            security: !!result.triggers.security,
+            refactor: !!result.triggers.refactor,
+            api: !!result.triggers.api,
+            test: !!result.triggers.test,
+            performance: !!result.triggers.performance,
+            infra: !!result.triggers.infra,
+            dependency: !!result.triggers.dependency
+        };
+
+        const riskAwareDepth = resolveRiskAwareDepth(
+            requestedDepth,
+            result.mode,
+            riskTriggers,
+            {
+                strip_examples: baseStripExamples,
+                strip_code_blocks: baseStripCodeBlocks,
+                scoped_diffs: baseScopedDiffs,
+                compact_reviewer_output: baseCompactReviewerOutput
+            }
+        );
+
+        const effectiveDepth = riskAwareDepth.effective_depth;
+
+        const depthEscalation = resolveDepthEscalation({
+            taskId: resolvedTaskId,
+            requestedDepth,
+            effectiveDepth,
+            pathMode: result.mode,
+            changedFilesCount: result.metrics.changed_files_count,
+            changedLinesTotal: result.metrics.changed_lines_total,
+            requiredReviews: result.required_reviews as Record<string, boolean>
+        });
+
+        const budgetForecast = buildBudgetForecast({
+            taskId: resolvedTaskId,
+            requestedDepth,
+            effectiveDepth,
+            pathMode: result.mode,
+            changedFilesCount: result.metrics.changed_files_count,
+            changedLinesTotal: result.metrics.changed_lines_total,
+            requiredReviews: result.required_reviews as Record<string, boolean>,
+            tokenEconomyEnabled,
+            tokenEconomyEnabledDepths: enabledDepths
+        });
+
+        (result as any).budget_forecast = budgetForecast;
+        (result as any).depth_escalation = depthEscalation;
+        (result as any).risk_aware_depth = riskAwareDepth;
+    }
+
+    const outputPath = options.outputPath ? resolvePathForWrite(options.outputPath, repoRoot) : null;
+    if (outputPath) {
+        writeJsonArtifact(outputPath, result);
+    }
+
+    const metricsPath = options.metricsPath
+        ? resolvePathForWrite(options.metricsPath, repoRoot)
+        : resolvePathForWrite(classificationConfig.metrics_path, repoRoot);
+    appendMetricsIfEnabled(repoRoot, metricsPath, {
+        timestamp_utc: new Date().toISOString(),
+        event_type: 'preflight_classification',
+        repo_root: gateHelpers.normalizePath(repoRoot),
+        task_id: resolvedTaskId || null,
+        output_path: normalizeOptionalPath(outputPath),
+        result
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    if (resolvedTaskId) {
+        try {
+            appendMandatoryTaskEvent(
+                orchestratorRoot,
+                resolvedTaskId,
+                'PREFLIGHT_CLASSIFIED',
+                'INFO',
+                result.zero_diff_guard && result.zero_diff_guard.zero_diff_detected
+                    ? `Preflight completed with mode ${result.mode} (zero-diff baseline only).`
+                    : `Preflight completed with mode ${result.mode}.`,
+                {
+                    mode: result.mode,
+                    output_path: normalizeOptionalPath(outputPath),
+                    changed_files_count: result.metrics.changed_files_count,
+                    changed_lines_total: result.metrics.changed_lines_total,
+                    required_reviews: result.required_reviews,
+                    zero_diff_guard: result.zero_diff_guard,
+                    budget_forecast: (result as any).budget_forecast || null,
+                    depth_escalation: (result as any).depth_escalation || null
+                }
+            );
+        } catch (error: unknown) {
+            removeArtifactIfExists(outputPath);
+            throw new Error(
+                `classify-change failed because mandatory lifecycle event 'PREFLIGHT_CLASSIFIED' could not be appended. ${getErrorMessage(error)}`
+            );
+        }
+    }
+
+    return {
+        outputText: `${JSON.stringify(result, null, 2)}\n`
+    };
+    } catch (error: unknown) {
+        if (resolvedTaskId) {
+            try {
+                emitMandatoryPreflightFailedEvent(orchestratorRoot, resolvedTaskId, {
+                    error: getErrorMessage(error),
+                    task_intent: String(options.taskIntent || '')
+                });
+            } catch (eventError: unknown) {
+                throw new Error(
+                    `classify-change failed and mandatory lifecycle event 'PREFLIGHT_FAILED' could not be appended. Original error: ${getErrorMessage(error)} | Event append error: ${getErrorMessage(eventError)}`
+                );
+            }
+        }
+        throw error;
+    }
+}
+
+export async function runCompileGateCommand(options: CompileGateCommandOptions): Promise<{ outputLines: string[]; exitCode: number }> {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
+    const failTailLines = parseIntOption(options.failTailLines, 50, 1);
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    const outputFiltersPath = resolveOutputFiltersPath(repoRoot, options.outputFiltersPath || '');
+    const compileEvidencePath = options.compileEvidencePath
+        ? requireResolvedPath(resolvePathForWrite(options.compileEvidencePath, repoRoot), 'CompileEvidencePath')
+        : resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`);
+    const compileOutputPath = options.compileOutputPath
+        ? requireResolvedPath(resolvePathForWrite(options.compileOutputPath, repoRoot), 'CompileOutputPath')
+        : resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-output.log`);
+
+    let resolvedCommandsPath: string | null = null;
+    let compileCommands: string[] = [];
+    let resolvedPreflightPath: string | null = null;
+    let preflightHash: string | null = null;
+    let preflightContext: PreflightContext | null = null;
+    let workspaceSnapshot: WorkspaceSnapshot | null = null;
+    let taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
+    let rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
+        artifactPath: String(options.rulePackPath || '')
+    });
+    let warningCount = 0;
+    let errorCount = 0;
+    let exitCode = 0;
+    let exceptionMessage: string | null = null;
+    let selectedCommandProfile: CompileCommandProfile | null = null;
+    let selectedCommandIndex = 0;
+    let budgetTokensForOutputFilters: number | null = null;
+    const compileOutputLines: string[] = [];
+    const compileOutputChunks: string[] = [];
+    const compileCommandAudits: CommandPolicyAudit[] = [];
+    const startedAt = Date.now();
+    let compileOutputInitialized = false;
+    let planDriftResult: PlanDriftResult | null = null;
+
+    try {
+        const commandsPathValue = options.commandsPath
+            ? options.commandsPath
+            : resolveGateExecutionPath(repoRoot, path.join('live', 'docs', 'agent-rules', '40-commands.md'));
+        resolvedCommandsPath = requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(commandsPathValue, repoRoot),
+            'CommandsPath'
+        );
+        compileCommands = getCompileCommands(resolvedCommandsPath);
+        resolvedPreflightPath = resolvePreflightPath(repoRoot, options.preflightPath || '', resolvedTaskId);
+        preflightContext = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+        rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'POST_PREFLIGHT', {
+            artifactPath: String(options.rulePackPath || ''),
+            preflightPath: resolvedPreflightPath,
+            taskModePath: String(options.taskModePath || '')
+        });
+        const taskModeViolations = getTaskModeEvidenceViolations(taskModeEvidence);
+        const rulePackViolations = getRulePackEvidenceViolations(rulePackEvidence);
+        if (taskModeViolations.length > 0) {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = taskModeViolations.join(' ');
+        } else if (rulePackViolations.length > 0) {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = rulePackViolations.join(' ');
+        }
+        const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
+        workspaceSnapshot = getWorkspaceSnapshotCached(
+            repoRoot,
+            preflightContext.detection_source,
+            preflightContext.include_untracked,
+            preflightChangedFiles
+        );
+
+        const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
+        const timelineErrors: string[] = [];
+        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        if (!exceptionMessage && timelineErrors.length > 0) {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = timelineErrors.join(' ');
+        } else if (!exceptionMessage && !timelineEventTypes.has('RULE_PACK_LOADED')) {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before compile gate.`;
+        } else if (!exceptionMessage && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before compile gate.`;
+        } else if (!exceptionMessage && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
+        }
+
+        budgetTokensForOutputFilters = resolveBudgetTokensFromForecast(
+            preflightContext ? (preflightContext as Record<string, unknown>).budget_forecast : null
+        );
+
+        const scopeViolations: string[] = [];
+        if (workspaceSnapshot.changed_files_sha256 !== preflightContext.changed_files_sha256) {
+            scopeViolations.push('Preflight changed_files differ from current workspace snapshot.');
+        }
+        if (workspaceSnapshot.changed_lines_total !== preflightContext.changed_lines_total) {
+            scopeViolations.push(
+                `Preflight changed_lines_total=${preflightContext.changed_lines_total} differs from current snapshot changed_lines_total=${workspaceSnapshot.changed_lines_total}.`
+            );
+        }
+        if (!exceptionMessage && scopeViolations.length > 0) {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
+        }
+
+        if (!exceptionMessage && taskModeEvidence.plan && taskModeEvidence.plan.plan_path) {
+            let loadedPlan: import('../../../schemas/task-plan').TaskPlan | null = null;
+            let planLoadError: string | null = null;
+            try {
+                const planFilePath = gateHelpers.resolvePathInsideRepo(taskModeEvidence.plan.plan_path, repoRoot, { allowMissing: false });
+                if (!planFilePath || !fs.existsSync(planFilePath) || !fs.statSync(planFilePath).isFile()) {
+                    planLoadError = `Plan artifact not found at '${taskModeEvidence.plan.plan_path}'. Replan the task or remove plan metadata.`;
+                } else {
+                    const planJson = JSON.parse(fs.readFileSync(planFilePath, 'utf8'));
+                    const validated = validateTaskPlan(planJson);
+                    if (validated.task_id !== resolvedTaskId) {
+                        planLoadError = `Plan task_id '${validated.task_id}' does not match task '${resolvedTaskId}'.`;
+                    } else if (!isApprovedPlan(validated)) {
+                        planLoadError = `Plan status is '${validated.status}'; only approved plans enforce drift detection.`;
+                    } else {
+                        const digest = computeTaskPlanDigest(validated);
+                        if (taskModeEvidence.plan.plan_sha256 && digest !== taskModeEvidence.plan.plan_sha256) {
+                            planLoadError = `Plan integrity mismatch: task-mode sha256='${taskModeEvidence.plan.plan_sha256}' vs current='${digest}'. Plan may have been edited after approval.`;
+                        } else {
+                            loadedPlan = validated;
+                        }
+                    }
+                }
+            } catch (planError: unknown) {
+                planLoadError = `Plan load/parse failed: ${getErrorMessage(planError)}. Replan the task or remove plan metadata.`;
+            }
+
+            if (planLoadError) {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = planLoadError;
+            } else {
+                planDriftResult = detectPlanDrift({
+                    plan: loadedPlan,
+                    actualFiles: preflightContext.changed_files as string[],
+                    allowPlanDrift: parseBooleanOption(options.allowPlanDrift, false),
+                    allowPlanDriftReason: String(options.allowPlanDriftReason || '').trim() || undefined
+                });
+
+                if (planDriftResult.status === 'REPLAN_REQUIRED') {
+                    exitCode = EXIT_GATE_FAILURE;
+                    exceptionMessage = planDriftResult.violations.join(' ');
+                }
+            }
+        }
+
+        if (!exceptionMessage) {
+            await emitMandatoryImplementationStartedEventAsync(orchestratorRoot, resolvedTaskId, {
+                preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                commands_path: normalizeOptionalPath(resolvedCommandsPath),
+                changed_files_count: preflightContext.changed_files.length,
+                changed_lines_total: preflightContext.changed_lines_total
+            });
+            preflightHash = gateHelpers.fileSha256(resolvedPreflightPath);
+            compileOutputInitialized = true;
+
+            for (let index = 0; index < compileCommands.length; index += 1) {
+                const compileCommand = compileCommands[index];
+                const commandProfile = getCompileCommandProfile(compileCommand);
+                const execution = await executeCommandAsync(compileCommand, {
+                    cwd: repoRoot,
+                    timeoutMs: DEFAULT_COMPILE_TIMEOUT_MS
+                });
+                const stats = getOutputStats(execution.outputLines);
+                compileCommandAudits.push(auditGateCommand(compileCommand, 'compile-gate'));
+
+                compileOutputLines.push(...execution.outputLines);
+                warningCount += stats.warningLines;
+                errorCount += stats.errorLines;
+                compileOutputChunks.push(
+                    formatCompileOutputEntry(index + 1, compileCommands.length, compileCommand, execution.outputLines)
+                );
+
+                if (execution.exitCode !== 0) {
+                    exitCode = execution.exitCode;
+                    exceptionMessage = `Compile command #${index + 1} exited with code ${execution.exitCode}.`;
+                    selectedCommandProfile = commandProfile;
+                    selectedCommandIndex = index + 1;
+                    break;
+                }
+
+                if (index === 0) {
+                    selectedCommandProfile = commandProfile;
+                    selectedCommandIndex = 1;
+                }
+            }
+            if (compileOutputPath && compileOutputInitialized) {
+                writeTextArtifact(compileOutputPath, compileOutputChunks.join(''));
+            }
+        }
+    } catch (error) {
+        exceptionMessage = getErrorMessage(error);
+        if (exitCode === 0) {
+            exitCode = EXIT_GATE_FAILURE;
+        }
+    }
+
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    const fallbackProfile = compileCommands.length > 0
+        ? getCompileCommandProfile(compileCommands[0])
+        : {
+            kind: 'compile',
+            strategy: 'generic',
+            label: 'compile',
+            failure_profile: 'compile_failure_console_generic',
+            success_profile: 'compile_success_console'
+        };
+    const effectiveProfile = selectedCommandProfile || fallbackProfile;
+    const selectedOutputProfile = exceptionMessage ? effectiveProfile.failure_profile : effectiveProfile.success_profile;
+    const filteredOutput = applyOutputFilterProfile(compileOutputLines, outputFiltersPath, selectedOutputProfile, {
+        budgetTokens: budgetTokensForOutputFilters,
+        context: {
+            fail_tail_lines: failTailLines,
+            command_filter_strategy: effectiveProfile.strategy,
+            command_kind: effectiveProfile.kind
+        }
+    });
+    const outputTelemetry = buildOutputTelemetry(compileOutputLines, filteredOutput.lines, {
+        filterMode: filteredOutput.filter_mode,
+        fallbackMode: filteredOutput.fallback_mode,
+        parserMode: filteredOutput.parser_mode,
+        parserName: filteredOutput.parser_name ?? undefined,
+        parserStrategy: filteredOutput.parser_strategy ?? undefined
+    });
+    const telemetrySummary: OutputTelemetrySummary = {
+        filter_mode: filteredOutput.filter_mode,
+        fallback_mode: filteredOutput.fallback_mode,
+        parser_mode: filteredOutput.parser_mode ?? 'NONE',
+        parser_name: filteredOutput.parser_name ?? null,
+        parser_strategy: filteredOutput.parser_strategy ?? null,
+        original_lines: compileOutputLines.length,
+        filtered_lines: filteredOutput.lines.length
+    };
+    const visibleSavingsLine = formatVisibleSavingsLine(outputTelemetry);
+
+    const gateContext: Record<string, unknown> = {
+        commands_path: normalizeOptionalPath(resolvedCommandsPath),
+        compile_commands: compileCommands,
+        compile_command: compileCommands.length > 0 ? compileCommands[0] : null,
+        preflight_path: normalizeOptionalPath(resolvedPreflightPath),
+        preflight_hash_sha256: preflightHash,
+        preflight_detection_source: preflightContext ? preflightContext.detection_source : null,
+        preflight_include_untracked: preflightContext ? !!preflightContext.include_untracked : null,
+        preflight_changed_files_count: preflightContext ? preflightContext.changed_files_count : null,
+        preflight_changed_lines_total: preflightContext ? preflightContext.changed_lines_total : null,
+        preflight_changed_files_sha256: preflightContext ? preflightContext.changed_files_sha256 : null,
+        task_mode: taskModeEvidence,
+        rule_pack: rulePackEvidence,
+        scope_detection_source: workspaceSnapshot ? workspaceSnapshot.detection_source : null,
+        scope_use_staged: workspaceSnapshot ? !!workspaceSnapshot.use_staged : null,
+        scope_include_untracked: workspaceSnapshot ? !!workspaceSnapshot.include_untracked : null,
+        scope_changed_files: workspaceSnapshot ? workspaceSnapshot.changed_files : [],
+        scope_changed_files_count: workspaceSnapshot ? workspaceSnapshot.changed_files_count : 0,
+        scope_changed_lines_total: workspaceSnapshot ? workspaceSnapshot.changed_lines_total : 0,
+        scope_changed_files_sha256: workspaceSnapshot ? workspaceSnapshot.changed_files_sha256 : null,
+        scope_sha256: workspaceSnapshot ? workspaceSnapshot.scope_sha256 : null,
+        evidence_path: normalizeOptionalPath(compileEvidencePath),
+        compile_output_path: normalizeOptionalPath(compileOutputPath),
+        output_filters_path: normalizeOptionalPath(outputFiltersPath),
+        command_kind: effectiveProfile.kind,
+        command_filter_strategy: effectiveProfile.strategy,
+        command_profile_label: effectiveProfile.label,
+        selected_output_profile: selectedOutputProfile,
+        selected_budget_tier: filteredOutput.budget_tier ?? null,
+        selected_command_index: selectedCommandIndex,
+        compile_output_lines: compileOutputLines.length,
+        compile_output_warning_lines: warningCount,
+        compile_output_error_lines: errorCount,
+        duration_ms: durationMs,
+        exit_code: exceptionMessage ? exitCode : 0,
+        command_policy_audits: compileCommandAudits,
+        command_policy_warning_count: compileCommandAudits.reduce((sum, a) => sum + a.warning_count, 0),
+        plan_drift: planDriftResult,
+        ...outputTelemetry
+    };
+
+    if (exceptionMessage) {
+        const failureEvent = {
+            timestamp_utc: new Date().toISOString(),
+            event_type: 'compile_gate_check',
+            status: 'FAILED',
+            task_id: resolvedTaskId,
+            error: exceptionMessage,
+            ...gateContext
+        };
+        appendMetricsIfEnabled(repoRoot, metricsPath, failureEvent, parseBooleanOption(options.emitMetrics, true));
+        let failureReason = exceptionMessage;
+        try {
+            await appendMandatoryTaskEventAsync(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', failureEvent);
+        } catch (eventError: unknown) {
+            failureReason = `Compile gate failed and mandatory lifecycle event 'COMPILE_GATE_FAILED' could not be appended. Original gate error: ${exceptionMessage} | Event append error: ${getErrorMessage(eventError)}`;
+        }
+        writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'FAILED', 'FAIL', failureReason);
+
+        const outputLines = [
+            'COMPILE_GATE_FAILED',
+            `CompileSummary: FAILED | duration_ms=${durationMs} | exit_code=${exitCode} | errors=${errorCount} | warnings=${warningCount}`
+        ];
+        if (compileOutputPath) {
+            outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
+        }
+        if (filteredOutput.lines.length > 0) {
+            if (telemetrySummary.parser_mode === 'FULL' || telemetrySummary.parser_mode === 'DEGRADED') {
+                outputLines.push(
+                    `CompileOutputCompactSummary: parser=${telemetrySummary.parser_name} mode=${telemetrySummary.parser_mode} strategy=${telemetrySummary.parser_strategy}`
+                );
+            } else if (telemetrySummary.filter_mode.startsWith('profile:') && telemetrySummary.fallback_mode === 'none') {
+                outputLines.push(`CompileOutputFilteredLines: profile=${telemetrySummary.filter_mode}`);
+            } else {
+                outputLines.push('CompileOutputFilteredLines:');
+            }
+            outputLines.push(...filteredOutput.lines);
+        }
+        if (visibleSavingsLine) {
+            outputLines.push(visibleSavingsLine);
+        }
+        outputLines.push(`Reason: ${failureReason}`);
+        return { outputLines, exitCode: EXIT_GATE_FAILURE };
+    }
+
+    const successEvent = {
+        timestamp_utc: new Date().toISOString(),
+        event_type: 'compile_gate_check',
+        status: 'PASSED',
+        task_id: resolvedTaskId,
+        ...gateContext
+    };
+    appendMetricsIfEnabled(repoRoot, metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
+    try {
+        await appendMandatoryTaskEventAsync(orchestratorRoot, resolvedTaskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', successEvent);
+    } catch (error: unknown) {
+        const failureReason = `Compile gate succeeded but mandatory lifecycle event 'COMPILE_GATE_PASSED' could not be appended. ${getErrorMessage(error)}`;
+        writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'FAILED', 'FAIL', failureReason);
+        return {
+            outputLines: [
+                'COMPILE_GATE_FAILED',
+                `CompileSummary: FAILED | duration_ms=${durationMs} | exit_code=0 | errors=${errorCount} | warnings=${warningCount}`,
+                `Reason: ${failureReason}`
+            ],
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
+    writeCompileEvidence(compileEvidencePath, resolvedTaskId, gateContext, 'PASSED', 'PASS', null);
+
+    const outputLines = [
+        'COMPILE_GATE_PASSED',
+        `CompileSummary: PASSED | duration_ms=${durationMs} | exit_code=0 | errors=${errorCount} | warnings=${warningCount}`
+    ];
+    if (planDriftResult) {
+        outputLines.push(`PlanDrift: ${planDriftResult.status}`);
+        if (planDriftResult.status === 'PLAN_DRIFT') {
+            outputLines.push(`PlanDriftExtraFiles: ${planDriftResult.extra_files.join(', ')}`);
+        }
+    }
+    if (compileOutputPath) {
+        outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
+    }
+    if (visibleSavingsLine) {
+        outputLines.push(visibleSavingsLine);
+    }
+    return { outputLines, exitCode: 0 };
+}

@@ -1,0 +1,7 @@
+{
+  "id": "data-database",
+  "label": "Data and Database",
+  "description": "Optional SQL, database, migration, and performance skills.",
+  "tags": ["database", "sql", "data"],
+  "recommended_for": ["Migration-heavy repos", "query tuning", "data layers"]
+}

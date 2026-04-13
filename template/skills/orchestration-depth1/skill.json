@@ -1,0 +1,11 @@
+{
+  "id": "orchestration-depth1",
+  "name": "Orchestration Depth 1",
+  "summary": "Short-form orchestration guidance for safe localized depth=1 execution when no escalation trigger fires.",
+  "tags": ["core", "workflow", "depth1"],
+  "aliases": ["depth1 orchestration", "localized task execution"],
+  "references": [],
+  "cost_hint": "low",
+  "priority": 80,
+  "autoload": "suggest"
+}

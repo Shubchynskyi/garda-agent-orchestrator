@@ -1,0 +1,15 @@
+{
+  "id": "multi-agent-review",
+  "name": "Multi-Agent Review",
+  "pack": "ai-agentic",
+  "summary": "Coordinates multiple specialized reviewer agents over one change set: scope decomposition, parallel evidence gathering, finding deduplication, conflict resolution, severity calibration, and synthesis into a single trustworthy review.",
+  "tags": ["ai", "agentic", "review", "orchestration", "multi-agent", "code-review"],
+  "aliases": ["multi-agent-review", "reviewer-coordination", "parallel-review", "agent-review-pipeline", "review-fan-out"],
+  "stack_signals": ["review_orchestrator", "reviewer_registry", "langchain/agents", "crewai", "autogen", "agents/reviewers", "review_pipeline", "evaluation_pipeline"],
+  "task_signals": ["multi-agent review", "reviewer coordination", "parallel review", "finding deduplication", "review synthesis", "severity calibration", "reviewer decomposition", "fan-out review"],
+  "changed_path_signals": ["src/reviewers/", "src/review/", "src/agents/", "src/orchestrator/", "src/evaluation/", "agents/", "review/", "lib/reviewers/", "**/review-pipeline.*", "**/review-report.*"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 80,
+  "autoload": "suggest"
+}

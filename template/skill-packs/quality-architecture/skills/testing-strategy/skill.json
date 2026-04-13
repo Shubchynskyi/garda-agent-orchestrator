@@ -1,0 +1,15 @@
+{
+  "id": "testing-strategy",
+  "name": "Testing Strategy",
+  "pack": "quality-architecture",
+  "summary": "Risk-based test selection, layer balance, fixture realism, flakiness control, and regression targeting for repository changes.",
+  "tags": ["testing", "quality", "regression", "coverage", "test-design"],
+  "aliases": ["test-strategy", "test-plan", "test-selection", "what-to-test"],
+  "stack_signals": ["tests/", "test/", "__tests__/", "*.test.*", "*.spec.*", "jest.config.*", "vitest.config.*", ".mocharc.*", "pytest.ini", "conftest.py", "cypress.config.*", "playwright.config.*"],
+  "task_signals": ["test coverage", "test strategy", "regression", "flaky test", "test plan", "which tests", "integration test", "contract test", "test data", "fixture"],
+  "changed_path_signals": ["tests/", "test/", "__tests__/", "fixtures/", "mocks/", "test-data/", "src/services/", "src/core/", "lib/", ".github/workflows/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 82,
+  "autoload": "suggest"
+}

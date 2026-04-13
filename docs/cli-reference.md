@@ -1,0 +1,340 @@
+# CLI Reference
+
+Complete command reference for Garda Agent Orchestrator.
+
+## Public Surface
+
+The runtime is Node-only.
+
+- Published command names: `garda`, `gao`, `garda-agent-orchestrator`
+- Source invocation: `node bin/garda.js <command>`
+- Runtime baseline: `Node.js 24 LTS`
+- Source installs from a git/source checkout run `npm prepare`, which builds the generated `bin/garda.js` launcher and compiled runtime before execution.
+
+---
+
+## Core Commands
+
+### `garda`
+
+Safe overview of the current workspace.
+
+```text
+garda
+```
+
+### `garda setup`
+
+First-run onboarding. Recommended entrypoint for end users.
+
+```text
+garda setup
+garda setup --target-root "." --no-prompt --assistant-language "English" --assistant-brevity concise --source-of-truth Codex --enforce-no-auto-commit no --claude-orchestrator-full-access no --token-economy-enabled yes
+```
+
+What it does:
+- deploys or refreshes `./garda-agent-orchestrator/`
+- collects or accepts the 6 init answers
+- writes `runtime/init-answers.json`
+- runs install
+- validates `MANIFEST.md`
+- leaves final agent onboarding for `AGENT_INIT_PROMPT.md` and `garda agent-init`
+
+Notes:
+- `setup` supports `--active-agent-files` for fully scripted flows, but ordinary onboarding leaves explicit active-agent-file confirmation to `garda agent-init`.
+- After CLI setup the workspace is still in agent handoff state, not ready for task execution.
+
+### `garda agent-init`
+
+Hard code-level onboarding gate. This command writes `runtime/agent-init-state.json` and blocks `Workspace ready` until it passes.
+
+```text
+garda agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md, CLAUDE.md" --project-rules-updated yes --skills-prompted yes
+```
+
+### `garda status`
+
+```text
+garda status --target-root "."
+garda status --target-root "." --compact
+garda status why-blocked --target-root "."
+```
+
+Notes:
+- `status` prints the normal workspace readiness snapshot.
+- `status --compact` preserves the not-ready output but reduces the green path to a single summary line: `GARDA_STATUS: ready | source=<provider>`.
+- `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
+- `status why-blocked` also surfaces task-event locks that can block timeline writes and reminds the operator that `runtime/reviews/` is not part of the lock subsystem.
+
+### `garda doctor`
+
+Runs `garda verify` plus `garda gate validate-manifest`.
+
+```text
+garda doctor --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+garda doctor --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --compact
+garda doctor --target-root "." --cleanup-stale-locks --dry-run
+garda doctor --target-root "." --cleanup-stale-locks
+garda doctor explain COMPILE_GATE_FAILED
+garda doctor explain --list
+```
+
+Notes:
+- `doctor` remains the aggregate verify + manifest + timeline health command.
+- `doctor --compact` preserves failure diagnostics but reduces the green path to a single line: `Doctor: PASS | verify=PASS | manifest=PASS`.
+- `doctor` reports task-event lock health under `garda-agent-orchestrator/runtime/task-events/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
+- `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
+- `runtime/reviews/` is not part of the task-event lock subsystem and is never cleaned by `doctor --cleanup-stale-locks`.
+- `doctor explain <FAILURE_ID>` prints remediation steps for known failure IDs such as `TASK_MODE_NOT_ENTERED`, `COMPILE_GATE_FAILED`, and `TIMELINE_INCOMPLETE`.
+- `doctor explain --list` prints the current remediation database keys.
+
+### `garda bootstrap`
+
+Deploy the bundle without running install.
+
+```text
+garda bootstrap
+garda bootstrap --repo-url "<git-url>" --branch "<branch>"
+```
+
+### `garda install`
+
+Deploy or refresh the orchestrator from prepared init answers.
+
+```text
+garda install --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+garda install --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --repo-url "<git-url>" --branch "<branch>"
+```
+
+### `garda init`
+
+Re-materialize `live/` from an existing deployed bundle.
+
+```text
+garda init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+```
+
+### `garda reinit`
+
+Change init answers without a full reinstall.
+
+```text
+garda reinit --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+```
+
+Notes:
+- `reinit` re-materializes `live/` based on new answers and enforces a hard atomic consistency invariant for the deployed bundle.
+- After sync, a mandatory post-reinit invariant check proves the deployed bundle is structurally complete (includes `bin`, `dist`, `package.json`, `VERSION`, and `template`) relative to the source being applied.
+
+### `garda verify`
+
+Validate deployment consistency and rule contracts.
+
+```text
+garda verify --target-root "." --source-of-truth "Codex" --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+garda verify --target-root "." --source-of-truth "Codex" --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --compact
+```
+
+Provider values: `Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
+
+Notes:
+- `verify --compact` preserves failure output but reduces the green path to `Verification: PASS | paths=<count> | violations=0`.
+
+### `garda check-update`
+
+Compare the current deployment with a newer npm package or a local unpacked bundle root. By default this only checks; `--apply` performs the update immediately.
+
+```text
+garda check-update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+garda check-update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --apply --no-prompt
+garda check-update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --dry-run
+garda check-update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --package-spec "garda-agent-orchestrator@latest"
+garda check-update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --source-path "."
+```
+
+Notes:
+- By default `check-update` uses the deployed package name from `garda-agent-orchestrator/package.json` with the npm `latest` tag.
+- `--package-spec` accepts npm specs such as `garda-agent-orchestrator@<target-version>`, dist-tags like `@latest`, and local tarballs like `.\garda-agent-orchestrator-<target-version>.tgz`.
+- `--source-path` is for local testing against an unpacked repo or bundle directory.
+- `--trust-override` is an explicit bypass for non-allowlisted npm specs, git sources, or local `--source-path` testing, and the public CLI only accepts it together with `--no-prompt`.
+- Ordinary CLI/runtime flows ignore `GARDA_UPDATE_TRUST_OVERRIDE`; that environment variable is reserved for test-only harness paths, not for production or CI.
+- `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, applies built-in live-rule contract migrations for existing workspaces, runs verify plus manifest validation, enforces a hard atomic consistency invariant for the deployed bundle, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
+
+### `garda update`
+
+Apply the update workflow directly.
+
+```text
+garda update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+garda update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --package-spec "garda-agent-orchestrator@latest"
+garda update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --source-path "."
+garda update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --dry-run
+```
+
+Notes:
+- `update` always applies the update workflow unless `--dry-run` is used.
+- Use `--trust-override --no-prompt` only when you intentionally bypass the trusted-source allowlist for a local or non-standard source; the update report records that override.
+- Successful applies sync bundle files, run install, re-materialize `live/`, apply built-in live-rule contract migrations for existing workspaces, run verify plus manifest validation, and only then write the final `VERSION` marker.
+- Successful applies create rollback artifacts under `garda-agent-orchestrator/runtime/update-rollbacks/` and `garda-agent-orchestrator/runtime/bundle-backups/`.
+- Update reports now reflect actual execution status; steps with no configured runner are reported as skipped rather than pass.
+- Use `garda check-update --apply` when you want a compare-first flow with optional apply.
+
+### `garda update git`
+
+Apply the update workflow from a git source explicitly.
+
+```text
+garda update git --target-root "." --repo-url "https://github.com/Shubchynskyi/garda-agent-orchestrator.git"
+garda update git --target-root "." --repo-url "." --check-only
+garda update git --target-root "." --repo-url "." --branch "master"
+garda update git
+```
+
+Notes:
+- `update git` uses `git clone --depth 1` into a temp directory, then runs the same update lifecycle as npm-based `update`.
+- `--check-only` compares the git source without applying it.
+- Trusted git sources stay in enforced mode; if you bypass git-source trust with `--trust-override --no-prompt`, that override is recorded in CLI output and the update report.
+- With no extra flags, `garda update git` targets the current directory and uses the default GitHub repository URL.
+
+### `garda rollback`
+
+Rollback to a specific orchestrator version or restore from the latest rollback snapshot.
+
+```text
+garda rollback --target-root "."
+garda rollback --target-root "." --dry-run
+garda rollback --target-root "." --snapshot-path "garda-agent-orchestrator/runtime/update-rollbacks/update-20260325-114000"
+garda rollback --target-root "." --to-version "<target-version>" --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+garda rollback --target-root "." --to-version "<target-version>" --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --source-path "."
+garda rollback --target-root "." --to-version "<target-version>" --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --package-spec "garda-agent-orchestrator@<target-version>"
+```
+
+Notes:
+- Without `--to-version`, `rollback` restores the latest saved pre-update workspace snapshot and, when available, the latest bundle backup created by `update` or `check-update --apply`.
+- With `--to-version`, `rollback` acquires that orchestrator version, syncs the bundle, re-runs install/materialization, and updates `VERSION` only after success.
+- `--init-answers-path` is required for version-based rollback because the workspace is re-materialized for the requested version.
+- `--snapshot-path` applies to snapshot-mode rollback; with no `--snapshot-path`, `rollback` uses the latest saved rollback snapshot automatically.
+- Older updates created before rollback metadata persistence may require manual recovery.
+
+### `garda cleanup`
+
+Remove retained runtime artifacts under `garda-agent-orchestrator/runtime/` using count- and age-based retention limits. Use `--dry-run` to preview removals without deleting anything.
+
+```text
+garda cleanup --target-root "."
+garda cleanup --target-root "." --dry-run
+garda cleanup --target-root "." --max-age-days 14 --max-backups 5 --max-task-events 30
+garda cleanup --target-root "." --max-reviews 20 --max-update-rollbacks 10 --max-update-reports 10 --max-bundle-backups 5
+garda cleanup policy --target-root "."
+garda cleanup policy edit --target-root "."
+garda cleanup policy --edit --target-root "."
+garda cleanup policy reset --target-root "."
+garda cleanup policy --retention-mode summary --compress-after-days 14 --target-root "."
+```
+
+Notes:
+- `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, update-rollbacks, and update-reports.
+- `--dry-run` reports projected removals and bytes reclaimed without mutating the filesystem.
+- Retention accepts both a global age limit (`--max-age-days`) and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
+- Count-based eviction uses **real filesystem recency** (file modification time), not task-id ordering. When the number of items exceeds the cap, the least recently modified entries are removed first. When modification times are equal, task-id / filename order is used as a deterministic tie-breaker.
+- For review artifacts, recency is determined per task group: the most recent `mtime` among all files in a `T-xxx-*` group represents that group's freshness.
+- `runtime/task-events/all-tasks.jsonl` is subject to aggregate line-count retention (`--max-aggregate-lines` via cleanup/gc policy). Tail pruning keeps the most recent entries and discards the oldest when the aggregate exceeds the configured cap. The file is never deleted outright by cleanup.
+- Cleanup runs under the lifecycle operation lock to avoid concurrent mutation of the same runtime state.
+- `cleanup policy` shows the current persistent review-artifact storage settings from `live/config/review-artifact-storage.json`.
+- `cleanup policy edit` is the dialog-first editor for retention mode, compression threshold, and receipt preservation. `cleanup policy --edit` is an alias.
+- `cleanup policy reset` restores the bundled default policy template. `cleanup policy --reset` is an alias.
+
+### `garda profile`
+
+Manage the active workspace profile and user-defined profile presets.
+
+```text
+garda profile list --target-root "."
+garda profile current --target-root "."
+garda profile use strict --target-root "."
+garda profile create --target-root "."
+garda profile create my-profile --target-root "." --copy-from balanced --depth 2 --description "Custom profile"
+garda profile delete my-profile --target-root "."
+garda profile validate --target-root "."
+```
+
+Notes:
+- Running `garda profile create` with no profile name in a TTY starts the full interactive profile builder.
+- The interactive builder can customize depth, review policy, token economy, and skill behavior for the new profile.
+- Passing `<name>` plus flags keeps `profile create` script-friendly for automation.
+- Profiles are stored in `live/config/profiles.json` and preserved across init/reinit/update merges.
+
+### `garda uninstall`
+
+Remove the orchestrator from a project.
+
+```text
+garda uninstall --target-root "."
+garda uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts yes
+garda uninstall --target-root "." --dry-run --no-prompt --keep-primary-entrypoint no --keep-task-file no --keep-runtime-artifacts no
+```
+
+Notes:
+- Uninstall removes managed blocks, bridge files, and the deployed bundle while preserving unrelated user content.
+- Before destructive work, uninstall creates an internal journal snapshot and attempts automatic restore if the uninstall flow fails mid-run.
+- `--skip-backups` skips the user-facing recovery backup copies; use it only when you intentionally accept losing those recovery artifacts.
+- `--keep-runtime-artifacts yes` preserves runtime reports, rollback snapshots, and task-event history under `garda-agent-orchestrator/runtime/`, along with user-owned `live/docs/project-memory/**`.
+
+### `garda skills`
+
+Manage optional built-in domain packs and generate code-driven recommendations from the compact skills index.
+
+```text
+garda skills list --target-root "."
+garda skills suggest --target-root "." --task-text "Fix slow API endpoint" --changed-path "src/api/users.ts"
+garda skills add java-spring --target-root "."
+garda skills remove java-spring --target-root "."
+garda skills validate --target-root "."
+```
+
+Rules:
+- `skills suggest` reads only `live/config/skills-index.json` to score optional skills.
+- After user selection, the chosen pack is installed into `live/skills/**` without reading its full optional `SKILL.md` immediately.
+- Full optional `SKILL.md` files are loaded only when a selected skill is actually activated for a task or a hard activation rule requires it.
+
+---
+
+## Gate Commands
+
+Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`.
+
+| Gate | Canonical invocation |
+|---|---|
+| Enter task mode | `garda gate enter-task-mode --task-id "T-001" --task-summary "..."` (`--orchestrator-work` for tasks that modify protected control-plane paths — see [orchestrator-work-and-isolation](orchestrator-work-and-isolation.md)) |
+| Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
+| Classify change | `garda gate classify-change --use-staged --task-intent "..."` |
+| Compile gate | `garda gate compile-gate --task-id "T-001"` |
+| Review gate | `garda gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |
+| Audited no-op | `garda gate record-no-op --task-id "T-001" --reason "Already implemented in current branch"` |
+| Doc impact | `garda gate doc-impact-gate --task-id "T-001" --decision "NO_DOC_UPDATES"` |
+| Completion gate | `garda gate completion-gate --task-id "T-001"` |
+| Scoped diff | `garda gate build-scoped-diff --review-type "db"` |
+| Review context | `garda gate build-review-context --review-type "code" --depth 2` |
+| Task events | `garda gate task-events-summary --task-id "T-001"` |
+| Log event | `garda gate log-task-event --task-id "T-001" --event-type "..."` |
+| Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
+| Human commit | `garda gate human-commit --message "<message>"` |
+
+Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+
+`doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
+
+`validate-manifest --compact` preserves failure diagnostics but reduces the green path to `MANIFEST_VALIDATION_PASSED | entries=<count>`.
+
+Zero-diff task contract:
+- A clean-tree `classify-change` result is baseline-only evidence, not proof that the task is complete.
+- `required-reviews-check` and `completion-gate` now block zero-diff implementation tasks unless the task later produces a real diff or an audited no-op artifact is recorded.
+- Use `garda gate record-no-op --task-id "<task-id>" --reason "<rationale>"` only when the task is genuinely `already done`, `no changes required`, or `audit only`.
+
+---
+
+## Runtime Requirements
+
+| Component | Requirement |
+|---|---|
+| Public CLI and gate commands | Node.js 24 LTS |

@@ -1,0 +1,7 @@
+{
+  "id": "devops-k8s",
+  "label": "DevOps K8s",
+  "description": "Optional Docker, Kubernetes, and delivery pipeline skills.",
+  "tags": ["devops", "docker", "kubernetes"],
+  "recommended_for": ["Deployment repos", "infra-heavy services", "CI/CD work"]
+}

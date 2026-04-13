@@ -1,0 +1,7 @@
+{
+  "id": "frontend-react",
+  "label": "Frontend React",
+  "description": "Optional React and TypeScript frontend skills.",
+  "tags": ["react", "frontend", "typescript"],
+  "recommended_for": ["React apps", "UI tasks", "frontend refactors"]
+}

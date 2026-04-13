@@ -1,0 +1,15 @@
+{
+  "id": "runbook-writer",
+  "name": "Runbook Writer",
+  "pack": "docs-process",
+  "summary": "Produces step-by-step operational runbooks for incidents, deployments, and recurring maintenance with deterministic commands, rollback steps, and escalation paths.",
+  "tags": ["docs", "runbook", "ops", "sre", "incident", "deployment", "maintenance"],
+  "aliases": ["runbook", "operational runbook", "ops playbook", "incident procedure", "deployment runbook"],
+  "stack_signals": ["docs/runbooks/", "runbooks/", "operations/", "docs/operations/", "deploy/", "docs/sre/", "on-call/"],
+  "task_signals": ["runbook", "playbook", "operational procedure", "incident response", "deployment steps", "maintenance procedure", "on-call", "rollback plan", "failover"],
+  "changed_path_signals": ["docs/runbooks/", "runbooks/", "operations/", "deploy/", "scripts/ops/", "scripts/deploy/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 76,
+  "autoload": "suggest"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "security-review",
+  "name": "Security Review",
+  "summary": "Independent security risk review with strict pass/fail verdict.",
+  "tags": ["core", "review", "security"],
+  "aliases": ["security review", "auth review", "secret handling review"],
+  "references": ["security-review-checklist.md"],
+  "cost_hint": "medium",
+  "priority": 100,
+  "autoload": "required_when_preflight_requires"
+}

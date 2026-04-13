@@ -1,0 +1,7 @@
+{
+  "id": "ai-agentic",
+  "label": "AI and Agentic",
+  "description": "Optional LLM, RAG, and agentic-system skills.",
+  "tags": ["ai", "llm", "agentic"],
+  "recommended_for": ["LLM apps", "agent systems", "retrieval workflows"]
+}

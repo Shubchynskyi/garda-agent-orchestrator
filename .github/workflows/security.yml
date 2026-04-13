@@ -1,0 +1,64 @@
+# Supply-chain security scanning for Garda Agent Orchestrator.
+# Jobs: npm audit (high-severity gate) + OSV vulnerability scan (SARIF).
+# Runs on push/PR to main branches and weekly on schedule.
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+      - 'release/**'
+  schedule:
+    # Weekly scan: every Monday at 03:30 UTC.
+    - cron: '30 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  # ── 1. npm audit — blocks on high-severity advisories ────────────────────────
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Install without --no-audit so the registry advisory metadata is fetched.
+      - name: Install dependencies
+        run: npm ci --no-fund
+
+      # Fail the job only on high or critical severity advisories.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high --no-fund
+
+  # ── 2. OSV Scanner — open-source vulnerability database scan ─────────────────
+  # Scans package-lock.json against the OSV database (osv.dev).
+  # Uses the upstream reusable workflow so SARIF upload and result handling stay
+  # aligned with the official OSV Scanner GitHub Action contract.
+  osv-scan:
+    name: OSV Vulnerability Scan
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.0
+    with:
+      scan-args: |-
+        --lockfile=package-lock.json

@@ -1,0 +1,15 @@
+{
+  "id": "architecture-review",
+  "name": "Architecture Review",
+  "pack": "quality-architecture",
+  "summary": "Reviews cross-module and system-design changes for boundary violations, coupling drift, failure-mode gaps, deployment blast radius, and mismatch between stated architecture and actual code.",
+  "tags": ["architecture", "review", "boundaries", "coupling", "system-design"],
+  "aliases": ["arch-review", "design-review", "system-review", "boundary-review", "module-review"],
+  "stack_signals": ["docs/architecture.md", "docs/adr/", "docs/design/", "architecture.md", "ARCHITECTURE.md", "services/", "modules/", "packages/", "libs/", "infra/", "docker-compose.yml", "nx.json", "turbo.json", "pnpm-workspace.yaml"],
+  "task_signals": ["architecture", "boundary", "module boundary", "coupling", "system design", "blast radius", "cross-module", "service split", "dependency direction", "layering", "integration point", "data ownership"],
+  "changed_path_signals": ["services/", "modules/", "packages/", "libs/", "shared/", "core/", "infra/", "gateway/", "platform/", "docker-compose.yml", "**/index.ts", "**/mod.rs", "**/public-api.ts", "**/facade.*"],
+  "references": ["checklist.md"],
+  "cost_hint": "medium",
+  "priority": 84,
+  "autoload": "suggest"
+}

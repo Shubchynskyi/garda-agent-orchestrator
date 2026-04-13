@@ -1,0 +1,15 @@
+{
+  "id": "tool-calling-patterns",
+  "name": "Tool Calling Patterns",
+  "pack": "ai-agentic",
+  "summary": "Safe multi-step tool orchestration: registry design, schema validation, planner sequencing, idempotent execution, and failure-safe result handling in agentic systems.",
+  "tags": ["ai", "tools", "agentic", "orchestration", "function-calling", "schemas"],
+  "aliases": ["tool-calling", "function-calling", "tool-use", "tool-orchestration", "tool-registry", "agent-tools"],
+  "stack_signals": ["tool_registry", "tool-registry", "function_schemas", "openai.functions", "openai.tools", "langchain/tools", "langgraph", "crewai", "autogen", "src/tools/", "src/planner/", "src/executor/"],
+  "task_signals": ["tool call", "function calling", "tool schema", "agent loop", "tool selection", "tool orchestration", "planner executor", "tool retry", "schema drift", "tool result validation"],
+  "changed_path_signals": ["src/tools/", "tools/", "src/agents/", "lib/tools/", "src/functions/", "src/planner/", "src/executor/", "src/orchestrator/", "src/registry/", "agent/tools/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 82,
+  "autoload": "suggest"
+}

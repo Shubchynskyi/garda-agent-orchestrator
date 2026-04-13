@@ -1,0 +1,15 @@
+{
+  "id": "query-performance",
+  "name": "Query Performance",
+  "pack": "data-database",
+  "summary": "Diagnose and improve SQL query performance through plan analysis, index review, join strategy, and N+1 detection.",
+  "tags": ["database", "sql", "performance", "optimization"],
+  "aliases": ["slow-query", "explain-plan", "query-tuning", "n-plus-one"],
+  "stack_signals": ["db/", "sql/", "migrations/", "schema.prisma", "*.sql", "knexfile.*", "ormconfig.*", "sequelize/", "typeorm/"],
+  "task_signals": ["slow query", "query performance", "explain plan", "missing index", "full table scan", "n+1", "pagination", "query timeout", "lock contention"],
+  "changed_path_signals": ["db/", "sql/", "migrations/", "repositories/", "queries/", "models/", "entities/", "schema/", "dal/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 84,
+  "autoload": "suggest"
+}

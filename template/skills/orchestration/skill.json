@@ -1,0 +1,11 @@
+{
+  "id": "orchestration",
+  "name": "Orchestration",
+  "summary": "Canonical end-to-end task execution workflow with deterministic gates, depth control, and required independent reviews.",
+  "tags": ["core", "workflow", "orchestration"],
+  "aliases": ["execute task", "run task", "implement task"],
+  "references": ["review-trigger-matrix.md", "stage-gates.md"],
+  "cost_hint": "high",
+  "priority": 100,
+  "autoload": "always"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "go-http-service",
+  "name": "Go HTTP Service",
+  "pack": "backend-polyglot",
+  "summary": "Production Go HTTP service architecture: routing, middleware, context propagation, concurrency safety, error mapping, and graceful shutdown.",
+  "tags": ["go", "backend", "api", "http", "microservice"],
+  "aliases": ["go-service", "golang-api", "go-http", "go-rest"],
+  "stack_signals": ["go.mod", "go.sum", "main.go", "cmd/"],
+  "task_signals": ["handler", "middleware", "endpoint", "route", "goroutine", "context", "graceful shutdown"],
+  "changed_path_signals": ["cmd/", "internal/", "pkg/", "handlers/", "routes/", "middleware/", "api/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 80,
+  "autoload": "suggest"
+}

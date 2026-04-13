@@ -1,0 +1,40 @@
+# Editors and local IDE state
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+.claude/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Installed/generated runtime artifacts
+/live/
+/runtime/
+/bin/garda.js
+dist/
+.node-build/
+.scripts-build/
+.tmp_rtk_bin_*/
+
+# Dependencies
+node_modules/
+
+# Local diagnostics and temp outputs
+testResults.xml
+tsc-errors-full.txt
+tsc-target-errors.txt
+
+# Local repo-only scripts and workspace state
+scripts/test/
+docs_local
+
+# garda-agent-orchestrator managed ignores
+.agents/workflows/start-task.md
+.github/agents/
+.github/copilot-instructions.md
+.qwen/
+/TASK.md
+garda-agent-orchestrator/

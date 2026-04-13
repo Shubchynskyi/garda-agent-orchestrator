@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "active_profile": "balanced",
+  "built_in_profiles": {
+    "balanced": {
+      "description": "Default profile: moderate depth, standard reviews, and token economy enabled for shallow depths.",
+      "depth": 2,
+      "review_policy": {
+        "code": true,
+        "db": "auto",
+        "security": "auto",
+        "refactor": "auto"
+      },
+      "token_economy": {
+        "enabled": true,
+        "strip_examples": true,
+        "strip_code_blocks": true,
+        "scoped_diffs": true,
+        "compact_reviewer_output": true
+      },
+      "skills": {
+        "auto_suggest": true
+      }
+    },
+    "fast": {
+      "description": "Speed-optimised profile: shallow depth, minimal reviews, aggressive token economy.",
+      "depth": 1,
+      "review_policy": {
+        "code": true,
+        "db": "auto",
+        "security": "auto",
+        "refactor": false
+      },
+      "token_economy": {
+        "enabled": true,
+        "strip_examples": true,
+        "strip_code_blocks": true,
+        "scoped_diffs": true,
+        "compact_reviewer_output": true
+      },
+      "skills": {
+        "auto_suggest": false
+      }
+    },
+    "strict": {
+      "description": "Maximum rigour: deep depth, all reviews enabled, full token economy with no stripping.",
+      "depth": 3,
+      "review_policy": {
+        "code": true,
+        "db": true,
+        "security": true,
+        "refactor": true
+      },
+      "token_economy": {
+        "enabled": true,
+        "strip_examples": false,
+        "strip_code_blocks": false,
+        "scoped_diffs": true,
+        "compact_reviewer_output": false
+      },
+      "skills": {
+        "auto_suggest": true
+      }
+    },
+    "docs-only": {
+      "description": "Documentation-focused profile: shallow depth, no code reviews, aggressive token economy.",
+      "depth": 1,
+      "review_policy": {
+        "code": false,
+        "db": false,
+        "security": false,
+        "refactor": false
+      },
+      "token_economy": {
+        "enabled": true,
+        "strip_examples": true,
+        "strip_code_blocks": true,
+        "scoped_diffs": false,
+        "compact_reviewer_output": true
+      },
+      "skills": {
+        "auto_suggest": false
+      }
+    }
+  },
+  "user_profiles": {}
+}

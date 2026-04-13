@@ -1,0 +1,15 @@
+{
+  "id": "prisma-review",
+  "name": "Prisma Review",
+  "pack": "data-database",
+  "summary": "Reviews Prisma schema design, migration safety, client usage patterns, and query correctness for Node/TypeScript services.",
+  "tags": ["database", "prisma", "orm", "migration", "typescript"],
+  "aliases": ["prisma", "prisma-schema", "prisma-migration", "prisma-client"],
+  "stack_signals": ["schema.prisma", "prisma/schema.prisma", "node_modules/.prisma/client", "@prisma/client"],
+  "task_signals": ["migration", "prisma model", "relation", "prisma query", "prisma generate", "schema change", "data model"],
+  "changed_path_signals": ["prisma/", "prisma/schema.prisma", "prisma/migrations/", "prisma/seed.ts", "prisma/seed.js", "**/repository.*", "**/prisma.*"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 80,
+  "autoload": "suggest"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "postgresql-review",
+  "name": "PostgreSQL Review",
+  "pack": "data-database",
+  "summary": "Review and harden PostgreSQL-specific schema, query plans, MVCC behavior, index strategy, and runtime configuration for correctness and production safety.",
+  "tags": ["postgresql", "database", "review", "performance", "migration"],
+  "aliases": ["postgres", "pgsql", "pg-review", "postgres-review"],
+  "stack_signals": ["postgresql.conf", "pg_hba.conf", "schema.prisma", "*.sql", "knexfile.*", "ormconfig.*", "docker-compose.yml", "node-postgres", "pg", "pgx", "psycopg", "sqlalchemy"],
+  "task_signals": ["vacuum", "autovacuum", "reindex", "EXPLAIN ANALYZE", "transaction isolation", "advisory lock", "row-level lock", "deadlock", "GIN index", "BRIN index", "partial index", "JSONB", "CTE", "materialized view", "pg_stat", "connection pool", "pgbouncer"],
+  "changed_path_signals": ["migrations/", "db/", "sql/", "schema/", "postgresql.conf", "*.sql", "prisma/migrations/", "flyway/", "liquibase/"],
+  "references": ["checklist.md"],
+  "cost_hint": "low",
+  "priority": 82,
+  "autoload": "suggest"
+}

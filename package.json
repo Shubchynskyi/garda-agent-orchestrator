@@ -1,0 +1,68 @@
+{
+  "name": "garda-agent-orchestrator",
+  "version": "1.0.0",
+  "description": "Governed local agent orchestration for workspace deployment, governance, and audit.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shubchynskyi/garda-agent-orchestrator.git"
+  },
+  "homepage": "https://github.com/Shubchynskyi/garda-agent-orchestrator#readme",
+  "bugs": {
+    "url": "https://github.com/Shubchynskyi/garda-agent-orchestrator/issues"
+  },
+  "author": "Dmytro Shubchynskyi <d.shubchynskyi@gmail.com>",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "bin": {
+    "garda": "bin/garda.js",
+    "gao": "bin/garda.js",
+    "garda-agent-orchestrator": "bin/garda.js"
+  },
+  "scripts": {
+    "build:scripts": "node scripts/node-foundation/build-scripts.cjs build.js sync-repo-cli",
+    "build": "node scripts/node-foundation/build-scripts.cjs build.js publish-runtime",
+    "build:publish-runtime": "node scripts/node-foundation/build-scripts.cjs build.js publish-runtime",
+    "build:node-foundation": "node scripts/node-foundation/build-scripts.cjs build.js node-foundation",
+    "test": "node scripts/node-foundation/build-scripts.cjs test.js",
+    "test:node-foundation": "node scripts/node-foundation/build-scripts.cjs test.js",
+    "validate:version-parity": "node scripts/node-foundation/build-scripts.cjs validate-release.js",
+    "validate:release": "npm run validate:version-parity && npm run build && npm test && node --test .node-build/tests/node/packaging/pack-smoke.test.js",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.node-foundation.json",
+    "prepack": "npm run build:publish-runtime"
+  },
+  "files": [
+    ".gitattributes",
+    "bin",
+    "dist",
+    "src",
+    "tsconfig.json",
+    "tsconfig.node-foundation.json",
+    "template",
+    "AGENT_INIT_PROMPT.md",
+    "CHANGELOG.md",
+    "HOW_TO.md",
+    "LICENSE",
+    "NOTICE",
+    "TRADEMARKS.md",
+    "MANIFEST.md",
+    "README.md",
+    "SECURITY.md",
+    "VERSION"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "keywords": [
+    "agents",
+    "bootstrap",
+    "copilot",
+    "garda",
+    "governed-runtime",
+    "orchestrator"
+  ]
+}

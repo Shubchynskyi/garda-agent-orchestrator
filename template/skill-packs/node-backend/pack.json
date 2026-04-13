@@ -1,0 +1,7 @@
+{
+  "id": "node-backend",
+  "label": "Node Backend",
+  "description": "Optional Node.js backend skills for services and APIs.",
+  "tags": ["node", "typescript", "backend"],
+  "recommended_for": ["Node.js APIs", "TypeScript services", "Express or Nest-like stacks"]
+}
