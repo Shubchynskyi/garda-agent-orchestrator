@@ -293,6 +293,35 @@ describe('runInit', () => {
         }
     });
 
+    it('renders profile-first task execution guidance in USAGE.md', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Codex'
+            });
+
+            const usage = fs.readFileSync(path.join(bundleRoot, 'live/USAGE.md'), 'utf8');
+            assert.ok(usage.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
+            assert.ok(
+                usage.includes(
+                    'The command automatically runs mandatory orchestration gates in order: `enter-task-mode`, `load-rule-pack`, `classify-change`, `load-rule-pack`, `compile-gate`, `build-review-context` (for each required review), `required-reviews-check`, `doc-impact-gate`, `completion-gate`.'
+                )
+            );
+            assert.ok(
+                usage.includes(
+                    'Default execution comes from the active profile. Built-in profiles: `balanced` (depth `2`), `fast` (depth `1`), `strict` (depth `3`), `docs-only` (depth `1`).'
+                )
+            );
+            assert.ok(usage.includes('Use `depth=<1|2|3>` only when you intentionally want a one-run override of the selected profile.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('synchronizes optional review capabilities from live specialist skills', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

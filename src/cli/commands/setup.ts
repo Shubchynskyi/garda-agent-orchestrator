@@ -4,7 +4,7 @@ import { SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
 import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
-import { buildProfileAwareExecuteTaskNextCommand } from '../../validators/task-command';
+import { readActiveProfileHint } from '../../validators/task-command';
 import {
     acquireSourceRoot,
     bold,
@@ -238,6 +238,11 @@ export async function collectSetupAnswersInteractively(
 
 export function printSetupHandoff(snapshot: StatusSnapshot): void {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
+    const gateFlow = 'enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate';
+    const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
+    const activeProfileLine = activeProfileHint.activeProfile
+        ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
+        : 'Use explicit depth only as a one-run override.';
     console.log('');
     console.log(bold('Agent Initialization'));
     console.log('  Primary setup is complete.');
@@ -249,12 +254,20 @@ export function printSetupHandoff(snapshot: StatusSnapshot): void {
     console.log('  2. The prompt already tells the agent to validate language,');
     console.log('     explicitly confirm active agent files, update live project rules,');
     console.log('     ask about specialist skills, and then run the code-level agent-init gate.');
-    console.log('  3. After the agent-init gate passes, you can execute tasks, for example:');
-    console.log(`     ${green(buildProfileAwareExecuteTaskNextCommand(snapshot.bundlePath))}`);
+    console.log('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
+    console.log(`     ${green('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.')}`);
+    console.log(`  4. ${activeProfileLine}`);
+    console.log('  5. Mandatory orchestrator flow:');
+    console.log(`     ${green(gateFlow)}`);
 }
 
 export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
+    const gateFlow = 'enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate';
+    const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
+    const activeProfileLine = activeProfileHint.activeProfile
+        ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
+        : 'Use explicit depth only as a one-run override.';
     const lines = [];
     lines.push('');
     lines.push('Agent Initialization');
@@ -267,8 +280,11 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push('  2. The prompt already tells the agent to validate language,');
     lines.push('     explicitly confirm active agent files, update live project rules,');
     lines.push('     ask about specialist skills, and then run the code-level agent-init gate.');
-    lines.push('  3. After the agent-init gate passes, you can execute tasks, for example:');
-    lines.push(`     ${buildProfileAwareExecuteTaskNextCommand(snapshot.bundlePath)}`);
+    lines.push('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
+    lines.push('     Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.');
+    lines.push(`  4. ${activeProfileLine}`);
+    lines.push('  5. Mandatory orchestrator flow:');
+    lines.push(`     ${gateFlow}`);
     return lines.join('\n');
 }
 

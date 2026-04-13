@@ -23,8 +23,12 @@ garda setup
 #    Agent reuses existing init answers, explicitly confirms active agent files,
 #    fills project context, offers optional skill packs, and finishes with garda agent-init
 
-# 4. After garda agent-init passes, start working
-#    "Execute task T-001 depth=2"
+# 4. After garda agent-init passes, pick a task from TASK.md and tell the agent:
+#    "Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates."
+#    the active profile (`balanced`, `fast`, `strict`, `docs-only`) provides the default execution mode;
+#    use explicit `depth=` only as a one-run override.
+#    the orchestrator then executes mandatory gates:
+#    enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate
 ```
 
 Temporary fallback without global install:

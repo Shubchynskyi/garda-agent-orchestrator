@@ -323,10 +323,13 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Next stage: launch your agent'));
     assert.ok(text.includes('CLAUDE.md, AGENTS.md'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md'));
-    assert.ok(text.includes('Execute task T-001'));
+    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+    assert.ok(text.includes('Use explicit depth only as a one-run override.'));
+    assert.ok(text.includes('Mandatory orchestrator flow:'));
+    assert.ok(text.includes('enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate'));
 });
 
-test('buildSetupHandoffText uses profile-aware next task command', () => {
+test('buildSetupHandoffText reports the active profile and default depth', () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-handoff-profile-'));
     try {
         const bundlePath = path.join(workspace, 'garda-agent-orchestrator');
@@ -361,7 +364,7 @@ test('buildSetupHandoffText uses profile-aware next task command', () => {
             bundlePath,
             activeAgentFiles: 'CLAUDE.md'
         } as unknown as StatusSnapshot);
-        assert.ok(text.includes('Execute task T-001 depth=3 (profile: strict)'));
+        assert.ok(text.includes('Current active profile: strict (default depth=3).'));
     } finally {
         fs.rmSync(workspace, { recursive: true, force: true });
     }

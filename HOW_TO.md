@@ -102,21 +102,37 @@ See **[docs/architecture.md](https://github.com/Shubchynskyi/garda-agent-orchest
 
 ## 5. Start Working On Tasks
 
+Tell your agent:
+
 ```
-Execute task T-001
+Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.
+```
+
+The orchestrator then runs this mandatory flow:
+`enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate`
+
+| Built-in Profile | Default Depth | When to Use |
+|---|---|---|
+| `balanced` | `2` | Default for most tasks |
+| `fast` | `1` | Small, localized, low-risk tasks |
+| `strict` | `3` | High-risk, cross-module, security-sensitive work |
+| `docs-only` | `1` | Documentation-only tasks |
+
+The active workspace profile is the default execution mode.
+The `TASK.md` `Profile` column controls which profile applies per task (`default` inherits the workspace active profile).
+
+Use explicit depth only as a one-run override when you intentionally need to override the selected profile:
+
+```
 Execute task T-001 depth=1
-Execute task T-001 depth=2
 Execute task T-001 depth=3
 ```
 
-| Depth | When to Use |
+| Depth Override | When to Use |
 |---|---|
-| `depth=1` | Small, localized, low-risk tasks |
-| `depth=2` | Default for most tasks |
-| `depth=3` | High-risk, cross-module, security-sensitive work |
-
-Depth is derived at runtime from the active profile.
-The `TASK.md` `Profile` column controls which profile applies per task (`default` inherits the workspace active profile).
+| `depth=1` | Force a shallow one-run execution |
+| `depth=2` | Force a balanced one-run execution |
+| `depth=3` | Force a strict one-run execution |
 
 Required gates apply at any depth.
 See **[docs/work-example.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/work-example.md)** for a full task lifecycle walkthrough.
