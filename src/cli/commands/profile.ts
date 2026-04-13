@@ -169,7 +169,9 @@ export function buildProfileCurrentOutput(data: ProfilesData, bundleRoot: string
         lines.push(`ReviewPolicy: ${formatReviewPolicy(entry.review_policy)}`);
         lines.push(`TokenEconomy: ${formatTokenEconomy(entry.token_economy)}`);
         lines.push(`Skills: ${formatSkills(entry.skills)}`);
+        lines.push('Why: Active profile settings are used by default.');
     }
+    lines.push('Tip: run "profile list" to inspect all available profiles.');
     return lines.join('\n');
 }
 
@@ -388,7 +390,7 @@ async function promptBooleanChoice(title: string, currentValue: boolean, trueLab
 
 async function promptReviewPolicyChoice(reviewType: string, currentValue: boolean | 'auto'): Promise<boolean | 'auto'> {
     const selected = await promptSingleSelect({
-        title: `Review policy: ${reviewType}`,
+        title: `Review policy: ${reviewType} (from base)`,
         defaultLabel: String(currentValue),
         options: [
             { label: 'Auto', value: 'auto' },
@@ -425,10 +427,10 @@ async function promptForProfileName(data: ProfilesData): Promise<string> {
 
 async function promptForCopyFrom(data: ProfilesData): Promise<string> {
     return promptSingleSelect({
-        title: 'Choose base profile',
-        defaultLabel: 'Start from default template',
+        title: 'Choose base profile for new profile settings',
+        defaultLabel: 'Use default template',
         options: [
-            { label: 'Start from default template', value: '' },
+            { label: 'Use default template', value: '' },
             ...getAllProfileNames(data).map((name) => ({
                 label: `Copy from ${name}`,
                 value: name
@@ -438,9 +440,9 @@ async function promptForCopyFrom(data: ProfilesData): Promise<string> {
     });
 }
 
-async function promptForDepth(defaultDepth: number): Promise<number> {
+async function promptForDepth(defaultDepth: number, inheritSource: string): Promise<number> {
     const selected = await promptSingleSelect({
-        title: 'Select profile depth',
+        title: `Select profile depth (from ${inheritSource})`,
         defaultLabel: `Depth ${defaultDepth}`,
         options: [
             { label: '1 - shallow', value: '1' },
@@ -469,6 +471,8 @@ async function resolveInteractiveCreateInput(
         const selected = await promptForCopyFrom(data);
         copyFrom = selected || null;
     }
+    const inheritSource = copyFrom ? `profile '${copyFrom}'` : 'default template';
+    console.log(`Defaults are copied from ${inheritSource}. You can keep inherited values or override them.`);
 
     const sourceEntry = copyFrom
         ? buildPromptReadyProfileEntry(cloneProfileEntry(getProfileEntry(data, copyFrom)!))
@@ -477,7 +481,7 @@ async function resolveInteractiveCreateInput(
     let description = typeof options.description === 'string'
         ? options.description.trim()
         : await promptTextInput(
-            'Enter profile description',
+            `Enter profile description (defaults from ${inheritSource})`,
             copyFrom ? `Copy of ${copyFrom}` : `User profile: ${name}`
         );
     description = description.trim();
@@ -487,7 +491,7 @@ async function resolveInteractiveCreateInput(
 
     const depth = typeof options.depth === 'string'
         ? parseStrictDepth(options.depth)
-        : await promptForDepth(sourceEntry.depth);
+        : await promptForDepth(sourceEntry.depth, inheritSource);
 
     const entry = buildPromptReadyProfileEntry({
         ...sourceEntry,
@@ -509,7 +513,7 @@ async function resolveInteractiveCreateInput(
     if (customizeTokenEconomy) {
         for (const field of TOKEN_ECONOMY_FIELDS) {
             entry.token_economy[field] = await promptBooleanChoice(
-                `Token economy: ${field}`,
+                `Token economy: ${field} (from base)`,
                 entry.token_economy[field] !== false,
                 'Enabled',
                 'Disabled'
@@ -691,7 +695,7 @@ interface ProfileValidateResult {
 export function handleProfile(commandArgv: string[], packageJson: PackageJsonLike): MaybePromise<ProfileValidateResult | null> {
     const firstArg = String(commandArgv[0] || '').trim();
     const hasExplicitSubcommand = firstArg.length > 0 && !firstArg.startsWith('-');
-    const subcommand = hasExplicitSubcommand ? firstArg : 'list';
+    const subcommand = hasExplicitSubcommand ? firstArg : 'current';
     const subcommandArgv = hasExplicitSubcommand ? commandArgv.slice(1) : commandArgv;
 
     const needsPositional = subcommand === 'use' || subcommand === 'create' || subcommand === 'delete';

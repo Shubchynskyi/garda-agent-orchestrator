@@ -100,6 +100,16 @@ test('profile list shows all profiles with active marker', () => {
     assert.ok(output.includes('docs-only'));
 });
 
+test('profile command without subcommand shows current profile', () => {
+    const bundleRoot = createTempBundleWithProfiles();
+    const { lines } = captureConsole(() => handleProfile(['--bundle-root', bundleRoot], PACKAGE_JSON));
+    const output = lines.join('\n');
+    assert.ok(output.includes('GARDA_PROFILES'));
+    assert.ok(output.includes('Action: current'));
+    assert.ok(output.includes('ActiveProfile: balanced'));
+    assert.ok(output.includes('Tip: run "profile list" to inspect all available profiles.'));
+});
+
 test('profile list --json returns valid JSON', () => {
     const bundleRoot = createTempBundleWithProfiles();
     const { lines } = captureConsole(() => handleProfile(['list', '--bundle-root', bundleRoot, '--json'], PACKAGE_JSON));
@@ -236,29 +246,29 @@ test('profile create without a name starts full interactive prompts when TTY is 
     cliHelpers.supportsInteractivePrompts = function () { return true; };
     cliHelpers.promptTextInput = async function (title: string) {
         if (title === 'Enter profile name') return 'guided-profile';
-        if (title === 'Enter profile description') return 'Interactive guided profile';
+        if (title === 'Enter profile description (defaults from profile \'strict\')') return 'Interactive guided profile';
         throw new Error(`Unexpected promptTextInput title: ${title}`);
     };
     cliHelpers.promptSingleSelect = async function (config: { title: string }) {
         switch (config.title) {
-            case 'Choose base profile': return 'strict';
-            case 'Select profile depth': return '2';
+            case 'Choose base profile for new profile settings': return 'strict';
+            case 'Select profile depth (from profile \'strict\')': return '2';
             case 'Customize review policy': return 'true';
-            case 'Review policy: code': return 'true';
-            case 'Review policy: db': return 'false';
-            case 'Review policy: security': return 'true';
-            case 'Review policy: refactor': return 'auto';
-            case 'Review policy: api': return 'false';
-            case 'Review policy: test': return 'true';
-            case 'Review policy: performance': return 'false';
-            case 'Review policy: infra': return 'false';
-            case 'Review policy: dependency': return 'true';
+            case 'Review policy: code (from base)': return 'true';
+            case 'Review policy: db (from base)': return 'false';
+            case 'Review policy: security (from base)': return 'true';
+            case 'Review policy: refactor (from base)': return 'auto';
+            case 'Review policy: api (from base)': return 'false';
+            case 'Review policy: test (from base)': return 'true';
+            case 'Review policy: performance (from base)': return 'false';
+            case 'Review policy: infra (from base)': return 'false';
+            case 'Review policy: dependency (from base)': return 'true';
             case 'Customize token economy': return 'true';
-            case 'Token economy: enabled': return 'true';
-            case 'Token economy: strip_examples': return 'false';
-            case 'Token economy: strip_code_blocks': return 'false';
-            case 'Token economy: scoped_diffs': return 'true';
-            case 'Token economy: compact_reviewer_output': return 'false';
+            case 'Token economy: enabled (from base)': return 'true';
+            case 'Token economy: strip_examples (from base)': return 'false';
+            case 'Token economy: strip_code_blocks (from base)': return 'false';
+            case 'Token economy: scoped_diffs (from base)': return 'true';
+            case 'Token economy: compact_reviewer_output (from base)': return 'false';
             case 'Customize skill behavior': return 'true';
             case 'Skills: auto_suggest': return 'false';
             default:
@@ -271,7 +281,9 @@ test('profile create without a name starts full interactive prompts when TTY is 
             'create',
             '--bundle-root', bundleRoot
         ], PACKAGE_JSON)));
-        assert.ok(lines.join('\n').includes('CREATED'));
+        const output = lines.join('\n');
+        assert.ok(output.includes('CREATED'));
+        assert.ok(output.includes("Defaults are copied from profile 'strict'. You can keep inherited values or override them."));
 
         const data = JSON.parse(fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'profiles.json'), 'utf8'));
         const created = data.user_profiles['guided-profile'];
@@ -449,6 +461,8 @@ test('buildProfileCurrentOutput text includes all fields', () => {
     assert.ok(output.includes('ActiveProfile: fast'));
     assert.ok(output.includes('Type: built-in'));
     assert.ok(output.includes('Depth: 1'));
+    assert.ok(output.includes('Why: Active profile settings are used by default.'));
+    assert.ok(output.includes('Tip: run "profile list" to inspect all available profiles.'));
 });
 
 test('buildProfileUseOutput shows CHANGED vs NO_CHANGE', () => {
