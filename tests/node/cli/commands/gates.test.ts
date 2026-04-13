@@ -146,10 +146,16 @@ function writeBudgetOutputFilters(repoRoot: string): string {
     return outputFiltersPath;
 }
 
-function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
+function writeReceiptBackedReviewArtifact(
+    repoRoot: string,
+    taskId: string,
+    reviewKey: string,
+    verdict: string,
+    contentLines?: string[]
+): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
-    const content = [
+    const content = (contentLines || [
         '# Review',
         '',
         `Verified changes in \`src/app.ts\`. This review artifact content has been extended with more words to ensure it strictly passes the newly introduced triviality check, which demands at least thirty words if there are no meaningful findings or risks.`,
@@ -164,7 +170,7 @@ function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: s
         '',
         '## Verdict',
         verdict
-    ].join('\n');
+    ]).join('\n');
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
@@ -208,6 +214,10 @@ function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: s
         });
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
+}
+
+function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
+    writeReceiptBackedReviewArtifact(repoRoot, taskId, reviewKey, verdict);
 }
 
 
@@ -1059,6 +1069,151 @@ describe('cli/commands/gates', () => {
             && typeof event.details === 'object'
             && (event.details as Record<string, unknown>).new_status === 'IN_REVIEW'
         )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails required reviews gate when review artifact is missing mandatory findings sections', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-invalid-sections';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-invalid-sections.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject schema-invalid review artifacts earlier'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeReceiptBackedReviewArtifact(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            [
+                '# Review',
+                '',
+                'Validated `src/app.ts` and related wiring with enough implementation detail to look realistic, but this fixture intentionally uses the wrong section names so review-gate must reject it before completion-gate ever runs.',
+                '',
+                'REVIEW PASSED',
+                '',
+                '## Findings',
+                'none',
+                '',
+                '## Residual',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ]
+        );
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes("missing required section '## Findings by Severity'")));
+        assert.ok(result.outputLines.some((line) => line.includes("missing required section '## Residual Risks'")));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails required reviews gate when review artifact is trivial even with valid receipt/context', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-trivial-review';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-trivial-review.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject trivial synthetic review artifacts earlier'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeReceiptBackedReviewArtifact(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            [
+                '# Review',
+                '',
+                'REVIEW PASSED',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ]
+        );
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('trivial or obviously synthetic')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

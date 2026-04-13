@@ -7,6 +7,7 @@ import {
     type ReviewReceipt
 } from '../gate-runtime/review-context';
 import { assertValidTaskId } from '../gate-runtime/task-events';
+import { getReviewArtifactFindingsEvidence, isTrivialReview } from './completion';
 import { fileSha256, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
@@ -184,6 +185,8 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         let reviewerFallbackReason: string | null = null;
         let trustLevel: string | null = null;
         let routingPolicySummary: Record<string, unknown> | null = null;
+        let trivialReview = false;
+        let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
         if (reviewArtifacts[reviewKey]) {
             const artifactPath = reviewArtifacts[reviewKey].path;
             const artifactContent = reviewArtifacts[reviewKey].content;
@@ -213,6 +216,17 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                     content: artifactContent,
                     reviewContext
                 });
+                if (required && !skippedByOverride) {
+                    trivialReview = isTrivialReview(artifactContent);
+                    if (trivialReview) {
+                        errors.push(
+                            `Review artifact '${normalizePath(artifactPath)}' is trivial or obviously synthetic. ` +
+                            'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
+                        );
+                    }
+                    findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
+                    errors.push(...findingsEvidence.violations);
+                }
                 if (required && !skippedByOverride) {
                     if (!reviewContext) {
                         errors.push(`Required review '${reviewKey}' is missing a valid review-context artifact.`);
@@ -360,7 +374,9 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
             reviewer_identity: reviewerIdentity,
             reviewer_fallback_reason: reviewerFallbackReason,
             trust_level: trustLevel,
-            reviewer_routing_policy: routingPolicySummary
+            reviewer_routing_policy: routingPolicySummary,
+            trivial_review: trivialReview,
+            findings_evidence: findingsEvidence
         };
     }
 

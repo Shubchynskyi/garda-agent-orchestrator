@@ -843,7 +843,7 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
     if (!findingsLines.length) {
         result.missing_sections.push('Findings by Severity');
         result.violations.push(
-            `Review artifact '${artifactPathNormalized}' is missing required section '## Findings by Severity' for completion audit.`
+            `Review artifact '${artifactPathNormalized}' is missing required section '## Findings by Severity' for lifecycle validation.`
         );
     } else {
         result.findings_section_present = true;
@@ -865,7 +865,7 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
     if (!residualLines.length) {
         result.missing_sections.push('Residual Risks');
         result.violations.push(
-            `Review artifact '${artifactPathNormalized}' is missing required section '## Residual Risks' for completion audit.`
+            `Review artifact '${artifactPathNormalized}' is missing required section '## Residual Risks' for lifecycle validation.`
         );
     } else {
         result.residual_risks_section_present = true;

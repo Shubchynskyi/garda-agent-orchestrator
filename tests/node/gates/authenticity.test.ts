@@ -251,7 +251,7 @@ REVIEW PASSED
         });
 
         it('passes delegated review for delegation-capable providers', () => {
-            const content = '# Review\nValidated `src/gates/build-review-context.ts` and `src/gates/required-reviews-check.ts` with isolated delegated reviewer evidence.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
+            const content = '# Review\nValidated `src/gates/build-review-context.ts`, `src/gates/required-reviews-check.ts`, and the receipt-backed routing path end to end, confirming that delegated reviewer identity, context hash integrity, and verdict propagation remain consistent across the required review gate.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {
                     source_of_truth: 'Codex',
