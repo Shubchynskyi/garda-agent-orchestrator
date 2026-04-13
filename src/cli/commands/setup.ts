@@ -49,6 +49,7 @@ import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
 import { validateManifest } from '../../validators/validate-manifest';
 import { runVerify } from '../../validators/verify';
+import { writeProtectedControlPlaneManifest } from '../../gates/helpers';
 
 // ---------------------------------------------------------------------------
 // Flag definitions
@@ -451,6 +452,7 @@ export async function handleSetup(
 
         if (!options.dryRun) {
             runContractMigrations({ rootPath: targetRoot });
+            writeProtectedControlPlaneManifest(targetRoot);
         }
 
         let manifestStatus = options.skipManifestValidation ? 'SKIPPED' : 'PASS';

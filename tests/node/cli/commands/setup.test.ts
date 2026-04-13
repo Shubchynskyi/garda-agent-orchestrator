@@ -11,6 +11,7 @@ import {
     buildSetupStepsText,
     handleSetup
 } from '../../../../src/cli/commands/setup';
+import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import { runVerify } from '../../../../src/validators/verify';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
@@ -374,6 +375,9 @@ test('handleSetup runs contract migrations before verify so stale live task work
             initAnswersPath: path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json')
         });
         assert.equal(verifyResult.passed, true, JSON.stringify(verifyResult.violations));
+
+        const protectedManifestEvidence = evaluateProtectedControlPlaneManifest(workspaceRoot, null, true);
+        assert.equal(protectedManifestEvidence.status, 'MATCH', JSON.stringify(protectedManifestEvidence));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
