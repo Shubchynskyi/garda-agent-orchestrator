@@ -2,27 +2,61 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 
-import {
-    buildTaskModeArtifact,
-    getTaskModeEvidence,
-    type TaskModePlanMetadata
-} from '../../../src/gates/task-mode';
+import {buildTaskModeArtifact, getTaskModeEvidence, type TaskModePlanMetadata} from '../../../src/gates/task-mode';
+import {runEnterTaskModeCommand} from '../../../src/cli/commands/gates';
+import {serializeTaskPlan, validateTaskPlan} from '../../../src/schemas/task-plan';
+import {formatCompletionGateResult} from '../../../src/gates/completion';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+const ownedScratchRoots = new Set<string>();
+
 function makeTempDir(): string {
-    const base = path.join(process.cwd(), 'garda-agent-orchestrator', 'runtime', '.test-scratch');
-    fs.mkdirSync(base, { recursive: true });
-    const dir = fs.mkdtempSync(path.join(base, 'tm-plan-'));
-    return dir;
+    const bundleRoot = path.join(process.cwd(), 'garda-agent-orchestrator');
+    const runtimeRoot = path.join(bundleRoot, 'runtime');
+    const base = path.join(runtimeRoot, '.test-scratch');
+
+    for (const dirPath of [bundleRoot, runtimeRoot, base]) {
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath);
+            ownedScratchRoots.add(dirPath);
+        }
+    }
+
+    return fs.mkdtempSync(path.join(base, 'tm-plan-'));
 }
 
 function cleanupDir(dir: string): void {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+        // Best-effort cleanup only.
+    }
+
+    const base = path.dirname(dir);
+    const runtimeRoot = path.dirname(base);
+    const bundleRoot = path.dirname(runtimeRoot);
+
+    for (const dirPath of [base, runtimeRoot, bundleRoot]) {
+        try {
+            if (dirPath !== base && !ownedScratchRoots.has(dirPath)) {
+                continue;
+            }
+            if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+                continue;
+            }
+            if (fs.readdirSync(dirPath).length !== 0) {
+                continue;
+            }
+            fs.rmdirSync(dirPath);
+            ownedScratchRoots.delete(dirPath);
+        } catch {
+            // Another test may still be using the parent directory.
+        }
+    }
 }
 
 const PLAN_METADATA: TaskModePlanMetadata = {
@@ -259,9 +293,6 @@ test('buildTaskModeArtifact returns null plan when plan_summary is missing', () 
 // CLI validation: runEnterTaskModeCommand plan-path scenarios
 // ---------------------------------------------------------------------------
 
-import { runEnterTaskModeCommand } from '../../../src/cli/commands/gates';
-import { serializeTaskPlan, validateTaskPlan } from '../../../src/schemas/task-plan';
-
 test('runEnterTaskModeCommand without --plan-path produces plan: null', () => {
     const tmpDir = makeTempDir();
     try {
@@ -454,8 +485,6 @@ test('runEnterTaskModeCommand rejects plan with sha256 mismatch', () => {
 // ---------------------------------------------------------------------------
 // Completion gate plan evidence formatting
 // ---------------------------------------------------------------------------
-
-import { formatCompletionGateResult } from '../../../src/gates/completion';
 
 test('formatCompletionGateResult shows PlanGuided: true when plan present', () => {
     const result = {

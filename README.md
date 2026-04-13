@@ -6,6 +6,8 @@ Governed local agent orchestration for AI coding workflows.
 `GARDA = Governed Agent Runtime, Deployment, and Audit.`
 Deploys canonical rules, mandatory quality gates, and token-usage optimization into any project; works with Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravity.
 
+Garda was not started from scratch in this repository. Earlier versions were developed privately as shell/Python prototypes before being rewritten and consolidated into the current Node/TypeScript implementation. This public repository intentionally starts from the first stable public release, `v1.0.0`, so the earlier internal incubation history is not reflected in the public commit log.
+
 **[Quick Start](#quick-start)** · **[User Guide](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/HOW_TO.md)** · **[CLI Reference](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md)** · **[Architecture](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/architecture.md)** · **[Configuration](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/configuration.md)** · **[Work Example](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/work-example.md)** · **[Changelog](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/CHANGELOG.md)**
 
 ## Quick Start
@@ -105,7 +107,8 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-
 
 ## Runtime Baseline
 
-- **Node.js 24 LTS is the required runtime** for the public CLI, lifecycle commands, and gate commands. CI targets Node 24 across the supported OS matrix.
+- **Node.js 24 LTS is the supported runtime baseline** for the public CLI, lifecycle commands, and gate commands. CI targets Node 24 across the supported OS matrix.
+- **Compatibility note:** as of `v1.0.0`, the codebase also builds on `Node 20.20.2` and `Node 22.22.2`. However, those versions are not part of the official support contract, and runtime diagnostics still enforce the documented `>=24.0.0` baseline.
 - **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/garda.ts` compiles into the public `bin/garda.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
 - **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and the wider repo graph (`tsconfig.node-foundation.json` / `tsconfig.tests.json`) covers `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
 - **Release validation is explicit:** `npm run validate:release` proves `build -> test -> pack -> install/invoke` for the published CLI contract.
