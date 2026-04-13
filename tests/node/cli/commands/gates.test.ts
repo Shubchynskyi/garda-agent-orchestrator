@@ -606,7 +606,52 @@ describe('cli/commands/gates', () => {
         const payload = JSON.parse(result.outputText);
         assert.equal(payload.task_id, taskId);
         assert.deepEqual(payload.changed_files, ['src/app.ts']);
-        assert.equal(payload.detection_source, 'git_staged_plus_untracked');
+        assert.equal(payload.detection_source, 'git_staged_only');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps pre-existing unrelated untracked files protected when isolate scope uses --use-staged', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900dirty-staged-untracked';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        const unrelatedUntrackedPath = path.join(repoRoot, 'src', 'scratch-note.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 13;\nconst b = 21;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(unrelatedUntrackedPath, 'export const scratch = "local-only";\n', 'utf8');
+        backdateFileMtime(appPath);
+        backdateFileMtime(unrelatedUntrackedPath);
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep unrelated untracked file protected during staged scope isolation'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const outputPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Keep unrelated untracked file protected during staged scope isolation',
+            useStaged: true,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        const preflight = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+        assert.equal(payload.task_id, taskId);
+        assert.deepEqual(payload.changed_files, ['src/app.ts']);
+        assert.equal(payload.detection_source, 'git_staged_only');
+        assert.deepEqual(preflight.triggers.dirty_workspace_protected_files, ['src/scratch-note.ts']);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2495,6 +2540,55 @@ describe('cli/commands/gates', () => {
         assert.ok(reviewResult.outputLines.some((line) => line.includes("Do not rerun 'required-reviews-check' in place")));
         assert.equal(afterEvents.length, beforeEvents);
         assert.equal(afterEvents.filter((event) => event.event_type === 'REVIEW_GATE_FAILED').length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check allows a fresh review cycle after a newer compile pass', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-rerun-review-gate-recovered';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-rerun.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow review-gate rerun after a new compile cycle'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Prior review gate passed.', {});
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+
+        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -305,8 +305,8 @@ function eventMatchesReviewSkill(event: TimelineEventEntry, candidateSkillIds: s
 export function isTrivialReview(content: string): boolean {
     const text = (content || '').trim();
     if (text.length < 100) return true;
-
-    if (!text.includes('`')) return true;
+    const hasImplementationReference = text.includes('`')
+        || /\b[A-Za-z0-9_./-]+\.[A-Za-z0-9]+(?::\d+)?\b/.test(text);
 
     // Check if findings and risks are all 'none' or 'n/a'
     const lines = text.split('\n');
@@ -319,6 +319,7 @@ export function isTrivialReview(content: string): boolean {
         // Trivial if very few words
         const wordCount = text.split(/\s+/).length;
         if (wordCount < 30) return true;
+        if (!hasImplementationReference && wordCount < 60) return true;
     }
 
     return false;

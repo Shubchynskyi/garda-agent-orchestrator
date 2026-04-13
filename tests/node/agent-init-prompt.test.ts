@@ -51,3 +51,11 @@ test('AGENT_INIT_PROMPT distinguishes optional packs from already available skil
     assert.match(content, /explicitly list baseline skills already available now/i);
     assert.match(content, /recommend only optional packs and optional skills that are not already available/i);
 });
+
+test('AGENT_INIT_PROMPT keeps the task execution contract profile-first', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
+    assert.match(content, /canonical user command: `Execute task <task-id> from TASK\.md strictly through all mandatory orchestrator gates\.`/i);
+    assert.match(content, /active profile is the default execution mode/i);
+    assert.match(content, /explicit `depth=<1\|2\|3>` is a one-run override only/i);
+    assert.doesNotMatch(content, /default depth when omitted:\s*`2`/i);
+});

@@ -102,9 +102,10 @@ node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-a
 ```
 This command is mandatory. It reruns answer-dependent install materialization, runs `verify`, runs manifest validation, and writes `garda-agent-orchestrator/runtime/agent-init-state.json`.
 If the command fails, fix the reported issue and rerun it until it prints PASS.
-9. Confirm task execution contract supports depth:
-   - accepted command shape: `Execute task <task-id> depth=<1|2|3>`
-   - default depth when omitted: `2`
+9. Confirm task execution contract is profile-first:
+   - canonical user command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
+   - active profile is the default execution mode
+   - explicit `depth=<1|2|3>` is a one-run override only
 10. Optional post-init specialization:
    - before the yes/no question, provide in `<assistant-language>`:
      - one-sentence clarification:
@@ -189,8 +190,9 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - Result of each command (PASS or FAIL with key lines).
 - Files created or updated.
 - `Usage Instructions` section for the user in `<assistant-language>`, with exact next commands for:
-  - executing a task (`Execute task <task-id> depth=<1|2|3>`);
-  - using default depth (`Execute task <task-id>`);
+  - executing a task (`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`);
+  - using the current active profile (the same command without explicit depth override);
+  - using a one-run depth override (`Execute task <task-id> depth=<1|2|3> from TASK.md strictly through all mandatory orchestrator gates.`);
   - when to use `depth=1`, `depth=2`, and `depth=3`.
   - if token economy is enabled, use `depth=1` only for small, well-localized tasks.
   - default `depth=3` keeps full reviewer context while shared gate-output filtering still applies.

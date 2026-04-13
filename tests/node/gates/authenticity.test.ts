@@ -47,6 +47,21 @@ REVIEW PASSED
             assert.equal(isTrivialReview(content), false);
         });
 
+        it('returns false for substantial prose review without backticks when it contains plain file references', () => {
+            const content = `
+# Code Review T-900
+## Summary
+Validated src/gates/completion.ts:305 and src/gates/required-reviews-check.ts:219 against the review contract, confirming that the gate now rejects obviously synthetic artifacts but still accepts detailed prose reviews that reference concrete files and lines without markdown code spans.
+## Findings by Severity
+none
+## Residual Risks
+none
+## Verdict
+REVIEW PASSED
+            `.trim();
+            assert.equal(isTrivialReview(content), false);
+        });
+
         it('returns false for content with findings', () => {
             const content = `
 # Code Review T-900

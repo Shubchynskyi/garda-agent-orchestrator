@@ -217,9 +217,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const resolvedTaskId = gateHelpers.resolveTaskId(options.taskId || '', options.outputPath || '');
     if (resolvedTaskId) {
         assertValidTaskId(resolvedTaskId);
+        const includeUntrackedForStart = parseBooleanOption(options.includeUntracked, options.useStaged ? false : true);
         emitMandatoryPreflightStartedEvent(orchestratorRoot, resolvedTaskId, {
             task_intent: String(options.taskIntent || ''),
-            include_untracked: parseBooleanOption(options.includeUntracked, true),
+            include_untracked: includeUntrackedForStart,
             use_staged: options.useStaged === true
         });
     }
@@ -227,7 +228,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     try {
     const explicitChangedFilesProvided = options.changedFiles !== undefined;
     const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
-    const includeUntracked = parseBooleanOption(options.includeUntracked, true);
+    const includeUntracked = parseBooleanOption(options.includeUntracked, options.useStaged ? false : true);
     const detectionSource = explicitChangedFilesProvided
         ? 'explicit_changed_files'
         : (options.useStaged ? (includeUntracked ? 'git_staged_plus_untracked' : 'git_staged_only') : 'git_auto');

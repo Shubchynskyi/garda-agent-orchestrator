@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { joinOrchestratorPath, normalizePath } from './helpers';
-import { collectTaskTimelineEventTypes } from './task-mode';
 
 export type ReviewLifecycleActionType = 'review_phase' | 'review_gate';
 
@@ -28,6 +27,60 @@ function resolveBlockingEvent(eventTypes: Set<string>): string | null {
         return 'REVIEW_GATE_PASSED';
     }
     return null;
+}
+
+interface TimelineEntry {
+    event_type: string;
+    sequence: number;
+}
+
+const REVIEW_RESET_EVENTS = new Set([
+    'TASK_MODE_ENTERED',
+    'PREFLIGHT_CLASSIFIED',
+    'COMPILE_GATE_PASSED',
+    'REVIEW_PHASE_STARTED'
+]);
+
+function collectTimelineEntries(timelinePath: string, errors: string[]): TimelineEntry[] {
+    const entries: TimelineEntry[] = [];
+    const lines = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0);
+    let sequence = 0;
+    for (const line of lines) {
+        try {
+            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const eventType = String(parsed.event_type || '').trim().toUpperCase();
+            if (eventType) {
+                entries.push({
+                    event_type: eventType,
+                    sequence
+                });
+            }
+        } catch {
+            errors.push(`Task timeline '${normalizePath(timelinePath)}' contains invalid JSON.`);
+        }
+        sequence += 1;
+    }
+    return entries;
+}
+
+function getLatestBlockingEntry(entries: readonly TimelineEntry[]): TimelineEntry | null {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index];
+        if (
+            entry.event_type === 'COMPLETION_GATE_PASSED'
+            || entry.event_type === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
+            || entry.event_type === 'REVIEW_GATE_PASSED'
+        ) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+function hasRecoveryAttemptAfterBlocking(entries: readonly TimelineEntry[], blockingSequence: number): boolean {
+    return entries.some((entry) => REVIEW_RESET_EVENTS.has(entry.event_type) && entry.sequence > blockingSequence);
 }
 
 function buildBlockedMessage(
@@ -68,7 +121,7 @@ export function getReviewLifecycleGuard(
     }
 
     const timelineErrors: string[] = [];
-    const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+    const timelineEntries = collectTimelineEntries(timelinePath, timelineErrors);
     if (timelineErrors.length > 0) {
         return {
             status: 'BLOCK',
@@ -80,8 +133,18 @@ export function getReviewLifecycleGuard(
         };
     }
 
+    const timelineEventTypes = new Set(timelineEntries.map((entry) => entry.event_type));
     const blockingEvent = resolveBlockingEvent(timelineEventTypes);
-    if (!blockingEvent) {
+    const latestBlockingEntry = getLatestBlockingEntry(timelineEntries);
+    if (!blockingEvent || !latestBlockingEntry) {
+        return {
+            status: 'ALLOW',
+            timeline_path: normalizePath(timelinePath),
+            blocking_event: null,
+            violations: []
+        };
+    }
+    if (hasRecoveryAttemptAfterBlocking(timelineEntries, latestBlockingEntry.sequence)) {
         return {
             status: 'ALLOW',
             timeline_path: normalizePath(timelinePath),
