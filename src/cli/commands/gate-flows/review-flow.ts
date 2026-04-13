@@ -34,6 +34,7 @@ import {
     getTaskModeEvidence,
     getTaskModeEvidenceViolations
 } from '../../../gates/task-mode';
+import { getReviewLifecycleGuard } from '../../../gates/review-lifecycle-guard';
 import * as gateHelpers from '../../../gates/helpers';
 import {
     normalizeOptionalPath,
@@ -235,6 +236,44 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
         : resolveDefaultMetricsPath(repoRoot);
     const outputFiltersPath = resolveOutputFiltersPath(repoRoot, options.outputFiltersPath || '');
+    const reviewLifecycleGuard = resolvedTaskId
+        ? getReviewLifecycleGuard(repoRoot, resolvedTaskId, 'required-reviews-check', 'review_gate')
+        : null;
+    if (reviewLifecycleGuard?.status === 'BLOCK') {
+        const failureOutputLines = [
+            'REVIEW_GATE_FAILED',
+            `Mode: ${validatedPreflight.mode}`,
+            'Violations:',
+            ...reviewLifecycleGuard.violations.map(function (item: string) { return `- ${item}`; })
+        ];
+        const filteredFailureOutput = applyOutputFilterProfile(failureOutputLines, outputFiltersPath, 'review_gate_failure_console', {
+            budgetTokens: reviewBudgetTokens
+        });
+        const failureTelemetry = buildOutputTelemetry(failureOutputLines, filteredFailureOutput.lines, {
+            filterMode: filteredFailureOutput.filter_mode,
+            fallbackMode: filteredFailureOutput.fallback_mode,
+            parserMode: filteredFailureOutput.parser_mode,
+            parserName: filteredFailureOutput.parser_name ?? undefined,
+            parserStrategy: filteredFailureOutput.parser_strategy ?? undefined
+        });
+        const failureVisibleSavingsLine = formatVisibleSavingsLine(failureTelemetry);
+        appendMetricsIfEnabled(repoRoot, metricsPath, {
+            timestamp_utc: new Date().toISOString(),
+            event_type: 'review_gate_rerun_blocked',
+            status: 'FAILED',
+            task_id: resolvedTaskId,
+            preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path),
+            mode: validatedPreflight.mode,
+            output_filters_path: normalizeOptionalPath(outputFiltersPath),
+            violations: reviewLifecycleGuard.violations,
+            ...failureTelemetry
+        }, parseBooleanOption(options.emitMetrics, true));
+        const outputLines = [...filteredFailureOutput.lines];
+        if (failureVisibleSavingsLine) {
+            outputLines.push(failureVisibleSavingsLine);
+        }
+        return { outputLines, exitCode: EXIT_GATE_FAILURE };
+    }
     const skipReviewsList = parseSkipReviews(options.skipReviews || '');
     const verdicts: Record<string, string> = {
         code: options.codeReviewVerdict || 'NOT_REQUIRED',

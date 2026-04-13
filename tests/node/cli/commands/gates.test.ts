@@ -1727,6 +1727,44 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('build-review-context rejects late review preparation after the review gate already passed', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-late-build';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewContextArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-context.json`);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Required reviews gate passed.', {});
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(reviewContextArtifactPath), false);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_PHASE_STARTED'), false);
+        assert.equal(events.some((event) => event.event_type === 'SKILL_SELECTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-receipt rejects unsupported reviewer execution modes', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904x';
@@ -1839,6 +1877,56 @@ describe('cli/commands/gates', () => {
 
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-routing rejects late routing after the review gate already passed', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-late-routing';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: {
+                source_of_truth: 'Codex',
+                actual_execution_mode: null,
+                reviewer_session_id: null,
+                fallback_reason: null
+            }
+        }, null, 2) + '\n', 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Required reviews gate passed.', {});
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2003,6 +2091,74 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(receiptPath), false);
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'));
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects late receipt recording after completion already passed', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904z-late-receipt';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904z-late-receipt',
+            '## Summary',
+            'Verified delegated reviewer routing with concrete implementation detail and realistic wording.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: {
+                source_of_truth: 'Codex',
+                actual_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:test-reviewer',
+                fallback_reason: null
+            }
+        }, null, 2) + '\n', 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:test-reviewer',
+            delegation_used: true
+        });
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'COMPLETION_GATE_PASSED', 'PASS', 'Completion gate passed.', {});
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(receiptPath), false);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2213,6 +2369,34 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
         assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'LOCAL_AUDITED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects rerun after the review gate already passed without mutating the timeline', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-rerun-review-gate';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Required reviews gate passed.', {});
+
+        const beforeEvents = readTaskTimelineEvents(repoRoot, taskId).length;
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+        const afterEvents = readTaskTimelineEvents(repoRoot, taskId);
+
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(reviewResult.outputLines.some((line) => line.includes("Do not rerun 'required-reviews-check' in place")));
+        assert.equal(afterEvents.length, beforeEvents);
+        assert.equal(afterEvents.filter((event) => event.event_type === 'REVIEW_GATE_FAILED').length, 0);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

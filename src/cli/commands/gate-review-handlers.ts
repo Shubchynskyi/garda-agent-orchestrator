@@ -14,6 +14,7 @@ import {
 import { writeReviewArtifactJson } from '../../gate-runtime/review-artifacts';
 import * as gateHelpers from '../../gates/helpers';
 import { normalizePath } from '../../gates/helpers';
+import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
 import {
     runDocImpactGateCommand,
     runRequiredReviewsCheckCommand
@@ -104,6 +105,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
     if (!reviewType) throw new Error('ReviewType is required.');
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
+    assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-routing', 'review_phase');
     const reviewsRoot = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const preferredContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
     const fallbackContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-context.json`);
@@ -221,6 +223,7 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
     if (!reviewType) throw new Error('ReviewType is required.');
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
+    assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-receipt', 'review_phase');
     const preflightPath = path.resolve(repoRoot, String(options.preflightPath || ''));
     if (!fs.existsSync(preflightPath)) throw new Error(`Preflight artifact not found: ${preflightPath}`);
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));

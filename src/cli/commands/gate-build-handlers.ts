@@ -15,6 +15,7 @@ import {
     emitSkillSelectedEventAsync
 } from '../../runtime/skill-telemetry';
 import * as gateHelpers from '../../gates/helpers';
+import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
 import { resolveGateExecutionPath } from '../../gates/isolation-sandbox';
 import {
     runClassifyChangeCommand,
@@ -160,6 +161,11 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
         gateHelpers.resolvePathInsideRepo(parseRequiredText(options.preflightPath, 'PreflightPath'), repoRoot),
         'PreflightPath'
     );
+    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const taskId = String(preflightPayload.task_id || '').trim();
+    if (taskId) {
+        assertReviewLifecycleGuard(repoRoot, taskId, 'build-review-context', 'review_phase');
+    }
     const tokenEconomyConfigPath = options.tokenEconomyConfigPath
         ? requireResolvedPath(
             gateHelpers.resolvePathInsideRepo(String(options.tokenEconomyConfigPath), repoRoot, { allowMissing: true }),
@@ -184,8 +190,6 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
     });
 
     try {
-        const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-        const taskId = String(preflightPayload.task_id || '').trim();
         if (taskId) {
             const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
             const skillId = resolveReviewSkillId(reviewType, repoRoot);
