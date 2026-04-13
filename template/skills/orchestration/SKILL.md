@@ -166,11 +166,12 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 21. Update required docs and changelog when behavior changed.
    - Internal orchestration artifacts (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
 22. Record artifacts and evidence in `TASK.md`.
-23. Set final status:
+23. After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json` and use `final_report_contract` as the mandatory final closeout scaffold.
+24. Set final status:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
     - `BLOCKED` when any mandatory gate failed or cannot run.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
-22. Report to user in exact order:
+25. Report to user in exact order:
     1. implementation summary (include depth, path mode, review verdicts, docs updated)
        - at `depth=1` and `depth=2`, include a token-economy savings line; at `depth=3` it is optional;
        - format savings as `Saved tokens: ~<total> (~<percent>%) (<part> <label> + <part> <label> + ...)` when the baseline is known;
@@ -178,8 +179,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
        - localized summaries may translate the wording, but must preserve the numeric structure; example: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
     2. commit suggestion as exact command form: `git commit -m "<message>"`
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
-23. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
-24. Never commit unless user explicitly requests commit.
+26. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
+27. Never commit unless user explicitly requests commit.
 
 ## Reviewer Agent Execution (Platform-Agnostic)
 - Apply this section on every platform.

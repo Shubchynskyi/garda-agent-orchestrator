@@ -202,10 +202,13 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     var protectedManifestOk = protectedManifestEvidence === null
         || protectedManifestEvidence.status === 'MATCH'
         || protectedManifestEvidence.status === 'MISSING';
+    var protectedManifestNeedsRepair = protectedManifestEvidence !== null
+        && (protectedManifestEvidence.status === 'DRIFT' || protectedManifestEvidence.status === 'INVALID');
     var readyForTasks = agentInitializationComplete && !parityResult.isStale && compliancePassed && protectedManifestOk;
     var recommendedNextCommand = 'npx garda-agent-orchestrator setup';
     if (readyForTasks) recommendedNextCommand = buildProfileAwareExecuteTaskNextCommand(bundlePath);
     else if (parityResult.isStale && parityResult.remediation) recommendedNextCommand = parityResult.remediation;
+    else if (protectedManifestNeedsRepair) recommendedNextCommand = 'npx garda-agent-orchestrator update --target-root "'+resolvedTargetRoot+'"';
     else if (primaryInitializationComplete && agentInitializationPendingReason !== null)
         recommendedNextCommand = 'Give your agent "'+path.join(bundlePath,'AGENT_INIT_PROMPT.md')+'" and complete the agent-init flow';
     else if (bundlePresent && (!initAnswersPresent || initAnswersError)) recommendedNextCommand = 'npx garda-agent-orchestrator setup --target-root "'+resolvedTargetRoot+'"';
@@ -335,8 +338,10 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
             if (driftCount > 5) {
                 lines.push('    ... and '+(driftCount - 5)+' more');
             }
+            lines.push('    Fix: Run setup/update/reinit to refresh the trusted lifecycle baseline, or restart with --orchestrator-work if the task intentionally changes orchestrator control-plane files.');
         } else if (pmStatus === 'INVALID') {
             lines.push('    Warning: trusted manifest is malformed; re-run setup/update/reinit');
+            lines.push('    Fix: Run setup/update/reinit before ordinary tasks, or restart with --orchestrator-work if this task intentionally changes orchestrator control-plane files.');
         }
     }
 

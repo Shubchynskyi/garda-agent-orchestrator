@@ -35,6 +35,15 @@ interface BlockerEntry {
     reason: string;
 }
 
+interface FinalReportContract {
+    status: 'READY' | 'NOT_READY';
+    blocker: string | null;
+    required_order: string[];
+    implementation_summary_requirements: string[];
+    commit_command_template: string;
+    commit_question: string;
+}
+
 export interface TaskAuditSummaryResult {
     task_id: string;
     generated_utc: string;
@@ -52,6 +61,7 @@ export interface TaskAuditSummaryResult {
     profile_review_decisions: ProfileReviewDecisionSummary | null;
     evidence: EvidenceArtifact[];
     blockers: BlockerEntry[];
+    final_report_contract: FinalReportContract;
 }
 
 interface ProfileReviewDecisionSummary {
@@ -485,6 +495,26 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         status = 'INCOMPLETE';
     }
 
+    const finalReportContract: FinalReportContract = {
+        status: status === 'PASS' ? 'READY' : 'NOT_READY',
+        blocker: status === 'PASS'
+            ? null
+            : 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
+        required_order: [
+            'implementation summary',
+            'git commit -m "<message>"',
+            'Do you want me to commit now? (yes/no)'
+        ],
+        implementation_summary_requirements: [
+            'depth',
+            'path mode',
+            'review verdicts',
+            'docs updated'
+        ],
+        commit_command_template: 'git commit -m "<message>"',
+        commit_question: 'Do you want me to commit now? (yes/no)'
+    };
+
     return {
         task_id: safeTaskId,
         generated_utc: new Date().toISOString(),
@@ -501,7 +531,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         scope_category: scopeCategory,
         profile_review_decisions: profileReviewDecisions,
         evidence,
-        blockers
+        blockers,
+        final_report_contract: finalReportContract
     };
 }
 
@@ -594,6 +625,19 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
             lines.push(`  [!] ${b.gate}: ${b.reason}`);
         }
     }
+
+    lines.push('');
+    lines.push(`FinalReportContract: ${summary.final_report_contract.status}`);
+    if (summary.final_report_contract.blocker) {
+        lines.push(`  Reason: ${summary.final_report_contract.blocker}`);
+    }
+    lines.push('FinalReportOrder:');
+    lines.push(
+        `  1. ${summary.final_report_contract.required_order[0]} ` +
+        `(include ${summary.final_report_contract.implementation_summary_requirements.join(', ')})`
+    );
+    lines.push(`  2. ${summary.final_report_contract.required_order[1]}`);
+    lines.push(`  3. ${summary.final_report_contract.required_order[2]}`);
 
     return lines.join('\n');
 }

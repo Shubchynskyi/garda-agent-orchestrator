@@ -41,6 +41,7 @@ import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
 } from '../../../gates/dirty-worktree-protection';
+import { getProtectedManifestLifecycleGuard } from '../../../gates/protected-manifest-guard';
 import {
     collectTaskTimelineEventTypes,
     getTaskModeEvidence,
@@ -380,6 +381,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         if (preflightErrors.length === 0 && hasExplicitScopeIsolation && dirtyWorkspaceProtectionDrift.status === 'DRIFT_DETECTED') {
             preflightErrors.push(...dirtyWorkspaceProtectionDrift.violations);
         }
+        if (preflightErrors.length === 0) {
+            const protectedManifestGuard = getProtectedManifestLifecycleGuard({
+                repoRoot,
+                orchestratorWork: taskModeEvidence.orchestrator_work === true,
+                phaseLabel: 'preflight classification',
+                manifestEvidence: protectedManifestEvidence
+            });
+            preflightErrors.push(...protectedManifestGuard.violations);
+        }
         if (preflightErrors.length > 0) {
             throw new Error(preflightErrors.join(' '));
         }
@@ -572,6 +582,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let compileOutputInitialized = false;
     let planDriftResult: PlanDriftResult | null = null;
     let dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(repoRoot, null);
+    let protectedManifestGuard: ReturnType<typeof getProtectedManifestLifecycleGuard> | null = null;
 
     try {
         const commandsPathValue = options.commandsPath
@@ -597,6 +608,16 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         } else if (rulePackViolations.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = rulePackViolations.join(' ');
+        }
+        protectedManifestGuard = getProtectedManifestLifecycleGuard({
+            repoRoot,
+            orchestratorWork: taskModeEvidence.orchestrator_work === true,
+            phaseLabel: 'compile gate',
+            preflight: preflightContext.preflight
+        });
+        if (!exceptionMessage && protectedManifestGuard.status === 'BLOCK') {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = protectedManifestGuard.violations.join(' ');
         }
         const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
         workspaceSnapshot = getWorkspaceSnapshotCached(
@@ -805,6 +826,11 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         scope_changed_files_sha256: workspaceSnapshot ? workspaceSnapshot.changed_files_sha256 : null,
         scope_sha256: workspaceSnapshot ? workspaceSnapshot.scope_sha256 : null,
         dirty_workspace_protection: dirtyWorkspaceProtectionDrift,
+        protected_manifest: protectedManifestGuard ? {
+            status: protectedManifestGuard.manifest_evidence.status,
+            manifest_path: protectedManifestGuard.manifest_evidence.manifest_path,
+            changed_files: protectedManifestGuard.manifest_evidence.changed_files
+        } : null,
         evidence_path: normalizeOptionalPath(compileEvidencePath),
         compile_output_path: normalizeOptionalPath(compileOutputPath),
         output_filters_path: normalizeOptionalPath(outputFiltersPath),

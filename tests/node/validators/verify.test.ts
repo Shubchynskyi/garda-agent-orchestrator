@@ -249,6 +249,7 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         'Compile gate validates post-preflight rule-pack evidence',
         'Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.',
         'Review gate command validates post-preflight rule-pack evidence (`RULE_PACK_LOADED`)',
+        'node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json',
         'ordered lifecycle evidence (`TASK_MODE_ENTERED`, `RULE_PACK_LOADED`, `PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `COMPILE_GATE_PASSED`, `REVIEW_PHASE_STARTED`, review pass evidence), review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`)',
         'Task timeline completeness is surfaced in `status` and `doctor`',
         'HARD STOP: do not skip `load-rule-pack`',

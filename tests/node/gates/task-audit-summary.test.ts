@@ -256,6 +256,27 @@ describe('gates/task-audit-summary', () => {
             });
 
             assert.equal(result.status, 'PASS');
+            assert.equal(result.final_report_contract.status, 'READY');
+            assert.equal(result.final_report_contract.blocker, null);
+        });
+
+        it('marks final report contract as NOT_READY before completion passes cleanly', () => {
+            fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/foo.ts'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: { code: false }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_report_contract.status, 'NOT_READY');
+            assert.ok(result.final_report_contract.blocker?.includes('Completion gate has not passed'));
         });
 
         it('returns BLOCKED when a gate has FAIL outcome', () => {
@@ -706,7 +727,19 @@ describe('gates/task-audit-summary', () => {
                 ],
                 blockers: [
                     { gate: 'code-review', reason: 'Required code review artifact not found' }
-                ]
+                ],
+                final_report_contract: {
+                    status: 'NOT_READY',
+                    blocker: 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
+                    required_order: [
+                        'implementation summary',
+                        'git commit -m "<message>"',
+                        'Do you want me to commit now? (yes/no)'
+                    ],
+                    implementation_summary_requirements: ['depth', 'path mode', 'review verdicts', 'docs updated'],
+                    commit_command_template: 'git commit -m "<message>"',
+                    commit_question: 'Do you want me to commit now? (yes/no)'
+                }
             };
 
             const text = formatTaskAuditSummaryText(summary);
@@ -722,6 +755,8 @@ describe('gates/task-audit-summary', () => {
             assert.ok(text.includes('[ ] preflight'));
             assert.ok(text.includes('Blockers:'));
             assert.ok(text.includes('code-review'));
+            assert.ok(text.includes('FinalReportContract: NOT_READY'));
+            assert.ok(text.includes('git commit -m "<message>"'));
         });
 
         it('omits blockers section when empty', () => {
@@ -741,12 +776,26 @@ describe('gates/task-audit-summary', () => {
                 scope_category: null,
                 profile_review_decisions: null,
                 evidence: [],
-                blockers: []
+                blockers: [],
+                final_report_contract: {
+                    status: 'READY',
+                    blocker: null,
+                    required_order: [
+                        'implementation summary',
+                        'git commit -m "<message>"',
+                        'Do you want me to commit now? (yes/no)'
+                    ],
+                    implementation_summary_requirements: ['depth', 'path mode', 'review verdicts', 'docs updated'],
+                    commit_command_template: 'git commit -m "<message>"',
+                    commit_question: 'Do you want me to commit now? (yes/no)'
+                }
             };
 
             const text = formatTaskAuditSummaryText(summary);
 
             assert.ok(!text.includes('Blockers:'));
+            assert.ok(text.includes('FinalReportContract: READY'));
+            assert.ok(text.includes('Do you want me to commit now? (yes/no)'));
         });
     });
 

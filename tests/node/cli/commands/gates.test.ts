@@ -62,6 +62,25 @@ function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
 }
 
+function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] = ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']): void {
+    const manifestPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'protected-control-plane-manifest.json');
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    const protectedSnapshot: Record<string, string> = {};
+    for (const changedFile of changedFiles) {
+        protectedSnapshot[changedFile] = 'stale-manifest-hash';
+    }
+    fs.writeFileSync(manifestPath, JSON.stringify({
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        timestamp_utc: '2026-04-02T16:59:00.000Z',
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        orchestrator_root: getOrchestratorRoot(repoRoot).replace(/\\/g, '/'),
+        protected_roots: ['garda-agent-orchestrator/live/docs/agent-rules/'],
+        protected_snapshot: protectedSnapshot,
+        is_source_checkout: false
+    }, null, 2), 'utf8');
+}
+
 function writePreflight(repoRoot: string, taskId: string, overrides: Record<string, unknown> = {}): string {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -592,6 +611,40 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('blocks classify-change when the trusted protected manifest is already drifted before task start', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900manifest-drift';
+        const outputPath = path.join(repoRoot, 'preflight-manifest-drift.json');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        writeDriftedProtectedManifest(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject ordinary task start on trusted manifest drift'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskId,
+                taskIntent: 'Reject ordinary task start on trusted manifest drift',
+                outputPath,
+                emitMetrics: false
+            }),
+            /Trusted protected control-plane manifest drift detected before preflight classification/
+        );
+        assert.equal(fs.existsSync(outputPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('captures a dirty workspace baseline when entering task mode', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900dirty-baseline';
@@ -830,6 +883,51 @@ describe('cli/commands/gates', () => {
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'compile-gate');
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'IMPLEMENTATION_STARTED'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when preflight already recorded trusted protected manifest drift before task start', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-manifest-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            triggers: {
+                protected_control_plane_manifest_status: 'DRIFT',
+                protected_control_plane_manifest_changed_files: ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-manifest-drift.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject ordinary compile on trusted manifest drift'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest was already drifted before task start')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

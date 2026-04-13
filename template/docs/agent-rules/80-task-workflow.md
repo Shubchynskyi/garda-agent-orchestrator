@@ -92,6 +92,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate`.
 - Completion gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate completion-gate`.
+- After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json` and use `final_report_contract` as the final closeout scaffold instead of free-form ordering.
 - Completion gate validates task-mode entry evidence, post-preflight rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, ordered lifecycle evidence (`TASK_MODE_ENTERED`, `RULE_PACK_LOADED`, `PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `COMPILE_GATE_PASSED`, `REVIEW_PHASE_STARTED`, review pass evidence), review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), best-effort task-event hash-chain integrity, required review artifacts, and final findings-resolution state in PASS review artifacts.
 - Completion gate rejects zero-diff implementation tasks unless the task has later produced a real diff or an audited no-op artifact exists at `runtime/reviews/<task-id>-no-op.json`.
 - Final PASS review artifacts must keep active `Findings by Severity` and `Residual Risks` empty (`none`). Non-blocking follow-ups may remain only in `Deferred Findings`, and every deferred entry must include `Justification:`.

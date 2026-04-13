@@ -663,10 +663,12 @@ test('getStatusSnapshot surfaces protected-manifest DRIFT and blocks readyForTas
         assert.equal(snapshot.protectedManifestEvidence!.status, 'DRIFT');
         assert.ok(snapshot.protectedManifestEvidence!.changed_files.length > 0);
         assert.equal(snapshot.readyForTasks, false);
+        assert.ok(snapshot.recommendedNextCommand.includes('garda-agent-orchestrator update'));
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('Protected manifest (DRIFT)'));
         assert.ok(output.includes('[ ] Protected manifest'));
         assert.ok(output.includes('Drift:'));
+        assert.ok(output.includes('Fix: Run setup/update/reinit'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -701,10 +703,12 @@ test('getStatusSnapshot surfaces protected-manifest INVALID and blocks readyForT
         assert.ok(snapshot.protectedManifestEvidence !== null);
         assert.equal(snapshot.protectedManifestEvidence!.status, 'INVALID');
         assert.equal(snapshot.readyForTasks, false);
+        assert.ok(snapshot.recommendedNextCommand.includes('garda-agent-orchestrator update'));
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('Protected manifest (INVALID)'));
         assert.ok(output.includes('[ ] Protected manifest'));
         assert.ok(output.includes('malformed'));
+        assert.ok(output.includes('Fix: Run setup/update/reinit'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
