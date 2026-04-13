@@ -28,7 +28,7 @@ garda setup
 #    the active profile (`balanced`, `fast`, `strict`, `docs-only`) provides the default execution mode;
 #    use explicit `depth=` only as a one-run override.
 #    the orchestrator then executes mandatory gates:
-#    enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate
+#    enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate
 ```
 
 Temporary fallback without global install:

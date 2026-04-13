@@ -308,9 +308,10 @@ describe('runInit', () => {
             assert.ok(usage.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
             assert.ok(
                 usage.includes(
-                    'The command automatically runs mandatory orchestration gates in order: `enter-task-mode`, `load-rule-pack`, `classify-change`, `load-rule-pack`, `compile-gate`, `build-review-context` (for each required review), `required-reviews-check`, `doc-impact-gate`, `completion-gate`.'
+                    'The command automatically runs mandatory orchestration gates in order: `enter-task-mode`, `load-rule-pack`, `handshake-diagnostics`, `shell-smoke-preflight`, `classify-change`, `load-rule-pack`, `compile-gate`, `build-review-context` (for each required review), `required-reviews-check`, `doc-impact-gate`, `completion-gate`.'
                 )
             );
+            assert.ok(usage.includes('The first execution reply must explicitly confirm `files not modified yet` before any edits and list the first gates it will run.'));
             assert.ok(
                 usage.includes(
                     'Default execution comes from the active profile. Built-in profiles: `balanced` (depth `2`), `fast` (depth `1`), `strict` (depth `3`), `docs-only` (depth `1`).'

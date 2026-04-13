@@ -32,6 +32,13 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - preflight returns `FULL_PATH`;
   - preflight requires specialized review (`db`, `security`, `refactor`, or enabled optional specialist review).
 
+## Agent Start Contract
+- The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
+- Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.
+- First execution reply before any edit must explicitly state `files not modified yet`.
+- First execution reply must list the first mandatory gates to run before implementation.
+- If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
+
 ## Task Resume Protocol
 - Apply this protocol whenever resuming an existing task in `IN_PROGRESS` or `IN_REVIEW`.
 - Mandatory resume sequence:
@@ -48,6 +55,12 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Baseline downstream rules must be opened and recorded before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --stage "TASK_ENTRY"`.
 - Baseline rule-pack evidence must produce `runtime/reviews/<task-id>-rule-pack.json` and task-timeline event `RULE_PACK_LOADED`.
+- Handshake diagnostics must pass after task-mode entry and before preflight:
+  `node garda-agent-orchestrator/bin/garda.js gate handshake-diagnostics`.
+- Handshake diagnostics must emit task-timeline event `HANDSHAKE_DIAGNOSTICS_RECORDED`.
+- Shell smoke preflight must pass after handshake diagnostics and before preflight:
+  `node garda-agent-orchestrator/bin/garda.js gate shell-smoke-preflight`.
+- Shell smoke preflight must emit task-timeline event `SHELL_SMOKE_PREFLIGHT_RECORDED`.
 - Preflight artifact must exist before review stage.
 - Preflight classification must run with explicit `--output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - Preflight lifecycle telemetry must show `PREFLIGHT_STARTED` and then either `PREFLIGHT_CLASSIFIED` or `PREFLIGHT_FAILED`.
@@ -97,6 +110,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Reviewer and specialist agents must be closed after verdict capture.
 - HARD STOP: do not skip `enter-task-mode`; compile/review/completion evidence is invalid without explicit task-mode entry.
 - HARD STOP: do not skip `load-rule-pack`; reading the top-level router alone is not enough to prove downstream rule loading.
+- HARD STOP: do not continue a normal task run when the workspace already had modified files before `enter-task-mode`; isolate scope first with staged or explicit preflight inputs.
 - HARD STOP: do not launch required reviewers without `build-review-context`; completion requires review-skill telemetry.
 - HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.

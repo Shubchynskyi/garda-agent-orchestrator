@@ -232,8 +232,14 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         '## Mandatory Gate Contract',
         'Task-mode entry command must pass before preflight or implementation:',
         'TASK_MODE_ENTERED',
+        'The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
+        'Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.',
+        'First execution reply before any edit must explicitly state `files not modified yet`.',
+        'First execution reply must list the first mandatory gates to run before implementation.',
         'Baseline downstream rules must be opened and recorded before preflight:',
         'RULE_PACK_LOADED',
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'SHELL_SMOKE_PREFLIGHT_RECORDED',
         'PREFLIGHT_STARTED',
         'IMPLEMENTATION_STARTED',
         'REVIEW_PHASE_STARTED',
@@ -247,6 +253,7 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         'Task timeline completeness is surfaced in `status` and `doctor`',
         'HARD STOP: do not skip `load-rule-pack`',
         'HARD STOP: do not skip `enter-task-mode`',
+        'If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.',
         'HARD STOP: do not launch required reviewers without `build-review-context`; completion requires review-skill telemetry.'
     ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(rulesDir, '90-skill-catalog.md'), [

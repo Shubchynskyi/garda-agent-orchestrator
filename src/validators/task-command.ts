@@ -9,6 +9,7 @@ export interface ProfileTaskHint {
 
 const DEFAULT_TASK_ID = 'T-001';
 const DEFAULT_TASK_DEPTH = 2;
+const DEFAULT_TASK_COMMAND_SUFFIX = 'from TASK.md strictly through all mandatory orchestrator gates.';
 
 function resolveProfilesPath(bundlePath: string): string {
     return path.join(bundlePath, 'live', 'config', 'profiles.json');
@@ -63,15 +64,21 @@ export function readActiveProfileHint(bundlePath: string): ProfileTaskHint {
     };
 }
 
-function buildExecuteTaskCommand(taskId: string, hint: ProfileTaskHint): string {
-    if (!hint.activeProfile) return `Execute task ${taskId}`;
-    return `Execute task ${taskId} depth=${hint.activeProfileDepth} (profile: ${hint.activeProfile})`;
+function buildExecuteTaskCommand(taskId: string): string {
+    return `Execute task ${taskId} ${DEFAULT_TASK_COMMAND_SUFFIX}`;
 }
 
 export function buildProfileAwareExecuteTaskNextCommand(bundlePath: string, taskId = DEFAULT_TASK_ID): string {
-    return buildExecuteTaskCommand(taskId, readActiveProfileHint(bundlePath));
+    readActiveProfileHint(bundlePath);
+    return buildExecuteTaskCommand(taskId);
 }
 
 export function buildProfileAwareNextLine(bundlePath: string, taskId = DEFAULT_TASK_ID): string {
-    return `Next: ${buildProfileAwareExecuteTaskNextCommand(bundlePath, taskId)}`;
+    const hint = readActiveProfileHint(bundlePath);
+    const command = buildExecuteTaskCommand(taskId);
+    if (!hint.activeProfile) {
+        return `Next: ${command}`;
+    }
+
+    return `Next: ${command} Active profile: ${hint.activeProfile} (default depth=${hint.activeProfileDepth}); use explicit depth only as a one-run override.`;
 }

@@ -43,12 +43,26 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
     Object.freeze({
         liveRelativePath: `${bn}/live/docs/agent-rules/80-task-workflow.md`,
         templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
+        heading: '## Agent Start Contract',
+        requiredSnippets: Object.freeze([
+            'The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
+            'Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.',
+            'First execution reply before any edit must explicitly state `files not modified yet`.',
+            'First execution reply must list the first mandatory gates to run before implementation.',
+            'If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.'
+        ])
+    }),
+    Object.freeze({
+        liveRelativePath: `${bn}/live/docs/agent-rules/80-task-workflow.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
         heading: '## Mandatory Gate Contract',
         requiredSnippets: Object.freeze([
             'Task-mode entry command must pass before preflight or implementation:',
             'TASK_MODE_ENTERED',
             'Baseline downstream rules must be opened and recorded before preflight:',
             'RULE_PACK_LOADED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
             'PREFLIGHT_STARTED',
             'IMPLEMENTATION_STARTED',
             'REVIEW_PHASE_STARTED',

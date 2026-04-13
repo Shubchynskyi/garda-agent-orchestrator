@@ -270,6 +270,11 @@ function initializeGitRepo(repoRoot: string): void {
     runGit(repoRoot, ['commit', '-m', 'test: baseline']);
 }
 
+function backdateFileMtime(filePath: string, secondsAgo = 5): void {
+    const older = new Date(Date.now() - (secondsAgo * 1000));
+    fs.utimesSync(filePath, older, older);
+}
+
 function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
     const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
     return fs.readFileSync(timelinePath, 'utf8')
@@ -482,6 +487,82 @@ describe('cli/commands/gates', () => {
         assert.equal(payload.zero_diff_guard.zero_diff_detected, true);
         assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
         assert.equal(payload.zero_diff_guard.completion_requires_audited_no_op, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('blocks classify-change when workspace was already dirty before task-mode entry without explicit isolation', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900dirty';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        backdateFileMtime(appPath);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Clarify dirty workspace preflight guard'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Clarify dirty workspace preflight guard',
+                emitMetrics: false
+            }),
+            /Workspace already contained modified files before task-mode entry: src\/app\.ts\..*--use-staged/
+        );
+
+        const eventTypes = readTaskTimelineEvents(repoRoot, taskId).map((event) => event.event_type);
+        assert.ok(eventTypes.includes('PREFLIGHT_STARTED'));
+        assert.ok(eventTypes.includes('PREFLIGHT_FAILED'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('allows classify-change when pre-existing dirty files are explicitly isolated with --use-staged', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900dirty-staged';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 5;\nconst b = 8;\nconsole.log(a + b);\n', 'utf8');
+        backdateFileMtime(appPath);
+        runGit(repoRoot, ['add', 'src/app.ts']);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow staged isolation for dirty workspace'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Allow staged isolation for dirty workspace',
+            useStaged: true,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, taskId);
+        assert.deepEqual(payload.changed_files, ['src/app.ts']);
+        assert.equal(payload.detection_source, 'git_staged_plus_untracked');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -43,6 +43,8 @@ const BRIDGE_PATHS = PROVIDER_BRIDGE_PROFILES.map((p) => p.orchestratorRelativeP
 const MANDATORY_GATE_SEQUENCE = [
     'gate enter-task-mode',
     'gate load-rule-pack',
+    'gate handshake-diagnostics',
+    'gate shell-smoke-preflight',
     'gate classify-change',
     'gate compile-gate',
     'gate build-review-context',
@@ -167,6 +169,8 @@ describe('cross-provider-router-matrix: redirect entrypoint blocks', () => {
         assert.ok(redirect.includes('gate load-rule-pack'));
         assert.ok(redirect.includes('gate build-review-context'));
         assert.ok(redirect.includes('orchestration control-plane files'));
+        assert.ok(redirect.includes('files not modified yet'));
+        assert.ok(redirect.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
     });
 });
 
@@ -211,6 +215,7 @@ describe('cross-provider-router-matrix: provider orchestrator bridges', () => {
                     providerLabel, canonicalFile, orchestratorRelativePath
                 );
                 assert.ok(content.includes('TASK.md'));
+                assert.ok(content.includes('files not modified yet'));
             });
 
             it(`${providerLabel} bridge (SoT=${sot}): references orchestration skill`, () => {

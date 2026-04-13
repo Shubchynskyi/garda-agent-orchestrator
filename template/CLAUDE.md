@@ -20,7 +20,10 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - Before implementing any task, open `.agents/workflows/start-task.md`.
 - Do not execute task work until this canonical file and `TASK.md` are both read.
 - Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.
-- Execute tasks only through orchestration workflow (`Execute task <task-id> depth=<1|2|3>`), with preflight and required review gates.
+- Execute tasks only through orchestration workflow (`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`), with preflight and required review gates.
+- First execution reply before any edit must explicitly state `files not modified yet`.
+- Use the active profile as the default execution mode; explicit `depth=<1|2|3>` is only a one-run override.
+- If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 - After opening downstream workflow files (`40-commands.md`, `80-task-workflow.md`, `90-skill-catalog.md`, and any risk-specific rule pack), record them via `node bin/garda.js gate load-rule-pack ...` in a self-hosted source checkout, or `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack ...` inside a materialized/deployed workspace.
 - If provider-native agent directories are available, execute through provider bridge profiles (`.github/agents/orchestrator.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).
 - Provider bridge profiles must resolve skills from `garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md` and `garda-agent-orchestrator/live/config/review-capabilities.json` (including skills added after init).

@@ -327,9 +327,13 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
         assert.ok(result.includes('# Start Task'));
         assert.ok(result.includes('gate enter-task-mode'));
+        assert.ok(result.includes('gate handshake-diagnostics'));
+        assert.ok(result.includes('gate shell-smoke-preflight'));
         assert.ok(result.includes('gate completion-gate'));
         assert.ok(result.includes('shared start-task router'));
         assert.ok(result.includes('If an active provider bridge exists'));
+        assert.ok(result.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
+        assert.ok(result.includes('files not modified yet'));
     });
 
     it('includes compact-command protocol reference', () => {

@@ -155,6 +155,56 @@ function getClassificationRenameCount(repoRoot: string, detectionSource: string,
     return splitOutputLines(result.stdout).filter((line) => /^R\d*\t/i.test(line)).length;
 }
 
+function getTaskModeEntryTimestampMs(taskModeEvidencePath: string | null): number | null {
+    const resolvedPath = String(taskModeEvidencePath || '').trim();
+    if (!resolvedPath || !fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(resolvedPath, 'utf8')) as Record<string, unknown>;
+        const timestampUtc = String(parsed.timestamp_utc || '').trim();
+        const parsedTimestamp = Date.parse(timestampUtc);
+        if (Number.isFinite(parsedTimestamp)) {
+            return parsedTimestamp;
+        }
+    } catch {
+        // Fall back to file mtime below.
+    }
+
+    return fs.statSync(resolvedPath).mtimeMs;
+}
+
+function listChangedFilesPredatingTaskMode(
+    repoRoot: string,
+    changedFiles: string[],
+    taskModeEvidencePath: string | null
+): string[] {
+    const taskModeTimestampMs = getTaskModeEntryTimestampMs(taskModeEvidencePath);
+    if (taskModeTimestampMs == null || changedFiles.length === 0) {
+        return [];
+    }
+
+    // Allow for coarse filesystem timestamp resolution.
+    const cutoffTimestampMs = taskModeTimestampMs - 1000;
+    const preTaskFiles = new Set<string>();
+    for (const relativePath of changedFiles) {
+        const absolutePath = path.join(repoRoot, relativePath);
+        try {
+            if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+                continue;
+            }
+            if (fs.statSync(absolutePath).mtimeMs < cutoffTimestampMs) {
+                preTaskFiles.add(relativePath);
+            }
+        } catch {
+            // Ignore unreadable files and let later scope validation surface them if needed.
+        }
+    }
+
+    return [...preTaskFiles].sort();
+}
+
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -283,6 +333,21 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             preflightErrors.push(
                 `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before preflight.`
             );
+        }
+        const hasExplicitScopeIsolation = explicitChangedFilesProvided || options.useStaged === true;
+        if (preflightErrors.length === 0 && !hasExplicitScopeIsolation) {
+            const preTaskModifiedFiles = listChangedFilesPredatingTaskMode(
+                repoRoot,
+                workspaceSnapshot.changed_files,
+                taskModeEvidence.evidence_path
+            );
+            if (preTaskModifiedFiles.length > 0) {
+                preflightErrors.push(
+                    `Workspace already contained modified files before task-mode entry: ${preTaskModifiedFiles.join(', ')}. ` +
+                    "This run is invalid as a normal orchestrated task start because the first execution reply must still be in 'files not modified yet' state. " +
+                    'Clean/stash unrelated changes, or rerun classify-change with --use-staged or explicit --changed-file scope after entering task mode.'
+                );
+            }
         }
         if (preflightErrors.length > 0) {
             throw new Error(preflightErrors.join(' '));

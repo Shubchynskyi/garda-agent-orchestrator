@@ -380,6 +380,9 @@ export function buildRedirectManagedBlock(
         `Hard stop: read \`${canonicalFile}\` first and follow its routing links before responding to anything.`,
         `Hard stop: before any task execution, open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.`,
         'Do not implement tasks directly without orchestration preflight and required review gates.',
+        'Canonical task-start command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
+        'First execution reply must explicitly state `files not modified yet` before any edits and list the first mandatory gates to run.',
+        'If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.',
         'Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.',
         'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
         `After opening downstream workflow files, record them via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/garda.js gate load-rule-pack ...\` inside a materialized/deployed workspace.`,
@@ -449,11 +452,13 @@ This bridge is a router, not a second workflow.
 
 Required:
 1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
-2. Execute every code task only as \`Execute task <task-id> depth=<1|2|3>\`.
-3. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
-4. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
-5. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Garda.
-6. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
+2. Start every task with \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
+3. First execution reply must explicitly state \`files not modified yet\` before any edits and list the first gates to run.
+4. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
+5. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
+6. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
+7. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Garda.
+8. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
 
 Canonical workflow skill: \`${resolveBundleName()}/live/skills/orchestration/SKILL.md\`
 Skill catalog: \`${resolveBundleName()}/live/docs/agent-rules/90-skill-catalog.md\`
@@ -468,6 +473,9 @@ Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
 Hard stop: first open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
+Canonical task-start command: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
+First execution reply must explicitly state \`files not modified yet\` before any edits and list the first mandatory gates to run.
+If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 This provider profile is a strict bridge to Garda skills and the Node gate router.
 Treat \`.agents/workflows/start-task.md\` as the shared router for every provider surface; it routes to canonical orchestration and does not replace \`80-task-workflow.md\`.
@@ -477,16 +485,21 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 ## Required Execution Contract
 1. Read \`${canonicalFile}\` and its routing links before making changes.
 2. Read \`TASK.md\` and select/create a task row before implementation.
-3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
-4. Enter task mode explicitly via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace.
-5. Record baseline downstream rules explicitly via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack ...\` inside a materialized/deployed workspace.
-6. Run preflight classification before implementation via \`node bin/garda.js gate classify-change ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} classify-change ...\` inside a materialized/deployed workspace.
-7. After preflight, refresh downstream rule-pack evidence via \`node bin/garda.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack --stage "POST_PREFLIGHT" ...\` inside a materialized/deployed workspace.
-8. Run compile gate before review via \`node bin/garda.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} compile-gate ...\` inside a materialized/deployed workspace.
-9. Before each required review, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`.
-10. Run required independent reviews and gates via \`node bin/garda.js gate required-reviews-check ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} required-reviews-check ...\` inside a materialized/deployed workspace; then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
-11. Update task status and artifacts in \`TASK.md\`.
-12. Log or inspect lifecycle events by task id via \`node bin/garda.js gate log-task-event ...\` / \`task-events-summary\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} log-task-event ...\` / \`task-events-summary\` inside a materialized/deployed workspace.
+3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
+4. In the first execution reply, explicitly state \`files not modified yet\` before any edits and list the first mandatory gates to run.
+5. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
+6. If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
+7. Enter task mode explicitly via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace.
+8. Record baseline downstream rules explicitly via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack ...\` inside a materialized/deployed workspace.
+9. Run handshake diagnostics via \`node bin/garda.js gate handshake-diagnostics ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} handshake-diagnostics ...\` inside a materialized/deployed workspace.
+10. Run shell smoke preflight via \`node bin/garda.js gate shell-smoke-preflight ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} shell-smoke-preflight ...\` inside a materialized/deployed workspace.
+11. Run preflight classification before implementation via \`node bin/garda.js gate classify-change ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} classify-change ...\` inside a materialized/deployed workspace.
+12. After preflight, refresh downstream rule-pack evidence via \`node bin/garda.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack --stage "POST_PREFLIGHT" ...\` inside a materialized/deployed workspace.
+13. Run compile gate before review via \`node bin/garda.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} compile-gate ...\` inside a materialized/deployed workspace.
+14. Before each required review, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`.
+15. Run required independent reviews and gates via \`node bin/garda.js gate required-reviews-check ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} required-reviews-check ...\` inside a materialized/deployed workspace; then \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
+16. Update task status and artifacts in \`TASK.md\`.
+17. Log or inspect lifecycle events by task id via \`node bin/garda.js gate log-task-event ...\` / \`task-events-summary\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} log-task-event ...\` / \`task-events-summary\` inside a materialized/deployed workspace.
 
 ## Reviewer Launch Mapping (Mandatory Delegation)
 - Delegation-capable providers must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid when delegation is available.
@@ -534,24 +547,30 @@ It routes to the canonical Garda workflow and does not replace \`80-task-workflo
 Before any code changes:
 - Open \`${canonicalFile}\` and \`TASK.md\`.
 - If an active provider bridge exists, open it too before implementation.
+- First execution reply must explicitly state \`files not modified yet\` before any edits.
 - Move the task to \`IN_PROGRESS\`.
-- Enter orchestrator mode: \`Execute task <task-id> depth=<1|2|3>\`.
+- Enter orchestrator mode with the canonical command: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
+- Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
+- If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 - Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
 Mandatory gate order:
 1. \`gate enter-task-mode\`
 2. \`gate load-rule-pack --stage TASK_ENTRY\`
-3. \`gate classify-change\`
-4. \`gate load-rule-pack --stage POST_PREFLIGHT\`
-5. implement only after preflight
-6. \`gate compile-gate\`
-7. \`gate build-review-context\` for each required review
-8. \`gate required-reviews-check\`
-9. \`gate doc-impact-gate\`
-10. \`gate completion-gate\`
+3. \`gate handshake-diagnostics\`
+4. \`gate shell-smoke-preflight\`
+5. \`gate classify-change\`
+6. \`gate load-rule-pack --stage POST_PREFLIGHT\`
+7. implement only after preflight
+8. \`gate compile-gate\`
+9. \`gate build-review-context\` for each required review
+10. \`gate required-reviews-check\`
+11. \`gate doc-impact-gate\`
+12. \`gate completion-gate\`
 
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
+- Do not make code edits before \`enter-task-mode\`; unscoped pre-task diffs must be isolated first.
 - Do not mark \`DONE\` without \`COMPLETION_GATE_PASSED\`.
 - Do not create fake review artifacts or bypass reviewer routing.
 - The \`40-commands.md\` preference to avoid ad-hoc manual commands does NOT exempt mandatory gates. Gates such as \`compile-gate\` must execute their underlying build/test commands when the workflow requires them.

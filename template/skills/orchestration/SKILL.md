@@ -90,6 +90,12 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
   3. Continue from current stage, but do not skip compile/review/completion gates.
   4. Final report contract remains mandatory on resume: summary -> commit command -> explicit commit question.
 
+## Task Start Contract
+- The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
+- Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.
+- Before any edit, the first execution reply must explicitly state `files not modified yet` and list the first mandatory gates to run.
+- If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
+
 ## Canonical Workflow
 1. Select highest-priority `TODO` task in `TASK.md` and move to `IN_PROGRESS`.
 2. If no `TODO` exists, create a task from current user request, then move it to `IN_PROGRESS`.
@@ -102,30 +108,34 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
    - `load-rule-pack` writes task-scoped event `RULE_PACK_LOADED` automatically and persists `runtime/reviews/<task-id>-rule-pack.json`.
 6. Build concise plan: scope, files, risks, tests or validation strategy.
    - `enter-task-mode` auto-emits `PLAN_CREATED`; do not backfill it manually unless recovery tooling explicitly requires it.
-7. Run preflight with explicit `--output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
+7. Run handshake diagnostics after task-mode entry and baseline rule-pack loading:
+   - canonical invocation: `node garda-agent-orchestrator/bin/garda.js gate handshake-diagnostics ...`.
+8. Run shell smoke preflight after handshake diagnostics:
+   - canonical invocation: `node garda-agent-orchestrator/bin/garda.js gate shell-smoke-preflight ...`.
+9. Run preflight with explicit `--output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
    - `classify-change` with repeated `--changed-file` for precise scope, or
    - `--use-staged` in dirty workspaces.
    - canonical invocation: `node garda-agent-orchestrator/bin/garda.js gate classify-change ...`.
    - `classify-change` writes task-scoped event `PREFLIGHT_STARTED` first, then `PREFLIGHT_CLASSIFIED` on success or `PREFLIGHT_FAILED` on failure.
-8. Apply depth escalation from preflight output when required.
-9. Refresh downstream rule-pack evidence for the actual required review set:
+10. Apply depth escalation from preflight output when required.
+11. Refresh downstream rule-pack evidence for the actual required review set:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>"`
    - `load-rule-pack` must include every downstream rule file actually opened after preflight, including risk-specific rule packs required by the selected reviews.
-10. Execute implementation path:
+12. Execute implementation path:
    - `FULL_PATH` runtime => tests first, then implementation.
    - non-runtime or `FAST_PATH` runtime => objective validations, then implementation.
-11. Run compile gate (mandatory) before review phase:
+13. Run compile gate (mandatory) before review phase:
    - Resolve `fail_tail_lines` from `garda-agent-orchestrator/live/config/token-economy.json`; when missing/invalid, fallback to `50`.
    - Gate output filter profiles are loaded from `garda-agent-orchestrator/live/config/output-filters.json`; invalid config must warn and fall back to passthrough output.
    - Node: `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate auto-emits `IMPLEMENTATION_STARTED` before execution and then writes `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED`.
    - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun preflight when scope changes.
    - On failure, do not move to review phase; fix and rerun until pass.
-12. Move task to `IN_REVIEW`.
-13. Before each required independent review, run `build-review-context` for that review type.
+14. Move task to `IN_REVIEW`.
+15. Before each required independent review, run `build-review-context` for that review type.
    - Node: `node garda-agent-orchestrator/bin/garda.js gate build-review-context --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"`
    - This step is mandatory even when token economy is inactive because it auto-emits `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED`.
-14. Run only required independent reviews from preflight:
+16. Run only required independent reviews from preflight:
     - preferred when available: clean-context reviewer agents
     - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass.
     - fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewer and do not require extra user confirmation to start review passes.
@@ -134,29 +144,29 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
     - when token economy mode is active, generate review-context artifact and attach both the JSON metadata artifact and its `rule_context.artifact_path` markdown snapshot to the reviewer prompt.
     - when `scoped_diffs=true` and required reviewer is `db`, `security`, or `refactor`, run scoped diff helper and attach scoped artifact path plus scoped metadata fallback flag to reviewer prompt.
     - Log event per reviewer invocation: `REVIEW_REQUESTED`.
-15. Run `required-reviews-check` and treat result as release gate.
+17. Run `required-reviews-check` and treat result as release gate.
    - `required-reviews-check` writes task-scoped event `REVIEW_GATE_PASSED` or `REVIEW_GATE_FAILED` automatically.
    - `required-reviews-check` fails if explicit task-mode entry evidence is missing (missing `TASK_MODE_ENTERED` / missing `runtime/reviews/<task-id>-task-mode.json`).
    - `required-reviews-check` fails if post-preflight rule-pack evidence is missing (missing `RULE_PACK_LOADED` / missing `runtime/reviews/<task-id>-rule-pack.json`).
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
    - `required-reviews-check` fails if workspace changed after compile evidence; rerun compile gate after post-compile edits.
-16. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
+18. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
    - blocking findings must be fixed before rerun.
    - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `none`.
    - On failed gate and return to coding, log event: `REWORK_STARTED`.
-17. Run doc impact gate before completion:
+19. Run doc impact gate before completion:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
    - Doc impact gate writes task-scoped event `DOC_IMPACT_ASSESSED` or `DOC_IMPACT_ASSESSMENT_FAILED`.
-18. Run completion gate and treat result as final readiness gate before `DONE`.
+20. Run completion gate and treat result as final readiness gate before `DONE`.
    - Node: `node garda-agent-orchestrator/bin/garda.js gate completion-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
    - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
    - Completion gate fails if task-mode entry evidence is missing.
    - Completion gate fails if post-preflight rule-pack evidence is missing.
    - Completion gate fails if a PASS review artifact still contains active findings or residual risks, or if any deferred entry omits `Justification:`.
-19. Update required docs and changelog when behavior changed.
+21. Update required docs and changelog when behavior changed.
    - Internal orchestration artifacts (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
-20. Record artifacts and evidence in `TASK.md`.
-21. Set final status:
+22. Record artifacts and evidence in `TASK.md`.
+23. Set final status:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
     - `BLOCKED` when any mandatory gate failed or cannot run.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.

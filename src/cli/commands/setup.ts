@@ -238,7 +238,7 @@ export async function collectSetupAnswersInteractively(
 
 export function printSetupHandoff(snapshot: StatusSnapshot): void {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
-    const gateFlow = 'enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate';
+    const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate';
     const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
     const activeProfileLine = activeProfileHint.activeProfile
         ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
@@ -256,14 +256,15 @@ export function printSetupHandoff(snapshot: StatusSnapshot): void {
     console.log('     ask about specialist skills, and then run the code-level agent-init gate.');
     console.log('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
     console.log(`     ${green('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.')}`);
-    console.log(`  4. ${activeProfileLine}`);
-    console.log('  5. Mandatory orchestrator flow:');
+    console.log('  4. Require the first execution reply to confirm `files not modified yet` before any edits and list the first gates it will run.');
+    console.log(`  5. ${activeProfileLine}`);
+    console.log('  6. Mandatory orchestrator flow:');
     console.log(`     ${green(gateFlow)}`);
 }
 
 export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
-    const gateFlow = 'enter-task-mode -> load-rule-pack -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate';
+    const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate';
     const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
     const activeProfileLine = activeProfileHint.activeProfile
         ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
@@ -282,8 +283,9 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push('     ask about specialist skills, and then run the code-level agent-init gate.');
     lines.push('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
     lines.push('     Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.');
-    lines.push(`  4. ${activeProfileLine}`);
-    lines.push('  5. Mandatory orchestrator flow:');
+    lines.push('  4. Require the first execution reply to confirm `files not modified yet` before any edits and list the first gates it will run.');
+    lines.push(`  5. ${activeProfileLine}`);
+    lines.push('  6. Mandatory orchestrator flow:');
     lines.push(`     ${gateFlow}`);
     return lines.join('\n');
 }
