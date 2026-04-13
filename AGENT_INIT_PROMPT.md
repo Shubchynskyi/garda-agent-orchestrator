@@ -80,15 +80,22 @@ Additional rules for saving:
 node garda-agent-orchestrator/bin/garda.js install --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
 ```
 7. Read discovery artifact and update project-context rules for this real project:
-   - `garda-agent-orchestrator/live/project-discovery.md`
-   - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
-   - ask the user a mandatory code-style policy question before finalizing `30-code-style.md`:
-     - recommended default policy: agents follow explicit project rules first, formatter/linter/static-analysis rules second, and otherwise use common best practices instead of copying weak, inconsistent, or legacy code patterns;
-     - ask whether the user accepts that default policy or wants custom project-specific style rules recorded now.
-   - if the user accepts the default policy, write it explicitly into `30-code-style.md`.
-   - if the user wants custom style rules, capture those rules explicitly in `30-code-style.md` before broad implementation starts.
-   - do not treat inconsistent or obviously low-quality existing code as automatic style source of truth.
-   - tune `garda-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
+    - `garda-agent-orchestrator/live/project-discovery.md`
+    - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
+    - Ask the user a mandatory code-style policy question in `<assistant-language>` before finalizing `30-code-style.md`:
+    - Ask this mandatory question in a deterministic format:
+      - `StylePolicy (answer must be exactly one token: default or custom):`
+        - `default`: `explicit project rules` first, `formatter/linter/static-analysis rules` second, and `common best practices` only if both are absent; do not copy weak, inconsistent, or legacy code patterns.
+        - `custom`: keep the above priority order but add project-specific style rules now.
+      - Ask with this exact shape:
+        - Choose style-policy for `30-code-style.md`: default|custom
+        - `default`: use the repository bootstrap policy
+        - `custom`: record repository-specific style rules now
+      - If answer is `default`, insert this canonical default paragraph verbatim into `30-code-style.md`:
+        - `The user accepted the default policy for this repository: follow explicit project rules first, formatter/linter/static-analysis rules second, and otherwise use common best practices instead of copying weak, inconsistent, or legacy code patterns.`
+      - If answer is `custom`, request explicit bullets for project-specific style rules and write them to `30-code-style.md` immediately.
+    - do not treat inconsistent or obviously low-quality existing code as automatic style source of truth.
+    - tune `garda-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
 8. Finalize agent initialization through the hard code-level gate:
 ```text
 node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes

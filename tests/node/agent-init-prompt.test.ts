@@ -40,6 +40,9 @@ test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositori
     assert.match(content, /ask the user a mandatory code-style policy question/i);
     assert.match(content, /use common best practices instead of copying weak, inconsistent, or legacy code patterns/i);
     assert.match(content, /do not treat inconsistent or obviously low-quality existing code as automatic style source of truth/i);
+    assert.match(content, /StylePolicy \(answer must be exactly one token: default or custom\)/i);
+    assert.match(content, /Choose style-policy for `30-code-style\.md`: default\|custom/i);
+    assert.match(content, /The user accepted the default policy for this repository: follow explicit project rules first, formatter\/linter\/static-analysis rules second/i);
 });
 
 test('AGENT_INIT_PROMPT distinguishes optional packs from already available skills', () => {

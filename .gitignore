@@ -33,8 +33,19 @@ docs_local
 
 # garda-agent-orchestrator managed ignores
 .agents/workflows/start-task.md
+.antigravity/
+.antigravity/rules.md
 .github/agents/
 .github/copilot-instructions.md
+.junie/
+.junie/guidelines.md
 .qwen/
-/TASK.md
+.windsurf/
+.windsurf/rules/rules.md
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+QWEN.md
+TASK.md
 garda-agent-orchestrator/
+/TASK.md
