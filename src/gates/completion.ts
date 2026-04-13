@@ -16,6 +16,10 @@ import {
 } from './helpers';
 import { evaluateIsolationModePostTask, loadIsolationModeConfig } from './isolation-mode';
 import { validateSandbox, compareSandboxToLive } from './isolation-sandbox';
+import {
+    detectProtectedDirtyWorkspaceDrift,
+    getProtectedDirtyWorkspaceScopeFromPreflight
+} from './dirty-worktree-protection';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshake-diagnostics';
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
@@ -1033,6 +1037,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     });
 
     const preflight = validatedPreflight.preflight || {};
+    const dirtyWorkspaceProtectionEvidence = detectProtectedDirtyWorkspaceDrift(
+        repoRoot,
+        getProtectedDirtyWorkspaceScopeFromPreflight(preflight)
+    );
     const preflightTriggers = toPlainRecord(preflight.triggers) || {};
     const preflightProtectedSnapshot = toPlainRecord(preflightTriggers.protected_control_plane_snapshot) || {};
     const hasProtectedSnapshot = Object.prototype.hasOwnProperty.call(preflightTriggers, 'protected_control_plane_snapshot');
@@ -1119,6 +1127,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
     errors.push(...getHandshakeEvidenceViolations(handshakeEvidence));
     errors.push(...getShellSmokeEvidenceViolations(shellSmokeEvidence));
+    errors.push(...dirtyWorkspaceProtectionEvidence.violations);
 
     // T-1011: post-task isolation mode enforcement (complements T-1010 drift check above)
     if (hasProtectedSnapshot && !orchestratorWork && isolationConfig.enabled) {
@@ -1328,6 +1337,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         stage_sequence_evidence: stageSequence,
         reviewer_routing_enforcement: reviewerRoutingEnforcement,
         zero_diff_evidence: zeroDiffEvidence,
+        dirty_workspace_protection_evidence: dirtyWorkspaceProtectionEvidence,
         plan: planEvidence,
         isolation_mode_warnings: isolationWarnings,
         violations: errors

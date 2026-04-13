@@ -2,6 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { assertValidTaskId } from '../gate-runtime/task-events';
+import {
+    normalizeDirtyWorkspaceBaseline,
+    type DirtyWorkspaceBaseline
+} from './dirty-worktree-protection';
 import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo } from './helpers';
 
 export const TASK_MODE_ENTRY_MODES = Object.freeze([
@@ -47,6 +51,7 @@ export interface TaskModeArtifact {
     plan: TaskModePlanMetadata | null;
     active_profile: string | null;
     profile_source: 'built_in' | 'user' | null;
+    dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
 }
 
 export interface BuildTaskModeArtifactOptions {
@@ -62,6 +67,7 @@ export interface BuildTaskModeArtifactOptions {
     plan?: TaskModePlanMetadata | null;
     activeProfile?: string | null;
     profileSource?: 'built_in' | 'user' | null;
+    dirtyWorkspaceBaseline?: DirtyWorkspaceBaseline | null;
 }
 
 export interface TaskModeEvidenceResult {
@@ -82,6 +88,7 @@ export interface TaskModeEvidenceResult {
     plan: TaskModePlanMetadata | null;
     active_profile: string | null;
     profile_source: string | null;
+    dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
 }
 
 export function normalizeTaskModeEntryMode(value: unknown): TaskModeEntryMode {
@@ -149,6 +156,7 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
             plan_summary: options.plan.plan_summary
         }
         : null;
+    const dirtyWorkspaceBaseline = normalizeDirtyWorkspaceBaseline(options.dirtyWorkspaceBaseline || null);
     return {
         timestamp_utc: new Date().toISOString(),
         event_source: 'enter-task-mode',
@@ -165,7 +173,8 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         actor,
         plan,
         active_profile: String(options.activeProfile || '').trim() || null,
-        profile_source: options.profileSource || null
+        profile_source: options.profileSource || null,
+        dirty_workspace_baseline: dirtyWorkspaceBaseline
     };
 }
 
@@ -187,7 +196,8 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         routed_to: null,
         plan: null,
         active_profile: null,
-        profile_source: null
+        profile_source: null,
+        dirty_workspace_baseline: null
     };
 
     if (!taskId) {
@@ -238,6 +248,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     // Extract optional profile metadata
     result.active_profile = String(artifactObject.active_profile || '').trim() || null;
     result.profile_source = String(artifactObject.profile_source || '').trim() || null;
+    result.dirty_workspace_baseline = normalizeDirtyWorkspaceBaseline(artifactObject.dirty_workspace_baseline);
 
     const requestedDepth = artifactObject.requested_depth;
     if (typeof requestedDepth === 'number' && Number.isInteger(requestedDepth)) {

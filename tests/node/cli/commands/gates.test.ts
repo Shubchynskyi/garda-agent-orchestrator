@@ -90,6 +90,21 @@ function writePreflight(repoRoot: string, taskId: string, overrides: Record<stri
     return preflightPath;
 }
 
+function runExplicitPreflight(repoRoot: string, taskId: string, taskIntent: string, changedFiles: string[]): string {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const result = runClassifyChangeCommand({
+        repoRoot,
+        taskId,
+        taskIntent,
+        changedFiles,
+        outputPath: preflightPath,
+        emitMetrics: false
+    });
+    const payload = JSON.parse(result.outputText);
+    assert.equal(payload.task_id, taskId);
+    return preflightPath;
+}
+
 function writeBudgetOutputFilters(repoRoot: string): string {
     const outputFiltersPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'output-filters.json');
     fs.mkdirSync(path.dirname(outputFiltersPath), { recursive: true });
@@ -567,6 +582,36 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('captures a dirty workspace baseline when entering task mode', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900dirty-baseline';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 13;\nconst b = 21;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'unrelated.ts'), 'export const unrelated = true;\n', 'utf8');
+
+        const result = runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Capture dirty workspace baseline'
+        });
+        assert.equal(result.exitCode, 0);
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.deepEqual(
+            artifact.dirty_workspace_baseline.changed_files,
+            ['src/app.ts', 'src/unrelated.ts']
+        );
+        assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['src/app.ts'], 'string');
+        assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['src/unrelated.ts'], 'string');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('loads rule-pack evidence and writes artifact', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900a';
@@ -871,6 +916,58 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some(line => line.includes('Task-mode entry evidence missing')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when a protected pre-existing dirty file changes outside explicit scope', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901dirty-protected';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        const unrelatedPath = path.join(repoRoot, 'src', 'unrelated.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 34;\nconst b = 55;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "before";\n', 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Protect unrelated dirty workspace edits'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(repoRoot, taskId, 'Protect unrelated dirty workspace edits', ['src/app.ts']);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+        assert.deepEqual(preflight.triggers.dirty_workspace_protected_files, ['src/unrelated.ts']);
+
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "after";\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-protected.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Protected pre-existing workspace edits changed outside task scope')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1281,6 +1378,91 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(passedCompletion.outcome, 'PASS');
         assert.equal(passedCompletion.zero_diff_evidence.status, 'SATISFIED_BY_AUDITED_NO_OP');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails completion gate when a protected pre-existing dirty file changes after review passed', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903dirty-completion';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        const unrelatedPath = path.join(repoRoot, 'src', 'unrelated.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 89;\nconst b = 144;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "baseline";\n', 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Protect unrelated dirty workspace edits through completion'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Protect unrelated dirty workspace edits through completion',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const commandsPath = path.join(repoRoot, 'commands-dirty-completion.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Internal cleanup only, no public behavior change.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "mutated";\n', 'utf8');
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'FAIL');
+        assert.ok(completionResult.violations.some((item: string) => item.includes('Protected pre-existing workspace edits changed outside task scope')));
+        assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'DRIFT_DETECTED');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

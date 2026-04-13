@@ -22,6 +22,10 @@ import {
 } from '../../../gates/required-reviews-check';
 import { readRuntimeReviewerProvider } from '../../../gates/reviewer-routing';
 import {
+    detectProtectedDirtyWorkspaceDrift,
+    getProtectedDirtyWorkspaceScopeFromPreflight
+} from '../../../gates/dirty-worktree-protection';
+import {
     getRulePackEvidence,
     getRulePackEvidenceViolations
 } from '../../../gates/rule-pack';
@@ -260,6 +264,10 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     const scopeDrift = compileGateEvidence.status === 'PASS'
         ? testCompileScopeDrift(repoRoot, compileGateEvidence)
         : null;
+    const dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(
+        repoRoot,
+        getProtectedDirtyWorkspaceScopeFromPreflight(preflight)
+    );
 
     const errors = [...validatedPreflight.errors];
     for (const skipItem of skipReviewsList) {
@@ -318,6 +326,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
             errors.push('Workspace changed after compile gate; rerun compile-gate before review gate.');
             errors.push(...scopeDrift.violations);
         }
+    }
+    if (dirtyWorkspaceProtectionDrift.status === 'DRIFT_DETECTED') {
+        errors.push(...dirtyWorkspaceProtectionDrift.violations);
     }
 
     const timelinePath = resolvedTaskId
@@ -466,6 +477,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         compile_evidence_hash_sha256: compileGateEvidence.evidence_hash,
         output_filters_path: normalizeOptionalPath(outputFiltersPath),
         scope_drift: scopeDrift,
+        dirty_workspace_protection: dirtyWorkspaceProtectionDrift,
         required_reviews: baseResult.required_reviews,
         verdicts,
         review_checks: baseResult.review_checks,

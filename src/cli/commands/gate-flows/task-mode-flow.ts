@@ -44,6 +44,7 @@ import {
     resolveTaskModeArtifactPath,
     type TaskModePlanMetadata
 } from '../../../gates/task-mode';
+import { captureDirtyWorkspaceBaseline } from '../../../gates/dirty-worktree-protection';
 import {
     validateTaskPlan,
     computeTaskPlanDigest,
@@ -158,6 +159,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
     const artifactPath = resolveTaskModeArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
     const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
+    const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot);
 
     let planMetadata: TaskModePlanMetadata | null = null;
     const rawPlanPath = String(options.planPath || '').trim();
@@ -218,7 +220,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         actor: String(options.actor || 'orchestrator'),
         plan: planMetadata,
         activeProfile,
-        profileSource
+        profileSource,
+        dirtyWorkspaceBaseline
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
 
@@ -238,7 +241,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         actor: taskModeArtifact.actor,
         plan_guided: !!taskModeArtifact.plan,
         active_profile: taskModeArtifact.active_profile,
-        profile_source: taskModeArtifact.profile_source
+        profile_source: taskModeArtifact.profile_source,
+        dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
+        dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
     }, parseBooleanOption(options.emitMetrics, true));
 
     try {
@@ -264,7 +269,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 plan_path: taskModeArtifact.plan?.plan_path ?? null,
                 plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
                 active_profile: taskModeArtifact.active_profile,
-                profile_source: taskModeArtifact.profile_source
+                profile_source: taskModeArtifact.profile_source,
+                dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
+                dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
             }
         );
     } catch (error: unknown) {
@@ -284,7 +291,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         routed_to: taskModeArtifact.routed_to,
         plan_guided: !!taskModeArtifact.plan,
         plan_path: taskModeArtifact.plan?.plan_path ?? null,
-        plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null
+        plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
+        dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
+        dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
     });
 
     const previousStatus = readTaskQueueStatus(repoRoot, taskModeArtifact.task_id);
@@ -312,7 +321,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),
             ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : []),
             ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`]),
-            ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : [])
+            ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : []),
+            `DirtyWorkspaceBaselineCount: ${taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0}`
         ],
         exitCode: 0
     };

@@ -37,6 +37,11 @@ import {
 import { loadIsolationModeConfig } from '../../../gates/isolation-mode';
 import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
 import {
+    deriveProtectedDirtyWorkspaceScope,
+    detectProtectedDirtyWorkspaceDrift,
+    getProtectedDirtyWorkspaceScopeFromPreflight
+} from '../../../gates/dirty-worktree-protection';
+import {
     collectTaskTimelineEventTypes,
     getTaskModeEvidence,
     getTaskModeEvidenceViolations,
@@ -303,7 +308,28 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
 
         const preflightErrors: string[] = [];
         const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
+        const dirtyWorkspaceBaseline = taskModeEvidence.dirty_workspace_baseline;
+        const dirtyWorkspaceProtectedScope = deriveProtectedDirtyWorkspaceScope(
+            dirtyWorkspaceBaseline,
+            workspaceSnapshot.changed_files
+        );
+        const dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(
+            repoRoot,
+            dirtyWorkspaceProtectedScope
+        );
         preflightErrors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
+
+        if (dirtyWorkspaceBaseline) {
+            (result.triggers as any).dirty_workspace_baseline_changed_files = dirtyWorkspaceBaseline.changed_files;
+            (result.triggers as any).dirty_workspace_baseline_changed_files_sha256 = dirtyWorkspaceBaseline.changed_files_sha256;
+            (result.triggers as any).dirty_workspace_protected_files = dirtyWorkspaceProtectedScope?.protected_files || [];
+            (result.triggers as any).dirty_workspace_protected_files_sha256 =
+                dirtyWorkspaceProtectedScope?.protected_files_sha256 || null;
+            (result.triggers as any).dirty_workspace_protected_file_hashes =
+                dirtyWorkspaceProtectedScope?.protected_file_hashes || {};
+            (result.triggers as any).dirty_workspace_protection_status = dirtyWorkspaceProtectionDrift.status;
+            (result.triggers as any).dirty_workspace_protection_changed_files = dirtyWorkspaceProtectionDrift.changed_files;
+        }
 
         const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
             artifactPath: String(options.rulePackPath || '')
@@ -336,11 +362,13 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         }
         const hasExplicitScopeIsolation = explicitChangedFilesProvided || options.useStaged === true;
         if (preflightErrors.length === 0 && !hasExplicitScopeIsolation) {
-            const preTaskModifiedFiles = listChangedFilesPredatingTaskMode(
-                repoRoot,
-                workspaceSnapshot.changed_files,
-                taskModeEvidence.evidence_path
-            );
+            const preTaskModifiedFiles = dirtyWorkspaceBaseline
+                ? dirtyWorkspaceBaseline.changed_files
+                : listChangedFilesPredatingTaskMode(
+                    repoRoot,
+                    workspaceSnapshot.changed_files,
+                    taskModeEvidence.evidence_path
+                );
             if (preTaskModifiedFiles.length > 0) {
                 preflightErrors.push(
                     `Workspace already contained modified files before task-mode entry: ${preTaskModifiedFiles.join(', ')}. ` +
@@ -348,6 +376,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     'Clean/stash unrelated changes, or rerun classify-change with --use-staged or explicit --changed-file scope after entering task mode.'
                 );
             }
+        }
+        if (preflightErrors.length === 0 && hasExplicitScopeIsolation && dirtyWorkspaceProtectionDrift.status === 'DRIFT_DETECTED') {
+            preflightErrors.push(...dirtyWorkspaceProtectionDrift.violations);
         }
         if (preflightErrors.length > 0) {
             throw new Error(preflightErrors.join(' '));
@@ -540,6 +571,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     const startedAt = Date.now();
     let compileOutputInitialized = false;
     let planDriftResult: PlanDriftResult | null = null;
+    let dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(repoRoot, null);
 
     try {
         const commandsPathValue = options.commandsPath
@@ -572,6 +604,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             preflightContext.detection_source,
             preflightContext.include_untracked,
             preflightChangedFiles
+        );
+        dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(
+            repoRoot,
+            getProtectedDirtyWorkspaceScopeFromPreflight(preflightContext.preflight)
         );
 
         const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
@@ -607,6 +643,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (!exceptionMessage && scopeViolations.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
+        }
+        if (!exceptionMessage && dirtyWorkspaceProtectionDrift.status === 'DRIFT_DETECTED') {
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = dirtyWorkspaceProtectionDrift.violations.join(' ');
         }
 
         if (!exceptionMessage && taskModeEvidence.plan && taskModeEvidence.plan.plan_path) {
@@ -764,6 +804,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         scope_changed_lines_total: workspaceSnapshot ? workspaceSnapshot.changed_lines_total : 0,
         scope_changed_files_sha256: workspaceSnapshot ? workspaceSnapshot.changed_files_sha256 : null,
         scope_sha256: workspaceSnapshot ? workspaceSnapshot.scope_sha256 : null,
+        dirty_workspace_protection: dirtyWorkspaceProtectionDrift,
         evidence_path: normalizeOptionalPath(compileEvidencePath),
         compile_output_path: normalizeOptionalPath(compileOutputPath),
         output_filters_path: normalizeOptionalPath(outputFiltersPath),
