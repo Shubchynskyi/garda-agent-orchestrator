@@ -11,6 +11,7 @@ import {
     buildSetupStepsText,
     handleSetup
 } from '../../../../src/cli/commands/setup';
+import { runVerify } from '../../../../src/validators/verify';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
 import { DEFAULT_BUNDLE_NAME, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../../../src/core/constants';
@@ -31,6 +32,33 @@ function findRepoRoot(startDir: string): string {
         }
         current = parent;
     }
+}
+
+function materializeProjectCommands(bundleRoot: string): void {
+    const commandsPath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md');
+    let content = fs.readFileSync(commandsPath, 'utf8');
+    const replacements = new Map([
+        ['<install dependencies command>', 'npm install --prefer-offline --no-fund --no-audit'],
+        ['<local environment bootstrap command>', 'npm run bootstrap'],
+        ['<start backend command>', 'npm run dev:backend'],
+        ['<start frontend command>', 'npm run dev:frontend'],
+        ['<start worker or background job command>', 'npm run dev:worker'],
+        ['<unit test command>', 'npm test'],
+        ['<integration test command>', 'npm run test:integration'],
+        ['<e2e test command>', 'npm run test:e2e'],
+        ['<lint command>', 'npm run lint'],
+        ['<type-check command>', 'npx tsc --noEmit --pretty false'],
+        ['<format check command>', 'npm run format:check'],
+        ['<compile command>', 'npm run build'],
+        ['<build command>', 'npm run build'],
+        ['<container or artifact packaging command>', 'docker build .']
+    ]);
+
+    for (const [placeholder, replacement] of replacements) {
+        content = content.replaceAll(placeholder, replacement);
+    }
+
+    fs.writeFileSync(commandsPath, content, 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +331,49 @@ test('handleSetup --no-prompt preserves existing active agent files and remateri
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'AGENTS.md')));
         assert.ok(fs.existsSync(path.join(workspaceRoot, '.antigravity', 'rules.md')));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup runs contract migrations before verify so stale live task workflow snippets do not block refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-contract-migrations-'));
+    const bundleRoot = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME);
+    const staleWorkflowPath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '80-task-workflow.md');
+    const taskAuditSnippet = 'gate task-audit-summary --task-id "<task-id>" --as-json';
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        materializeProjectCommands(bundleRoot);
+        const staleWorkflow = fs.readFileSync(staleWorkflowPath, 'utf8')
+            .replace(/^.*gate task-audit-summary --task-id "<task-id>" --as-json.*\r?\n?/gm, '');
+        fs.writeFileSync(staleWorkflowPath, staleWorkflow, 'utf8');
+        assert.ok(!fs.readFileSync(staleWorkflowPath, 'utf8').includes(taskAuditSnippet));
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--verify', '--skip-manifest-validation', '--preserve-agent-state'],
+            packageJson,
+            repoRoot
+        );
+
+        const refreshedWorkflow = fs.readFileSync(staleWorkflowPath, 'utf8');
+        assert.ok(refreshedWorkflow.includes(taskAuditSnippet));
+
+        const verifyResult = runVerify({
+            targetRoot: workspaceRoot,
+            sourceOfTruth: 'Codex',
+            initAnswersPath: path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json')
+        });
+        assert.equal(verifyResult.passed, true, JSON.stringify(verifyResult.violations));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

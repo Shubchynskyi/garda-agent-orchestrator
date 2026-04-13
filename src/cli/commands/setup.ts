@@ -43,6 +43,7 @@ import {
     writeAgentInitState
 } from '../../runtime/agent-init-state';
 import { withLifecycleOperationLockAsync } from '../../lifecycle/common';
+import { runContractMigrations } from '../../lifecycle/contract-migrations';
 import { serializeInitAnswers } from '../../schemas/init-answers';
 import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
@@ -447,6 +448,10 @@ export async function handleSetup(
                 runInit(Object.assign({ bundleRoot: effectiveBundlePath }, initOptions));
             }
         });
+
+        if (!options.dryRun) {
+            runContractMigrations({ rootPath: targetRoot });
+        }
 
         let manifestStatus = options.skipManifestValidation ? 'SKIPPED' : 'PASS';
         if (!options.skipManifestValidation) {
