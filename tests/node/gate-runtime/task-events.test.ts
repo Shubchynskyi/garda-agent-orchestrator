@@ -82,6 +82,77 @@ function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string,
     });
 }
 
+async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: number): Promise<() => Promise<void>> {
+    const workerScript = [
+        "const fs = require('node:fs');",
+        "const os = require('node:os');",
+        "const path = require('node:path');",
+        "const lockPath = process.argv[1];",
+        "const holdMs = Number.parseInt(process.argv[2], 10);",
+        "fs.mkdirSync(lockPath, { recursive: true });",
+        "fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({",
+        "  pid: process.pid,",
+        "  hostname: os.hostname(),",
+        "  created_at_utc: new Date().toISOString()",
+        "}, null, 2) + '\\n', 'utf8');",
+        "setTimeout(() => {",
+        "  try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}",
+        "  process.exit(0);",
+        "}, holdMs);"
+    ].join('\n');
+
+    const child = spawn(process.execPath, [
+        '--input-type=commonjs',
+        '--eval',
+        workerScript,
+        lockPath,
+        String(holdMs)
+    ], {
+        stdio: ['ignore', 'ignore', 'pipe']
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+        stderr += String(chunk);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+        const ownerPath = path.join(lockPath, 'owner.json');
+        const deadline = Date.now() + 1000;
+        const timer = setInterval(() => {
+            if (fs.existsSync(ownerPath)) {
+                clearInterval(timer);
+                resolve();
+                return;
+            }
+            if (Date.now() >= deadline) {
+                clearInterval(timer);
+                reject(new Error(stderr || 'Timed out waiting for child task-event lock holder'));
+            }
+        }, 10);
+        child.once('error', (error) => {
+            clearInterval(timer);
+            reject(error);
+        });
+        child.once('exit', (code) => {
+            if (!fs.existsSync(ownerPath) && code !== 0) {
+                clearInterval(timer);
+                reject(new Error(stderr || `task-event lock holder exited with code ${code}`));
+            }
+        });
+    });
+
+    return async function cleanup(): Promise<void> {
+        if (!child.killed && child.exitCode === null) {
+            child.kill();
+        }
+        await new Promise<void>((resolve) => {
+            child.once('exit', () => resolve());
+            setTimeout(resolve, 250);
+        });
+    };
+}
+
 // --- assertValidTaskId ---
 
 test('assertValidTaskId accepts valid IDs', () => {
@@ -1183,7 +1254,7 @@ test('task-events module avoids Atomics.wait and uses async timer-based waiting'
     );
 });
 
-test('appendTaskEvent sync path fails fast on active lock without waiting', () => {
+test('appendTaskEvent sync path fails fast on self-owned active lock without waiting', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-retry-cap-'));
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
@@ -1218,6 +1289,42 @@ test('appendTaskEvent sync path fails fast on active lock without waiting', () =
         assert.match(result!.warnings[0], /retries=0/);
         assert.ok(elapsedMs < 250, `sync append should fail fast, got ${elapsedMs} ms`);
     } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent sync path waits through short-lived external contention', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-sync-contention-'));
+    const lockPath = path.join(tempDir, 'runtime', 'task-events', '.T-SYNC-WAIT.lock');
+    let cleanupChild: (() => Promise<void>) | null = null;
+    try {
+        cleanupChild = await holdTaskEventLockInChildProcess(lockPath, 120);
+        const startedAt = Date.now();
+        const result = appendTaskEvent(
+            tempDir,
+            'T-SYNC-WAIT',
+            'test',
+            'PASS',
+            'Should wait for short-lived external lock',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 1000,
+                lockRetryMs: 20,
+                lockStaleMs: 60000
+            }
+        );
+        const elapsedMs = Date.now() - startedAt;
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 0, 'sync append should succeed after bounded wait');
+        assert.ok(elapsedMs >= 80, `sync append should wait for external owner, got ${elapsedMs} ms`);
+        assert.ok((result!.lock_telemetry?.task_lock_retries || 0) > 0, 'telemetry should record sync retries');
+        assert.notEqual(result!.lock_telemetry?.task_lock_contention_level, 'none');
+    } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import {
     acquireFilesystemLock,
@@ -14,6 +15,76 @@ import {
 
 function mkTmpDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'gao-fslock-'));
+}
+
+async function holdLockInChildProcess(lockPath: string, holdMs: number): Promise<() => Promise<void>> {
+    const workerScript = [
+        "const fs = require('node:fs');",
+        "const os = require('node:os');",
+        "const path = require('node:path');",
+        "const lockPath = process.argv[1];",
+        "const holdMs = Number.parseInt(process.argv[2], 10);",
+        "fs.mkdirSync(lockPath, { recursive: true });",
+        "fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({",
+        "  pid: process.pid,",
+        "  hostname: os.hostname(),",
+        "  created_at_utc: new Date().toISOString()",
+        "}, null, 2) + '\\n', 'utf8');",
+        "setTimeout(() => {",
+        "  try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}",
+        "  process.exit(0);",
+        "}, holdMs);"
+    ].join('\n');
+
+    const child = spawn(process.execPath, [
+        '--input-type=commonjs',
+        '--eval',
+        workerScript,
+        lockPath,
+        String(holdMs)
+    ], {
+        stdio: ['ignore', 'ignore', 'pipe']
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+        stderr += String(chunk);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+        const deadline = Date.now() + 1000;
+        const timer = setInterval(() => {
+            if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+                clearInterval(timer);
+                resolve();
+                return;
+            }
+            if (Date.now() >= deadline) {
+                clearInterval(timer);
+                reject(new Error(stderr || 'Timed out waiting for child lock holder to initialize'));
+            }
+        }, 10);
+        child.once('error', (error) => {
+            clearInterval(timer);
+            reject(error);
+        });
+        child.once('exit', (code) => {
+            if (!fs.existsSync(path.join(lockPath, 'owner.json')) && code !== 0) {
+                clearInterval(timer);
+                reject(new Error(stderr || `lock holder exited with code ${code}`));
+            }
+        });
+    });
+
+    return async function cleanup(): Promise<void> {
+        if (!child.killed && child.exitCode === null) {
+            child.kill();
+        }
+        await new Promise<void>((resolve) => {
+            child.once('exit', () => resolve());
+            setTimeout(resolve, 250);
+        });
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -52,6 +123,32 @@ test('acquireFilesystemLock fails when lock already held by live process', () =>
         );
         releaseFilesystemLock(handle);
     } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock waits through short-lived external contention and reports retries', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-external-live.lock');
+    let cleanupChild: (() => Promise<void>) | null = null;
+    try {
+        cleanupChild = await holdLockInChildProcess(lockPath, 120);
+        const startedAt = Date.now();
+        const { handle, telemetry } = acquireFilesystemLock(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 20,
+            staleMs: 60000
+        });
+        const elapsedMs = Date.now() - startedAt;
+
+        assert.ok(elapsedMs >= 80, `sync acquire should wait for the external owner, got ${elapsedMs} ms`);
+        assert.ok(telemetry.retries > 0, 'telemetry should capture contention retries');
+        assert.notEqual(telemetry.contentionLevel, 'none');
+        releaseFilesystemLock(handle);
+    } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });

@@ -420,10 +420,13 @@ function redactLockPath(lockPath: string): string {
 
 export function acquireFilesystemLock(lockPath: string, options: LockOptions = {}): { handle: LockHandle; telemetry: AcquireLockTelemetry } {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
+    const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
     const startedAt = Date.now();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
+    let retries = 0;
+    let contentionWarned = false;
     let staleLockRecovered = false;
     let staleLockReason: 'owner_dead' | 'age_exceeded' | null = null;
 
@@ -440,9 +443,9 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
             return {
                 handle: { lockPath },
                 telemetry: {
-                    retries: 0,
+                    retries,
                     elapsedMs,
-                    contentionLevel: classifyLockContention(0, elapsedMs),
+                    contentionLevel: classifyLockContention(retries, elapsedMs),
                     staleLockRecovered,
                     staleLockReason
                 }
@@ -463,11 +466,46 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
                 continue;
             }
 
+            const ownerHostMatchesCurrent = isCurrentHostOwner(lastInspection.metadata.hostname);
+            const currentProcessOwnsLock = lastInspection.metadata.pid === process.pid
+                && ownerHostMatchesCurrent !== false
+                && lastInspection.ownerAlive !== false;
+            if (currentProcessOwnsLock || ownerHostMatchesCurrent === false) {
+                const waitedMs = Date.now() - startedAt;
+                throw new Error(
+                    formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
+                    + '; retries=0; wait_strategy=immediate_fail'
+                );
+            }
+
+            retries += 1;
+
+            if (!contentionWarned && retries >= LOCK_CONTENTION_WARN_THRESHOLD) {
+                contentionWarned = true;
+                const elapsedMs = Date.now() - startedAt;
+                const ownerPid = lastInspection.metadata.pid !== null ? String(lastInspection.metadata.pid) : 'unknown';
+                const ownerHost = redactHostnameValue(lastInspection.metadata.hostname) || 'unknown';
+                process.stderr.write(
+                    `WARNING: lock contention on ${redactLockPath(lockPath)} (retries=${retries}, elapsed_ms=${elapsedMs}, owner_pid=${ownerPid}, owner_host=${ownerHost})\n`
+                );
+            }
+
             const waitedMs = Date.now() - startedAt;
-            throw new Error(
-                formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
-                + '; retries=0; wait_strategy=immediate_fail'
-            );
+            if (retries >= MAX_LOCK_RETRIES) {
+                throw new Error(
+                    formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
+                    + `; retries=${retries}; max_retries=${MAX_LOCK_RETRIES}; wait_strategy=sync_retry`
+                );
+            }
+
+            if (waitedMs >= timeoutMs) {
+                throw new Error(
+                    formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
+                    + `; retries=${retries}; wait_strategy=sync_retry`
+                );
+            }
+
+            sleepMsSync(retryMs);
         }
     }
 }
