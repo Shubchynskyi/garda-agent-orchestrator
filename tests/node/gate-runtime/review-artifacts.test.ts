@@ -171,3 +171,103 @@ test('writeReviewArtifactJson waits for a short-lived external review-artifact l
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });
+
+test('writeReviewArtifactJson does not reclaim aged foreign-host review-artifact lock without explicit override', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-'));
+    const artifactPath = path.join(tempDir, 'T-005-preflight.json');
+    const lockPath = getReviewArtifactLockPath(artifactPath);
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        assert.throws(
+            () => writeReviewArtifactJson(
+                artifactPath,
+                { task_id: 'T-005', status: 'PASSED' },
+                { lockTimeoutMs: 75, lockRetryMs: 10 }
+            ),
+            /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/
+        );
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(lockPath), true);
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactJson reclaims aged foreign-host review-artifact lock when explicit override is enabled', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-'));
+    const artifactPath = path.join(tempDir, 'T-005-preflight.json');
+    const lockPath = getReviewArtifactLockPath(artifactPath);
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        writeReviewArtifactJson(
+            artifactPath,
+            { task_id: 'T-005', status: 'PASSED' },
+            { lockTimeoutMs: 500, lockRetryMs: 10 }
+        );
+
+        assert.deepEqual(JSON.parse(fs.readFileSync(artifactPath, 'utf8')), {
+            task_id: 'T-005',
+            status: 'PASSED'
+        });
+        assert.equal(fs.existsSync(lockPath), false);
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactJson does not reclaim fresh foreign-host review-artifact lock', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-'));
+    const artifactPath = path.join(tempDir, 'T-006-preflight.json');
+    const lockPath = getReviewArtifactLockPath(artifactPath);
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        assert.throws(
+            () => writeReviewArtifactJson(
+                artifactPath,
+                { task_id: 'T-006', status: 'PASSED' },
+                { lockTimeoutMs: 75, lockRetryMs: 10, lockStaleMs: 60_000 }
+            ),
+            /Timed out acquiring file lock/
+        );
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(lockPath), true);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});

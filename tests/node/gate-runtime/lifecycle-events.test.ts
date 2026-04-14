@@ -308,18 +308,33 @@ describe('gate-runtime/lifecycle-events', () => {
             ]);
         });
 
-        it('mandatory emit-once helpers do not duplicate existing stage entries', () => {
+        it('implementation and review-phase stage helpers can repeat across recovery cycles', () => {
             emitMandatoryImplementationStartedEvent(tempDir, 'T-ONCE', { preflight_path: '/tmp/preflight.json' }, {
                 eventsRoot: path.join(tempDir, 'runtime', 'task-events')
             });
-            const secondResult = emitMandatoryImplementationStartedEvent(tempDir, 'T-ONCE', { preflight_path: '/tmp/preflight.json' }, {
+            const secondImplementation = emitMandatoryImplementationStartedEvent(tempDir, 'T-ONCE', { preflight_path: '/tmp/preflight-2.json' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            emitMandatoryReviewPhaseStartedEvent(tempDir, 'T-ONCE', { review_type: 'code' }, {
+                eventsRoot: path.join(tempDir, 'runtime', 'task-events')
+            });
+            const secondReviewPhase = emitMandatoryReviewPhaseStartedEvent(tempDir, 'T-ONCE', { review_type: 'test' }, {
                 eventsRoot: path.join(tempDir, 'runtime', 'task-events')
             });
 
             const timelinePath = path.join(tempDir, 'runtime', 'task-events', 'T-ONCE.jsonl');
-            const lines = fs.readFileSync(timelinePath, 'utf8').trim().split('\n');
-            assert.equal(lines.length, 1);
-            assert.equal(secondResult, null);
+            const events = fs.readFileSync(timelinePath, 'utf8')
+                .trim()
+                .split('\n')
+                .map((line) => JSON.parse(line) as Record<string, unknown>);
+            assert.deepEqual(events.map((event) => event.event_type), [
+                'IMPLEMENTATION_STARTED',
+                'IMPLEMENTATION_STARTED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_PHASE_STARTED'
+            ]);
+            assert.ok(secondImplementation);
+            assert.ok(secondReviewPhase);
         });
     });
 

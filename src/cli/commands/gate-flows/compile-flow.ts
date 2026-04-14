@@ -664,7 +664,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         }
         if (!exceptionMessage && scopeViolations.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
-            exceptionMessage = `Preflight scope drift detected. Re-run classify-change before compile gate. ${scopeViolations.join(' ')}`;
+            const scopeRecoveryHint = preflightContext.detection_source === 'explicit_changed_files'
+                ? 'Refresh preflight for the real diff: rerun classify-change for the current scope, rerun load-rule-pack --stage POST_PREFLIGHT, and then rerun compile-gate. If the original preflight used planned --changed-file inputs in a clean workspace before implementation, this drift is expected once the real diff exists.'
+                : 'Refresh preflight for the current scope before compile: rerun classify-change, rerun load-rule-pack --stage POST_PREFLIGHT, and then rerun compile-gate.';
+            exceptionMessage = `Preflight scope drift detected. ${scopeRecoveryHint} ${scopeViolations.join(' ')}`;
         }
         if (!exceptionMessage && dirtyWorkspaceProtectionDrift.status === 'DRIFT_DETECTED') {
             exitCode = EXIT_GATE_FAILURE;

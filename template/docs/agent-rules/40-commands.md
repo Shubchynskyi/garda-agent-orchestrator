@@ -221,9 +221,10 @@ Notes:
 - `--use-staged` includes untracked files by default, so new files are classified even before `git add`.
 - Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.
 - For maximum precision, pass planned task file list via repeated `--changed-file`.
+- In a clean workspace, planned `--changed-file` preflight is only the initial scope hint before implementation. If `compile-gate` later reports scope drift after the real diff exists, treat that as expected planned-scope recovery: rerun `classify-change` for the current scope, rerun `load-rule-pack --stage POST_PREFLIGHT`, and then rerun `compile-gate`.
 - In a clean workspace, `classify-change` can auto-detect changed files from git without additional flags.
 - Compile gate is mandatory before review phase; run `node garda-agent-orchestrator/bin/garda.js gate compile-gate` and treat non-zero result as blocking.
-- Compile gate is strict: preflight scope drift blocks execution. Re-run `classify-change` when scope changes.
+- Compile gate is strict: preflight scope drift blocks execution. Refresh the task scope by rerunning `classify-change`, rerunning `load-rule-pack --stage POST_PREFLIGHT`, and then rerunning `compile-gate`.
 - Compile gate additionally validates explicit task-mode entry evidence from `enter-task-mode`.
 - Compile gate additionally validates post-preflight rule-pack evidence from `load-rule-pack`.
 - `required-reviews-check` additionally validates compile evidence in `runtime/task-events/<task-id>.jsonl`; without `COMPILE_GATE_PASSED` the review gate fails.

@@ -373,7 +373,6 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     const timelinePath = resolvedTaskId
         ? gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`))
         : null;
-    let reviewPhaseMissingFromTimeline = false;
     if (timelinePath) {
         const timelineErrors: string[] = [];
         const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
@@ -390,7 +389,6 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         if (timelineErrors.length === 0 && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
             errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before review gate.`);
         }
-        reviewPhaseMissingFromTimeline = timelineErrors.length === 0 && !timelineEventTypes.has('REVIEW_PHASE_STARTED');
     }
 
     const zeroDiffGuard = validateZeroDiffForReviewGate(
@@ -656,10 +654,11 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     appendMetricsIfEnabled(repoRoot, metricsPath, successEvent, parseBooleanOption(options.emitMetrics, true));
     if (resolvedTaskId) {
         const hasRequiredReviews = Object.values(required).some((value) => value === true);
-        if (!hasRequiredReviews && reviewPhaseMissingFromTimeline) {
+        if (!hasRequiredReviews) {
             emitMandatoryReviewPhaseStartedEvent(orchestratorRoot, resolvedTaskId, {
                 review_type: 'none',
                 reason: 'no_required_reviews',
+                mode: validatedPreflight.mode,
                 preflight_path: gateHelpers.normalizePath(validatedPreflight.preflight_path)
             });
         }

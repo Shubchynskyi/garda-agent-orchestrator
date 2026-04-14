@@ -447,12 +447,90 @@ describe('gates/completion', () => {
 
         it('passes when stages are in correct order for code-changing task', () => {
             const events = makeEvents(
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'PREFLIGHT_CLASSIFIED',
+                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PREFLIGHT_CLASSIFIED',
                 'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED',
                 'REVIEW_PHASE_STARTED', 'REVIEW_RECORDED', 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, true, '/timeline.jsonl');
             assert.equal(result.violations.length, 0);
+        });
+
+        it('uses the latest coherent cycle instead of the first stale stage occurrences', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'REVIEW_PHASE_STARTED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_RECORDED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, true, '/timeline.jsonl');
+            assert.equal(result.violations.length, 0);
+            assert.deepEqual(result.observed_order, [...STAGE_SEQUENCE_ORDER]);
+        });
+
+        it('does not let an early task-entry rule-pack misorder poison a later valid cycle', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                { type: 'RULE_PACK_LOADED', details: { stage: 'TASK_ENTRY' } },
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_RECORDED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, true, '/timeline.jsonl');
+            assert.equal(result.violations.length, 0);
+        });
+
+        it('rejects backfilling compile evidence from an older cycle when the latest cycle is misordered', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'REVIEW_PHASE_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_RECORDED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, true, '/timeline.jsonl');
+            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
+        });
+
+        it('rejects latest-cycle review evidence when compile and implementation only exist in an older cycle', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED',
+                'PREFLIGHT_CLASSIFIED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_RECORDED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, true, '/timeline.jsonl');
+            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'IMPLEMENTATION_STARTED' from an older execution cycle.")));
+            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
         });
     });
 
@@ -574,6 +652,110 @@ describe('gates/completion', () => {
                 }
                 assert.equal(result.violations.length, 0);
                 assert.deepEqual(result.reviewer_execution_modes, ['delegated_subagent']);
+            } finally {
+                fsMock.existsSync = originalExists;
+                fsMock.readFileSync = originalRead;
+            }
+        });
+
+        it('uses review-type-specific REVIEW_PHASE_STARTED events when multiple required reviews share a cycle', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'test' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'testing-strategy',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'test',
+                    reviewer_execution_mode: 'delegated_subagent'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
+                makeEvent('REVIEW_PHASE_STARTED', 6, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent'
+                }),
+                makeEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 11)
+            ];
+            const requiredReviews = { code: true, test: true };
+            const reviewArtifacts = {
+                code: {
+                    path: '/reviews/T-123-code.md',
+                    reviewContext: {
+                        reviewer_routing: {
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:code-reviewer'
+                        }
+                    },
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-123',
+                        review_type: 'code',
+                        preflight_sha256: null,
+                        scope_sha256: null,
+                        review_context_sha256: null,
+                        review_artifact_sha256: null,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:code-reviewer',
+                        reviewer_fallback_reason: null,
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                },
+                test: {
+                    path: '/reviews/T-123-test.md',
+                    reviewContext: {
+                        reviewer_routing: {
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:test-reviewer'
+                        }
+                    },
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-123',
+                        review_type: 'test',
+                        preflight_sha256: null,
+                        scope_sha256: null,
+                        review_context_sha256: null,
+                        review_artifact_sha256: null,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:test-reviewer',
+                        reviewer_fallback_reason: null,
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            };
+
+            const fsMock = require('node:fs');
+            const originalExists = fsMock.existsSync;
+            const originalRead = fsMock.readFileSync;
+            const norm = (p: string) => p.replace(/\\/g, '/');
+
+            fsMock.existsSync = (p: string) => norm(p).includes('T-123-code.md') || norm(p).includes('T-123-test.md') || originalExists(p);
+            fsMock.readFileSync = (p: string, e: string) => {
+                if (norm(p).includes('T-123-code.md') || norm(p).includes('T-123-test.md')) {
+                    return '# Review\nValidated `src/gates/completion.ts` and the matching review context ordering for this review type. This review text is intentionally detailed enough to exceed the triviality filter and documents why the recovery-cycle evidence is acceptable.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
+                }
+                return originalRead(p, e);
+            };
+
+            try {
+                const result = validateReviewSkillEvidence(
+                    events,
+                    requiredReviews,
+                    reviewArtifacts,
+                    true,
+                    '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                    'Codex'
+                );
+                assert.equal(result.violations.length, 0);
             } finally {
                 fsMock.existsSync = originalExists;
                 fsMock.readFileSync = originalRead;

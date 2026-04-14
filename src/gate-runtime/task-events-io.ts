@@ -37,6 +37,7 @@ export interface AppendTaskEventOptions {
     lockTimeoutMs?: unknown;
     lockRetryMs?: unknown;
     lockStaleMs?: unknown;
+    allowForeignHostStaleRecovery?: unknown;
     preWriteDelayMs?: unknown;
     aggregateMaxLines?: unknown;
 }
@@ -419,7 +420,8 @@ export function appendTaskEvent(
     const lockOptions: LockOptions = {
         timeoutMs: options.lockTimeoutMs,
         retryMs: options.lockRetryMs,
-        staleMs: options.lockStaleMs
+        staleMs: options.lockStaleMs,
+        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
     };
     const event: TaskEvent = {
         timestamp_utc: new Date().toISOString(),
@@ -499,7 +501,8 @@ export async function appendTaskEventAsync(
     const lockOptions: LockOptions = {
         timeoutMs: options.lockTimeoutMs,
         retryMs: options.lockRetryMs,
-        staleMs: options.lockStaleMs
+        staleMs: options.lockStaleMs,
+        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
     };
     const event: TaskEvent = {
         timestamp_utc: new Date().toISOString(),

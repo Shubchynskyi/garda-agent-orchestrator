@@ -13,12 +13,14 @@ const MAX_LOCK_RELEASE_RETRY_MS = 250;
 const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 const LOCK_METADATA_GRACE_MS = 2000;
+const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
 const TRANSIENT_LOCK_RELEASE_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
 
 export interface LockOptions {
     timeoutMs?: unknown;
     retryMs?: unknown;
     staleMs?: unknown;
+    allowForeignHostStaleRecovery?: unknown;
 }
 
 export interface LockHandle {
@@ -36,6 +38,7 @@ export interface LockInspectionResult {
     exists: boolean;
     ageMs: number | null;
     metadata: LockOwnerMetadata;
+    ownerHostMatchesCurrent: boolean | null;
     ownerAlive: boolean | null;
     staleReason: 'owner_dead' | 'age_exceeded' | null;
 }
@@ -129,6 +132,11 @@ function sleepMsSync(milliseconds: number): void {
         return;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function parseBooleanLike(value: unknown): boolean {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
 function writeLockMetadata(lockPath: string): void {
@@ -239,6 +247,17 @@ function isCurrentHostOwner(hostname: string | null): boolean | null {
     return ownerHost === normalizeHostname(os.hostname());
 }
 
+function allowForeignHostStaleRecovery(options: LockOptions | undefined): boolean {
+    if (options && options.allowForeignHostStaleRecovery !== undefined) {
+        return parseBooleanLike(options.allowForeignHostStaleRecovery);
+    }
+    return parseBooleanLike(process.env[FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV]);
+}
+
+function requiresExplicitAgeRecovery(inspection: LockInspectionResult): boolean {
+    return inspection.ownerHostMatchesCurrent === false && inspection.staleReason === 'age_exceeded';
+}
+
 function isRetryableLockReleaseError(error: unknown): boolean {
     return TRANSIENT_LOCK_RELEASE_ERROR_CODES.has(getErrorCode(error));
 }
@@ -304,6 +323,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
             exists: false,
             ageMs: null,
             metadata,
+            ownerHostMatchesCurrent: null,
             ownerAlive: null,
             staleReason: null
         };
@@ -318,8 +338,24 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
             exists: true,
             ageMs,
             metadata,
+            ownerHostMatchesCurrent,
             ownerAlive,
             staleReason: 'owner_dead'
+        };
+    }
+
+    if (metadata.pid === null
+        && ageMs !== null
+        && staleMs > 0
+        && ageMs >= staleMs
+        && ownerHostMatchesCurrent === false) {
+        return {
+            exists: true,
+            ageMs,
+            metadata,
+            ownerHostMatchesCurrent,
+            ownerAlive: null,
+            staleReason: 'age_exceeded'
         };
     }
 
@@ -330,6 +366,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
             exists: true,
             ageMs,
             metadata,
+            ownerHostMatchesCurrent,
             ownerAlive: null,
             staleReason: 'owner_dead'
         };
@@ -337,12 +374,13 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
 
     if (staleMs > 0
         && ageMs >= staleMs
-        && ownerAlive !== true
-        && ownerHostMatchesCurrent !== false) {
+        && ownerHostMatchesCurrent === false
+        && ownerAlive !== true) {
         return {
             exists: true,
             ageMs,
             metadata,
+            ownerHostMatchesCurrent,
             ownerAlive,
             staleReason: 'age_exceeded'
         };
@@ -352,6 +390,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
         exists: true,
         ageMs,
         metadata,
+        ownerHostMatchesCurrent,
         ownerAlive,
         staleReason: null
     };
@@ -375,13 +414,19 @@ function formatLockDiagnostic(lockPath: string, inspection: LockInspectionResult
         `owner_hostname=${ownerHostText}`,
         `owner_created_at_utc=${createdAtText}`,
         `owner_metadata_status=${inspection.metadata.metadata_status}`,
-        `stale_reason=${staleReasonText}`
-    ].join('; ');
+        `stale_reason=${staleReasonText}`,
+        requiresExplicitAgeRecovery(inspection)
+            ? `foreign_host_recovery_hint=verify remote owner is gone, then rerun with ${FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV}=1`
+            : ''
+    ].filter(Boolean).join('; ');
 }
 
-function tryRemoveStaleLock(lockPath: string, staleMs: number): { removed: boolean; inspection: LockInspectionResult } {
+function tryRemoveStaleLock(lockPath: string, staleMs: number, options: LockOptions = {}): { removed: boolean; inspection: LockInspectionResult } {
     const inspection = inspectLock(lockPath, staleMs);
     if (!inspection.exists || !inspection.staleReason) {
+        return { removed: false, inspection };
+    }
+    if (requiresExplicitAgeRecovery(inspection) && !allowForeignHostStaleRecovery(options)) {
         return { removed: false, inspection };
     }
 
@@ -458,7 +503,7 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
                 throw error;
             }
 
-            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs);
+            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
             lastInspection = staleAttempt.inspection;
             if (staleAttempt.removed) {
                 staleLockRecovered = true;
@@ -470,7 +515,11 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
             const currentProcessOwnsLock = lastInspection.metadata.pid === process.pid
                 && ownerHostMatchesCurrent !== false
                 && lastInspection.ownerAlive !== false;
-            if (currentProcessOwnsLock || ownerHostMatchesCurrent === false) {
+            if (
+                currentProcessOwnsLock
+                || ownerHostMatchesCurrent === false
+                || (requiresExplicitAgeRecovery(lastInspection) && !allowForeignHostStaleRecovery(options))
+            ) {
                 const waitedMs = Date.now() - startedAt;
                 throw new Error(
                     formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
@@ -556,12 +605,28 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                 throw error;
             }
 
-            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs);
+            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
             lastInspection = staleAttempt.inspection;
             if (staleAttempt.removed) {
                 staleLockRecovered = true;
                 staleLockReason = staleAttempt.inspection.staleReason;
                 continue;
+            }
+
+            const ownerHostMatchesCurrent = isCurrentHostOwner(lastInspection.metadata.hostname);
+            const currentProcessOwnsLock = lastInspection.metadata.pid === process.pid
+                && ownerHostMatchesCurrent !== false
+                && lastInspection.ownerAlive !== false;
+            if (
+                currentProcessOwnsLock
+                || ownerHostMatchesCurrent === false
+                || (requiresExplicitAgeRecovery(lastInspection) && !allowForeignHostStaleRecovery(options))
+            ) {
+                const waitedMs = Date.now() - startedAt;
+                throw new Error(
+                    formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
+                    + '; retries=0; wait_strategy=immediate_fail'
+                );
             }
 
             retries += 1;
@@ -619,6 +684,12 @@ function classifyLockName(entryName: string): { scope: 'aggregate' | 'task'; tas
 }
 
 function buildLockRemediation(entryName: string, inspection: LockInspectionResult): string {
+    if (requiresExplicitAgeRecovery(inspection)) {
+        return [
+            `Verify the remote owner is gone, then rerun with ${FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV}=1 to reclaim aged foreign-host lock '${entryName}'.`,
+            'Do not delete live locks manually. runtime/reviews/ is not part of the task-event lock subsystem.'
+        ].join(' ');
+    }
     if (inspection.staleReason) {
         return [
             `Run 'garda doctor --target-root "." --cleanup-stale-locks --dry-run' first, then rerun without '--dry-run' if the candidate list looks correct.`,
@@ -710,6 +781,7 @@ export function cleanupStaleTaskEventLocks(
     const dryRun = options.dryRun === true;
     const lockRoot = getTaskEventsRoot(orchestratorRoot);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    const foreignHostRecoveryAllowed = allowForeignHostStaleRecovery(options);
     const removableStaleLocks: string[] = [];
     const retainedLiveLocks: string[] = [];
     const removedLocks: string[] = [];
@@ -728,13 +800,21 @@ export function cleanupStaleTaskEventLocks(
             continue;
         }
 
+        if (requiresExplicitAgeRecovery(inspection) && !foreignHostRecoveryAllowed) {
+            retainedLiveLocks.push(entryName);
+            warnings.push(
+                `Skipped aged foreign-host lock '${entryName}': rerun cleanup with ${FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV}=1 after verifying the remote owner is gone.`
+            );
+            continue;
+        }
+
         removableStaleLocks.push(entryName);
         if (dryRun) {
             continue;
         }
 
         try {
-            const removalAttempt = tryRemoveStaleLock(lockPath, staleMs);
+            const removalAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
             if (removalAttempt.removed) {
                 removedLocks.push(entryName);
                 continue;

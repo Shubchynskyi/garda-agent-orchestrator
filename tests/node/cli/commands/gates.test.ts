@@ -1125,6 +1125,117 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('explains planned explicit preflight refresh steps when compile gate detects scope drift in a clean workspace', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901scope-drift-guidance';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Clarify planned explicit preflight drift recovery'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(repoRoot, taskId, 'Clarify planned explicit preflight drift recovery', ['src/app.ts']);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        fs.writeFileSync(appPath, 'const a = 10;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-scope-drift.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Preflight scope drift detected.')));
+        assert.ok(result.outputLines.some((line) => line.includes('planned --changed-file inputs in a clean workspace')));
+        assert.ok(result.outputLines.some((line) => line.includes('load-rule-pack --stage POST_PREFLIGHT')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('recovers from planned explicit preflight scope drift after rerunning classify-change and POST_PREFLIGHT rule-pack', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901scope-drift-recovery';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Recover planned explicit preflight drift after real diff exists'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(repoRoot, taskId, 'Recover planned explicit preflight drift after real diff exists', ['src/app.ts']);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        fs.writeFileSync(appPath, 'const a = 10;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-scope-drift-recovery.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const firstCompile = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(firstCompile.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(firstCompile.outputLines.some((line) => line.includes('Preflight scope drift detected.')));
+
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Recover planned explicit preflight drift after real diff exists',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, refreshedPreflightPath).exitCode, 0);
+
+        const secondCompile = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(secondCompile.exitCode, 0);
+        assert.equal(secondCompile.outputLines[0], 'COMPILE_GATE_PASSED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('passes doc-impact gate and writes artifact', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902';
@@ -1551,6 +1662,427 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('passes completion gate when a later coherent cycle exists despite stale early task-entry ordering noise', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-recovery';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-completion-recovery.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Recover a later coherent completion cycle'
+        });
+        runHandshakeForTask(repoRoot, taskId);
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'Preflight completed with mode FULL_PATH.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Internal lifecycle recovery only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'PASS');
+        assert.equal(completionResult.status, 'PASSED');
+        assert.equal(completionResult.stage_sequence_evidence.violations.length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails completion gate when the latest cycle is misordered and would need compile backfill from an older cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-recovery-negative';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-completion-recovery-negative.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject cross-cycle compile backfill in completion gate'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'Initial preflight completed with mode FULL_PATH.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Initial review phase started.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const firstReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(firstReviewResult.exitCode, 0);
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'New preflight started for a later cycle.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation started for later cycle.',
+            {}
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started too early for later cycle.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'COMPILE_GATE_PASSED',
+            'PASS',
+            'Compile gate passed too late in later cycle.',
+            {}
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_GATE_PASSED',
+            'PASS',
+            'Later review gate appeared to pass.',
+            {}
+        );
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'FAIL');
+        assert.ok(completionResult.stage_sequence_evidence.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails completion gate when the latest cycle has review evidence but no same-cycle implementation or compile', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-recovery-missing-prereq';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-completion-recovery-missing-prereq.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject missing same-cycle compile backfill in completion gate'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'Initial preflight completed with mode FULL_PATH.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Initial review phase started.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const firstReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(firstReviewResult.exitCode, 0);
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'New preflight started for a later cycle.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Later review phase started without same-cycle implementation or compile.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_RECORDED',
+            'PASS',
+            'Later review recorded.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_GATE_PASSED',
+            'PASS',
+            'Later review gate appeared to pass.',
+            {}
+        );
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'FAIL');
+        assert.ok(completionResult.stage_sequence_evidence.violations.some((item) => item.includes("Do not backfill 'IMPLEMENTATION_STARTED' from an older execution cycle.")));
+        assert.ok(completionResult.stage_sequence_evidence.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('requires audited no-op evidence before zero-diff completion can pass', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b';
@@ -1655,6 +2187,32 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
         assert.equal(passedReviewResult.exitCode, 0);
+
+        // A later compile+review rerun must emit a fresh REVIEW_PHASE_STARTED
+        // for the latest no-required-review cycle, otherwise completion would
+        // incorrectly demand a missing same-cycle review phase.
+        const rerunCompileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(rerunCompileResult.exitCode, 0);
+
+        const rerunReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(rerunReviewResult.exitCode, 0);
+        assert.ok(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEW_PHASE_STARTED').length >= 2
+        );
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -2512,6 +3070,190 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
         assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'LOCAL_AUDITED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('passes completion when test review telemetry is emitted before a later code review phase in the same cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-mixed-order';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-mixed-order.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Validate mixed code/test review ordering',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 2,
+            changed_lines_total: 12,
+            required_reviews: { code: true, test: true }
+        });
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'test',
+                '--depth', '2',
+                '--preflight-path', preflightPath
+            ]);
+            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-test.md`), [
+                '# Test Review',
+                '',
+                'Validated `tests/node/cli/commands/gates.test.ts` and the recovery ordering for the mixed required-review cycle. This artifact is intentionally detailed enough to satisfy the anti-triviality check while still reporting no concrete failures for the reviewed test scope.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'TEST REVIEW PASSED'
+            ].join('\n'), 'utf8');
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath
+            ]);
+            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-code.md`), [
+                '# Review',
+                '',
+                'Validated `src/gates/completion.ts` and the typed review-phase ordering used by the mixed required-review cycle. This artifact is intentionally verbose enough to satisfy the anti-triviality check while still reporting no findings for the reviewed implementation.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            testReviewVerdict: 'TEST REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Mixed review-order regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'PASS');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

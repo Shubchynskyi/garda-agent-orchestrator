@@ -34,7 +34,6 @@ import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidence
  */
 export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
-    'RULE_PACK_LOADED',
     'HANDSHAKE_DIAGNOSTICS_RECORDED',
     'SHELL_SMOKE_PREFLIGHT_RECORDED',
     'PREFLIGHT_CLASSIFIED',
@@ -71,6 +70,58 @@ export interface ZeroDiffCompletionEvidence {
     no_op_reason: string | null;
     violations: string[];
 }
+
+function eventMatchesStage(entry: TimelineEventEntry, stage: string): boolean {
+    if (stage === 'REVIEW_GATE_PASSED') {
+        return entry.event_type === 'REVIEW_GATE_PASSED' || entry.event_type === 'REVIEW_GATE_PASSED_WITH_OVERRIDE';
+    }
+    return entry.event_type === stage;
+}
+
+function findLatestStageOccurrence(
+    events: readonly TimelineEventEntry[],
+    stage: string,
+    upperBoundExclusive: number
+): TimelineEventEntry | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const entry = events[index];
+        if (entry.sequence >= upperBoundExclusive) {
+            continue;
+        }
+        if (eventMatchesStage(entry, stage)) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+function findLatestStageOccurrenceInRange(
+    events: readonly TimelineEventEntry[],
+    stage: string,
+    lowerBoundExclusive: number,
+    upperBoundExclusive: number
+): TimelineEventEntry | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const entry = events[index];
+        if (entry.sequence >= upperBoundExclusive) {
+            continue;
+        }
+        if (entry.sequence <= lowerBoundExclusive) {
+            break;
+        }
+        if (eventMatchesStage(entry, stage)) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+const CYCLE_BOUNDARY_EVENTS = new Set([
+    'REVIEW_GATE_PASSED',
+    'REVIEW_GATE_PASSED_WITH_OVERRIDE',
+    'COMPLETION_GATE_FAILED',
+    'COMPLETION_GATE_PASSED'
+]);
 
 /**
  * Read ordered timeline events from a JSONL file.
@@ -136,41 +187,113 @@ export function validateStageSequence(
     const observedOrder: string[] = [];
     const expectedStages = codeChanged
         ? [...STAGE_SEQUENCE_ORDER]
-        : ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'];
+        : ['TASK_MODE_ENTERED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'];
 
-    const firstOccurrence = new Map<string, number>();
-    for (const entry of events) {
-        if (!firstOccurrence.has(entry.event_type)) {
-            firstOccurrence.set(entry.event_type, entry.sequence);
+    const anchorStage = expectedStages[expectedStages.length - 1];
+    const anchorEntry = anchorStage
+        ? findLatestStageOccurrence(events, anchorStage, Number.POSITIVE_INFINITY)
+        : null;
+
+    const cycleLocalStages = new Set(
+        codeChanged
+            ? ['PREFLIGHT_CLASSIFIED', 'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_RECORDED', 'REVIEW_GATE_PASSED']
+            : ['COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED']
+    );
+
+    let cycleFloorExclusive = Number.NEGATIVE_INFINITY;
+    if (anchorEntry) {
+        for (let index = events.length - 1; index >= 0; index -= 1) {
+            const entry = events[index];
+            if (entry.sequence >= anchorEntry.sequence) {
+                continue;
+            }
+            if (CYCLE_BOUNDARY_EVENTS.has(entry.event_type)) {
+                cycleFloorExclusive = entry.sequence;
+                break;
+            }
+        }
+    }
+
+    const stageEntries = new Map<string, TimelineEventEntry>();
+    const upperBoundExclusive = anchorEntry ? anchorEntry.sequence + 1 : Number.POSITIVE_INFINITY;
+    for (const stage of expectedStages) {
+        const lowerBoundExclusive = cycleLocalStages.has(stage) ? cycleFloorExclusive : Number.NEGATIVE_INFINITY;
+        const latest = findLatestStageOccurrenceInRange(events, stage, lowerBoundExclusive, upperBoundExclusive);
+        if (latest) {
+            stageEntries.set(stage, latest);
         }
     }
 
     for (const stage of expectedStages) {
-        if (firstOccurrence.has(stage)) {
+        if (stageEntries.has(stage)) {
             observedOrder.push(stage);
         }
     }
 
-    // Verify each expected stage occurs after its predecessor
-    for (let i = 1; i < expectedStages.length; i++) {
-        const prev = expectedStages[i - 1];
-        const curr = expectedStages[i];
-        const prevSeq = firstOccurrence.get(prev);
-        const currSeq = firstOccurrence.get(curr);
-        if (prevSeq === undefined || currSeq === undefined) {
-            continue; // Missing events are caught by other checks
+    for (let index = 0; index < expectedStages.length; index += 1) {
+        const stage = expectedStages[index];
+        if (stageEntries.has(stage)) {
+            continue;
         }
-        if (currSeq < prevSeq) {
+        const laterStage = expectedStages
+            .slice(index + 1)
+            .find((candidate) => stageEntries.has(candidate));
+        if (!laterStage) {
+            continue;
+        }
+        const laterEntry = stageEntries.get(laterStage);
+        const olderStage = findLatestStageOccurrence(events, stage, upperBoundExclusive);
+        const backfillHint = olderStage
+            ? ` Do not backfill '${stage}' from an older execution cycle.`
+            : '';
+        violations.push(
+            `Stage sequence violation in '${normalizedTimelinePath}': ` +
+            `latest '${laterStage}' evidence (seq ${laterEntry?.sequence ?? 'unknown'}) has no matching ` +
+            `'${stage}' evidence inside the latest execution cycle.` +
+            `${backfillHint} Expected order: ${expectedStages.join(' → ')}.`
+        );
+    }
+
+    for (let index = 1; index < expectedStages.length; index += 1) {
+        const previousStage = expectedStages[index - 1];
+        const currentStage = expectedStages[index];
+        const previousEntry = stageEntries.get(previousStage);
+        const currentEntry = stageEntries.get(currentStage);
+
+        if (!currentEntry) {
+            continue;
+        }
+
+        if (!previousEntry) {
+            const olderPrevious = findLatestStageOccurrence(events, previousStage, upperBoundExclusive);
+            const backfillHint = olderPrevious
+                ? ` Do not backfill '${previousStage}' from an older execution cycle.`
+                : '';
             violations.push(
                 `Stage sequence violation in '${normalizedTimelinePath}': ` +
-                `'${curr}' (seq ${currSeq}) appears before '${prev}' (seq ${prevSeq}). ` +
-                `Expected order: ${expectedStages.join(' → ')}.`
+                `latest '${currentStage}' evidence (seq ${currentEntry.sequence}) has no matching ` +
+                `'${previousStage}' evidence inside the latest execution cycle.` +
+                `${backfillHint} Expected order: ${expectedStages.join(' → ')}.`
+            );
+            continue;
+        }
+
+        if (currentEntry.sequence < previousEntry.sequence) {
+            const olderPrevious = findLatestStageOccurrence(events, previousStage, currentEntry.sequence);
+            const backfillHint = olderPrevious
+                ? ` Do not backfill '${previousStage}' from an older execution cycle.`
+                : '';
+            violations.push(
+                `Stage sequence violation in '${normalizedTimelinePath}': ` +
+                `latest '${currentStage}' evidence (seq ${currentEntry.sequence}) appears before ` +
+                `latest '${previousStage}' evidence (seq ${previousEntry.sequence}) in the latest execution cycle.` +
+                `${backfillHint} Expected order: ${expectedStages.join(' → ')}.`
             );
         }
     }
 
     // For code-changing tasks, PREFLIGHT_CLASSIFIED is mandatory
-    if (codeChanged && !firstOccurrence.has('PREFLIGHT_CLASSIFIED')) {
+    if (codeChanged && !stageEntries.has('PREFLIGHT_CLASSIFIED')) {
         violations.push(
             `Task timeline '${normalizedTimelinePath}' is missing PREFLIGHT_CLASSIFIED. ` +
             'Code-changing tasks must carry preflight classification evidence.'
@@ -367,6 +490,24 @@ export function validateReviewSkillEvidence(
     const reviewGatePassSequence = findLatestTimelineEvent(events, (entry) => (
         entry.event_type === 'REVIEW_GATE_PASSED' || entry.event_type === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
     ))?.sequence ?? null;
+    const typedReviewPhaseEventsPresent = events.some((entry) => (
+        entry.event_type === 'REVIEW_PHASE_STARTED'
+        && normalizeTimelineDetailString(entry.details?.review_type ?? entry.details?.reviewType) !== null
+    ));
+    const getReviewPhaseSequenceForKey = (reviewKey: string): number | null => {
+        const normalizedReviewKey = reviewKey.toLowerCase();
+        const matchingTypedPhase = findLatestTimelineEvent(events, (entry) => (
+            entry.event_type === 'REVIEW_PHASE_STARTED'
+            && normalizeTimelineDetailString(entry.details?.review_type ?? entry.details?.reviewType) === normalizedReviewKey
+        ));
+        if (matchingTypedPhase) {
+            return matchingTypedPhase.sequence;
+        }
+        if (!typedReviewPhaseEventsPresent) {
+            return reviewPhaseSequence;
+        }
+        return null;
+    };
 
     if (requiredKeys.length > 0 && reviewPhaseSequence == null) {
         result.violations.push(
@@ -379,6 +520,7 @@ export function validateReviewSkillEvidence(
 
     for (const key of requiredKeys) {
         const candidateSkillIds = getReviewSkillCandidates(key);
+        const reviewPhaseSequenceForKey = getReviewPhaseSequenceForKey(key);
         const selectionEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'SKILL_SELECTED' && eventMatchesReviewSkill(entry, candidateSkillIds)
         ));
@@ -393,6 +535,13 @@ export function validateReviewSkillEvidence(
             entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
             String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
         ));
+
+        if (reviewPhaseSequence != null && reviewPhaseSequenceForKey == null) {
+            result.violations.push(
+                `Task timeline '${normalizedTimelinePath}' is missing REVIEW_PHASE_STARTED for required review '${key}'. ` +
+                'Required review skills must be prepared before review gate completion.'
+            );
+        }
 
         if (!selectionEvent) {
             result.violations.push(
@@ -409,7 +558,7 @@ export function validateReviewSkillEvidence(
                     `Review skill '${selectedSkillId}' was selected before COMPILE_GATE_PASSED in '${normalizedTimelinePath}'.`
                 );
             }
-            if (reviewPhaseSequence != null && selectionEvent.sequence < reviewPhaseSequence) {
+            if (reviewPhaseSequenceForKey != null && selectionEvent.sequence < reviewPhaseSequenceForKey) {
                 result.violations.push(
                     `Review skill '${selectedSkillId}' was selected before REVIEW_PHASE_STARTED in '${normalizedTimelinePath}'.`
                 );
@@ -431,7 +580,7 @@ export function validateReviewSkillEvidence(
             if (referencePath && !result.reference_paths.includes(referencePath)) {
                 result.reference_paths.push(referencePath);
             }
-            if (reviewPhaseSequence != null && referenceEvent.sequence < reviewPhaseSequence) {
+            if (reviewPhaseSequenceForKey != null && referenceEvent.sequence < reviewPhaseSequenceForKey) {
                 result.violations.push(
                     `Review skill reference for '${key}' was loaded before REVIEW_PHASE_STARTED in '${normalizedTimelinePath}'.`
                 );
@@ -461,7 +610,7 @@ export function validateReviewSkillEvidence(
             if (executionMode && !result.reviewer_execution_modes.includes(executionMode)) {
                 result.reviewer_execution_modes.push(executionMode);
             }
-            if (reviewPhaseSequence != null && routingEvent.sequence < reviewPhaseSequence) {
+            if (reviewPhaseSequenceForKey != null && routingEvent.sequence < reviewPhaseSequenceForKey) {
                 result.violations.push(
                     `Reviewer routing telemetry for '${key}' was emitted before REVIEW_PHASE_STARTED in '${normalizedTimelinePath}'.`
                 );

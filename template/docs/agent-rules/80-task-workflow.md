@@ -73,7 +73,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Compile gate command must pass before `IN_REVIEW`:
   `node garda-agent-orchestrator/bin/garda.js gate compile-gate`.
 - Compile lifecycle telemetry must show `IMPLEMENTATION_STARTED` before `COMPILE_GATE_PASSED`.
-- Compile gate enforces preflight scope freshness; if scope drift is detected, re-run preflight before compile.
+- Compile gate enforces preflight scope freshness; if scope drift is detected, rerun `classify-change` for the current scope, rerun `load-rule-pack --stage "POST_PREFLIGHT"`, and then rerun `compile-gate`.
+- When preflight was created from planned `--changed-file` inputs in a clean workspace before implementation, this refresh is expected once the real diff exists; treat it as normal lifecycle recovery, not as an unexpected workflow failure.
 - Compile gate validates post-preflight rule-pack evidence for the same task id and preflight artifact.
 - Compile gate invocation must pass `fail_tail_lines` from `live/config/token-economy.json` (fallback `50`) to keep failure-output budget deterministic.
 - Compile/review gate output compaction profiles are loaded from `live/config/output-filters.json`; invalid or missing config must warn and fall back to passthrough output instead of inventing filtered summaries.

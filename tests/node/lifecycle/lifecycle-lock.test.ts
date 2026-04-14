@@ -99,6 +99,198 @@ test('withLifecycleOperationLock reclaims lock from dead process', () => {
     }
 });
 
+test('withLifecycleOperationLock does not reclaim aged foreign-host lock without explicit override', () => {
+    const tmp = mkTmpDir();
+    const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        let error: Error | null = null;
+        try {
+            withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed');
+        } catch (caught: unknown) {
+            error = caught instanceof Error ? caught : new Error(String(caught));
+        }
+        assert.ok(error, 'foreign-host lock should block without explicit override');
+        assert.match(error.message, /GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS=1/);
+        assert.doesNotMatch(String(error.message), /remote-build-host/);
+    } finally {
+        if (previousLifecycleEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+        }
+        if (previousFileLockEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock reclaims aged pid-only lock with dead PID and unknown host', () => {
+    const tmp = mkTmpDir();
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            operation: 'legacy-partial',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = withLifecycleOperationLock(tmp, 'recover-pid-only', () => 'reclaimed');
+        assert.equal(result, 'reclaimed');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock reclaims aged foreign-host lock when explicit override is enabled', () => {
+    const tmp = mkTmpDir();
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = '1';
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed');
+        assert.equal(result, 'reclaimed');
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock reclaims aged foreign-host lock with call-scoped override', () => {
+    const tmp = mkTmpDir();
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed', {
+            allowForeignHostStaleRecovery: true
+        });
+        assert.equal(result, 'reclaimed');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock explicit false override wins over env-based recovery', () => {
+    const tmp = mkTmpDir();
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = '1';
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        assert.throws(
+            () => withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed', {
+                allowForeignHostStaleRecovery: false
+            }),
+            /GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS=1|GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/
+        );
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock does not reclaim fresh foreign-host lock before stale threshold', () => {
+    const tmp = mkTmpDir();
+    const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-fresh',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+
+        assert.throws(
+            () => withLifecycleOperationLock(tmp, 'should-fail', () => 'nope'),
+            /Another lifecycle operation is already running/
+        );
+    } finally {
+        if (previousLifecycleEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+        }
+        if (previousFileLockEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('withLifecycleOperationLock writes correct owner metadata', () => {
     const tmp = mkTmpDir();
     try {
@@ -229,6 +421,272 @@ test('withLifecycleOperationLockAsync allows independent targets concurrently', 
     } finally {
         fs.rmSync(tmp1, { recursive: true, force: true });
         fs.rmSync(tmp2, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync does not reclaim aged foreign-host lock without explicit override', async () => {
+    const tmp = mkTmpDir();
+    const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        let error: Error | null = null;
+        try {
+            await withLifecycleOperationLockAsync(tmp, 'async-foreign', async () => 'reclaimed');
+        } catch (caught: unknown) {
+            error = caught instanceof Error ? caught : new Error(String(caught));
+        }
+        assert.ok(error, 'async foreign-host lock should block without explicit override');
+        assert.match(error.message, /GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS=1/);
+        assert.doesNotMatch(String(error.message), /remote-build-host/);
+    } finally {
+        if (previousLifecycleEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+        }
+        if (previousFileLockEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync does not reclaim fresh foreign-host lock before stale threshold', async () => {
+    const tmp = mkTmpDir();
+    const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-fresh',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+
+        await assert.rejects(
+            () => withLifecycleOperationLockAsync(tmp, 'async-fresh-foreign', async () => 'nope'),
+            /Another lifecycle operation is already running/
+        );
+    } finally {
+        if (previousLifecycleEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+        }
+        if (previousFileLockEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync reclaims aged foreign-host lock when explicit override is enabled', async () => {
+    const tmp = mkTmpDir();
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = '1';
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = await withLifecycleOperationLockAsync(tmp, 'async-foreign', async () => 'reclaimed');
+        assert.equal(result, 'reclaimed');
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync reclaims aged foreign-host lock with call-scoped override', async () => {
+    const tmp = mkTmpDir();
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = await withLifecycleOperationLockAsync(tmp, 'async-foreign', async () => 'reclaimed', {
+            allowForeignHostStaleRecovery: true
+        });
+        assert.equal(result, 'reclaimed');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync reclaims aged pid-only lock with dead PID and unknown host', async () => {
+    const tmp = mkTmpDir();
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            operation: 'legacy-partial',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = await withLifecycleOperationLockAsync(tmp, 'async-pid-only', async () => 'reclaimed');
+        assert.equal(result, 'reclaimed');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync explicit false override wins over env-based recovery', async () => {
+    const tmp = mkTmpDir();
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = '1';
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        await assert.rejects(
+            () => withLifecycleOperationLockAsync(tmp, 'async-foreign', async () => 'reclaimed', {
+                allowForeignHostStaleRecovery: false
+            }),
+            /GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS=1|GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/
+        );
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock reclaims aged foreign-host lock when shared file-lock env alias is enabled', () => {
+    const tmp = mkTmpDir();
+    const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed');
+        assert.equal(result, 'reclaimed');
+    } finally {
+        if (previousLifecycleEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+        }
+        if (previousFileLockEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync reclaims aged foreign-host lock when shared file-lock env alias is enabled', async () => {
+    const tmp = mkTmpDir();
+    const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale',
+            acquired_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = await withLifecycleOperationLockAsync(tmp, 'reclaim-foreign-host', async () => 'reclaimed');
+        assert.equal(result, 'reclaimed');
+    } finally {
+        if (previousLifecycleEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+        }
+        if (previousFileLockEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
 

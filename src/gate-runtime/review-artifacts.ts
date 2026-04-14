@@ -12,6 +12,7 @@ export interface ReviewArtifactLockOptions {
     lockTimeoutMs?: unknown;
     lockRetryMs?: unknown;
     lockStaleMs?: unknown;
+    allowForeignHostStaleRecovery?: unknown;
 }
 
 export interface ReviewArtifactLockTelemetry {
@@ -80,7 +81,8 @@ export function withReviewArtifactLock<T>(
     const { handle, telemetry } = acquireFilesystemLock(lockPath, {
         timeoutMs: options.lockTimeoutMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS,
         retryMs: options.lockRetryMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS,
-        staleMs: options.lockStaleMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS
+        staleMs: options.lockStaleMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS,
+        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
     });
     try {
         return {

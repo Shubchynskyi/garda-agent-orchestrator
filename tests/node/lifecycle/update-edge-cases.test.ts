@@ -816,7 +816,6 @@ describe('Lifecycle lock contention during update/rollback (T-007)', () => {
             const result = withLifecycleOperationLock(tmpDir, 'recovery-test', () => 'recovered');
             assert.equal(result, 'recovered');
 
-            // Lock should be released
             assert.ok(!fs.existsSync(lockPath), 'Lock must be released after recovery');
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -835,10 +834,99 @@ describe('Lifecycle lock contention during update/rollback (T-007)', () => {
 
             const result = withLifecycleOperationLock(tmpDir, 'orphan-test', () => 'success');
             assert.equal(result, 'success');
-
             assert.ok(!fs.existsSync(lockPath), 'Lock must be released');
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('update blocks on aged foreign-host lifecycle lock without explicit override', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        try {
+            const lockPath = getLifecycleOperationLockPath(projectRoot);
+            fs.mkdirSync(lockPath, { recursive: true });
+            fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+                pid: 999999999,
+                hostname: 'remote-build-host',
+                operation: 'update',
+                acquired_at_utc: '2020-01-01T00:00:00.000Z',
+                target_root: path.resolve(projectRoot)
+            }, null, 2), 'utf8');
+            const oldDate = new Date('2020-01-01T00:00:00.000Z');
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldDate, oldDate);
+            fs.utimesSync(lockPath, oldDate, oldDate);
+
+            let error: Error | null = null;
+            try {
+                runUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    initAnswersPath: answersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true
+                });
+            } catch (caught: unknown) {
+                error = caught instanceof Error ? caught : new Error(String(caught));
+            }
+
+            assert.ok(error, 'foreign-host lifecycle lock should block update without explicit override');
+            assert.match(error.message, /GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS=1/);
+            assert.doesNotMatch(String(error.message), /remote-build-host/);
+            assert.ok(fs.existsSync(lockPath), 'foreign-host lock must stay in place without override');
+        } finally {
+            if (previousLifecycleEnv === undefined) {
+                delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+            } else {
+                process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+            }
+            if (previousFileLockEnv === undefined) {
+                delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+            } else {
+                process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+            }
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('update recovers aged foreign-host lifecycle lock when explicit override is enabled', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = '1';
+        try {
+            const lockPath = getLifecycleOperationLockPath(projectRoot);
+            fs.mkdirSync(lockPath, { recursive: true });
+            fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+                pid: 999999999,
+                hostname: 'remote-build-host',
+                operation: 'update',
+                acquired_at_utc: '2020-01-01T00:00:00.000Z',
+                target_root: path.resolve(projectRoot)
+            }, null, 2), 'utf8');
+            const oldDate = new Date('2020-01-01T00:00:00.000Z');
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldDate, oldDate);
+            fs.utimesSync(lockPath, oldDate, oldDate);
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.installStatus, 'PASS');
+            assert.equal(result.materializationStatus, 'PASS');
+        } finally {
+            if (previousLifecycleEnv === undefined) {
+                delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+            } else {
+                process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+            }
+            removePathRecursive(projectRoot);
         }
     });
 });

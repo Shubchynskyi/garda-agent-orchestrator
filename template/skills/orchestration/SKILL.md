@@ -129,7 +129,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
    - Gate output filter profiles are loaded from `garda-agent-orchestrator/live/config/output-filters.json`; invalid config must warn and fall back to passthrough output.
    - Node: `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate auto-emits `IMPLEMENTATION_STARTED` before execution and then writes `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED`.
-   - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun preflight when scope changes.
+   - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun `classify-change` for the current scope, rerun `load-rule-pack --stage POST_PREFLIGHT`, and then rerun `compile-gate` when scope changes.
+   - If preflight was created from planned `--changed-file` inputs in a clean workspace before implementation, that refresh is expected once the real diff exists.
    - On failure, do not move to review phase; fix and rerun until pass.
 14. Move task to `IN_REVIEW`.
 15. Before each required independent review, run `build-review-context` for that review type.
@@ -306,7 +307,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 - Compile gate failed:
   - Fix compile errors and rerun `compile-gate` until `COMPILE_GATE_PASSED`.
 - Compile gate failed with preflight scope drift:
-  - Re-run `classify-change` for current scope, then rerun compile and review gates.
+  - Re-run `classify-change` for current scope, rerun `load-rule-pack --stage POST_PREFLIGHT`, and then rerun `compile-gate`.
+  - If the original preflight used planned `--changed-file` inputs in a clean workspace before coding, changed line totals may differ once the real diff exists; this is expected.
 - Doc impact gate failed:
   - Fix doc-impact decision/rationale/changelog flags and rerun `doc-impact-gate`.
 - Override rejected:

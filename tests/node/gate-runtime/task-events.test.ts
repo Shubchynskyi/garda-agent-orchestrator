@@ -604,8 +604,10 @@ test('appendTaskEvent removes orphaned task lock when owner pid is no longer ali
     }
 });
 
-test('appendTaskEvent does not reclaim aged foreign-host lock by default', () => {
+test('appendTaskEvent does not reclaim aged foreign-host lock without explicit override', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-foreign-lock-'));
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const lockPath = path.join(eventsRoot, '.T-TEST.lock');
@@ -623,23 +625,72 @@ test('appendTaskEvent does not reclaim aged foreign-host lock by default', () =>
             'T-TEST',
             'test',
             'PASS',
-            'Should not reclaim foreign-host lock',
+            'Should not reclaim foreign-host lock by default',
             null,
             {
                 passThru: true,
-                lockTimeoutMs: 50,
+                lockTimeoutMs: 75,
                 lockRetryMs: 5
             }
         );
 
         assert.ok(result !== null);
         assert.equal(result!.warnings.length, 1);
-        assert.match(result!.warnings[0], /Timed out acquiring file lock/);
-        const expectedHostToken = redactHostname('remote-build-host');
-        assert.ok(result!.warnings[0].includes(`owner_hostname=${expectedHostToken}`), 'hostname should be redacted');
-        assert.match(result!.warnings[0], /owner_alive=unknown/);
-        assert.ok(fs.existsSync(lockPath), 'foreign-host lock should remain in place');
+        assert.match(result!.warnings[0], /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/);
+        assert.ok(result!.warnings[0].includes(`owner_hostname=${redactHostname('remote-build-host')}`));
+        assert.doesNotMatch(result!.warnings[0], /remote-build-host/);
+        assert.ok(!fs.existsSync(path.join(eventsRoot, 'T-TEST.jsonl')), 'blocked write must not append any task-event file');
+        assert.ok(fs.existsSync(lockPath), 'aged foreign-host lock should remain without explicit override');
     } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent reclaims aged foreign-host lock when explicit override is enabled', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-foreign-lock-'));
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-TEST.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: 'remote-build-host',
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'test',
+            'PASS',
+            'Recovered aged foreign-host lock',
+            { recovered: true },
+            {
+                passThru: true,
+                lockTimeoutMs: 250,
+                lockRetryMs: 5
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 0);
+        assert.ok(fs.existsSync(path.join(eventsRoot, 'T-TEST.jsonl')));
+        assert.ok(!fs.existsSync(lockPath), 'aged foreign-host lock should be reclaimed and released');
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });
@@ -1331,23 +1382,11 @@ test('appendTaskEvent sync path waits through short-lived external contention', 
 
 test('appendTaskEventAsync reports non-zero telemetry after contended lock acquisition', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-contention-telemetry-'));
+    let cleanupChild: (() => Promise<void>) | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const lockPath = path.join(eventsRoot, '.T-TELEM.lock');
-        fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
-            pid: process.pid,
-            hostname: os.hostname(),
-            created_at_utc: new Date().toISOString()
-        }, null, 2) + '\n', 'utf8');
-
-        setTimeout(() => {
-            try {
-                fs.rmSync(lockPath, { recursive: true, force: true });
-            } catch {
-                // ignore
-            }
-        }, 80);
+        cleanupChild = await holdTaskEventLockInChildProcess(lockPath, 120);
 
         const result = await appendTaskEventAsync(
             tempDir,
@@ -1370,6 +1409,100 @@ test('appendTaskEventAsync reports non-zero telemetry after contended lock acqui
         assert.ok(result!.lock_telemetry!.task_lock_retries > 0, 'Should have non-zero retries after contention');
         assert.ok(result!.lock_telemetry!.task_lock_elapsed_ms > 0, 'Should have non-zero elapsed time after contention');
     } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync does not reclaim aged foreign-host lock without explicit override', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-async-foreign-lock-'));
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-ASYNC.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: 'remote-build-host',
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = await appendTaskEventAsync(
+            tempDir,
+            'T-ASYNC',
+            'test',
+            'PASS',
+            'Should not reclaim foreign-host lock by default',
+            null,
+            {
+                passThru: true,
+                lockTimeoutMs: 75,
+                lockRetryMs: 5
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 1);
+        assert.match(result!.warnings[0], /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/);
+        assert.ok(result!.warnings[0].includes(`owner_hostname=${redactHostname('remote-build-host')}`));
+        assert.doesNotMatch(result!.warnings[0], /remote-build-host/);
+        assert.ok(!fs.existsSync(path.join(eventsRoot, 'T-ASYNC.jsonl')), 'blocked async write must not append any task-event file');
+        assert.ok(fs.existsSync(lockPath), 'aged foreign-host lock should remain without explicit override');
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync reclaims aged foreign-host lock when explicit override is enabled', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-async-foreign-lock-'));
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const lockPath = path.join(eventsRoot, '.T-ASYNC.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: 'remote-build-host',
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = await appendTaskEventAsync(
+            tempDir,
+            'T-ASYNC',
+            'test',
+            'PASS',
+            'Recovered aged foreign-host lock',
+            { recovered: true },
+            {
+                passThru: true,
+                lockTimeoutMs: 250,
+                lockRetryMs: 5
+            }
+        );
+
+        assert.ok(result !== null);
+        assert.equal(result!.warnings.length, 0);
+        assert.ok(fs.existsSync(path.join(eventsRoot, 'T-ASYNC.jsonl')));
+        assert.ok(!fs.existsSync(lockPath), 'aged foreign-host lock should be reclaimed and released');
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });

@@ -175,29 +175,92 @@ test('acquireFilesystemLock does not reclaim aged live lock on the current host'
     }
 });
 
-test('acquireFilesystemLock does not reclaim aged live lock when metadata has pid but no hostname', () => {
+test('acquireFilesystemLock reclaims aged pid-only lock with dead PID and unknown host', () => {
     const tmp = mkTmpDir();
     const lockPath = path.join(tmp, '.test-live-pid-only.lock');
     try {
         fs.mkdirSync(lockPath);
         fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
-            pid: process.pid,
+            pid: 999999999,
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const { handle, telemetry } = acquireFilesystemLock(lockPath);
+        assert.equal(telemetry.staleLockRecovered, true);
+        assert.equal(telemetry.staleLockReason, 'owner_dead');
+        const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(owner.pid, process.pid);
+        releaseFilesystemLock(handle);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock does not reclaim aged foreign-host lock without explicit override', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-foreign-aged.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
             created_at_utc: new Date().toISOString()
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         assert.throws(
-            () => acquireFilesystemLock(lockPath),
-            /Timed out acquiring file lock/
+            () => acquireFilesystemLock(lockPath, { timeoutMs: 75, retryMs: 10 }),
+            /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/
         );
-        assert.ok(fs.existsSync(lockPath), 'pid-only live lock should not be reclaimed automatically');
+        assert.ok(fs.existsSync(lockPath), 'foreign-host lock should remain in place without override');
     } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
 
-test('acquireFilesystemLock does not reclaim aged foreign-host lock by default', () => {
+test('acquireFilesystemLock reclaims aged foreign-host lock when explicit override is enabled', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-foreign-aged.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const { handle, telemetry } = acquireFilesystemLock(lockPath);
+        assert.ok(fs.existsSync(lockPath), 'recovered foreign-host lock should be replaced by the current owner');
+        assert.equal(telemetry.staleLockRecovered, true);
+        assert.equal(telemetry.staleLockReason, 'age_exceeded');
+        const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(owner.pid, process.pid);
+        releaseFilesystemLock(handle);
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock reclaims aged foreign-host lock with call-scoped override', () => {
     const tmp = mkTmpDir();
     const lockPath = path.join(tmp, '.test-foreign-aged.lock');
     try {
@@ -210,12 +273,68 @@ test('acquireFilesystemLock does not reclaim aged foreign-host lock by default',
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
 
+        const { handle, telemetry } = acquireFilesystemLock(lockPath, { allowForeignHostStaleRecovery: true });
+        assert.equal(telemetry.staleLockRecovered, true);
+        assert.equal(telemetry.staleLockReason, 'age_exceeded');
+        releaseFilesystemLock(handle);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock explicit false override wins over env-based recovery', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-foreign-aged.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
         assert.throws(
-            () => acquireFilesystemLock(lockPath),
+            () => acquireFilesystemLock(lockPath, { timeoutMs: 75, retryMs: 10, allowForeignHostStaleRecovery: false }),
+            /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/
+        );
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock does not reclaim fresh foreign-host lock before stale threshold', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-foreign-fresh.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+
+        assert.throws(
+            () => acquireFilesystemLock(lockPath, { timeoutMs: 75, retryMs: 10, staleMs: 60_000 }),
             /Timed out acquiring file lock/
         );
-        assert.ok(fs.existsSync(lockPath), 'foreign-host lock should not be reclaimed automatically');
+        assert.ok(fs.existsSync(lockPath), 'fresh foreign-host lock should not be reclaimed automatically');
     } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
@@ -310,7 +429,7 @@ test('acquireFilesystemLock does not reclaim lock without metadata within grace 
         // mtime is current — within the 2s grace period
 
         assert.throws(
-            () => acquireFilesystemLock(lockPath),
+            () => acquireFilesystemLock(lockPath, { timeoutMs: 250, retryMs: 10 }),
             /Timed out acquiring file lock/
         );
     } finally {
@@ -393,6 +512,177 @@ test('acquireFilesystemLockAsync times out against live lock', async () => {
         );
         releaseFilesystemLock(handle);
     } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLockAsync does not reclaim aged foreign-host lock without explicit override', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-foreign-aged.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        await assert.rejects(
+            () => acquireFilesystemLockAsync(lockPath, { timeoutMs: 75, retryMs: 10 }),
+            /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/
+        );
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLockAsync does not reclaim fresh foreign-host lock before stale threshold', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-foreign-fresh.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+
+        await assert.rejects(
+            () => acquireFilesystemLockAsync(lockPath, { timeoutMs: 75, retryMs: 10, staleMs: 60_000 }),
+            /Timed out acquiring file lock/
+        );
+        assert.ok(fs.existsSync(lockPath), 'fresh foreign-host lock should not be reclaimed automatically');
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLockAsync reclaims aged foreign-host lock when explicit override is enabled', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-foreign-aged.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, { timeoutMs: 250, retryMs: 10 });
+        assert.equal(telemetry.staleLockRecovered, true);
+        assert.equal(telemetry.staleLockReason, 'age_exceeded');
+        releaseFilesystemLock(handle);
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLockAsync reclaims aged foreign-host lock with call-scoped override', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-foreign-aged.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
+            timeoutMs: 250,
+            retryMs: 10,
+            allowForeignHostStaleRecovery: true
+        });
+        assert.equal(telemetry.staleLockRecovered, true);
+        assert.equal(telemetry.staleLockReason, 'age_exceeded');
+        releaseFilesystemLock(handle);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLockAsync reclaims aged pid-only lock with dead PID and unknown host', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-pid-only.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
+            timeoutMs: 250,
+            retryMs: 10
+        });
+        assert.equal(telemetry.staleLockRecovered, true);
+        assert.equal(telemetry.staleLockReason, 'owner_dead');
+        const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(owner.pid, process.pid);
+        releaseFilesystemLock(handle);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLockAsync explicit false override wins over env-based recovery', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-foreign-aged.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        await assert.rejects(
+            () => acquireFilesystemLockAsync(lockPath, {
+                timeoutMs: 75,
+                retryMs: 10,
+                allowForeignHostStaleRecovery: false
+            }),
+            /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/
+        );
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
@@ -531,7 +821,7 @@ test('scanTaskEventLocks classifies lock with dead PID as stale', () => {
     }
 });
 
-test('scanTaskEventLocks retains aged foreign-host locks as active', () => {
+test('scanTaskEventLocks classifies aged foreign-host locks as stale', () => {
     const tmp = mkTmpDir();
     const orchRoot = path.join(tmp, 'orch');
     const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
@@ -548,16 +838,18 @@ test('scanTaskEventLocks retains aged foreign-host locks as active', () => {
     try {
         const result = scanTaskEventLocks(orchRoot);
         assert.equal(result.locks.length, 1);
-        assert.equal(result.active_count, 1);
-        assert.equal(result.stale_count, 0);
-        assert.equal(result.locks[0].status, 'ACTIVE');
+        assert.equal(result.active_count, 0);
+        assert.equal(result.stale_count, 1);
+        assert.equal(result.locks[0].status, 'STALE');
         assert.equal(result.locks[0].owner_alive, null);
+        assert.equal(result.locks[0].stale_reason, 'age_exceeded');
+        assert.match(result.locks[0].remediation, /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/);
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
 
-test('scanTaskEventLocks retains aged pid-only live locks as active', () => {
+test('scanTaskEventLocks reports aged pid-only locks as stale dead-owner candidates', () => {
     const tmp = mkTmpDir();
     const orchRoot = path.join(tmp, 'orch');
     const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
@@ -565,7 +857,7 @@ test('scanTaskEventLocks retains aged pid-only live locks as active', () => {
     const lockDir = path.join(eventsRoot, '.T-PID-ONLY.lock');
     fs.mkdirSync(lockDir);
     fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
-        pid: process.pid,
+        pid: 999999999,
         created_at_utc: new Date().toISOString()
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
@@ -573,11 +865,13 @@ test('scanTaskEventLocks retains aged pid-only live locks as active', () => {
     try {
         const result = scanTaskEventLocks(orchRoot);
         assert.equal(result.locks.length, 1);
-        assert.equal(result.active_count, 1);
-        assert.equal(result.stale_count, 0);
-        assert.equal(result.locks[0].status, 'ACTIVE');
-        assert.equal(result.locks[0].owner_alive, true);
+        assert.equal(result.active_count, 0);
+        assert.equal(result.stale_count, 1);
+        assert.equal(result.locks[0].status, 'STALE');
+        assert.equal(result.locks[0].owner_alive, false);
         assert.equal(result.locks[0].owner_hostname, null);
+        assert.equal(result.locks[0].stale_reason, 'owner_dead');
+        assert.doesNotMatch(result.locks[0].remediation, /GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1/);
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -667,7 +961,7 @@ test('cleanupStaleTaskEventLocks retains active locks', () => {
     }
 });
 
-test('cleanupStaleTaskEventLocks retains aged foreign-host locks', () => {
+test('cleanupStaleTaskEventLocks retains aged foreign-host locks without explicit override', () => {
     const tmp = mkTmpDir();
     const orchRoot = path.join(tmp, 'orch');
     const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
@@ -684,8 +978,116 @@ test('cleanupStaleTaskEventLocks retains aged foreign-host locks', () => {
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
         assert.ok(result.retained_live_locks.includes('.T-REMOTE-LIVE.lock'));
+        assert.ok(result.warnings.some((item) => item.includes('GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1')));
         assert.ok(fs.existsSync(lockDir));
     } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleTaskEventLocks removes aged foreign-host locks when explicit override is enabled', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    const lockDir = path.join(eventsRoot, '.T-REMOTE-LIVE.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: 999999999,
+        hostname: 'remote-build-host',
+        created_at_utc: new Date().toISOString()
+    }));
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(lockDir, oldTime, oldTime);
+    try {
+        const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
+        assert.ok(result.removed_locks.includes('.T-REMOTE-LIVE.lock'));
+        assert.ok(!fs.existsSync(lockDir));
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleTaskEventLocks removes aged foreign-host locks with direct option override', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    const lockDir = path.join(eventsRoot, '.T-REMOTE-LIVE.lock');
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: 999999999,
+        hostname: 'remote-build-host',
+        created_at_utc: new Date().toISOString()
+    }));
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(lockDir, oldTime, oldTime);
+    try {
+        const result = cleanupStaleTaskEventLocks(orchRoot, {
+            dryRun: false,
+            allowForeignHostStaleRecovery: true
+        });
+        assert.ok(result.removed_locks.includes('.T-REMOTE-LIVE.lock'));
+        assert.ok(!fs.existsSync(lockDir));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleTaskEventLocks removes aged pid-only locks with dead PID and unknown host', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    const lockDir = path.join(eventsRoot, '.T-PID-ONLY-LIVE.lock');
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: 999999999,
+        created_at_utc: new Date().toISOString()
+    }));
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(lockDir, oldTime, oldTime);
+    try {
+        const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
+        assert.ok(result.removed_locks.includes('.T-PID-ONLY-LIVE.lock'));
+        assert.ok(!fs.existsSync(lockDir));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleTaskEventLocks explicit false override wins over env-based recovery', () => {
+    const tmp = mkTmpDir();
+    const orchRoot = path.join(tmp, 'orch');
+    const eventsRoot = path.join(orchRoot, 'runtime', 'task-events');
+    const lockDir = path.join(eventsRoot, '.T-REMOTE-LIVE.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+        pid: 999999999,
+        hostname: 'remote-build-host',
+        created_at_utc: new Date().toISOString()
+    }));
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(lockDir, oldTime, oldTime);
+    try {
+        const result = cleanupStaleTaskEventLocks(orchRoot, {
+            dryRun: false,
+            allowForeignHostStaleRecovery: false
+        });
+        assert.ok(result.retained_live_locks.includes('.T-REMOTE-LIVE.lock'));
+        assert.ok(fs.existsSync(lockDir));
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });

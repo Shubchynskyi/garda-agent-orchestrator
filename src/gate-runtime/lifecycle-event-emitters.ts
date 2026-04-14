@@ -41,23 +41,23 @@ export async function emitMandatoryPreflightFailedEventAsync(repoRoot: string, t
 }
 
 export function emitImplementationStartedEvent(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
-    return emitLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED, 'INFO', 'Implementation started.', details, options, true);
+    return emitLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED, 'INFO', 'Implementation started.', details, options);
 }
 
 export function emitMandatoryImplementationStartedEvent(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
-    return emitMandatoryLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED, 'INFO', 'Implementation started.', details, options, true);
+    return emitMandatoryLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED, 'INFO', 'Implementation started.', details, options);
 }
 
 export async function emitMandatoryImplementationStartedEventAsync(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
-    return emitMandatoryLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED, 'INFO', 'Implementation started.', details, options, true);
+    return emitMandatoryLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED, 'INFO', 'Implementation started.', details, options);
 }
 
 export function emitReviewPhaseStartedEvent(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
-    return emitLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options, true);
+    return emitLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options);
 }
 
 export async function emitReviewPhaseStartedEventAsync(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
-    return emitLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options, true);
+    return emitLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options);
 }
 
 export function emitReviewRecordedEvent(repoRoot: string, taskId: string, reviewType: string, details: unknown, options: AutoEmitOptions = {}) {
@@ -69,11 +69,11 @@ export async function emitReviewRecordedEventAsync(repoRoot: string, taskId: str
 }
 
 export function emitMandatoryReviewPhaseStartedEvent(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
-    return emitMandatoryLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options, true);
+    return emitMandatoryLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options);
 }
 
 export async function emitMandatoryReviewPhaseStartedEventAsync(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
-    return emitMandatoryLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options, true);
+    return emitMandatoryLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options);
 }
 
 export function emitCompletionGateEvent(repoRoot: string, taskId: string, passed: boolean, details: unknown, options: AutoEmitOptions = {}): ReturnType<typeof appendTaskEvent> {

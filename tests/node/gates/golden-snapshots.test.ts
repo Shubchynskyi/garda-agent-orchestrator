@@ -36,7 +36,6 @@ describe('golden: STAGE_SEQUENCE_ORDER', () => {
     it('has exact canonical ordering', () => {
         assert.deepEqual([...STAGE_SEQUENCE_ORDER], [
             'TASK_MODE_ENTERED',
-            'RULE_PACK_LOADED',
             'HANDSHAKE_DIAGNOSTICS_RECORDED',
             'SHELL_SMOKE_PREFLIGHT_RECORDED',
             'PREFLIGHT_CLASSIFIED',
@@ -165,7 +164,6 @@ describe('golden: validateStageSequence', () => {
     it('valid code-changing sequence produces zero violations', () => {
         const events = makeEvents([
             'TASK_MODE_ENTERED',
-            'RULE_PACK_LOADED',
             'HANDSHAKE_DIAGNOSTICS_RECORDED',
             'SHELL_SMOKE_PREFLIGHT_RECORDED',
             'PREFLIGHT_CLASSIFIED',
@@ -196,24 +194,24 @@ describe('golden: validateStageSequence', () => {
     it('out-of-order stages produce violations', () => {
         const events = makeEvents([
             'TASK_MODE_ENTERED',
-            'COMPILE_GATE_PASSED',
-            'RULE_PACK_LOADED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'REVIEW_PHASE_STARTED',
             'PREFLIGHT_CLASSIFIED',
             'IMPLEMENTATION_STARTED',
-            'REVIEW_PHASE_STARTED',
+            'COMPILE_GATE_PASSED',
             'REVIEW_GATE_PASSED'
         ]);
         const evidence = validateStageSequence(events, true, 'timeline.jsonl');
 
         assert.ok(evidence.violations.length > 0, 'must report at least one violation');
         assert.ok(evidence.violations.some(v => v.includes('Stage sequence violation')));
-        assert.ok(evidence.violations.some(v => v.includes('RULE_PACK_LOADED')));
+        assert.ok(evidence.violations.some(v => v.includes('COMPILE_GATE_PASSED')));
     });
 
     it('non-code-changing task uses minimal expected order', () => {
         const events = makeEvents([
             'TASK_MODE_ENTERED',
-            'RULE_PACK_LOADED',
             'COMPILE_GATE_PASSED',
             'REVIEW_PHASE_STARTED',
             'REVIEW_GATE_PASSED'
@@ -224,7 +222,6 @@ describe('golden: validateStageSequence', () => {
         assert.deepEqual(evidence.violations, []);
         assert.deepEqual(evidence.expected_order, [
             'TASK_MODE_ENTERED',
-            'RULE_PACK_LOADED',
             'COMPILE_GATE_PASSED',
             'REVIEW_PHASE_STARTED',
             'REVIEW_GATE_PASSED'
@@ -234,7 +231,8 @@ describe('golden: validateStageSequence', () => {
     it('missing PREFLIGHT_CLASSIFIED for code-changing task triggers violation', () => {
         const events = makeEvents([
             'TASK_MODE_ENTERED',
-            'RULE_PACK_LOADED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
             'IMPLEMENTATION_STARTED',
             'COMPILE_GATE_PASSED',
             'REVIEW_PHASE_STARTED',
@@ -242,6 +240,66 @@ describe('golden: validateStageSequence', () => {
         ]);
         const evidence = validateStageSequence(events, true, 'timeline.jsonl');
         assert.ok(evidence.violations.some(v => v.includes('PREFLIGHT_CLASSIFIED')));
+    });
+
+    it('later coherent cycle supersedes stale early order noise', () => {
+        const events = makeEvents([
+            'TASK_MODE_ENTERED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'REVIEW_PHASE_STARTED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_RECORDED',
+            'REVIEW_GATE_PASSED'
+        ]);
+        const evidence = validateStageSequence(events, true, 'timeline.jsonl');
+        assert.deepEqual(evidence.violations, []);
+        assert.deepEqual(evidence.observed_order, [...STAGE_SEQUENCE_ORDER]);
+    });
+
+    it('does not backfill a missing predecessor from an older cycle when the latest cycle is misordered', () => {
+        const events = makeEvents([
+            'TASK_MODE_ENTERED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_GATE_PASSED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'REVIEW_PHASE_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_GATE_PASSED'
+        ]);
+        const evidence = validateStageSequence(events, true, 'timeline.jsonl');
+        assert.ok(evidence.violations.some(v => v.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
+    });
+
+    it('does not backfill missing compile and implementation from an older cycle', () => {
+        const events = makeEvents([
+            'TASK_MODE_ENTERED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_GATE_PASSED',
+            'PREFLIGHT_CLASSIFIED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_RECORDED',
+            'REVIEW_GATE_PASSED'
+        ]);
+        const evidence = validateStageSequence(events, true, 'timeline.jsonl');
+        assert.ok(evidence.violations.some(v => v.includes("Do not backfill 'IMPLEMENTATION_STARTED' from an older execution cycle.")));
+        assert.ok(evidence.violations.some(v => v.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
     });
 });
 
