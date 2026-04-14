@@ -5,7 +5,12 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { runCheckUpdate } from '../../../src/lifecycle/check-update';
-import { BUNDLE_SYNC_ITEMS, removePathRecursive, getUpdateSentinelPath } from '../../../src/lifecycle/common';
+import {
+    BUNDLE_SYNC_ITEMS,
+    removePathRecursive,
+    getUpdateSentinelPath,
+    withLifecycleOperationLockAsync
+} from '../../../src/lifecycle/common';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -250,6 +255,164 @@ describe('runCheckUpdate', () => {
             assert.equal(result.trustOverrideUsed, true);
             assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('revalidates workspace state after lock acquisition and skips redundant apply', async () => {
+        const latestVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            let releaseBlocker!: () => void;
+            let blockerEntered!: () => void;
+            let updateRunnerCalled = false;
+            const blockerEnteredPromise = new Promise<void>((resolve) => {
+                blockerEntered = resolve;
+            });
+            const blockerReleasePromise = new Promise<void>((resolve) => {
+                releaseBlocker = resolve;
+            });
+
+            const blocker = withLifecycleOperationLockAsync(projectRoot, 'concurrent-update', async () => {
+                seedBundleSyncSurface(repoRoot, bundleRoot);
+                fs.writeFileSync(path.join(bundleRoot, 'VERSION'), `${latestVersion}\n`, 'utf8');
+                blockerEntered();
+                await blockerReleasePromise;
+            });
+
+            await blockerEnteredPromise;
+
+            const resultPromise = runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: repoRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner: () => {
+                    updateRunnerCalled = true;
+                }
+            });
+
+            releaseBlocker();
+            await blocker;
+
+            const result = await resultPromise;
+            assert.equal(updateRunnerCalled, false, 'updateRunner must not run when the workspace is already updated');
+            assert.equal(result.currentVersion, latestVersion);
+            assert.equal(result.latestVersion, latestVersion);
+            assert.equal(result.updateAvailable, false);
+            assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
+            assert.equal(result.updateApplied, false);
+            assert.equal(result.syncItemsUpdated, 0);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('revalidates workspace state after lock acquisition and refuses stale downgrade apply', async () => {
+        const sourceRoot = createSourcePathFixture(repoRoot);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            fs.writeFileSync(path.join(sourceRoot, 'VERSION'), '1.5.0\n', 'utf8');
+
+            let releaseBlocker!: () => void;
+            let blockerEntered!: () => void;
+            let updateRunnerCalled = false;
+            const blockerEnteredPromise = new Promise<void>((resolve) => {
+                blockerEntered = resolve;
+            });
+            const blockerReleasePromise = new Promise<void>((resolve) => {
+                releaseBlocker = resolve;
+            });
+
+            const blocker = withLifecycleOperationLockAsync(projectRoot, 'concurrent-update', async () => {
+                fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '9.9.9\n', 'utf8');
+                blockerEntered();
+                await blockerReleasePromise;
+            });
+
+            await blockerEnteredPromise;
+
+            const resultPromise = runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner: () => {
+                    updateRunnerCalled = true;
+                }
+            });
+
+            releaseBlocker();
+            await blocker;
+
+            const result = await resultPromise;
+            assert.equal(updateRunnerCalled, false, 'updateRunner must not run when the workspace became newer than the source');
+            assert.equal(result.currentVersion, '9.9.9');
+            assert.equal(result.latestVersion, '1.5.0');
+            assert.equal(result.updateAvailable, false);
+            assert.equal(result.versionDiffDetected, false);
+            assert.equal(result.contentDriftDetected, false);
+            assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
+            assert.equal(result.updateApplied, false);
+        } finally {
+            removePathRecursive(sourceRoot);
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('revalidates latest source version after lock acquisition when source-path mutates in place', async () => {
+        const sourceRoot = createSourcePathFixture(repoRoot);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            fs.writeFileSync(path.join(sourceRoot, 'VERSION'), '1.5.0\n', 'utf8');
+
+            let releaseBlocker!: () => void;
+            let blockerEntered!: () => void;
+            let updateRunnerCalled = false;
+            const blockerEnteredPromise = new Promise<void>((resolve) => {
+                blockerEntered = resolve;
+            });
+            const blockerReleasePromise = new Promise<void>((resolve) => {
+                releaseBlocker = resolve;
+            });
+
+            const blocker = withLifecycleOperationLockAsync(projectRoot, 'concurrent-update', async () => {
+                fs.writeFileSync(path.join(sourceRoot, 'VERSION'), '2.5.0\n', 'utf8');
+                blockerEntered();
+                await blockerReleasePromise;
+            });
+
+            await blockerEnteredPromise;
+
+            const resultPromise = runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner: () => {
+                    updateRunnerCalled = true;
+                }
+            });
+
+            releaseBlocker();
+            await blocker;
+
+            const result = await resultPromise;
+            assert.equal(updateRunnerCalled, true, 'updateRunner should still execute when the source version advanced');
+            assert.equal(result.currentVersion, '0.0.1');
+            assert.equal(result.latestVersion, '2.5.0');
+            assert.equal(result.updateAvailable, true);
+            assert.equal(result.updateApplied, true);
+            assert.equal(result.checkUpdateResult, 'UPDATED');
+            assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), '2.5.0');
+        } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });

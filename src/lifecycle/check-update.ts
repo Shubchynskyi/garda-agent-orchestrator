@@ -134,6 +134,15 @@ interface CheckUpdateResult {
     checkUpdateResult: string;
 }
 
+interface UpdateAvailabilitySnapshot {
+    currentVersion: string;
+    versionDiffDetected: boolean;
+    contentDriftDetected: boolean;
+    driftedSyncItems: string[];
+    updateAvailable: boolean;
+    checkUpdateResult: string;
+}
+
 function syncDeferredLiveVersionPayload(bundleRoot: string, version: string): void {
     const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
     if (!pathExists(liveVersionPath)) {
@@ -257,6 +266,87 @@ function detectSyncSurfaceDrift(sourceRoot: string, deployedBundleRoot: string):
     }
 
     return driftedItems;
+}
+
+function readCurrentBundleVersionOrThrow(deployedBundleRoot: string): string {
+    const currentVersionPath = path.join(deployedBundleRoot, 'VERSION');
+    if (!pathExists(currentVersionPath)) {
+        throw new Error(`Current VERSION file not found: ${currentVersionPath}`);
+    }
+
+    const currentVersion = readTextFile(currentVersionPath).trim();
+    if (!currentVersion) {
+        throw new Error(`Current VERSION file is empty: ${currentVersionPath}`);
+    }
+
+    return currentVersion;
+}
+
+function readLatestSourceVersionOrThrow(
+    sourceRoot: string,
+    effectiveDiagnosticSource: string,
+    effectiveDiagnosticTool: string
+): string {
+    const latestVersionPath = path.join(sourceRoot, 'VERSION');
+    if (!pathExists(latestVersionPath)) {
+        throw createLifecycleDiagnosticError({
+            message: `Latest VERSION file not found in update source '${effectiveDiagnosticSource}'.`,
+            tool: effectiveDiagnosticTool,
+            code: 'UPDATE_SOURCE_VERSION_MISSING',
+            sourceReference: effectiveDiagnosticSource,
+            detailText: latestVersionPath
+        });
+    }
+
+    const latestVersion = readTextFile(latestVersionPath).trim();
+    if (!latestVersion) {
+        throw createLifecycleDiagnosticError({
+            message: `Latest VERSION file is empty in update source '${effectiveDiagnosticSource}'.`,
+            tool: effectiveDiagnosticTool,
+            code: 'UPDATE_SOURCE_VERSION_EMPTY',
+            sourceReference: effectiveDiagnosticSource,
+            detailText: latestVersionPath
+        });
+    }
+
+    return latestVersion;
+}
+
+function evaluateUpdateAvailability(
+    currentVersion: string,
+    latestVersion: string,
+    sourceType: AcquiredUpdateSource['sourceType'],
+    sourceRoot: string,
+    deployedBundleRoot: string
+): UpdateAvailabilitySnapshot {
+    const comparison = compareVersionStrings(currentVersion, latestVersion);
+    const versionDiffDetected = comparison < 0;
+    const driftedSyncItems = comparison === 0 && sourceType === 'path'
+        ? detectSyncSurfaceDrift(sourceRoot, deployedBundleRoot)
+        : [];
+    const contentDriftDetected = driftedSyncItems.length > 0;
+    const updateAvailable = versionDiffDetected || contentDriftDetected;
+
+    return {
+        currentVersion,
+        versionDiffDetected,
+        contentDriftDetected,
+        driftedSyncItems,
+        updateAvailable,
+        checkUpdateResult: updateAvailable ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE'
+    };
+}
+
+function applyUpdateAvailabilitySnapshot(
+    result: CheckUpdateResult,
+    snapshot: UpdateAvailabilitySnapshot
+): void {
+    result.currentVersion = snapshot.currentVersion;
+    result.versionDiffDetected = snapshot.versionDiffDetected;
+    result.contentDriftDetected = snapshot.contentDriftDetected;
+    result.driftedSyncItems = snapshot.driftedSyncItems;
+    result.updateAvailable = snapshot.updateAvailable;
+    result.checkUpdateResult = snapshot.checkUpdateResult;
 }
 
 let resolvedNpmInvocation: NpmInvocation | null = null;
@@ -619,14 +709,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         throw new Error(`Deployed bundle not found: ${deployedBundleRoot}`);
     }
 
-    const currentVersionPath = path.join(deployedBundleRoot, 'VERSION');
-    if (!pathExists(currentVersionPath)) {
-        throw new Error(`Current VERSION file not found: ${currentVersionPath}`);
-    }
-    const currentVersion = readTextFile(currentVersionPath).trim();
-    if (!currentVersion) {
-        throw new Error(`Current VERSION file is empty: ${currentVersionPath}`);
-    }
+    let currentVersion = readCurrentBundleVersionOrThrow(deployedBundleRoot);
 
     const timestamp = getTimestamp();
     const syncBackupRoot = path.join(deployedBundleRoot, 'runtime', 'bundle-backups', timestamp);
@@ -673,41 +756,30 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
     };
 
     try {
-        const latestVersionPath = path.join(source.sourceRoot, 'VERSION');
         const effectiveDiagnosticSource = source.diagnosticSourceReference || source.sourceReference;
         const effectiveDiagnosticTool = source.diagnosticTool || source.sourceType || 'update-source';
-        if (!pathExists(latestVersionPath)) {
-            throw createLifecycleDiagnosticError({
-                message: `Latest VERSION file not found in update source '${effectiveDiagnosticSource}'.`,
-                tool: effectiveDiagnosticTool,
-                code: 'UPDATE_SOURCE_VERSION_MISSING',
-                sourceReference: effectiveDiagnosticSource,
-                detailText: latestVersionPath
-            });
-        }
-        const latestVersion = readTextFile(latestVersionPath).trim();
-        if (!latestVersion) {
-            throw createLifecycleDiagnosticError({
-                message: `Latest VERSION file is empty in update source '${effectiveDiagnosticSource}'.`,
-                tool: effectiveDiagnosticTool,
-                code: 'UPDATE_SOURCE_VERSION_EMPTY',
-                sourceReference: effectiveDiagnosticSource,
-                detailText: latestVersionPath
-            });
-        }
+        let latestVersion = readLatestSourceVersionOrThrow(source.sourceRoot, effectiveDiagnosticSource, effectiveDiagnosticTool);
         result.latestVersion = latestVersion;
 
-        const comparison = compareVersionStrings(currentVersion, latestVersion);
-        result.versionDiffDetected = comparison < 0;
-        if (comparison === 0 && source.sourceType === 'path') {
-            result.driftedSyncItems = detectSyncSurfaceDrift(source.sourceRoot, deployedBundleRoot);
-            result.contentDriftDetected = result.driftedSyncItems.length > 0;
-        }
-        result.updateAvailable = result.versionDiffDetected || result.contentDriftDetected;
-        result.checkUpdateResult = result.updateAvailable ? 'UPDATE_AVAILABLE' : 'UP_TO_DATE';
+        applyUpdateAvailabilitySnapshot(
+            result,
+            evaluateUpdateAvailability(currentVersion, latestVersion, source.sourceType, source.sourceRoot, deployedBundleRoot)
+        );
 
         if (result.updateAvailable && apply) {
             await withLifecycleOperationLockAsync(normalizedTarget, 'update', async () => {
+            currentVersion = readCurrentBundleVersionOrThrow(deployedBundleRoot);
+            latestVersion = readLatestSourceVersionOrThrow(source.sourceRoot, effectiveDiagnosticSource, effectiveDiagnosticTool);
+            result.latestVersion = latestVersion;
+            applyUpdateAvailabilitySnapshot(
+                result,
+                evaluateUpdateAvailability(currentVersion, latestVersion, source.sourceType, source.sourceRoot, deployedBundleRoot)
+            );
+
+            if (!result.updateAvailable) {
+                return;
+            }
+
             const syncPreexistingMap: Record<string, boolean> = {};
             const DEFERRED_VERSION_ITEM = 'VERSION';
 
