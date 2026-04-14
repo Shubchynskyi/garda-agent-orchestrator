@@ -353,7 +353,9 @@ export interface ReviewReceipt {
     review_type: string;
     preflight_sha256: string | null;
     scope_sha256: string | null;
+    code_scope_sha256?: string | null;
     review_context_sha256: string | null;
+    review_context_reuse_sha256?: string | null;
     review_artifact_sha256: string | null;
     reviewer_execution_mode: string | null;
     reviewer_identity: string | null;
@@ -366,6 +368,12 @@ export interface ReviewContextRoutingMetadataUpdate {
     actualExecutionMode: string | null;
     reviewerSessionId: string | null;
     fallbackReason: string | null;
+}
+
+export interface RestoreReviewerRoutingMetadataResult {
+    restored: boolean;
+    contextSha256: string | null;
+    reason: 'missing_context' | 'hash_mismatch' | null;
 }
 
 export const REVIEWER_EXECUTION_MODES = Object.freeze([
@@ -393,7 +401,9 @@ export function buildReviewReceipt(options: {
     reviewType: string;
     preflightSha256: string | null;
     scopeSha256: string | null;
+    codeScopeSha256?: string | null;
     reviewContextSha256: string | null;
+    reviewContextReuseSha256?: string | null;
     reviewArtifactSha256: string | null;
     reviewerExecutionMode?: string | null;
     reviewerIdentity?: string | null;
@@ -406,7 +416,9 @@ export function buildReviewReceipt(options: {
         review_type: options.reviewType,
         preflight_sha256: options.preflightSha256,
         scope_sha256: options.scopeSha256,
+        code_scope_sha256: options.codeScopeSha256 ?? null,
         review_context_sha256: options.reviewContextSha256,
+        review_context_reuse_sha256: options.reviewContextReuseSha256 ?? null,
         review_artifact_sha256: options.reviewArtifactSha256,
         reviewer_execution_mode: options.reviewerExecutionMode ?? null,
         reviewer_identity: options.reviewerIdentity ?? null,
@@ -420,12 +432,25 @@ export function applyReviewerRoutingMetadata(
     reviewContextPath: string,
     update: ReviewContextRoutingMetadataUpdate
 ): { updated: boolean; contextSha256: string | null } {
+    const restored = restoreReviewerRoutingMetadata(reviewContextPath, update);
+    return {
+        updated: restored.restored,
+        contextSha256: restored.contextSha256
+    };
+}
+
+export function restoreReviewerRoutingMetadata(
+    reviewContextPath: string,
+    update: ReviewContextRoutingMetadataUpdate,
+    expectedContextSha256: string | null = null
+): RestoreReviewerRoutingMetadataResult {
     if (!reviewContextPath || !fs.existsSync(reviewContextPath) || !fs.statSync(reviewContextPath).isFile()) {
-        return { updated: false, contextSha256: null };
+        return { restored: false, contextSha256: null, reason: 'missing_context' };
     }
+    const normalizedExpectedHash = String(expectedContextSha256 || '').trim().toLowerCase() || null;
     return withReviewArtifactLock(reviewContextPath, () => {
         if (!fs.existsSync(reviewContextPath) || !fs.statSync(reviewContextPath).isFile()) {
-            return { updated: false, contextSha256: null };
+            return { restored: false, contextSha256: null, reason: 'missing_context' as const };
         }
 
         const parsed = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
@@ -441,10 +466,20 @@ export function applyReviewerRoutingMetadata(
         };
 
         const serialized = JSON.stringify(parsed, null, 2) + '\n';
+        const contextSha256 = stringSha256(serialized);
+        if (normalizedExpectedHash && contextSha256 !== normalizedExpectedHash) {
+            return {
+                restored: false,
+                contextSha256,
+                reason: 'hash_mismatch' as const
+            };
+        }
+
         writeArtifactFileAtomically(reviewContextPath, serialized);
         return {
-            updated: true,
-            contextSha256: stringSha256(serialized)
+            restored: true,
+            contextSha256,
+            reason: null
         };
     }).result;
 }

@@ -14,6 +14,10 @@ import {
 import { writeReviewArtifactJson } from '../../gate-runtime/review-artifacts';
 import * as gateHelpers from '../../gates/helpers';
 import { normalizePath } from '../../gates/helpers';
+import {
+    computeCodeReviewScopeFingerprint,
+    computeReviewContextReuseHash
+} from '../../gates/review-reuse';
 import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
 import {
     runDocImpactGateCommand,
@@ -362,7 +366,11 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         reviewType,
         preflightSha256,
         scopeSha256: preflight.metrics?.changed_files_sha256 || null,
+        codeScopeSha256: reviewType === 'code'
+            ? computeCodeReviewScopeFingerprint(preflight as Record<string, unknown>, repoRoot).code_scope_sha256
+            : null,
         reviewContextSha256: contextSha256,
+        reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),
         reviewArtifactSha256: artifactSha256,
         reviewerExecutionMode,
         reviewerIdentity,
