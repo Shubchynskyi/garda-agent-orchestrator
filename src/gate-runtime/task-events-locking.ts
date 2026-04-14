@@ -7,9 +7,13 @@ import { redactHostname as redactHostnameValue, redactPath } from '../core/redac
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_LOCK_RETRY_MS = 25;
 const DEFAULT_LOCK_STALE_MS = 30 * 60 * 1000;
+const DEFAULT_LOCK_RELEASE_RETRY_MS = 25;
+const DEFAULT_LOCK_RELEASE_RETRIES = 8;
+const MAX_LOCK_RELEASE_RETRY_MS = 250;
 const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 const LOCK_METADATA_GRACE_MS = 2000;
+const TRANSIENT_LOCK_RELEASE_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
 
 export interface LockOptions {
     timeoutMs?: unknown;
@@ -112,6 +116,19 @@ function sleepMsAsync(milliseconds: number): Promise<void> {
 
 function getErrorMessage(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
+}
+
+function getErrorCode(error: unknown): string {
+    return error != null && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+}
+
+function sleepMsSync(milliseconds: number): void {
+    if (!milliseconds || milliseconds <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
 function writeLockMetadata(lockPath: string): void {
@@ -222,8 +239,58 @@ function isCurrentHostOwner(hostname: string | null): boolean | null {
     return ownerHost === normalizeHostname(os.hostname());
 }
 
+function isRetryableLockReleaseError(error: unknown): boolean {
+    return TRANSIENT_LOCK_RELEASE_ERROR_CODES.has(getErrorCode(error));
+}
+
+function getLockReleaseDelayMs(retryIndex: number): number {
+    const baseDelay = DEFAULT_LOCK_RELEASE_RETRY_MS * Math.pow(2, Math.max(0, retryIndex));
+    return Math.min(baseDelay, MAX_LOCK_RELEASE_RETRY_MS);
+}
+
+function formatLockReleaseDiagnostic(lockPath: string, kind: string, retries: number, elapsedMs: number, error: unknown): string {
+    const code = getErrorCode(error) || 'UNKNOWN';
+    return [
+        `kind=${kind}`,
+        `lock=${redactLockPath(lockPath)}`,
+        `retries=${retries}`,
+        `elapsed_ms=${elapsedMs}`,
+        `code=${code}`,
+        `message=${getErrorMessage(error)}`
+    ].join('; ');
+}
+
+export function removeLockPathWithRetry(lockPath: string, kind = 'filesystem_lock'): void {
+    let retries = 0;
+    const startedAt = Date.now();
+    while (true) {
+        try {
+            fs.rmSync(lockPath, { recursive: true, force: true });
+            if (retries > 0) {
+                process.stderr.write(
+                    `LOCK_RELEASE_RETRY_RESOLVED: kind=${kind}; lock=${redactLockPath(lockPath)}; retries=${retries}; elapsed_ms=${Date.now() - startedAt}\n`
+                );
+            }
+            return;
+        } catch (error: unknown) {
+            if (!isRetryableLockReleaseError(error) || retries >= DEFAULT_LOCK_RELEASE_RETRIES) {
+                const diagnostic = formatLockReleaseDiagnostic(lockPath, kind, retries, Date.now() - startedAt, error);
+                process.stderr.write(`WARNING: LOCK_RELEASE_FAILED: ${diagnostic}\n`);
+                throw new Error(`Failed to release lock after retry backoff: ${diagnostic}`);
+            }
+
+            retries += 1;
+            const delayMs = getLockReleaseDelayMs(retries - 1);
+            process.stderr.write(
+                `WARNING: LOCK_RELEASE_RETRY: ${formatLockReleaseDiagnostic(lockPath, kind, retries, Date.now() - startedAt, error)}; next_delay_ms=${delayMs}\n`
+            );
+            sleepMsSync(delayMs);
+        }
+    }
+}
+
 function removeLockPath(lockPath: string): void {
-    fs.rmSync(lockPath, { recursive: true, force: true });
+    removeLockPathWithRetry(lockPath, 'filesystem_lock');
 }
 
 function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
@@ -366,7 +433,7 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
             try {
                 writeLockMetadata(lockPath);
             } catch (metadataError: unknown) {
-                fs.rmSync(lockPath, { recursive: true, force: true });
+                removeLockPath(lockPath);
                 throw metadataError;
             }
             const elapsedMs = Date.now() - startedAt;
@@ -423,7 +490,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
             try {
                 writeLockMetadata(lockPath);
             } catch (metadataError: unknown) {
-                fs.rmSync(lockPath, { recursive: true, force: true });
+                removeLockPath(lockPath);
                 throw metadataError;
             }
             const elapsedMs = Date.now() - startedAt;

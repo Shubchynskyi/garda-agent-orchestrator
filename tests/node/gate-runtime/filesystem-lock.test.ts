@@ -312,6 +312,43 @@ test('releaseFilesystemLock is safe with empty lockPath', () => {
     assert.doesNotThrow(() => releaseFilesystemLock({ lockPath: '' }));
 });
 
+test('releaseFilesystemLock retries transient EPERM and removes lock directory', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-release-retry.lock');
+    const realFs = require('node:fs');
+    const originalRmSync = realFs.rmSync;
+    const originalStderrWrite = process.stderr.write;
+    let interceptedRetries = 0;
+    let stderrOutput = '';
+
+    try {
+        const { handle } = acquireFilesystemLock(lockPath);
+        realFs.rmSync = function (...args: unknown[]) {
+            const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+            if (targetPath === path.resolve(lockPath) && interceptedRetries < 2) {
+                interceptedRetries += 1;
+                const error = new Error('EPERM: simulated transient release contention') as NodeJS.ErrnoException;
+                error.code = 'EPERM';
+                throw error;
+            }
+            return originalRmSync.apply(realFs, args as [string, fs.RmOptions?]);
+        };
+        (process.stderr as unknown as { write: (...args: unknown[]) => boolean }).write = function (chunk: unknown): boolean {
+            stderrOutput += String(chunk);
+            return true;
+        };
+
+        assert.doesNotThrow(() => releaseFilesystemLock(handle));
+        assert.equal(interceptedRetries, 2, 'release path should retry transient contention');
+        assert.ok(!fs.existsSync(lockPath), 'lock directory should be removed after retry recovery');
+        assert.ok(stderrOutput.includes('LOCK_RELEASE_RETRY_RESOLVED'));
+    } finally {
+        realFs.rmSync = originalRmSync;
+        (process.stderr as unknown as { write: typeof process.stderr.write }).write = originalStderrWrite;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // scanTaskEventLocks
 // ---------------------------------------------------------------------------

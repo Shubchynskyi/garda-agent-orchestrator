@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { redactHostname as redactHostnameValue, redactPath } from '../core/redaction';
 import { resolveBundleName } from '../core/constants';
+import { removeLockPathWithRetry } from '../gate-runtime/task-events-locking';
 
 type JsonObject = Record<string, unknown>;
 
@@ -178,7 +179,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string): {
             } catch {
                 throw error;
             }
-            fs.rmSync(tempPath, { recursive: true, force: true });
+            removeLockPathWithRetry(tempPath, 'lifecycle_lock_stale_cleanup');
             fs.mkdirSync(lockPath);
             staleLockRecovered = true;
         } else {
@@ -197,7 +198,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string): {
     try {
         writeLifecycleOperationLockMetadata(lockPath, normalizedTarget, operation);
     } catch (error: unknown) {
-        fs.rmSync(lockPath, { recursive: true, force: true });
+        removeLockPathWithRetry(lockPath, 'lifecycle_lock_metadata_cleanup');
         throw error;
     }
 
@@ -213,7 +214,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string): {
             const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
             if (currentCount <= 1) {
                 ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
-                fs.rmSync(lockPath, { recursive: true, force: true });
+                removeLockPathWithRetry(lockPath, 'lifecycle_lock_release');
                 return;
             }
             ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);

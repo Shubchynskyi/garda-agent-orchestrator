@@ -430,6 +430,36 @@ test('withLifecycleOperationLock stale recovery does not leave .stale- temp dire
     }
 });
 
+test('withLifecycleOperationLock retries transient EBUSY during release and preserves callback result', () => {
+    const tmp = mkTmpDir();
+    const realFs = require('node:fs');
+    const originalRmSync = realFs.rmSync;
+    let interceptedRetries = 0;
+    try {
+        const result = withLifecycleOperationLock(tmp, 'release-retry', () => {
+            const lockPath = getLifecycleOperationLockPath(tmp);
+            realFs.rmSync = function (...args: unknown[]) {
+                const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+                if (targetPath === path.resolve(lockPath) && interceptedRetries < 2) {
+                    interceptedRetries += 1;
+                    const error = new Error('EBUSY: simulated transient lifecycle release contention') as NodeJS.ErrnoException;
+                    error.code = 'EBUSY';
+                    throw error;
+                }
+                return originalRmSync.apply(realFs, args as [string, fs.RmOptions?]);
+            };
+            return 'ok';
+        });
+
+        assert.equal(result, 'ok');
+        assert.equal(interceptedRetries, 2, 'lifecycle release should retry transient contention');
+        assert.ok(!fs.existsSync(getLifecycleOperationLockPath(tmp)), 'lock should be released after retry recovery');
+    } finally {
+        realFs.rmSync = originalRmSync;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // Lifecycle lock telemetry (getLastLifecycleLockTelemetry)
 // ---------------------------------------------------------------------------
