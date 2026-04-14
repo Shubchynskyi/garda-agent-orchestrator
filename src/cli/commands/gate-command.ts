@@ -10,6 +10,7 @@ import {
 import {
     handleRequiredReviewsCheck,
     handleDocImpactGate,
+    handleRecordReviewResult,
     handleRecordReviewRouting,
     handleRecordReviewReceipt
 } from './gate-review-handlers';
@@ -75,6 +76,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleRequiredReviewsCheck(gateArgv);
         case 'doc-impact-gate':
             return handleDocImpactGate(gateArgv);
+        case 'record-review-result':
+            return handleRecordReviewResult(gateArgv);
         case 'completion-gate':
             return handleCompletionGate(gateArgv);
         case 'record-review-routing':

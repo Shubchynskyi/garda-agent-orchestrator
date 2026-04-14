@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
+    extractReviewVerdictToken,
     compactMarkdownContent,
     getCompactReviewBudget,
     auditReviewArtifactCompaction,
@@ -358,4 +359,39 @@ test('buildReviewReceipt preserves explicit trust_level', () => {
     });
 
     assert.equal(receipt.trust_level, 'LOCAL_AUDITED');
+});
+
+test('extractReviewVerdictToken prefers verdict section tokens', () => {
+    const verdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Findings by Severity',
+        'none',
+        '',
+        '## Verdict',
+        'TEST REVIEW PASSED'
+    ].join('\n'), 'TEST REVIEW PASSED', 'TEST REVIEW FAILED');
+
+    assert.equal(verdict, 'TEST REVIEW PASSED');
+});
+
+test('extractReviewVerdictToken falls back to exact token lines outside verdict section', () => {
+    const verdict = extractReviewVerdictToken('# Review\nREVIEW FAILED\n', 'REVIEW PASSED', 'REVIEW FAILED');
+    assert.equal(verdict, 'REVIEW FAILED');
+});
+
+test('extractReviewVerdictToken accepts canonical bullet-form verdict lines', () => {
+    const verdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        '- `REVIEW PASSED`'
+    ].join('\n'), 'REVIEW PASSED', 'REVIEW FAILED');
+
+    assert.equal(verdict, 'REVIEW PASSED');
+});
+
+test('extractReviewVerdictToken returns null when no exact verdict token exists', () => {
+    const verdict = extractReviewVerdictToken('# Review\nVerdict pending.\n', 'REVIEW PASSED', 'REVIEW FAILED');
+    assert.equal(verdict, null);
 });

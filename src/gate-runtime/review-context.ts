@@ -393,6 +393,56 @@ export function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutio
         : null;
 }
 
+export function extractReviewVerdictToken(
+    content: unknown,
+    passVerdict: string | null,
+    failVerdict: string | null = null
+): string | null {
+    const normalizedPassVerdict = String(passVerdict || '').trim();
+    const normalizedFailVerdict = String(failVerdict || '').trim();
+    const reviewText = String(content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (!reviewText.trim()) {
+        return null;
+    }
+
+    const normalizeCandidateLine = (line: string): string => {
+        let normalized = line.trim();
+        normalized = normalized.replace(/^[-*+]\s+/, '');
+        if (/^`.+`$/.test(normalized)) {
+            normalized = normalized.slice(1, -1).trim();
+        }
+        return normalized;
+    };
+
+    const candidateLines = reviewText
+        .split('\n')
+        .map((line) => normalizeCandidateLine(line))
+        .filter((line) => line.length > 0);
+    const verdictHeadingIndex = candidateLines.findIndex((line) => /^##+\s+verdict$/i.test(line));
+    if (verdictHeadingIndex >= 0) {
+        for (let index = verdictHeadingIndex + 1; index < candidateLines.length; index += 1) {
+            const line = candidateLines[index];
+            if (normalizedPassVerdict && line === normalizedPassVerdict) {
+                return normalizedPassVerdict;
+            }
+            if (normalizedFailVerdict && line === normalizedFailVerdict) {
+                return normalizedFailVerdict;
+            }
+            if (/^##+\s+/.test(line)) {
+                break;
+            }
+        }
+    }
+
+    if (normalizedPassVerdict && candidateLines.some((line) => line === normalizedPassVerdict)) {
+        return normalizedPassVerdict;
+    }
+    if (normalizedFailVerdict && candidateLines.some((line) => line === normalizedFailVerdict)) {
+        return normalizedFailVerdict;
+    }
+    return null;
+}
+
 /**
  * Build a review receipt artifact.
  */
