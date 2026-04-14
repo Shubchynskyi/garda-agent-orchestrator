@@ -68,11 +68,11 @@ function getRuntimeCandidates(packageRoot: string): string[] {
     const publishRuntimeRoot = path.join(packageRoot, 'dist', 'src');
     const candidates: string[] = [];
 
-    if (hasRuntimeRoot(devBuildRuntimeRoot)) {
-        candidates.push(devBuildRuntimeRoot);
-    }
     if (hasRuntimeRoot(publishRuntimeRoot)) {
         candidates.push(publishRuntimeRoot);
+    }
+    if (hasRuntimeRoot(devBuildRuntimeRoot)) {
+        candidates.push(devBuildRuntimeRoot);
     }
 
     return candidates;

@@ -807,6 +807,18 @@ function normalizeUninstallBackupGitignoreLines(lines: string[]): string[] {
     return normalizedLines;
 }
 
+function normalizeGitignoreComparableEntry(entry: string | null | undefined): string | null {
+    if (!entry) {
+        return null;
+    }
+
+    const trimmed = entry.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+        return null;
+    }
+    return trimmed;
+}
+
 export function syncManagedGitignoreBlockInContent(
     content: string | null | undefined,
     entries: string[],
@@ -818,8 +830,10 @@ export function syncManagedGitignoreBlockInContent(
     const rawLines = normalizedContent.length > 0 ? normalizedContent.split('\n') : [];
     const lines = normalizeUninstallBackupGitignoreLines(rawLines);
     const cleanupEntrySet = new Set(getManagedGitignoreCleanupEntries(enableClaudeOrchestratorFullAccess));
-    const canonicalBlockLines = [GITIGNORE_MANAGED_COMMENT, ...[...new Set(entries)].sort()];
-    const canonicalEntrySet = new Set(canonicalBlockLines.slice(1));
+    const canonicalEntries = [...new Set(entries)].sort();
+    const canonicalComparableEntries = canonicalEntries
+        .map((entry) => ({ entry, normalized: normalizeGitignoreComparableEntry(entry) }))
+        .filter((item): item is { entry: string; normalized: string } => Boolean(item.normalized));
 
     let existingManagedEntries: string[] = [];
     const preservedLines: string[] = [];
@@ -841,8 +855,28 @@ export function syncManagedGitignoreBlockInContent(
         preservedLines.push(lines[i]);
     }
 
-    const existingManagedSet = new Set(existingManagedEntries);
-    const addedEntries = [...canonicalEntrySet].filter((entry) => !existingManagedSet.has(entry)).length;
+    const userOwnedComparableEntries = new Set<string>();
+    for (const line of preservedLines) {
+        const normalized = normalizeGitignoreComparableEntry(line);
+        if (normalized) {
+            userOwnedComparableEntries.add(normalized);
+        }
+    }
+
+    const managedEntries = canonicalComparableEntries
+        .filter((item) => !userOwnedComparableEntries.has(item.normalized))
+        .map((item) => item.entry);
+
+    const canonicalBlockLines = [GITIGNORE_MANAGED_COMMENT, ...managedEntries];
+    const existingManagedComparableEntries = new Set(
+        existingManagedEntries
+            .map((entry) => normalizeGitignoreComparableEntry(entry))
+            .filter((entry): entry is string => Boolean(entry))
+    );
+    const addedEntries = managedEntries.filter((entry) => {
+        const normalized = normalizeGitignoreComparableEntry(entry);
+        return normalized ? !existingManagedComparableEntries.has(normalized) : false;
+    }).length;
 
     let updatedLines: string[];
     if (insertionIndex >= 0) {

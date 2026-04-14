@@ -514,6 +514,38 @@ describe('managed gitignore block sync', () => {
         assert.ok(result.content.includes('node_modules/'));
     });
 
+    it('deduplicates by trimmed string only and keeps /TASK.md distinct from TASK.md', () => {
+        const content = [
+            'node_modules/',
+            '/TASK.md',
+            'garda-agent-orchestrator/',
+            '.claude/',
+            '# garda-agent-orchestrator managed ignores',
+            'TASK.md',
+            'AGENTS.md'
+        ].join('\n');
+        const result = syncManagedGitignoreBlockInContent(
+            content,
+            ['TASK.md', 'AGENTS.md', 'garda-agent-orchestrator/', '.claude/'],
+            false
+        );
+        const lines = result.content.split(/\r?\n/);
+        const managedStart = lines.indexOf('# garda-agent-orchestrator managed ignores');
+        assert.ok(managedStart >= 0);
+        const managedEntries: string[] = [];
+        for (let i = managedStart + 1; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line) {
+                break;
+            }
+            managedEntries.push(line);
+        }
+        assert.deepEqual(managedEntries, ['AGENTS.md', 'TASK.md']);
+        assert.ok(lines.includes('/TASK.md'));
+        assert.ok(lines.includes('garda-agent-orchestrator/'));
+        assert.ok(lines.includes('.claude/'));
+    });
+
     it('migrates legacy uninstall backup ignore entries outside managed block', () => {
         const content = [
             'node_modules/',
