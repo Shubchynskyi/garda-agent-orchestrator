@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { invalidateIndex as invalidateReviewsIndex } from '../gate-runtime/reviews-index';
 import { pruneAggregateLogLocked } from '../gate-runtime/task-events';
-import { readTimelineSummaryIndex, writeTimelineSummaryIndex } from '../gate-runtime/timeline-summary';
+import { pruneTimelineSummaryEntries } from '../gate-runtime/timeline-summary';
 import { validateTargetRoot } from './lifecycle-common';
 import { withLifecycleOperationLock } from './lifecycle-lock';
 import { applyStoragePolicy, loadStoragePolicy } from './cleanup-storage-policy';
@@ -245,28 +245,6 @@ function resolveActiveTaskIds(targetRoot: string, bundleRoot: string, explicitTa
     mergeRuntimeTaskIds(true);
 
     return activeTaskIds;
-}
-
-function pruneTimelineSummaryEntries(taskEventsDir: string): void {
-    const index = readTimelineSummaryIndex(taskEventsDir);
-    if (!index) return;
-
-    const taskIds = Object.keys(index.entries);
-    if (taskIds.length === 0) return;
-
-    let pruned = false;
-    for (const taskId of taskIds) {
-        const jsonlPath = path.join(taskEventsDir, `${taskId}.jsonl`);
-        if (!fs.existsSync(jsonlPath)) {
-            delete index.entries[taskId];
-            pruned = true;
-        }
-    }
-
-    if (pruned) {
-        index.updated_at_utc = new Date().toISOString();
-        writeTimelineSummaryIndex(taskEventsDir, index);
-    }
 }
 
 export function runCleanup(options: CleanupOptions): CleanupResult {

@@ -1,12 +1,15 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
     __setTimelineSummaryTestHooks,
+    getTimelineSummaryLockPath,
     getTimelineSummaryPath,
+    pruneTimelineSummaryEntries,
     readTimelineSummaryIndex,
     writeTimelineSummaryIndex,
     isTimelineSummaryEntryCurrent,
@@ -17,6 +20,10 @@ import {
     type TimelineSummaryIndex,
     type TimelineSummaryEntry
 } from '../../../src/gate-runtime/timeline-summary';
+import {
+    acquireFilesystemLock,
+    releaseFilesystemLock
+} from '../../../src/gate-runtime/task-events-locking';
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-summary-test-'));
@@ -24,6 +31,24 @@ function createTempDir(): string {
 
 function removeTempDir(dirPath: string): void {
     fs.rmSync(dirPath, { recursive: true, force: true });
+}
+
+function sleep(milliseconds: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function waitForChildExit(child: childProcess.ChildProcess): Promise<{ code: number | null; stderr: string }> {
+    return new Promise((resolve, reject) => {
+        let stderr = '';
+        child.stderr?.setEncoding('utf8');
+        child.stderr?.on('data', (chunk) => {
+            stderr += chunk;
+        });
+        child.once('error', reject);
+        child.once('exit', (code) => {
+            resolve({ code, stderr });
+        });
+    });
 }
 
 const ALL_MANDATORY_NON_CODE = [
@@ -345,6 +370,80 @@ describe('gate-runtime/timeline-summary', () => {
             assert.equal(index!.entries['T-001'].completeness_status, 'COMPLETE');
             assert.ok((index!.entries['T-001'].written_at_ms || 0) > 1);
             assert.equal(index!.entries['T-001'].events_missing.length, 0);
+        });
+
+        it('does not restore a stale entry when cleanup deletes the timeline before merge', () => {
+            writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            const timelinePath = path.join(eventsRoot, 'T-001.jsonl');
+            let cleanupSimulated = false;
+
+            updateTimelineSummaryForTask(eventsRoot, 'T-001', false);
+
+            try {
+                __setTimelineSummaryTestHooks({
+                    beforeMerge(root) {
+                        if (cleanupSimulated) return;
+                        cleanupSimulated = true;
+                        fs.unlinkSync(timelinePath);
+                        pruneTimelineSummaryEntries(root);
+                    }
+                });
+
+                updateTimelineSummaryForTask(eventsRoot, 'T-001', false);
+            } finally {
+                __setTimelineSummaryTestHooks(null);
+            }
+
+            assert.equal(cleanupSimulated, true);
+            const index = readTimelineSummaryIndex(eventsRoot);
+            assert.ok(!index?.entries['T-001']);
+        });
+
+        it('waits behind the summary lock before updating and still skips a deleted timeline', async () => {
+            writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            const timelinePath = path.join(eventsRoot, 'T-001.jsonl');
+            const lockPath = getTimelineSummaryLockPath(eventsRoot);
+            const modulePath = path.resolve(__dirname, '../../../src/gate-runtime/timeline-summary.js');
+            const { handle } = acquireFilesystemLock(lockPath, {
+                timeoutMs: 2_000,
+                retryMs: 10
+            });
+
+            try {
+                const child = childProcess.spawn(process.execPath, [
+                    '-e',
+                    [
+                        'const timelineSummary = require(process.argv[1]);',
+                        'timelineSummary.updateTimelineSummaryForTask(process.argv[2], process.argv[3], false);'
+                    ].join(' '),
+                    modulePath,
+                    eventsRoot,
+                    'T-001'
+                ], {
+                    cwd: tempDir,
+                    stdio: ['ignore', 'ignore', 'pipe'],
+                    windowsHide: true
+                });
+
+                await sleep(75);
+                assert.equal(child.exitCode, null, 'update must still be waiting on the held summary lock');
+                assert.equal(fs.existsSync(getTimelineSummaryPath(eventsRoot)), false,
+                    'summary must not be written while another holder owns the summary lock');
+
+                fs.unlinkSync(timelinePath);
+                releaseFilesystemLock(handle);
+
+                const { code, stderr } = await waitForChildExit(child);
+                assert.equal(code, 0, stderr || 'child update should complete successfully after lock release');
+
+                const index = readTimelineSummaryIndex(eventsRoot);
+                assert.ok(!index?.entries['T-001'],
+                    'deleted timeline must not be reintroduced after waiting on the summary lock');
+            } finally {
+                releaseFilesystemLock(handle);
+            }
         });
     });
 

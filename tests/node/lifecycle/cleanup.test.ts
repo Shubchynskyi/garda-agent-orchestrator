@@ -1064,6 +1064,53 @@ describe('runGc', () => {
         assert.equal(fs.readdirSync(backupsDir).length, 0, 'all backups removed');
     });
 
+    it('prunes stale timeline summary entries when gc removes task-event files', () => {
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        createTaskEventFile(eventsDir, 'T-001');
+        createTaskEventFile(eventsDir, 'T-002');
+
+        const summaryPath = path.join(eventsDir, '.timeline-summary.json');
+        const summaryIndex = {
+            version: 1,
+            updated_at_utc: new Date().toISOString(),
+            entries: {
+                'T-001': { task_id: 'T-001', file_size_bytes: 100, file_mtime_ms: 0,
+                    code_changed: false, completeness_status: 'COMPLETE',
+                    events_found: [], events_missing: [], completeness_violations: [],
+                    integrity_status: 'OK', events_scanned: 1,
+                    integrity_event_count: 1, integrity_violations: [] },
+                'T-002': { task_id: 'T-002', file_size_bytes: 100, file_mtime_ms: 0,
+                    code_changed: false, completeness_status: 'COMPLETE',
+                    events_found: [], events_missing: [], completeness_violations: [],
+                    integrity_status: 'OK', events_scanned: 1,
+                    integrity_event_count: 1, integrity_violations: [] }
+            }
+        };
+        fs.writeFileSync(summaryPath, JSON.stringify(summaryIndex, null, 2) + '\n', 'utf8');
+
+        const past = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+        fs.utimesSync(path.join(eventsDir, 'T-001.jsonl'), past, past);
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxTaskEvents: 1, maxAgeDays: 365 }
+        });
+
+        const removedNames = result.removed.map((item) => path.basename(item.path));
+        assert.ok(removedNames.includes('T-001.jsonl'), 'gc should remove the stale T-001 timeline');
+
+        assert.ok(fs.existsSync(summaryPath), 'timeline summary must remain after gc pruning');
+        const updated = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+        assert.ok(!updated.entries['T-001'],
+            'gc must prune stale T-001 entry from timeline summary after removing its JSONL');
+        assert.ok(updated.entries['T-002'],
+            'gc must preserve still-live T-002 summary entry');
+    });
+
     it('returns per-category summary with correct counts and bytes', () => {
         const backupsDir = path.join(runtimeDir, 'backups');
         const eventsDir = path.join(runtimeDir, 'task-events');

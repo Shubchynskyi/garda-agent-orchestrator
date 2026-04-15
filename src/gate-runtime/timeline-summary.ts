@@ -5,9 +5,14 @@ import {
     type TimelineCompletenessResult
 } from './lifecycle-events';
 import { inspectTaskEventFile } from './task-events';
+import { withFilesystemLock } from './task-events-locking';
 
 const SUMMARY_VERSION = 1;
 const SUMMARY_FILE_NAME = '.timeline-summary.json';
+const SUMMARY_LOCK_FILE_NAME = '.timeline-summary.lock';
+const DEFAULT_SUMMARY_LOCK_TIMEOUT_MS = 500;
+const DEFAULT_SUMMARY_LOCK_RETRY_MS = 25;
+const DEFAULT_SUMMARY_LOCK_STALE_MS = 30 * 1000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,6 +42,7 @@ export interface TimelineSummaryIndex {
 }
 
 interface TimelineSummaryTestHooks {
+    beforeMerge?: (eventsRoot: string, taskId: string, entry: TimelineSummaryEntry) => void;
     afterWrite?: (eventsRoot: string, taskId: string, entry: TimelineSummaryEntry, attempt: number) => void;
 }
 
@@ -80,6 +86,19 @@ export interface DoctorTimelineSummary {
 
 export function getTimelineSummaryPath(eventsRoot: string): string {
     return path.join(eventsRoot, SUMMARY_FILE_NAME);
+}
+
+export function getTimelineSummaryLockPath(eventsRoot: string): string {
+    return path.join(eventsRoot, SUMMARY_LOCK_FILE_NAME);
+}
+
+function withTimelineSummaryLock<T>(eventsRoot: string, callback: () => T): T {
+    const { result } = withFilesystemLock(getTimelineSummaryLockPath(eventsRoot), {
+        timeoutMs: DEFAULT_SUMMARY_LOCK_TIMEOUT_MS,
+        retryMs: DEFAULT_SUMMARY_LOCK_RETRY_MS,
+        staleMs: DEFAULT_SUMMARY_LOCK_STALE_MS
+    }, callback);
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,10 +203,9 @@ export function buildTimelineSummaryEntry(
 
 // ---------------------------------------------------------------------------
 // Write-side: update a single task entry in the aggregate summary.
-// Called after appendTaskEvent, best-effort. Not under any lock—
-// concurrent writers may race; a single optimistic retry resolves
-// the most common two-writer overlap, falling back to the stale entry
-// that readers already handle gracefully.
+// Called after appendTaskEvent, best-effort. Summary mutations are
+// serialized under a dedicated summary lock so append and cleanup do
+// not clobber each other.
 // ---------------------------------------------------------------------------
 
 export function updateTimelineSummaryForTask(
@@ -206,7 +224,18 @@ export function updateTimelineSummaryForTask(
     const entry = buildTimelineSummaryEntry(timelinePath, taskId, effectiveCodeChanged);
     if (!entry) return;
 
-    mergeEntryWithRetry(eventsRoot, taskId, entry);
+    timelineSummaryTestHooks?.beforeMerge?.(eventsRoot, taskId, entry);
+
+    try {
+        withTimelineSummaryLock(eventsRoot, () => {
+            if (!isTimelineSummaryEntryCurrent(entry, timelinePath)) {
+                return;
+            }
+            mergeEntryWithRetry(eventsRoot, taskId, entry);
+        });
+    } catch {
+        // Lock contention or transient filesystem issues are best-effort only.
+    }
 }
 
 const MAX_MERGE_ATTEMPTS = 2;
@@ -258,6 +287,36 @@ function mergeEntryWithRetry(
         // Entry was clobbered; retry with fresh state on next iteration
     }
     // Exhausted retries — best-effort contract: stale entry is acceptable
+}
+
+export function pruneTimelineSummaryEntries(eventsRoot: string): void {
+    if (!fs.existsSync(eventsRoot)) return;
+
+    try {
+        withTimelineSummaryLock(eventsRoot, () => {
+            const index = readTimelineSummaryIndex(eventsRoot);
+            if (!index) return;
+
+            const taskIds = Object.keys(index.entries);
+            if (taskIds.length === 0) return;
+
+            let pruned = false;
+            for (const taskId of taskIds) {
+                const jsonlPath = path.join(eventsRoot, `${taskId}.jsonl`);
+                if (!fs.existsSync(jsonlPath)) {
+                    delete index.entries[taskId];
+                    pruned = true;
+                }
+            }
+
+            if (pruned) {
+                index.updated_at_utc = new Date().toISOString();
+                writeTimelineSummaryIndex(eventsRoot, index);
+            }
+        });
+    } catch {
+        // Cleanup-time summary pruning is also best-effort.
+    }
 }
 
 // ---------------------------------------------------------------------------
