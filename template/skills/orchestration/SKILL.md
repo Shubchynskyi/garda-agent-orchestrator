@@ -217,8 +217,11 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
         - `reviewer_execution_mode` used for this review (`delegated_subagent` or `same_agent_fallback`);
         - when verdict is pass, keep active `Findings by Severity` and `Residual Risks` empty (`none`); move any accepted non-blocking follow-up to `Deferred Findings` and include `Justification:` in each deferred entry;
         - review artifact write path: `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
-   3. Parse verdict token from reviewer output.
-   4. If verdict is failed, or a PASS artifact still leaves active findings/residual risks without justified deferral, fix or explicitly defer the finding and rerun the same reviewer until the final artifact is clean.
+   3. Feed reviewer output into `record-review-result` using exactly one source: `--review-output-path` or `--review-output-stdin`.
+      - `--review-output-stdin` is only a transport convenience. The gate must still persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md` before verdict extraction and receipt materialization.
+      - Do not introduce a lighter validation branch for stdin. Verdict, routing, receipt, and telemetry checks must be identical to file-based ingest.
+   4. Parse verdict token from the persisted reviewer output artifact.
+   5. If verdict is failed, or a PASS artifact still leaves active findings/residual risks without justified deferral, fix or explicitly defer the finding and rerun the same reviewer until the final artifact is clean.
 - Reviewer mapping contract:
   - `required_reviews.code=true` => skill `garda-agent-orchestrator/live/skills/code-review/SKILL.md` => pass token `REVIEW PASSED` => gate parameter `-CodeReviewVerdict`
   - `required_reviews.db=true` => skill `garda-agent-orchestrator/live/skills/db-review/SKILL.md` => pass token `DB REVIEW PASSED` => gate parameter `-DbReviewVerdict`

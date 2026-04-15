@@ -94,6 +94,13 @@ interface ReviewArtifactRollbackState {
     content: string | null;
 }
 
+interface ResolvedReviewOutputInput {
+    reviewContent: string;
+    reviewOutputPath: string;
+    reviewOutputMode: 'path' | 'stdin';
+    reviewOutputSourcePath: string | null;
+}
+
 function resolveCanonicalReviewPaths(
     repoRoot: string,
     taskId: string,
@@ -180,6 +187,71 @@ function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequiredMessage
         reviewerExecutionMode,
         reviewerIdentity,
         reviewerFallbackReason
+    };
+}
+
+function getCanonicalReviewOutputArtifactPath(reviewsRoot: string, taskId: string, reviewType: string): string {
+    return path.join(reviewsRoot, `${taskId}-${reviewType}-review-output.md`);
+}
+
+export let readReviewOutputFromStdin = async (): Promise<string> => {
+    if (!process.stdin || process.stdin.isTTY) {
+        throw new Error('ReviewOutputStdin requires piped stdin input.');
+    }
+    process.stdin.setEncoding('utf8');
+    let content = '';
+    for await (const chunk of process.stdin) {
+        content += String(chunk);
+    }
+    return content;
+};
+
+async function resolveReviewOutputInput(
+    options: ParsedOptionsRecord,
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    reviewType: string
+): Promise<ResolvedReviewOutputInput> {
+    const useReviewOutputStdin = options.reviewOutputStdin === true;
+    const rawReviewOutputPath = String(options.reviewOutputPath || '').trim();
+    const hasReviewOutputPath = rawReviewOutputPath.length > 0;
+    if (useReviewOutputStdin === hasReviewOutputPath) {
+        throw new Error(
+            "Review output requires exactly one input source. Provide either '--review-output-path' or '--review-output-stdin'."
+        );
+    }
+
+    const reviewOutputArtifactPath = getCanonicalReviewOutputArtifactPath(reviewsRoot, taskId, reviewType);
+    let reviewContent = '';
+    let reviewOutputSourcePath: string | null = null;
+    if (useReviewOutputStdin) {
+        reviewContent = await readReviewOutputFromStdin();
+    } else {
+        const resolvedReviewOutputPath = gateHelpers.resolvePathInsideRepo(rawReviewOutputPath, repoRoot, { allowMissing: true });
+        if (!resolvedReviewOutputPath) {
+            throw new Error('ReviewOutputPath is required.');
+        }
+        if (!fs.existsSync(resolvedReviewOutputPath) || !fs.statSync(resolvedReviewOutputPath).isFile()) {
+            throw new Error(`Review output not found: ${normalizePath(resolvedReviewOutputPath)}.`);
+        }
+        reviewOutputSourcePath = resolvedReviewOutputPath;
+        reviewContent = fs.readFileSync(resolvedReviewOutputPath, 'utf8');
+    }
+
+    // Persist raw reviewer input before verdict extraction so direct ingest cannot bypass the audited file path.
+    writeReviewArtifactText(reviewOutputArtifactPath, reviewContent);
+    if (!reviewContent.trim()) {
+        throw new Error(`Review output is empty: ${normalizePath(reviewOutputArtifactPath)}.`);
+    }
+
+    return {
+        reviewContent,
+        reviewOutputPath: reviewOutputArtifactPath,
+        reviewOutputMode: useReviewOutputStdin ? 'stdin' : 'path',
+        reviewOutputSourcePath: reviewOutputSourcePath && normalizePath(reviewOutputSourcePath) !== normalizePath(reviewOutputArtifactPath)
+            ? reviewOutputSourcePath
+            : null
     };
 }
 
@@ -604,6 +676,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         '--review-type': { key: 'reviewType', type: 'string' },
         '--preflight-path': { key: 'preflightPath', type: 'string' },
         '--review-output-path': { key: 'reviewOutputPath', type: 'string' },
+        '--review-output-stdin': { key: 'reviewOutputStdin', type: 'boolean' },
         '--review-context-path': { key: 'reviewContextPath', type: 'string' },
         '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
         '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
@@ -625,17 +698,8 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         options.preflightPath,
         options.reviewContextPath
     );
-    const reviewOutputPath = gateHelpers.resolvePathInsideRepo(String(options.reviewOutputPath || ''), repoRoot, { allowMissing: true });
-    if (!reviewOutputPath) {
-        throw new Error('ReviewOutputPath is required.');
-    }
-    if (!fs.existsSync(reviewOutputPath) || !fs.statSync(reviewOutputPath).isFile()) {
-        throw new Error(`Review output not found: ${normalizePath(reviewOutputPath)}.`);
-    }
-    const reviewContent = fs.readFileSync(reviewOutputPath, 'utf8');
-    if (!reviewContent.trim()) {
-        throw new Error(`Review output is empty: ${normalizePath(reviewOutputPath)}.`);
-    }
+    const reviewOutput = await resolveReviewOutputInput(options, repoRoot, path.dirname(preflightPath), taskId, reviewType);
+    const reviewContent = reviewOutput.reviewContent;
     const expectedPassVerdict = REVIEW_CONTRACTS.find(([candidate]) => candidate === reviewType)?.[1] || null;
     if (!expectedPassVerdict) {
         throw new Error(`Unsupported review type '${reviewType}' for record-review-result.`);
@@ -752,7 +816,11 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
     console.log(`ReceiptPath: ${normalizePath(receiptPath)}`);
     console.log(`ReviewerExecutionMode: ${reviewerExecutionMode}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
-    console.log(`ReviewOutputPath: ${normalizePath(reviewOutputPath)}`);
+    console.log(`ReviewOutputMode: ${reviewOutput.reviewOutputMode}`);
+    console.log(`ReviewOutputPath: ${normalizePath(reviewOutput.reviewOutputPath)}`);
+    if (reviewOutput.reviewOutputSourcePath) {
+        console.log(`ReviewOutputSourcePath: ${normalizePath(reviewOutput.reviewOutputSourcePath)}`);
+    }
     console.log(`ContextSha256: ${routingUpdate.contextSha256 || 'n/a'}`);
     if (reviewerFallbackReason) {
         console.log(`ReviewerFallbackReason: ${reviewerFallbackReason}`);
