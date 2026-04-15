@@ -29,7 +29,7 @@ function resolveBlockingEvent(eventTypes: Set<string>): string | null {
     return null;
 }
 
-interface TimelineEntry {
+export interface ReviewLifecycleTimelineEntry {
     event_type: string;
     sequence: number;
 }
@@ -41,8 +41,8 @@ const REVIEW_RESET_EVENTS = new Set([
     'REVIEW_PHASE_STARTED'
 ]);
 
-function collectTimelineEntries(timelinePath: string, errors: string[]): TimelineEntry[] {
-    const entries: TimelineEntry[] = [];
+function collectTimelineEntries(timelinePath: string, errors: string[]): ReviewLifecycleTimelineEntry[] {
+    const entries: ReviewLifecycleTimelineEntry[] = [];
     const lines = fs.readFileSync(timelinePath, 'utf8')
         .split('\n')
         .filter((line) => line.trim().length > 0);
@@ -65,7 +65,7 @@ function collectTimelineEntries(timelinePath: string, errors: string[]): Timelin
     return entries;
 }
 
-function getLatestBlockingEntry(entries: readonly TimelineEntry[]): TimelineEntry | null {
+function getLatestBlockingEntry(entries: readonly ReviewLifecycleTimelineEntry[]): ReviewLifecycleTimelineEntry | null {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index];
         if (
@@ -79,7 +79,7 @@ function getLatestBlockingEntry(entries: readonly TimelineEntry[]): TimelineEntr
     return null;
 }
 
-function hasRecoveryAttemptAfterBlocking(entries: readonly TimelineEntry[], blockingSequence: number): boolean {
+function hasRecoveryAttemptAfterBlocking(entries: readonly ReviewLifecycleTimelineEntry[], blockingSequence: number): boolean {
     return entries.some((entry) => REVIEW_RESET_EVENTS.has(entry.event_type) && entry.sequence > blockingSequence);
 }
 
@@ -104,14 +104,14 @@ function buildBlockedMessage(
     );
 }
 
-export function getReviewLifecycleGuard(
-    repoRoot: string,
-    taskId: string,
+export function getReviewLifecycleGuardFromEntries(
+    timelinePath: string,
+    timelineEntries: readonly ReviewLifecycleTimelineEntry[],
+    hasTimelineErrors: boolean,
     actionLabel: string,
     actionType: ReviewLifecycleActionType
 ): ReviewLifecycleGuardResult {
-    const timelinePath = resolveTimelinePath(repoRoot, taskId);
-    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
+    if (timelineEntries.length === 0 && !hasTimelineErrors) {
         return {
             status: 'ALLOW',
             timeline_path: normalizePath(timelinePath),
@@ -119,10 +119,7 @@ export function getReviewLifecycleGuard(
             violations: []
         };
     }
-
-    const timelineErrors: string[] = [];
-    const timelineEntries = collectTimelineEntries(timelinePath, timelineErrors);
-    if (timelineErrors.length > 0) {
+    if (hasTimelineErrors) {
         return {
             status: 'BLOCK',
             timeline_path: normalizePath(timelinePath),
@@ -159,6 +156,52 @@ export function getReviewLifecycleGuard(
         blocking_event: blockingEvent,
         violations: [buildBlockedMessage(timelinePath, blockingEvent, actionLabel, actionType)]
     };
+}
+
+export function getReviewLifecycleGuard(
+    repoRoot: string,
+    taskId: string,
+    actionLabel: string,
+    actionType: ReviewLifecycleActionType
+): ReviewLifecycleGuardResult {
+    const timelinePath = resolveTimelinePath(repoRoot, taskId);
+    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
+        return {
+            status: 'ALLOW',
+            timeline_path: normalizePath(timelinePath),
+            blocking_event: null,
+            violations: []
+        };
+    }
+
+    const timelineErrors: string[] = [];
+    const timelineEntries = collectTimelineEntries(timelinePath, timelineErrors);
+    return getReviewLifecycleGuardFromEntries(
+        timelinePath,
+        timelineEntries,
+        timelineErrors.length > 0,
+        actionLabel,
+        actionType
+    );
+}
+
+export function assertReviewLifecycleGuardFromEntries(
+    timelinePath: string,
+    timelineEntries: readonly ReviewLifecycleTimelineEntry[],
+    hasTimelineErrors: boolean,
+    actionLabel: string,
+    actionType: ReviewLifecycleActionType
+): void {
+    const result = getReviewLifecycleGuardFromEntries(
+        timelinePath,
+        timelineEntries,
+        hasTimelineErrors,
+        actionLabel,
+        actionType
+    );
+    if (result.status === 'BLOCK') {
+        throw new Error(result.violations[0]);
+    }
 }
 
 export function assertReviewLifecycleGuard(

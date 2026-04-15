@@ -90,13 +90,18 @@ REVIEW PASSED
             fs.writeFileSync(artifactPath, content);
             let reviewContextHash: string | null = null;
             if (contextOverride !== null) {
+                const inferredReviewType = String(baseName.split('-').pop() || '').trim().toLowerCase() || 'code';
                 const reviewContext = contextOverride || {
+                    review_type: inferredReviewType,
                     reviewer_routing: {
                         source_of_truth: 'Codex',
                         actual_execution_mode: 'delegated_subagent',
                         reviewer_session_id: 'agent:reviewer-1'
                     }
                 };
+                if (!Object.prototype.hasOwnProperty.call(reviewContext, 'review_type')) {
+                    (reviewContext as Record<string, unknown>).review_type = inferredReviewType;
+                }
                 const serializedContext = JSON.stringify(reviewContext, null, 2);
                 fs.writeFileSync(reviewContextPath, serializedContext);
                 reviewContextHash = crypto.createHash('sha256').update(serializedContext).digest('hex');

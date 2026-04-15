@@ -10,6 +10,7 @@ import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getReviewArtifactFindingsEvidence, isTrivialReview } from './completion';
 import { fileSha256, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
+import { getReviewContextContractViolations } from './review-context-contract';
 import { normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { resolveBundleName } from '../core/constants';
 
@@ -131,7 +132,248 @@ interface ReviewArtifactEntry {
     path: string;
     content: string;
     reviewContext?: Record<string, unknown>;
+    reviewContextPath?: string | null;
     reviewContextSha256?: string | null;
+    artifactSha256?: string | null;
+    receipt?: ReviewReceipt | null;
+}
+
+export interface ReviewArtifactGateEligibilityResult {
+    compactionAudit: ReturnType<typeof auditReviewArtifactCompaction> | null;
+    receiptValid: boolean;
+    reviewerExecutionMode: string | null;
+    reviewerIdentity: string | null;
+    reviewerFallbackReason: string | null;
+    trustLevel: string | null;
+    reviewerRoutingPolicy: Record<string, unknown> | null;
+    trivialReview: boolean;
+    findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null;
+    violations: string[];
+}
+
+export function validateReviewArtifactGateEligibility(options: {
+    resolvedTaskId: string | null;
+    reviewKey: string;
+    required: boolean;
+    skippedByOverride: boolean;
+    reviewArtifact: ReviewArtifactEntry;
+    preflightPath?: string | null;
+    preflightSha256?: string | null;
+    sourceOfTruth?: string | null;
+}): ReviewArtifactGateEligibilityResult {
+    const { resolvedTaskId, reviewKey, required, skippedByOverride, reviewArtifact } = options;
+    const errors: string[] = [];
+    const artifactPath = reviewArtifact.path;
+    const artifactContent = reviewArtifact.content;
+    const reviewContext = reviewArtifact.reviewContext;
+    const routingMetadata = toPlainRecord(reviewContext?.reviewer_routing);
+    const contextExecutionMode = normalizeReviewerExecutionMode(routingMetadata?.actual_execution_mode);
+    const contextReviewerSessionId = typeof routingMetadata?.reviewer_session_id === 'string'
+        ? String(routingMetadata.reviewer_session_id).trim()
+        : '';
+    const contextFallbackReason = typeof routingMetadata?.fallback_reason === 'string'
+        ? String(routingMetadata.fallback_reason).trim()
+        : '';
+    const canonicalSourceOfTruth = normalizeSourceOfTruthValue(options.sourceOfTruth);
+    const routingSourceOfTruth = canonicalSourceOfTruth ?? normalizeSourceOfTruthValue(routingMetadata?.source_of_truth);
+    const routingPolicy = resolveReviewerRoutingPolicy(routingSourceOfTruth);
+    const routingPolicySummary = {
+        source_of_truth: routingPolicy.source_of_truth,
+        capability_level: routingPolicy.capability_level,
+        delegation_required: routingPolicy.delegation_required,
+        expected_execution_mode: routingPolicy.expected_execution_mode,
+        fallback_allowed: routingPolicy.fallback_allowed,
+        fallback_reason_required: routingPolicy.fallback_reason_required
+    };
+    let compactionAudit: ReturnType<typeof auditReviewArtifactCompaction> | null = null;
+    let receiptValid = false;
+    let reviewerExecutionMode: string | null = null;
+    let reviewerIdentity: string | null = null;
+    let reviewerFallbackReason: string | null = null;
+    let trustLevel: string | null = null;
+    let trivialReview = false;
+    let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
+
+    if (artifactPath && artifactContent) {
+        const canonicalPreferredContextPath = artifactPath.replace(/\.md$/, '-review-context.json');
+        const canonicalFallbackContextPath = artifactPath.replace(/\.md$/, '-context.json');
+        const normalizedReviewContextPath = reviewArtifact.reviewContextPath
+            ? normalizePath(reviewArtifact.reviewContextPath)
+            : null;
+        const requireStrictBindingMetadata = normalizedReviewContextPath != null
+            && normalizedReviewContextPath !== normalizePath(canonicalPreferredContextPath)
+            && normalizedReviewContextPath !== normalizePath(canonicalFallbackContextPath);
+        compactionAudit = auditReviewArtifactCompaction({
+            artifactPath,
+            content: artifactContent,
+            reviewContext
+        });
+        if (required && !skippedByOverride) {
+            trivialReview = isTrivialReview(artifactContent);
+            if (trivialReview) {
+                errors.push(
+                    `Review artifact '${normalizePath(artifactPath)}' is trivial or obviously synthetic. ` +
+                    'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
+                );
+            }
+            findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
+            errors.push(...findingsEvidence.violations);
+        }
+        if (required && !skippedByOverride) {
+            if (!reviewContext) {
+                errors.push(`Required review '${reviewKey}' is missing a valid review-context artifact.`);
+            }
+            errors.push(...getReviewContextContractViolations({
+                contextPath: reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json'),
+                reviewContext: reviewContext || null,
+                expectedTaskId: resolvedTaskId,
+                expectedReviewType: reviewKey,
+                expectedPreflightPath: options.preflightPath,
+                expectedPreflightSha256: options.preflightSha256,
+                requireReviewType: true,
+                requireTaskId: requireStrictBindingMetadata,
+                requirePreflightPath: requireStrictBindingMetadata,
+                requirePreflightSha256: requireStrictBindingMetadata
+            }));
+            if (routingMetadata?.actual_execution_mode && !contextExecutionMode) {
+                errors.push(
+                    `Review '${reviewKey}' review-context has invalid reviewer_routing.actual_execution_mode ` +
+                    `('${String(routingMetadata.actual_execution_mode)}').`
+                );
+            }
+            if (canonicalSourceOfTruth && routingMetadata?.source_of_truth) {
+                const artifactSourceOfTruth = normalizeSourceOfTruthValue(routingMetadata.source_of_truth);
+                if (artifactSourceOfTruth && artifactSourceOfTruth !== canonicalSourceOfTruth) {
+                    errors.push(
+                        `Review '${reviewKey}' review-context source_of_truth (${artifactSourceOfTruth}) does not match canonical provider (${canonicalSourceOfTruth}).`
+                    );
+                }
+            }
+        }
+
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        if (reviewArtifact.receipt || fs.existsSync(receiptPath)) {
+            try {
+                const receipt = reviewArtifact.receipt ?? JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
+                const currentArtifactHash = reviewArtifact.artifactSha256 ?? fileSha256(artifactPath);
+                if (receipt.task_id !== resolvedTaskId) {
+                    errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
+                } else if (receipt.review_type !== reviewKey) {
+                    errors.push(`Review receipt for '${reviewKey}' has mismatched review type: ${receipt.review_type}.`);
+                } else if (receipt.review_artifact_sha256 !== currentArtifactHash) {
+                    errors.push(`Review artifact hash mismatch for '${reviewKey}'. Artifact was modified after receipt was issued.`);
+                } else if (required && !skippedByOverride && !reviewArtifact.reviewContextSha256) {
+                    errors.push(`Required review '${reviewKey}' is missing a verifiable review-context hash.`);
+                } else if (required && !skippedByOverride && !receipt.review_context_sha256) {
+                    errors.push(`Review receipt for '${reviewKey}' is missing review_context_sha256.`);
+                } else if (reviewArtifact.reviewContextSha256 && receipt.review_context_sha256 !== reviewArtifact.reviewContextSha256) {
+                    errors.push(`Review context hash mismatch for '${reviewKey}'. Review-context artifact was modified after receipt was issued.`);
+                } else {
+                    receiptValid = true;
+                }
+                if (receipt.reviewer_execution_mode) {
+                    reviewerExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
+                    if (!reviewerExecutionMode) {
+                        errors.push(
+                            `Review receipt for '${reviewKey}' has invalid reviewer_execution_mode ` +
+                            `('${String(receipt.reviewer_execution_mode)}').`
+                        );
+                    }
+                }
+                if (receipt.reviewer_identity) {
+                    reviewerIdentity = String(receipt.reviewer_identity);
+                }
+                if (receipt.reviewer_fallback_reason) {
+                    reviewerFallbackReason = String(receipt.reviewer_fallback_reason);
+                }
+                if (receipt.trust_level) {
+                    trustLevel = String(receipt.trust_level);
+                }
+            } catch {
+                errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
+            }
+        } else if (required && !skippedByOverride) {
+            errors.push(`Verifiable review receipt missing for '${reviewKey}': ${normalizePath(receiptPath)}. Run 'gate record-review-receipt' to fix.`);
+        }
+
+        if (required && !skippedByOverride && receiptValid) {
+            if (!reviewerExecutionMode) {
+                errors.push(`Review receipt for '${reviewKey}' is missing reviewer_execution_mode.`);
+            }
+            if (!reviewerIdentity) {
+                errors.push(`Review receipt for '${reviewKey}' is missing reviewer_identity.`);
+            }
+            if (!contextExecutionMode) {
+                errors.push(`Review '${reviewKey}' is missing reviewer_routing.actual_execution_mode in review-context.`);
+            }
+            if (!contextReviewerSessionId) {
+                errors.push(`Review '${reviewKey}' is missing reviewer_routing.reviewer_session_id in review-context.`);
+            }
+            if (reviewerExecutionMode && contextExecutionMode && reviewerExecutionMode !== contextExecutionMode) {
+                errors.push(
+                    `Review '${reviewKey}' has inconsistent execution mode between receipt (${reviewerExecutionMode}) ` +
+                    `and review-context (${contextExecutionMode}).`
+                );
+            }
+            if (reviewerIdentity && contextReviewerSessionId && reviewerIdentity !== contextReviewerSessionId) {
+                errors.push(
+                    `Review '${reviewKey}' has inconsistent reviewer identity between receipt (${reviewerIdentity}) ` +
+                    `and review-context (${contextReviewerSessionId}).`
+                );
+            }
+            if (reviewerFallbackReason && contextFallbackReason && reviewerFallbackReason !== contextFallbackReason) {
+                errors.push(`Review '${reviewKey}' has inconsistent fallback reason between receipt and review-context.`);
+            }
+            if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && reviewerIdentity.startsWith('self:')) {
+                errors.push(`Review '${reviewKey}' claims delegated_subagent execution but reviewer_identity is self-scoped (${reviewerIdentity}).`);
+            } else if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && !reviewerIdentity.startsWith('agent:')) {
+                errors.push(`Review '${reviewKey}' claims delegated_subagent execution but reviewer_identity must be agent-scoped (expected prefix 'agent:').`);
+            }
+            if (contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && contextReviewerSessionId.startsWith('self:')) {
+                errors.push(`Review '${reviewKey}' review-context claims delegated_subagent execution but reviewer_session_id is self-scoped (${contextReviewerSessionId}).`);
+            } else if (contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && !contextReviewerSessionId.startsWith('agent:')) {
+                errors.push(`Review '${reviewKey}' review-context claims delegated_subagent execution but reviewer_session_id must be agent-scoped (expected prefix 'agent:').`);
+            }
+            if (contextExecutionMode === 'same_agent_fallback' && contextReviewerSessionId && !contextReviewerSessionId.startsWith('self:')) {
+                errors.push(`Review '${reviewKey}' review-context claims same_agent_fallback but reviewer_session_id must be self-scoped (expected prefix 'self:').`);
+            }
+            if (routingPolicy.delegation_required && reviewerExecutionMode !== 'delegated_subagent') {
+                errors.push(
+                    `Review '${reviewKey}' must use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
+                    'Same-agent self-review is invalid on delegation-capable providers.'
+                );
+            }
+            if (routingPolicy.capability_level === 'single_agent_only' && reviewerExecutionMode === 'delegated_subagent') {
+                errors.push(
+                    `Review '${reviewKey}' cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
+                    'Explicit same_agent_fallback evidence is required on single-agent providers.'
+                );
+            }
+            if (reviewerExecutionMode === 'same_agent_fallback') {
+                if (!routingPolicy.fallback_allowed) {
+                    errors.push(`Review '${reviewKey}' used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}', but fallback is not allowed.`);
+                }
+                if (routingPolicy.fallback_reason_required && !String(reviewerFallbackReason || '').trim()) {
+                    errors.push(`Review '${reviewKey}' used same_agent_fallback without reviewer_fallback_reason.`);
+                }
+            }
+        }
+    } else if (required && !skippedByOverride) {
+        errors.push(`Review artifact missing for '${reviewKey}'.`);
+    }
+
+    return {
+        compactionAudit,
+        receiptValid,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewerFallbackReason,
+        trustLevel,
+        reviewerRoutingPolicy: routingPolicySummary,
+        trivialReview,
+        findingsEvidence,
+        violations: errors
+    };
 }
 export interface CheckRequiredReviewsOptions {
     validatedPreflight: {
@@ -188,179 +430,26 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         let trivialReview = false;
         let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
         if (reviewArtifacts[reviewKey]) {
-            const artifactPath = reviewArtifacts[reviewKey].path;
-            const artifactContent = reviewArtifacts[reviewKey].content;
-            const reviewContext = reviewArtifacts[reviewKey].reviewContext;
-            const routingMetadata = toPlainRecord(reviewContext?.reviewer_routing);
-            const contextExecutionMode = normalizeReviewerExecutionMode(routingMetadata?.actual_execution_mode);
-            const contextReviewerSessionId = typeof routingMetadata?.reviewer_session_id === 'string'
-                ? String(routingMetadata.reviewer_session_id).trim()
-                : '';
-            const contextFallbackReason = typeof routingMetadata?.fallback_reason === 'string'
-                ? String(routingMetadata.fallback_reason).trim()
-                : '';
-            const canonicalSourceOfTruth = normalizeSourceOfTruthValue(options.sourceOfTruth);
-            const routingSourceOfTruth = canonicalSourceOfTruth ?? normalizeSourceOfTruthValue(routingMetadata?.source_of_truth);
-            const routingPolicy = resolveReviewerRoutingPolicy(routingSourceOfTruth);
-            routingPolicySummary = {
-                source_of_truth: routingPolicy.source_of_truth,
-                capability_level: routingPolicy.capability_level,
-                delegation_required: routingPolicy.delegation_required,
-                expected_execution_mode: routingPolicy.expected_execution_mode,
-                fallback_allowed: routingPolicy.fallback_allowed,
-                fallback_reason_required: routingPolicy.fallback_reason_required
-            };
-            if (artifactPath && artifactContent) {
-                compactionAudit = auditReviewArtifactCompaction({
-                    artifactPath,
-                    content: artifactContent,
-                    reviewContext
-                });
-                if (required && !skippedByOverride) {
-                    trivialReview = isTrivialReview(artifactContent);
-                    if (trivialReview) {
-                        errors.push(
-                            `Review artifact '${normalizePath(artifactPath)}' is trivial or obviously synthetic. ` +
-                            'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
-                        );
-                    }
-                    findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
-                    errors.push(...findingsEvidence.violations);
-                }
-                if (required && !skippedByOverride) {
-                    if (!reviewContext) {
-                        errors.push(`Required review '${reviewKey}' is missing a valid review-context artifact.`);
-                    }
-                    if (routingMetadata?.actual_execution_mode && !contextExecutionMode) {
-                        errors.push(
-                            `Review '${reviewKey}' review-context has invalid reviewer_routing.actual_execution_mode ` +
-                            `('${String(routingMetadata.actual_execution_mode)}').`
-                        );
-                    }
-                    if (canonicalSourceOfTruth && routingMetadata?.source_of_truth) {
-                        const artifactSourceOfTruth = normalizeSourceOfTruthValue(routingMetadata.source_of_truth);
-                        if (artifactSourceOfTruth && artifactSourceOfTruth !== canonicalSourceOfTruth) {
-                            errors.push(
-                                `Review '${reviewKey}' review-context source_of_truth (${artifactSourceOfTruth}) does not match canonical provider (${canonicalSourceOfTruth}).`
-                            );
-                        }
-                    }
-                }
-
-                // Authenticity hardening: check for machine-verifiable receipt.
-                const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-                if (fs.existsSync(receiptPath)) {
-                    try {
-                        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
-                        const currentArtifactHash = fileSha256(artifactPath);
-                        if (receipt.task_id !== resolvedTaskId) {
-                            errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
-                        } else if (receipt.review_type !== reviewKey) {
-                            errors.push(`Review receipt for '${reviewKey}' has mismatched review type: ${receipt.review_type}.`);
-                        } else if (receipt.review_artifact_sha256 !== currentArtifactHash) {
-                            errors.push(`Review artifact hash mismatch for '${reviewKey}'. Artifact was modified after receipt was issued.`);
-                        } else if (required && !skippedByOverride && !reviewArtifacts[reviewKey].reviewContextSha256) {
-                            errors.push(`Required review '${reviewKey}' is missing a verifiable review-context hash.`);
-                        } else if (required && !skippedByOverride && !receipt.review_context_sha256) {
-                            errors.push(`Review receipt for '${reviewKey}' is missing review_context_sha256.`);
-                        } else if (reviewArtifacts[reviewKey].reviewContextSha256 && receipt.review_context_sha256 !== reviewArtifacts[reviewKey].reviewContextSha256) {
-                            errors.push(`Review context hash mismatch for '${reviewKey}'. Review-context artifact was modified after receipt was issued.`);
-                        } else {
-                            receiptValid = true;
-                        }
-                        // Extract reviewer routing metadata from the receipt.
-                        if (receipt.reviewer_execution_mode) {
-                            reviewerExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
-                            if (!reviewerExecutionMode) {
-                                errors.push(
-                                    `Review receipt for '${reviewKey}' has invalid reviewer_execution_mode ` +
-                                    `('${String(receipt.reviewer_execution_mode)}').`
-                                );
-                            }
-                        }
-                        if (receipt.reviewer_identity) {
-                            reviewerIdentity = String(receipt.reviewer_identity);
-                        }
-                        if (receipt.reviewer_fallback_reason) {
-                            reviewerFallbackReason = String(receipt.reviewer_fallback_reason);
-                        }
-                        if (receipt.trust_level) {
-                            trustLevel = String(receipt.trust_level);
-                        }
-                    } catch {
-                        errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
-                    }
-                } else if (required && !skippedByOverride) {
-                    errors.push(`Verifiable review receipt missing for '${reviewKey}': ${normalizePath(receiptPath)}. Run 'gate record-review-receipt' to fix.`);
-                }
-
-                if (required && !skippedByOverride && receiptValid) {
-                    if (!reviewerExecutionMode) {
-                        errors.push(`Review receipt for '${reviewKey}' is missing reviewer_execution_mode.`);
-                    }
-                    if (!reviewerIdentity) {
-                        errors.push(`Review receipt for '${reviewKey}' is missing reviewer_identity.`);
-                    }
-                    if (!contextExecutionMode) {
-                        errors.push(`Review '${reviewKey}' is missing reviewer_routing.actual_execution_mode in review-context.`);
-                    }
-                    if (!contextReviewerSessionId) {
-                        errors.push(`Review '${reviewKey}' is missing reviewer_routing.reviewer_session_id in review-context.`);
-                    }
-                    if (reviewerExecutionMode && contextExecutionMode && reviewerExecutionMode !== contextExecutionMode) {
-                        errors.push(
-                            `Review '${reviewKey}' has inconsistent execution mode between receipt (${reviewerExecutionMode}) ` +
-                            `and review-context (${contextExecutionMode}).`
-                        );
-                    }
-                    if (reviewerIdentity && contextReviewerSessionId && reviewerIdentity !== contextReviewerSessionId) {
-                        errors.push(
-                            `Review '${reviewKey}' has inconsistent reviewer identity between receipt (${reviewerIdentity}) ` +
-                            `and review-context (${contextReviewerSessionId}).`
-                        );
-                    }
-                    if (reviewerFallbackReason && contextFallbackReason && reviewerFallbackReason !== contextFallbackReason) {
-                        errors.push(
-                            `Review '${reviewKey}' has inconsistent fallback reason between receipt and review-context.`
-                        );
-                    }
-                    if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && reviewerIdentity.startsWith('self:')) {
-                        errors.push(`Review '${reviewKey}' claims delegated_subagent execution but reviewer_identity is self-scoped (${reviewerIdentity}).`);
-                    } else if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && !reviewerIdentity.startsWith('agent:')) {
-                        errors.push(`Review '${reviewKey}' claims delegated_subagent execution but reviewer_identity must be agent-scoped (expected prefix 'agent:').`);
-                    }
-                    if (contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && contextReviewerSessionId.startsWith('self:')) {
-                        errors.push(`Review '${reviewKey}' review-context claims delegated_subagent execution but reviewer_session_id is self-scoped (${contextReviewerSessionId}).`);
-                    } else if (contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && !contextReviewerSessionId.startsWith('agent:')) {
-                        errors.push(`Review '${reviewKey}' review-context claims delegated_subagent execution but reviewer_session_id must be agent-scoped (expected prefix 'agent:').`);
-                    }
-                    if (contextExecutionMode === 'same_agent_fallback' && contextReviewerSessionId && !contextReviewerSessionId.startsWith('self:')) {
-                        errors.push(`Review '${reviewKey}' review-context claims same_agent_fallback but reviewer_session_id must be self-scoped (expected prefix 'self:').`);
-                    }
-                    if (routingPolicy.delegation_required && reviewerExecutionMode !== 'delegated_subagent') {
-                        errors.push(
-                            `Review '${reviewKey}' must use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
-                            'Same-agent self-review is invalid on delegation-capable providers.'
-                        );
-                    }
-                    if (routingPolicy.capability_level === 'single_agent_only' && reviewerExecutionMode === 'delegated_subagent') {
-                        errors.push(
-                            `Review '${reviewKey}' cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
-                            'Explicit same_agent_fallback evidence is required on single-agent providers.'
-                        );
-                    }
-                    if (reviewerExecutionMode === 'same_agent_fallback') {
-                        if (!routingPolicy.fallback_allowed) {
-                            errors.push(`Review '${reviewKey}' used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}', but fallback is not allowed.`);
-                        }
-                        if (routingPolicy.fallback_reason_required && !String(reviewerFallbackReason || '').trim()) {
-                            errors.push(`Review '${reviewKey}' used same_agent_fallback without reviewer_fallback_reason.`);
-                        }
-                    }
-                }
-            }
-        } else if (required && !skippedByOverride) {
-            errors.push(`Review artifact missing for '${reviewKey}'.`);
+            const validation = validateReviewArtifactGateEligibility({
+                resolvedTaskId,
+                reviewKey,
+                required,
+                skippedByOverride,
+                reviewArtifact: reviewArtifacts[reviewKey],
+                preflightPath: validatedPreflight.preflight_path,
+                preflightSha256: validatedPreflight.preflight_hash,
+                sourceOfTruth: options.sourceOfTruth
+            });
+            compactionAudit = validation.compactionAudit;
+            receiptValid = validation.receiptValid;
+            reviewerExecutionMode = validation.reviewerExecutionMode;
+            reviewerIdentity = validation.reviewerIdentity;
+            reviewerFallbackReason = validation.reviewerFallbackReason;
+            trustLevel = validation.trustLevel;
+            routingPolicySummary = validation.reviewerRoutingPolicy;
+            trivialReview = validation.trivialReview;
+            findingsEvidence = validation.findingsEvidence;
+            errors.push(...validation.violations);
         }
 
         reviewChecks[reviewKey] = {

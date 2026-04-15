@@ -16,6 +16,7 @@ import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
     normalizeReviewerExecutionMode,
+    restoreReviewerRoutingMetadata,
     type ReviewReceipt
 } from '../../gate-runtime/review-context';
 import {
@@ -24,7 +25,11 @@ import {
 } from '../../runtime/skill-telemetry';
 import { writeReviewArtifactJson } from '../../gate-runtime/review-artifacts';
 import * as gateHelpers from '../../gates/helpers';
-import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
+import { assertReviewLifecycleGuardFromEntries } from '../../gates/review-lifecycle-guard';
+import {
+    assertRequiredUpstreamReviewDependencies,
+    type ReviewDependencyTimelineEvent
+} from '../../gates/review-dependencies';
 import { resolveGateExecutionPath } from '../../gates/isolation-sandbox';
 import {
     computeCodeReviewScopeFingerprint,
@@ -46,12 +51,6 @@ import {
     requireResolvedPath
 } from './shared-command-utils';
 
-interface TimelineEventSummary {
-    event_type: string;
-    sequence: number;
-    details: Record<string, unknown> | null;
-}
-
 interface ReviewReuseResult {
     reused: boolean;
     receiptPath: string | null;
@@ -65,11 +64,20 @@ interface CompileEvidenceSummary {
     preflightHashSha256: string | null;
 }
 
-function readTimelineEventsSummary(timelinePath: string): TimelineEventSummary[] {
+interface TimelineEventsSummaryResult {
+    events: ReviewDependencyTimelineEvent[];
+    hasInvalidLines: boolean;
+}
+
+function readTimelineEventsSummary(timelinePath: string): TimelineEventsSummaryResult {
     if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
-        return [];
+        return {
+            events: [],
+            hasInvalidLines: false
+        };
     }
-    const events: TimelineEventSummary[] = [];
+    const events: ReviewDependencyTimelineEvent[] = [];
+    let hasInvalidLines = false;
     const lines = fs.readFileSync(timelinePath, 'utf8').split('\n').filter((line) => line.trim().length > 0);
     for (let index = 0; index < lines.length; index += 1) {
         try {
@@ -83,15 +91,18 @@ function readTimelineEventsSummary(timelinePath: string): TimelineEventSummary[]
                 details
             });
         } catch {
-            // Ignore malformed lines; integrity validation handles them elsewhere.
+            hasInvalidLines = true;
         }
     }
-    return events;
+    return {
+        events,
+        hasInvalidLines
+    };
 }
 
 function findLatestTimelineSequence(
-    events: readonly TimelineEventSummary[],
-    predicate: (entry: TimelineEventSummary) => boolean
+    events: readonly ReviewDependencyTimelineEvent[],
+    predicate: (entry: ReviewDependencyTimelineEvent) => boolean
 ): number | null {
     for (let index = events.length - 1; index >= 0; index -= 1) {
         if (predicate(events[index])) {
@@ -198,7 +209,7 @@ async function tryReuseCodeReviewEvidence(options: {
     }
 
     const timelinePath = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'task-events', `${options.taskId}.jsonl`));
-    const timelineEvents = readTimelineEventsSummary(timelinePath);
+    const timelineEvents = readTimelineEventsSummary(timelinePath).events;
     const latestCompilePassSequence = findLatestTimelineSequence(
         timelineEvents,
         (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
@@ -220,6 +231,11 @@ async function tryReuseCodeReviewEvidence(options: {
     }
 
     const currentReviewContext = JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const currentRouting = currentReviewContext.reviewer_routing
+        && typeof currentReviewContext.reviewer_routing === 'object'
+        && !Array.isArray(currentReviewContext.reviewer_routing)
+        ? currentReviewContext.reviewer_routing as Record<string, unknown>
+        : null;
     const currentReviewContextSha256 = String(gateHelpers.fileSha256(options.reviewContextPath) || '').trim().toLowerCase() || null;
     const contextHashMatches = !!expectedContextSha256 && expectedContextSha256 === currentReviewContextSha256;
     const contextReuseHashMatches = !!expectedContextReuseSha256
@@ -238,6 +254,26 @@ async function tryReuseCodeReviewEvidence(options: {
     if (!routingUpdate.updated || !routingUpdate.contextSha256) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
+    const previousRoutingUpdate = {
+        actualExecutionMode: currentRouting?.actual_execution_mode != null
+            ? String(currentRouting.actual_execution_mode).trim() || null
+            : null,
+        reviewerSessionId: currentRouting?.reviewer_session_id != null
+            ? String(currentRouting.reviewer_session_id).trim() || null
+            : null,
+        fallbackReason: currentRouting?.fallback_reason != null
+            ? String(currentRouting.fallback_reason).trim() || null
+            : null
+    };
+    const receiptRollbackState = fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()
+        ? {
+            existed: true,
+            content: fs.readFileSync(receiptPath, 'utf8')
+        }
+        : {
+            existed: false,
+            content: null as string | null
+        };
     const refreshedReceipt = buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -255,22 +291,46 @@ async function tryReuseCodeReviewEvidence(options: {
     writeReviewArtifactJson(receiptPath, refreshedReceipt);
 
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
-    await emitReviewerDelegationRoutedEventAsync(
-        orchestratorRoot,
-        options.taskId,
-        options.reviewType,
-        reviewerExecutionMode,
-        reviewerIdentity,
-        reviewerFallbackReason
-    );
-    await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
-        ...refreshedReceipt,
-        reused_existing_review: true,
-        receipt_path: gateHelpers.normalizePath(receiptPath),
-        review_artifact_path: gateHelpers.normalizePath(artifactPath),
-        review_context_path: gateHelpers.normalizePath(options.reviewContextPath),
-        review_context_sha256: routingUpdate.contextSha256
-    });
+    try {
+        const routedEvent = await emitReviewerDelegationRoutedEventAsync(
+            orchestratorRoot,
+            options.taskId,
+            options.reviewType,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            reviewerFallbackReason
+        );
+        if (!routedEvent || (Array.isArray(routedEvent.warnings) && routedEvent.warnings.length > 0)) {
+            throw new Error('REVIEWER_DELEGATION_ROUTED telemetry could not be persisted for review reuse.');
+        }
+        const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
+            ...refreshedReceipt,
+            reused_existing_review: true,
+            receipt_path: gateHelpers.normalizePath(receiptPath),
+            review_artifact_path: gateHelpers.normalizePath(artifactPath),
+            review_context_path: gateHelpers.normalizePath(options.reviewContextPath),
+            review_context_sha256: routingUpdate.contextSha256
+        });
+        if (!recordedEvent || (Array.isArray(recordedEvent.warnings) && recordedEvent.warnings.length > 0)) {
+            throw new Error('REVIEW_RECORDED telemetry could not be persisted for review reuse.');
+        }
+    } catch {
+        try {
+            restoreReviewerRoutingMetadata(options.reviewContextPath, previousRoutingUpdate);
+        } catch {
+            // Best-effort rollback only.
+        }
+        try {
+            if (receiptRollbackState.existed) {
+                fs.writeFileSync(receiptPath, String(receiptRollbackState.content || ''), 'utf8');
+            } else if (fs.existsSync(receiptPath)) {
+                fs.rmSync(receiptPath, { force: true });
+            }
+        } catch {
+            // Best-effort rollback only.
+        }
+        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+    }
     return {
         reused: true,
         receiptPath: gateHelpers.normalizePath(receiptPath),
@@ -410,7 +470,25 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const taskId = String(preflightPayload.task_id || '').trim();
     if (taskId) {
-        assertReviewLifecycleGuard(repoRoot, taskId, 'build-review-context', 'review_phase');
+        const timelinePath = gateHelpers.joinOrchestratorPath(
+            repoRoot,
+            path.join('runtime', 'task-events', `${taskId}.jsonl`)
+        );
+        const timelineSummary = readTimelineEventsSummary(timelinePath);
+        assertReviewLifecycleGuardFromEntries(
+            timelinePath,
+            timelineSummary.events,
+            timelineSummary.hasInvalidLines,
+            'build-review-context',
+            'review_phase'
+        );
+        assertRequiredUpstreamReviewDependencies({
+            taskId,
+            preflightPath,
+            preflightPayload,
+            reviewType,
+            timelineEvents: timelineSummary.events
+        });
     }
     const tokenEconomyConfigPath = options.tokenEconomyConfigPath
         ? requireResolvedPath(
@@ -439,6 +517,7 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
         reviewType,
         depth,
         preflightPath,
+        preflightPayload,
         tokenEconomyConfigPath,
         scopedDiffMetadataPath,
         outputPath,

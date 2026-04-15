@@ -243,6 +243,10 @@ describe('gates/build-review-context', () => {
                 repoRoot
             });
 
+            assert.equal(result.task_id, 'T-1005');
+            assert.equal(result.preflight_path, preflightPath.replace(/\\/g, '/'));
+            assert.equal(typeof result.preflight_sha256, 'string');
+            assert.ok(String(result.preflight_sha256 || '').length > 0);
             assert.equal(result.reviewer_routing.reviewer_execution_mode_required, true);
             assert.equal(result.reviewer_routing.reviewer_identity_required, true);
             fs.rmSync(repoRoot, { recursive: true, force: true });

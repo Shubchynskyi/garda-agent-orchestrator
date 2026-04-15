@@ -18,9 +18,14 @@ import * as gateHelpers from '../../gates/helpers';
 import { normalizePath } from '../../gates/helpers';
 import { REVIEW_CONTRACTS } from '../../gates/required-reviews-check';
 import {
+    assertRequiredUpstreamReviewDependencies,
+    type ReviewDependencyTimelineEvent
+} from '../../gates/review-dependencies';
+import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../gates/review-reuse';
+import { getReviewContextContractViolations } from '../../gates/review-context-contract';
 import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
 import {
     runDocImpactGateCommand,
@@ -121,16 +126,6 @@ function resolveCanonicalReviewPaths(
     const resolvedContextOverride = reviewContextPathValue
         ? gateHelpers.resolvePathInsideRepo(String(reviewContextPathValue), repoRoot, { allowMissing: true })
         : null;
-    if (
-        resolvedContextOverride &&
-        resolvedContextOverride !== preferredContextPath &&
-        resolvedContextOverride !== fallbackContextPath
-    ) {
-        throw new Error(
-            `ReviewContextPath must point to the canonical review-context artifact for '${reviewType}'. ` +
-            `Allowed paths: ${normalizePath(preferredContextPath)} or ${normalizePath(fallbackContextPath)}.`
-        );
-    }
     const contextPath = resolvedContextOverride || (fs.existsSync(preferredContextPath) ? preferredContextPath : fallbackContextPath);
     if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
@@ -243,6 +238,32 @@ function assertRoutingCompatibility(
     }
 }
 
+function assertReviewContextContractOrThrow(options: {
+    taskId: string;
+    reviewType: string;
+    contextPath: string;
+    reviewContext: Record<string, unknown> | null;
+    preflightPath: string;
+    preflightSha256: string | null;
+    requireStrictBindingMetadata?: boolean;
+}): void {
+    const violations = getReviewContextContractViolations({
+        contextPath: options.contextPath,
+        reviewContext: options.reviewContext,
+        expectedTaskId: options.taskId,
+        expectedReviewType: options.reviewType,
+        expectedPreflightPath: options.preflightPath,
+        expectedPreflightSha256: options.preflightSha256,
+        requireReviewType: true,
+        requireTaskId: options.requireStrictBindingMetadata === true,
+        requirePreflightPath: options.requireStrictBindingMetadata === true,
+        requirePreflightSha256: options.requireStrictBindingMetadata === true
+    });
+    if (violations.length > 0) {
+        throw new Error(violations.join(' '));
+    }
+}
+
 function hasMatchingRoutingEvent(
     timelinePath: string,
     reviewType: string,
@@ -273,6 +294,30 @@ function hasMatchingRoutingEvent(
         : false;
 }
 
+function readDependencyTimelineEvents(timelinePath: string): ReviewDependencyTimelineEvent[] {
+    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
+        return [];
+    }
+    return fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .flatMap((line, sequence) => {
+            try {
+                const parsed = JSON.parse(line) as Record<string, unknown>;
+                const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
+                    ? parsed.details as Record<string, unknown>
+                    : null;
+                return [{
+                    event_type: String(parsed.event_type || '').trim().toUpperCase(),
+                    sequence,
+                    details
+                }];
+            } catch {
+                return [];
+            }
+        });
+}
+
 async function recordReviewReceiptFromArtifacts(options: {
     repoRoot: string;
     taskId: string;
@@ -283,6 +328,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
     reviewerIdentity: string;
     reviewerFallbackReason: string | null;
+    requireStrictBindingMetadata?: boolean;
 }): Promise<string> {
     if (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile()) {
         throw new Error(`Review artifact not found: ${options.artifactPath}`);
@@ -292,6 +338,15 @@ async function recordReviewReceiptFromArtifacts(options: {
     const preflightSha256 = fileSha256(options.preflightPath);
     const artifactSha256 = fileSha256(options.artifactPath);
     const parsedReviewContext = JSON.parse(fs.readFileSync(options.contextPath, 'utf8')) as Record<string, unknown>;
+    assertReviewContextContractOrThrow({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        contextPath: options.contextPath,
+        reviewContext: parsedReviewContext,
+        preflightPath: options.preflightPath,
+        preflightSha256,
+        requireStrictBindingMetadata: options.requireStrictBindingMetadata
+    });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
         && !Array.isArray(parsedReviewContext.reviewer_routing)
@@ -370,7 +425,12 @@ async function recordReviewReceiptFromArtifacts(options: {
 
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
     try {
-        const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, receipt);
+        const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
+            ...receipt,
+            receipt_path: normalizePath(receiptPath),
+            review_artifact_path: normalizePath(options.artifactPath),
+            review_context_path: normalizePath(options.contextPath)
+        });
         if (!recordedEvent || (Array.isArray(recordedEvent.warnings) && recordedEvent.warnings.length > 0)) {
             throw new Error(
                 `Review receipts require REVIEW_RECORDED telemetry for '${options.reviewType}'. ` +
@@ -432,16 +492,6 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
     const resolvedContextOverride = options.reviewContextPath
         ? gateHelpers.resolvePathInsideRepo(String(options.reviewContextPath), repoRoot, { allowMissing: true })
         : null;
-    if (
-        resolvedContextOverride &&
-        resolvedContextOverride !== preferredContextPath &&
-        resolvedContextOverride !== fallbackContextPath
-    ) {
-        throw new Error(
-            `ReviewContextPath must point to the canonical review-context artifact for '${reviewType}'. ` +
-            `Allowed paths: ${normalizePath(preferredContextPath)} or ${normalizePath(fallbackContextPath)}.`
-        );
-    }
     const contextPath = resolvedContextOverride || (fs.existsSync(preferredContextPath) ? preferredContextPath : fallbackContextPath);
     if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
@@ -473,8 +523,28 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
     } else if (!reviewerIdentity.startsWith('self:')) {
         throw new Error("Fallback review routing requires a self-scoped reviewer identity (prefix 'self:').");
     }
+    const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
+    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const preflightSha256 = fileSha256(preflightPath);
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    assertRequiredUpstreamReviewDependencies({
+        taskId,
+        preflightPath,
+        preflightPayload,
+        reviewType,
+        timelineEvents: readDependencyTimelineEvents(timelinePath)
+    });
 
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    assertReviewContextContractOrThrow({
+        taskId,
+        reviewType,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        preflightPath,
+        preflightSha256,
+        requireStrictBindingMetadata: !!options.reviewContextPath
+    });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
         && !Array.isArray(parsedReviewContext.reviewer_routing)
@@ -580,7 +650,26 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         options,
         "ReviewerExecutionMode is required. Expected one of 'delegated_subagent' or 'same_agent_fallback'."
     );
+    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const preflightSha256 = fileSha256(preflightPath);
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    assertRequiredUpstreamReviewDependencies({
+        taskId,
+        preflightPath,
+        preflightPayload,
+        reviewType,
+        timelineEvents: readDependencyTimelineEvents(timelinePath)
+    });
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    assertReviewContextContractOrThrow({
+        taskId,
+        reviewType,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        preflightPath,
+        preflightSha256,
+        requireStrictBindingMetadata: !!options.reviewContextPath
+    });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
         && !Array.isArray(parsedReviewContext.reviewer_routing)
@@ -650,7 +739,8 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         contextPath,
         reviewerExecutionMode,
         reviewerIdentity,
-        reviewerFallbackReason
+        reviewerFallbackReason,
+        requireStrictBindingMetadata: !!options.reviewContextPath
     });
 
     console.log(`REVIEW_RESULT_RECORDED: ${reviewType}`);
@@ -697,6 +787,15 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         options,
         "ReviewerExecutionMode is required. Expected one of 'delegated_subagent' or 'same_agent_fallback'."
     );
+    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    assertRequiredUpstreamReviewDependencies({
+        taskId,
+        preflightPath,
+        preflightPayload,
+        reviewType,
+        timelineEvents: readDependencyTimelineEvents(timelinePath)
+    });
     const receiptPath = await recordReviewReceiptFromArtifacts({
         repoRoot,
         taskId,
@@ -706,7 +805,8 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         contextPath,
         reviewerExecutionMode,
         reviewerIdentity,
-        reviewerFallbackReason
+        reviewerFallbackReason,
+        requireStrictBindingMetadata: !!options.reviewContextPath
     });
     console.log(`REVIEW_RECORDED: ${reviewType} (Receipt: ${normalizePath(receiptPath)})`);
 }

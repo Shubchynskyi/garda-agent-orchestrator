@@ -24,6 +24,11 @@ import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshake-diagnostics';
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
+import { getReviewContextContractViolations } from './review-context-contract';
+import {
+    getRequiredUpstreamReviewsFromRecord,
+    normalizeRequiredReviewRecord
+} from './review-dependencies';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
@@ -90,6 +95,27 @@ function findLatestStageOccurrence(
         }
         if (eventMatchesStage(entry, stage)) {
             return entry;
+        }
+    }
+    return null;
+}
+
+function findLatestRecordedReviewContextPath(
+    events: readonly TimelineEventEntry[],
+    reviewKey: string
+): string | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const entry = events[index];
+        if (entry.event_type !== 'REVIEW_RECORDED') {
+            continue;
+        }
+        const recordedReviewType = String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase();
+        if (recordedReviewType !== reviewKey) {
+            continue;
+        }
+        const reviewContextPath = String(entry.details?.review_context_path || entry.details?.reviewContextPath || '').trim();
+        if (reviewContextPath) {
+            return reviewContextPath;
         }
     }
     return null;
@@ -508,6 +534,8 @@ export function validateReviewSkillEvidence(
         }
         return null;
     };
+    const reviewPhaseSequenceByKey = new Map<string, number | null>();
+    const reviewRecordedEventByKey = new Map<string, TimelineEventEntry | null>();
 
     if (requiredKeys.length > 0 && reviewPhaseSequence == null) {
         result.violations.push(
@@ -521,6 +549,7 @@ export function validateReviewSkillEvidence(
     for (const key of requiredKeys) {
         const candidateSkillIds = getReviewSkillCandidates(key);
         const reviewPhaseSequenceForKey = getReviewPhaseSequenceForKey(key);
+        reviewPhaseSequenceByKey.set(key, reviewPhaseSequenceForKey);
         const selectionEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'SKILL_SELECTED' && eventMatchesReviewSkill(entry, candidateSkillIds)
         ));
@@ -531,6 +560,7 @@ export function validateReviewSkillEvidence(
             entry.event_type === 'REVIEW_RECORDED' && 
             String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
         ));
+        reviewRecordedEventByKey.set(key, recordEvent);
         const routingEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
             String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
@@ -597,6 +627,11 @@ export function validateReviewSkillEvidence(
                 `Code-changing task is missing REVIEW_RECORDED telemetry for required review '${key}'. ` +
                 "Review evidence was not officially recorded via 'gate record-review-receipt'."
             );
+        } else if (compilePassSequence != null && recordEvent.sequence < compilePassSequence) {
+            result.violations.push(
+                `Required review '${key}' was recorded before the latest COMPILE_GATE_PASSED in '${normalizedTimelinePath}'. ` +
+                `Do not backfill '${key}' review evidence from an older execution cycle.`
+            );
         }
         if (!routingEvent) {
             result.violations.push(
@@ -618,6 +653,46 @@ export function validateReviewSkillEvidence(
             if (recordEvent && routingEvent.sequence > recordEvent.sequence) {
                 result.violations.push(
                     `Reviewer routing telemetry for '${key}' was emitted after REVIEW_RECORDED in '${normalizedTimelinePath}'.`
+                );
+            }
+        }
+    }
+
+    const normalizedRequiredReviewRecord = normalizeRequiredReviewRecord(requiredReviews);
+    const upstreamRequiredReviewsByKey = new Map<string, string[]>();
+    for (const key of requiredKeys) {
+        upstreamRequiredReviewsByKey.set(
+            key,
+            getRequiredUpstreamReviewsFromRecord(key, normalizedRequiredReviewRecord)
+        );
+    }
+
+    for (const key of requiredKeys) {
+        const downstreamPhaseSequence = reviewPhaseSequenceByKey.get(key) ?? null;
+        if (downstreamPhaseSequence == null) {
+            continue;
+        }
+        const upstreamRequiredReviews = upstreamRequiredReviewsByKey.get(key) || [];
+        for (const upstreamKey of upstreamRequiredReviews) {
+            const upstreamRecordedEvent = reviewRecordedEventByKey.get(upstreamKey) ?? null;
+            if (!upstreamRecordedEvent) {
+                result.violations.push(
+                    `Required review '${key}' cannot start before upstream review '${upstreamKey}' is recorded in '${normalizedTimelinePath}'. ` +
+                    `Run and record '${upstreamKey}' for the current cycle before launching '${key}'.`
+                );
+                continue;
+            }
+            if (compilePassSequence != null && upstreamRecordedEvent.sequence < compilePassSequence) {
+                result.violations.push(
+                    `Required review '${key}' depends on upstream review '${upstreamKey}', but the latest '${upstreamKey}' evidence predates ` +
+                    `COMPILE_GATE_PASSED in '${normalizedTimelinePath}'. Re-run or reuse '${upstreamKey}' for the current cycle before '${key}'.`
+                );
+                continue;
+            }
+            if (upstreamRecordedEvent.sequence > downstreamPhaseSequence) {
+                result.violations.push(
+                    `Required review '${key}' started before upstream review '${upstreamKey}' completed in '${normalizedTimelinePath}'. ` +
+                    `Downstream '${key}' review must wait for current-cycle '${upstreamKey}' evidence.`
                 );
             }
         }
@@ -1372,7 +1447,12 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
         const reviewContextPreferredPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}-review-context.json`);
         const reviewContextFallbackPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}-context.json`);
-        const reviewContextPath = fs.existsSync(reviewContextPreferredPath) ? reviewContextPreferredPath : reviewContextFallbackPath;
+        const recordedReviewContextPath = findLatestRecordedReviewContextPath(orderedEvents, reviewKey);
+        const reviewContextPath = recordedReviewContextPath
+            || (fs.existsSync(reviewContextPreferredPath) ? reviewContextPreferredPath : reviewContextFallbackPath);
+        const normalizedReviewContextPath = normalizePath(reviewContextPath);
+        const requireStrictBindingMetadata = normalizedReviewContextPath !== normalizePath(reviewContextPreferredPath)
+            && normalizedReviewContextPath !== normalizePath(reviewContextFallbackPath);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
         const required = !!requiredReviews[reviewKey];
@@ -1392,6 +1472,20 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
                 const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
                 if (parsedReviewContext && typeof parsedReviewContext === 'object' && !Array.isArray(parsedReviewContext)) {
                     reviewContext = parsedReviewContext as Record<string, unknown>;
+                    if (required) {
+                        errors.push(...getReviewContextContractViolations({
+                            contextPath: reviewContextPath,
+                            reviewContext,
+                            expectedTaskId: resolvedTaskId,
+                            expectedReviewType: reviewKey,
+                            expectedPreflightPath: validatedPreflight.preflight_path,
+                            expectedPreflightSha256: validatedPreflight.preflight_hash,
+                            requireReviewType: true,
+                            requireTaskId: requireStrictBindingMetadata,
+                            requirePreflightPath: requireStrictBindingMetadata,
+                            requirePreflightSha256: requireStrictBindingMetadata
+                        }));
+                    }
                 }
             } catch {
                 if (required) {

@@ -69,6 +69,8 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
             'SKILL_SELECTED',
             'SKILL_REFERENCE_LOADED',
             'After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...`',
+            'Downstream `test` review preparation must not start until every required upstream non-`test` review for the current cycle has a clean PASS artifact and receipt.',
+            'If a later cycle changes only test scope, still run `build-review-context` for reusable upstream `code` review first so current-cycle reuse evidence exists before `test` review starts.',
             'Compile gate validates post-preflight rule-pack evidence',
             'Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.',
             'Review gate command validates post-preflight rule-pack evidence (`RULE_PACK_LOADED`)',
@@ -90,7 +92,9 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
             'record the baseline downstream rules that were actually opened',
             `${getBundleCliCommand(bn)} gate load-rule-pack`,
             'After preflight, re-run `load-rule-pack --stage "POST_PREFLIGHT"`',
-            'build-review-context --review-type "<review-type>" --depth "<1|2|3>"'
+            'build-review-context --review-type "<review-type>" --depth "<1|2|3>"',
+            '`test` review is downstream: prepare it only after every required upstream non-`test` review for the current cycle is already recorded as PASS.',
+            'On pure test-scope reruns, run `build-review-context` for reusable upstream `code` review first so the current-cycle reuse receipt exists before launching `test` review.'
         ])
     }),
     Object.freeze({

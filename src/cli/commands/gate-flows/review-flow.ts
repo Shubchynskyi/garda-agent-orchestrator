@@ -429,7 +429,13 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         options.reviewsRoot || ''
     );
 
-    const reviewArtifactsMap: Record<string, { path: string; content: string; reviewContext?: Record<string, unknown>; reviewContextSha256?: string | null }> = {};
+    const reviewArtifactsMap: Record<string, {
+        path: string;
+        content: string;
+        reviewContext?: Record<string, unknown>;
+        reviewContextPath?: string | null;
+        reviewContextSha256?: string | null;
+    }> = {};
     for (const entry of artifactEvidence.checked) {
         if (entry.present && entry.path) {
             try {
@@ -448,6 +454,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                     path: entry.path,
                     content: fs.readFileSync(entry.path, 'utf8'),
                     reviewContext,
+                    reviewContextPath,
                     reviewContextSha256: reviewContextPath && fs.existsSync(reviewContextPath)
                         ? gateHelpers.fileSha256(reviewContextPath)
                         : null

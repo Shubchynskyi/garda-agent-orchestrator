@@ -457,6 +457,18 @@ function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<
         .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+function findLastTimelineEventIndex(
+    events: Array<Record<string, unknown>>,
+    predicate: (event: Record<string, unknown>) => boolean
+): number {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        if (predicate(events[index])) {
+            return index;
+        }
+    }
+    return -1;
+}
+
 function loadTaskEntryRulePack(repoRoot: string, taskId: string) {
     return runLoadRulePackCommand({
         repoRoot,
@@ -2512,6 +2524,7 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-904a';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
+        writePreflight(repoRoot, taskId);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
@@ -3661,6 +3674,100 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('does not report reuse success when current-cycle reuse telemetry cannot be recorded', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-reuse-telemetry-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
+        fs.mkdirSync(taskEventsRoot, { recursive: true });
+        const lockPath = path.join(taskEventsRoot, `.${taskId}.lock`);
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', reviewContextPath,
+                '--repo-root', repoRoot
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const crypto = require('node:crypto');
+        const priorPreflightSha = crypto.createHash('sha256').update(fs.readFileSync(priorPreflightPath, 'utf8')).digest('hex');
+        const currentPreflightSha = crypto.createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
+        const refreshedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(refreshedReceipt.preflight_sha256, priorPreflightSha);
+        assert.notEqual(refreshedReceipt.preflight_sha256, currentPreflightSha);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        const currentCycleCodeEvents = events
+            .map((event, index) => ({ event, index }))
+            .filter(({ event, index }) => (
+                index > latestCompileSequence
+                && (event.event_type === 'REVIEWER_DELEGATION_ROUTED' || event.event_type === 'REVIEW_RECORDED')
+                && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+            ));
+        assert.equal(currentCycleCodeEvents.length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-receipt rejects unsupported reviewer execution modes', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904x';
@@ -4269,9 +4376,9 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('passes completion when test review telemetry is emitted before a later code review phase in the same cycle', async () => {
+    it('build-review-context blocks downstream test review until current-cycle code review is recorded', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-904b-mixed-order';
+        const taskId = 'T-904b-sequenced-test-review';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId, {
@@ -4287,7 +4394,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
-        const commandsPath = path.join(repoRoot, 'commands-mixed-order.md');
+        const commandsPath = path.join(repoRoot, 'commands-sequenced-review.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
@@ -4299,7 +4406,7 @@ describe('cli/commands/gates', () => {
         runEnterTaskModeCommand({
             repoRoot,
             taskId,
-            taskSummary: 'Validate mixed code/test review ordering',
+            taskSummary: 'Block downstream test review until code review is recorded',
             provider: 'Codex'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
@@ -4324,11 +4431,31 @@ describe('cli/commands/gates', () => {
         assert.equal(compileResult.exitCode, 0);
 
         const reviewsRoot = getReviewsRoot(repoRoot);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const blockedTestReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context-blocked.json`);
+        const blockedTestReviewContextArtifactPath = blockedTestReviewContextPath.replace(/\.json$/, '.md');
+        const blockedTestScopedDiffPath = path.join(reviewsRoot, `${taskId}-test-scoped-blocked.json`);
+        const testReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        const testReviewScopedDiffPath = path.join(reviewsRoot, `${taskId}-test-scoped.json`);
+        const testReviewArtifactPath = path.join(reviewsRoot, `${taskId}-test.md`);
+        const testReviewReceiptPath = testReviewArtifactPath.replace(/\.md$/, '-receipt.json');
+        const codeReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const blockedErrors: string[] = [];
         process.exitCode = 0;
+        let blockedExitCode = 0;
+        let blockedAttemptTestPhaseCount = 0;
+        let blockedErrorOutput = '';
+        let codeReviewBuildExitCode = 0;
+        let codeReviewRecordExitCode = 0;
+        let testReviewBuildExitCode = 0;
         try {
             process.chdir(repoRoot);
+            console.error = (...args: unknown[]) => {
+                blockedErrors.push(args.map((value) => String(value)).join(' '));
+            };
 
             await runCliMainWithHandling([
                 'gate',
@@ -4336,54 +4463,33 @@ describe('cli/commands/gates', () => {
                 '--repo-root', repoRoot,
                 '--review-type', 'test',
                 '--depth', '2',
-                '--preflight-path', preflightPath
-            ]);
-            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-test.md`), [
-                '# Test Review',
-                '',
-                'Validated `tests/node/cli/commands/gates.test.ts` and the recovery ordering for the mixed required-review cycle. This artifact is intentionally detailed enough to satisfy the anti-triviality check while still reporting no concrete failures for the reviewed test scope.',
-                '',
-                '## Findings by Severity',
-                'none',
-                '',
-                '## Residual Risks',
-                'none',
-                '',
-                '## Verdict',
-                'TEST REVIEW PASSED'
-            ].join('\n'), 'utf8');
-            await runCliMainWithHandling([
-                'gate',
-                'record-review-routing',
-                '--task-id', taskId,
-                '--review-type', 'test',
-                '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:test-reviewer'
-            ]);
-            await runCliMainWithHandling([
-                'gate',
-                'record-review-receipt',
-                '--task-id', taskId,
-                '--review-type', 'test',
                 '--preflight-path', preflightPath,
-                '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:test-reviewer'
+                '--scoped-diff-metadata-path', blockedTestScopedDiffPath,
+                '--output-path', blockedTestReviewContextPath
             ]);
+            blockedExitCode = Number(process.exitCode ?? 0);
+            blockedAttemptTestPhaseCount = readTaskTimelineEvents(repoRoot, taskId).filter((event) => (
+                event.event_type === 'REVIEW_PHASE_STARTED'
+                && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
+            )).length;
+            blockedErrorOutput = blockedErrors.join('\n');
 
+            process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
                 'build-review-context',
                 '--repo-root', repoRoot,
                 '--review-type', 'code',
                 '--depth', '2',
-                '--preflight-path', preflightPath
+                '--preflight-path', preflightPath,
+                '--output-path', codeReviewContextPath
             ]);
-            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-code.md`), [
+            codeReviewBuildExitCode = Number(process.exitCode ?? 0);
+
+            fs.writeFileSync(codeReviewOutputPath, [
                 '# Review',
                 '',
-                'Validated `src/gates/completion.ts` and the typed review-phase ordering used by the mixed required-review cycle. This artifact is intentionally verbose enough to satisfy the anti-triviality check while still reporting no findings for the reviewed implementation.',
+                'Validated `src/gates/completion.ts` and `src/cli/commands/gate-build-handlers.ts`, confirming that current-cycle upstream review evidence is present before downstream test review preparation is allowed to continue.',
                 '',
                 '## Findings by Severity',
                 'none',
@@ -4394,29 +4500,539 @@ describe('cli/commands/gates', () => {
                 '## Verdict',
                 'REVIEW PASSED'
             ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
-                'record-review-routing',
-                '--task-id', taskId,
-                '--review-type', 'code',
-                '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:code-reviewer'
-            ]);
-            await runCliMainWithHandling([
-                'gate',
-                'record-review-receipt',
+                'record-review-result',
                 '--task-id', taskId,
                 '--review-type', 'code',
                 '--preflight-path', preflightPath,
+                '--review-output-path', codeReviewOutputPath,
                 '--repo-root', repoRoot,
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:code-reviewer'
             ]);
+            codeReviewRecordExitCode = Number(process.exitCode ?? 0);
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'test',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--scoped-diff-metadata-path', testReviewScopedDiffPath,
+                '--output-path', testReviewContextPath
+            ]);
+            testReviewBuildExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(blockedExitCode !== 0, `Expected non-zero exit code, got ${blockedExitCode}`);
+        assert.equal(blockedAttemptTestPhaseCount, 0);
+        assert.ok(
+            blockedErrorOutput.includes("ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code."),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('Run and record those reviews first.'),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('code: no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
+            blockedErrorOutput
+        );
+        assert.equal(fs.existsSync(blockedTestReviewContextPath), false);
+        assert.equal(fs.existsSync(blockedTestReviewContextArtifactPath), false);
+        assert.equal(fs.existsSync(blockedTestScopedDiffPath), false);
+        assert.equal(fs.existsSync(testReviewArtifactPath), false);
+        assert.equal(fs.existsSync(testReviewReceiptPath), false);
+        assert.equal(codeReviewBuildExitCode, 0);
+        assert.equal(fs.existsSync(codeReviewContextPath), true);
+        assert.equal(codeReviewRecordExitCode, 0);
+        assert.equal(testReviewBuildExitCode, 0);
+        assert.equal(fs.existsSync(testReviewContextPath), true);
+        assert.equal(fs.existsSync(testReviewScopedDiffPath), false);
+
+        const testReviewPhaseEvents = readTaskTimelineEvents(repoRoot, taskId).filter((event) => (
+            event.event_type === 'REVIEW_PHASE_STARTED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
+        ));
+        assert.equal(testReviewPhaseEvents.length, 1);
+        const allEvents = readTaskTimelineEvents(repoRoot, taskId);
+        const codeReviewRecordedIndex = findLastTimelineEventIndex(allEvents, (event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        ));
+        const testReviewPhaseIndex = findLastTimelineEventIndex(allEvents, (event) => (
+            event.event_type === 'REVIEW_PHASE_STARTED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
+        ));
+        assert.ok(codeReviewRecordedIndex >= 0);
+        assert.ok(testReviewPhaseIndex > codeReviewRecordedIndex);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('build-review-context keeps downstream test review blocked when upstream code review is not gate-eligible', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-sequenced-test-review-invalid-code';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-sequenced-review-invalid.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep downstream test review blocked until upstream code review is gate-eligible',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 2,
+            changed_lines_total: 12,
+            required_reviews: { code: true, test: true }
+        });
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const blockedTestReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context-blocked.json`);
+        const blockedTestReviewContextArtifactPath = blockedTestReviewContextPath.replace(/\.json$/, '.md');
+        const blockedTestScopedDiffPath = path.join(reviewsRoot, `${taskId}-test-scoped-blocked.json`);
+        const testReviewArtifactPath = path.join(reviewsRoot, `${taskId}-test.md`);
+        const testReviewReceiptPath = testReviewArtifactPath.replace(/\.md$/, '-receipt.json');
+        const codeReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const blockedErrors: string[] = [];
+        process.exitCode = 0;
+        let codeReviewBuildExitCode = 0;
+        let codeReviewRecordExitCode = 0;
+        let blockedExitCode = 0;
+        let blockedAttemptTestPhaseCount = 0;
+        let blockedErrorOutput = '';
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', codeReviewContextPath
+            ]);
+            codeReviewBuildExitCode = process.exitCode ?? 0;
+
+            fs.writeFileSync(codeReviewOutputPath, [
+                '# Review',
+                '',
+                'Looks good.',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', codeReviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            codeReviewRecordExitCode = process.exitCode ?? 0;
+
+            process.exitCode = 0;
+            console.error = (...args: unknown[]) => {
+                blockedErrors.push(args.map((value) => String(value)).join(' '));
+            };
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'test',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--scoped-diff-metadata-path', blockedTestScopedDiffPath,
+                '--output-path', blockedTestReviewContextPath
+            ]);
+            blockedExitCode = Number(process.exitCode ?? 0);
+            blockedAttemptTestPhaseCount = readTaskTimelineEvents(repoRoot, taskId).filter((event) => (
+                event.event_type === 'REVIEW_PHASE_STARTED'
+                && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
+            )).length;
+            blockedErrorOutput = blockedErrors.join('\n');
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(codeReviewBuildExitCode, 0);
+        assert.equal(codeReviewRecordExitCode, 0);
+        assert.ok(blockedExitCode !== 0, `Expected non-zero exit code, got ${blockedExitCode}`);
+        assert.equal(blockedAttemptTestPhaseCount, 0);
+        assert.ok(
+            blockedErrorOutput.includes("ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code."),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('trivial or obviously synthetic'),
+            blockedErrorOutput
+        );
+        assert.equal(fs.existsSync(blockedTestReviewContextPath), false);
+        assert.equal(fs.existsSync(blockedTestReviewContextArtifactPath), false);
+        assert.equal(fs.existsSync(blockedTestScopedDiffPath), false);
+        assert.equal(fs.existsSync(testReviewArtifactPath), false);
+        assert.equal(fs.existsSync(testReviewReceiptPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result blocks downstream test review materialization until upstream code review passes current cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-record-test-review-blocked';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-record-review-blocked.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block downstream test review materialization until upstream code review passes current cycle',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 2,
+            changed_lines_total: 12,
+            required_reviews: { code: true, test: true }
+        });
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const testReviewContextPath = path.join(reviewsRoot, `${taskId}-manual-test-context.json`);
+        const testReviewOutputPath = path.join(reviewsRoot, `${taskId}-test-review-output.md`);
+        const testReviewArtifactPath = path.join(reviewsRoot, `${taskId}-test.md`);
+        const testReviewReceiptPath = testReviewArtifactPath.replace(/\.md$/, '-receipt.json');
+        fs.writeFileSync(testReviewContextPath, JSON.stringify({
+            review_type: 'test',
+            reviewer_routing: {
+                source_of_truth: 'Codex',
+                capability_level: 'delegation_capable',
+                expected_execution_mode: 'delegated_subagent',
+                fallback_allowed: false,
+                fallback_reason_required: false,
+                actual_execution_mode: null,
+                reviewer_session_id: null,
+                fallback_reason: null
+            }
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(testReviewOutputPath, [
+            '# Review',
+            '',
+            'Validated the downstream test-review materialization path against current-cycle review sequencing evidence.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'TEST REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const blockedErrors: string[] = [];
+        process.exitCode = 0;
+        let blockedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            console.error = (...args: unknown[]) => {
+                blockedErrors.push(args.map((value) => String(value)).join(' '));
+            };
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--preflight-path', preflightPath,
+                '--review-output-path', testReviewOutputPath,
+                '--review-context-path', testReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            blockedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const blockedErrorOutput = blockedErrors.join('\n');
+        assert.ok(blockedExitCode !== 0, `Expected non-zero exit code, got ${blockedExitCode}`);
+        assert.ok(
+            blockedErrorOutput.includes("ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code."),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('code: no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
+            blockedErrorOutput
+        );
+        assert.equal(fs.existsSync(testReviewArtifactPath), false);
+        assert.equal(fs.existsSync(testReviewReceiptPath), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
+        )), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('build-review-context accepts upstream code review evidence recorded with an explicit custom review-context path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-custom-code-context';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-custom-code-context.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow downstream test review after code review was recorded from a custom context path',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 2,
+            changed_lines_total: 12,
+            required_reviews: { code: true, test: true }
+        });
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const customCodeReviewContextPath = path.join(reviewsRoot, 'custom-code-context.json');
+        const codeReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const testReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        const testReviewOutputPath = path.join(reviewsRoot, `${taskId}-test-review-output.md`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        let codeReviewBuildExitCode = 0;
+        let codeReviewRecordExitCode = 0;
+        let testReviewBuildExitCode = 0;
+        let testReviewRecordExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', customCodeReviewContextPath
+            ]);
+            codeReviewBuildExitCode = Number(process.exitCode ?? 0);
+
+            fs.writeFileSync(codeReviewOutputPath, [
+                '# Review',
+                '',
+                'Validated `src/cli/commands/gate-build-handlers.ts`, `src/gates/review-dependencies.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that current-cycle upstream review readiness now follows recorded review-context paths and that downstream sequencing is enforced consistently across both preparation and materialization gates.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', codeReviewOutputPath,
+                '--review-context-path', customCodeReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            codeReviewRecordExitCode = Number(process.exitCode ?? 0);
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'test',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', testReviewContextPath
+            ]);
+            testReviewBuildExitCode = Number(process.exitCode ?? 0);
+
+            fs.writeFileSync(testReviewOutputPath, [
+                '# Review',
+                '',
+                'Validated `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates-artifacts.ts`, and `src/gates/completion.ts`, confirming that downstream review validation now follows the recorded custom code review-context path through materialization, review-gate verification, and completion-gate consumption.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'TEST REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--preflight-path', preflightPath,
+                '--review-output-path', testReviewOutputPath,
+                '--review-context-path', testReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            testReviewRecordExitCode = Number(process.exitCode ?? 0);
         } finally {
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
+
+        assert.equal(codeReviewBuildExitCode, 0);
+        assert.equal(codeReviewRecordExitCode, 0);
+        assert.equal(testReviewBuildExitCode, 0);
+        assert.equal(testReviewRecordExitCode, 0);
+        assert.equal(fs.existsSync(customCodeReviewContextPath), true);
+        assert.equal(fs.existsSync(testReviewContextPath), true);
 
         const reviewResult = runRequiredReviewsCheckCommand({
             repoRoot,
@@ -4428,7 +5044,6 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
         assert.equal(reviewResult.exitCode, 0);
-        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -4437,7 +5052,7 @@ describe('cli/commands/gates', () => {
             decision: 'NO_DOC_UPDATES',
             behaviorChanged: false,
             changelogUpdated: false,
-            rationale: 'Mixed review-order regression fixture only.',
+            rationale: 'Custom review-context path is an internal gate-contract regression fixture.',
             emitMetrics: false
         });
         assert.equal(docImpactResult.exitCode, 0);
@@ -4449,6 +5064,446 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('build-review-context keeps downstream test review blocked when upstream code review uses a legacy custom context path without strict binding metadata', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-custom-code-context-legacy-blocked';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-custom-code-context-legacy-blocked.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep downstream test review blocked when legacy custom upstream review contexts fail strict gate validation',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 2,
+            changed_lines_total: 12,
+            required_reviews: { code: true, test: true }
+        });
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const canonicalCodeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const legacyCodeReviewContextPath = path.join(reviewsRoot, 'legacy-code-context.json');
+        const codeReviewArtifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const codeReviewReceiptPath = codeReviewArtifactPath.replace(/\.md$/, '-receipt.json');
+        const blockedTestReviewContextPath = path.join(reviewsRoot, `${taskId}-blocked-test-review-context.json`);
+        const blockedTestReviewContextArtifactPath = blockedTestReviewContextPath.replace(/\.json$/, '.md');
+        const blockedTestScopedDiffPath = path.join(reviewsRoot, `${taskId}-blocked-test-scoped.json`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const blockedErrors: string[] = [];
+        let codeReviewBuildExitCode = 0;
+        let blockedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', canonicalCodeReviewContextPath
+            ]);
+            codeReviewBuildExitCode = Number(process.exitCode ?? 0);
+
+            const canonicalContext = JSON.parse(fs.readFileSync(canonicalCodeReviewContextPath, 'utf8')) as Record<string, unknown>;
+            const routing = (canonicalContext.reviewer_routing && typeof canonicalContext.reviewer_routing === 'object')
+                ? canonicalContext.reviewer_routing as Record<string, unknown>
+                : {};
+            const legacyContext = {
+                review_type: canonicalContext.review_type,
+                reviewer_routing: {
+                    ...routing,
+                    actual_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }
+            };
+            fs.writeFileSync(legacyCodeReviewContextPath, JSON.stringify(legacyContext, null, 2) + '\n', 'utf8');
+
+            const artifactText = [
+                '# Review',
+                '',
+                'Validated `src/app.ts` and the downstream review sequencing contract in detail, confirming that the upstream code-review artifact is otherwise realistic and non-trivial while leaving no active findings for this fixture.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n');
+            fs.writeFileSync(codeReviewArtifactPath, artifactText, 'utf8');
+
+            const crypto = require('node:crypto');
+            const preflightText = fs.readFileSync(preflightPath, 'utf8');
+            const preflight = JSON.parse(preflightText) as Record<string, unknown>;
+            const legacyContextText = fs.readFileSync(legacyCodeReviewContextPath, 'utf8');
+            const receipt = buildReviewReceipt({
+                taskId,
+                reviewType: 'code',
+                preflightSha256: crypto.createHash('sha256').update(preflightText).digest('hex'),
+                scopeSha256: String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
+                codeScopeSha256: computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256,
+                reviewContextSha256: crypto.createHash('sha256').update(legacyContextText).digest('hex'),
+                reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(legacyContextText) as Record<string, unknown>),
+                reviewArtifactSha256: crypto.createHash('sha256').update(artifactText).digest('hex'),
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer',
+                reviewerFallbackReason: null,
+                trustLevel: 'LOCAL_AUDITED'
+            });
+            fs.writeFileSync(codeReviewReceiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'Review phase started.', {
+                review_type: 'code'
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_SELECTED', 'INFO', 'selected', {
+                skill_id: 'code-review'
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', {
+                reference_path: '/live/skills/code-review/SKILL.md'
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                delegation_used: true
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', {
+                review_type: 'code',
+                review_context_path: legacyCodeReviewContextPath.replace(/\\/g, '/')
+            });
+
+            process.exitCode = 0;
+            console.error = (...args: unknown[]) => {
+                blockedErrors.push(args.map((value) => String(value)).join(' '));
+            };
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'test',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--scoped-diff-metadata-path', blockedTestScopedDiffPath,
+                '--output-path', blockedTestReviewContextPath
+            ]);
+            blockedExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const blockedErrorOutput = blockedErrors.join('\n');
+        assert.equal(codeReviewBuildExitCode, 0);
+        assert.ok(blockedExitCode !== 0, `Expected non-zero exit code, got ${blockedExitCode}`);
+        assert.ok(
+            blockedErrorOutput.includes("ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code."),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('missing task_id')
+            || blockedErrorOutput.includes('missing preflight_path')
+            || blockedErrorOutput.includes('missing preflight_sha256'),
+            blockedErrorOutput
+        );
+        assert.equal(fs.existsSync(blockedTestReviewContextPath), false);
+        assert.equal(fs.existsSync(blockedTestReviewContextArtifactPath), false);
+        assert.equal(fs.existsSync(blockedTestScopedDiffPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects a foreign review-context path whose review_type does not match the requested review', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-record-review-result-foreign-context';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
+            metrics: { changed_lines_total: 10 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject foreign review-context materialization for delegated review evidence',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 2,
+            changed_lines_total: 10,
+            required_reviews: { code: true, test: true }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const testReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        const codeReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const codeArtifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const codeReceiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        let buildCodeExitCode = 0;
+        let recordExitCode = 0;
+        try {
+            console.error = (...args: unknown[]) => {
+                capturedErrors.push(args.map((arg) => String(arg)).join(' '));
+            };
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', codeReviewContextPath
+            ]);
+            buildCodeExitCode = Number(process.exitCode ?? 0);
+
+            const foreignReviewContext = JSON.parse(fs.readFileSync(codeReviewContextPath, 'utf8')) as Record<string, unknown>;
+            foreignReviewContext.review_type = 'test';
+            foreignReviewContext.output_path = testReviewContextPath.replace(/\\/g, '/');
+            fs.writeFileSync(testReviewContextPath, JSON.stringify(foreignReviewContext, null, 2) + '\n', 'utf8');
+
+            fs.writeFileSync(codeReviewOutputPath, [
+                '# Review',
+                '',
+                'Validated the current implementation and found no blocking code-level defects in the scoped change.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', codeReviewOutputPath,
+                '--review-context-path', testReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            recordExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(buildCodeExitCode, 0);
+        assert.notEqual(recordExitCode, 0);
+        assert.ok(capturedErrors.some((line) => line.includes("review_type 'test'")));
+        assert.equal(fs.existsSync(codeArtifactPath), false);
+        assert.equal(fs.existsSync(codeReceiptPath), false);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => (
+            event.event_type === 'REVIEWER_DELEGATION_ROUTED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        )), false);
+        assert.equal(events.some((event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        )), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects a custom legacy review-context path that omits task and preflight binding metadata', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-record-review-result-legacy-context';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject legacy custom review-context artifacts without fresh-cycle binding metadata',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 1,
+            changed_lines_total: 3,
+            required_reviews: { code: true }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const canonicalContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const legacyContextPath = path.join(reviewsRoot, 'legacy-code-context.json');
+        const reviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        let buildExitCode = 0;
+        let recordExitCode = 0;
+        try {
+            console.error = (...args: unknown[]) => {
+                capturedErrors.push(args.map((arg) => String(arg)).join(' '));
+            };
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', canonicalContextPath
+            ]);
+            buildExitCode = Number(process.exitCode ?? 0);
+
+            const canonicalContext = JSON.parse(fs.readFileSync(canonicalContextPath, 'utf8')) as Record<string, unknown>;
+            const legacyContext = {
+                review_type: canonicalContext.review_type,
+                reviewer_routing: canonicalContext.reviewer_routing
+            };
+            fs.writeFileSync(legacyContextPath, JSON.stringify(legacyContext, null, 2) + '\n', 'utf8');
+
+            fs.writeFileSync(reviewOutputPath, [
+                '# Review',
+                '',
+                'Validated the scoped implementation and found no blocking issues.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--review-context-path', legacyContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            recordExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(buildExitCode, 0);
+        assert.notEqual(recordExitCode, 0);
+        assert.ok(capturedErrors.some((line) => (
+            line.includes('missing task_id')
+            || line.includes('missing preflight_path')
+            || line.includes('missing preflight_sha256')
+        )));
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

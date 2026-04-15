@@ -6,6 +6,7 @@ import {
     testExpectedVerdict,
     REVIEW_CONTRACTS,
     detectZeroDiffFromPreflight,
+    validateReviewArtifactGateEligibility,
     validateZeroDiffForReviewGate
 } from '../../../src/gates/required-reviews-check';
 
@@ -170,6 +171,100 @@ describe('gates/required-reviews-check', () => {
             const result = validateZeroDiffForReviewGate(preflight, 'T-099', '/nonexistent-repo');
             assert.ok(result.violations[0].includes('record-no-op'));
             assert.ok(result.violations[0].includes('BLOCKED'));
+        });
+    });
+
+    describe('validateReviewArtifactGateEligibility', () => {
+        it('rejects a review-context artifact whose review_type does not match the expected review', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-053',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-preflight.json',
+                preflightSha256: 'abc123',
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated the current implementation and found no blocking issues in the scoped change.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/custom-test-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-053',
+                        review_type: 'test',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:test-reviewer'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact'
+                },
+                sourceOfTruth: 'Codex'
+            });
+
+            assert.ok(result.violations.some((violation) => (
+                violation.includes('custom-test-context.json') && violation.includes("review_type 'test'")
+            )));
+        });
+
+        it('requires task and preflight binding metadata for custom review-context paths', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-053',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-preflight.json',
+                preflightSha256: 'abc123',
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated the current implementation and found no blocking issues in the scoped change.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/custom-code-context.json',
+                    reviewContext: {
+                        review_type: 'code',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:test-reviewer'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact'
+                },
+                sourceOfTruth: 'Codex'
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('missing task_id')));
+            assert.ok(result.violations.some((violation) => violation.includes('missing preflight_path')));
+            assert.ok(result.violations.some((violation) => violation.includes('missing preflight_sha256')));
         });
     });
 });

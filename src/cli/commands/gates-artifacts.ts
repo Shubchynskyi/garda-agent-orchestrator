@@ -102,6 +102,33 @@ export function resolveReviewContextPath(reviewsRoot: string, taskId: string | n
     if (!taskId) {
         return path.join(reviewsRoot, `${reviewKey}-context.json`);
     }
+    const timelinePath = path.resolve(reviewsRoot, '..', 'task-events', `${taskId}.jsonl`);
+    if (fs.existsSync(timelinePath) && fs.statSync(timelinePath).isFile()) {
+        const lines = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim().length > 0);
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+            try {
+                const parsed = JSON.parse(lines[index]) as Record<string, unknown>;
+                const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
+                    ? parsed.details as Record<string, unknown>
+                    : null;
+                const reviewType = String(details?.review_type || details?.reviewType || '').trim().toLowerCase();
+                const reviewContextPath = String(details?.review_context_path || details?.reviewContextPath || '').trim();
+                if (
+                    String(parsed.event_type || '').trim().toUpperCase() === 'REVIEW_RECORDED'
+                    && reviewType === reviewKey
+                    && reviewContextPath
+                    && fs.existsSync(reviewContextPath)
+                    && fs.statSync(reviewContextPath).isFile()
+                ) {
+                    return reviewContextPath;
+                }
+            } catch {
+                // Ignore malformed timeline lines here; downstream validators will surface integrity issues separately.
+            }
+        }
+    }
     const preferred = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     if (fs.existsSync(preferred) && fs.statSync(preferred).isFile()) {
         return preferred;

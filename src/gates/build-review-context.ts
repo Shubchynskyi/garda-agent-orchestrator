@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
 import { buildReviewContextSections } from '../gate-runtime/review-context';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
-import { normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
+import { fileSha256, normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPath, resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
@@ -139,6 +139,7 @@ export interface BuildReviewContextOptions {
     reviewType: string;
     depth: number;
     preflightPath: string;
+    preflightPayload?: Record<string, unknown> | null;
     tokenEconomyConfigPath: string;
     scopedDiffMetadataPath: string;
     outputPath: string;
@@ -158,7 +159,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const outputPath = options.outputPath;
     const repoRoot = options.repoRoot;
 
-    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+    const preflight = options.preflightPayload ?? JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
     let tokenConfig: TokenEconomyConfig = {};
     if (tokenEconomyConfigPath && fs.existsSync(tokenEconomyConfigPath) && fs.statSync(tokenEconomyConfigPath).isFile()) {
         tokenConfig = JSON.parse(fs.readFileSync(tokenEconomyConfigPath, 'utf8')) as TokenEconomyConfig;
@@ -299,11 +300,13 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
 
     const result = {
         schema_version: 2,
+        task_id: taskId,
         review_type: reviewType,
         depth,
         token_economy_active: !!tokenEconomyActive,
         required_review: !!requiredReview,
         preflight_path: normalizePath(preflightPath),
+        preflight_sha256: fileSha256(preflightPath),
         output_path: normalizePath(outputPath),
         token_economy_config_path: normalizePath(tokenEconomyConfigPath),
         compatibility,

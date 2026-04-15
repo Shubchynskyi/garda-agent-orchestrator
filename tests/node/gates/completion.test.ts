@@ -551,7 +551,7 @@ describe('gates/completion', () => {
         it('returns no violations when code changed and review telemetry plus artifacts are present', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
                 makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
                 makeEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
@@ -562,17 +562,18 @@ describe('gates/completion', () => {
                     reviewer_execution_mode: 'delegated_subagent'
                 }),
                 makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 6, { skill_id: 'testing-strategy' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 7, {
+                makeEvent('REVIEW_PHASE_STARTED', 6, { review_type: 'test' }),
+                makeEvent('SKILL_SELECTED', 7, { skill_id: 'testing-strategy' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 8, {
                     skill_id: 'testing-strategy',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 8, {
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
                     review_type: 'test',
                     reviewer_execution_mode: 'delegated_subagent'
                 }),
-                makeEvent('REVIEW_RECORDED', 9, { review_type: 'test' }),
-                makeEvent('REVIEW_GATE_PASSED', 10)
+                makeEvent('REVIEW_RECORDED', 10, { review_type: 'test' }),
+                makeEvent('REVIEW_GATE_PASSED', 11)
             ];
             const requiredReviews = { code: true, test: true };
             const reviewArtifacts = {
@@ -658,7 +659,7 @@ describe('gates/completion', () => {
             }
         });
 
-        it('uses review-type-specific REVIEW_PHASE_STARTED events when multiple required reviews share a cycle', () => {
+        it('fails when downstream test review starts before upstream code review is recorded in the same cycle', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'test' }),
@@ -755,7 +756,154 @@ describe('gates/completion', () => {
                     '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
                     'Codex'
                 );
-                assert.equal(result.violations.length, 0);
+                assert.ok(
+                    result.violations.some((entry) => entry.includes("Required review 'test' started before upstream review 'code' completed")),
+                    JSON.stringify(result, null, 2)
+                );
+            } finally {
+                fsMock.existsSync = originalExists;
+                fsMock.readFileSync = originalRead;
+            }
+        });
+
+        it('fails when downstream test review starts before required non-test upstream reviews are recorded in the same cycle', () => {
+            const upstreamReviewTypes = [
+                'api',
+                'db',
+                'security',
+                'refactor',
+                'performance',
+                'infra',
+                'dependency'
+            ] as const;
+            const skillIds: Record<typeof upstreamReviewTypes[number], string> = {
+                api: 'api-review',
+                db: 'db-review',
+                security: 'security-review',
+                refactor: 'refactor-review',
+                performance: 'performance-review',
+                infra: 'infra-review',
+                dependency: 'dependency-review'
+            };
+            const verdictTokens: Record<typeof upstreamReviewTypes[number], string> = {
+                api: 'API REVIEW PASSED',
+                db: 'DB REVIEW PASSED',
+                security: 'SECURITY REVIEW PASSED',
+                refactor: 'REFACTOR REVIEW PASSED',
+                performance: 'PERFORMANCE REVIEW PASSED',
+                infra: 'INFRA REVIEW PASSED',
+                dependency: 'DEPENDENCY REVIEW PASSED'
+            };
+
+            const fsMock = require('node:fs');
+            const originalExists = fsMock.existsSync;
+            const originalRead = fsMock.readFileSync;
+            const norm = (p: string) => p.replace(/\\/g, '/');
+
+            try {
+                for (const upstreamReviewType of upstreamReviewTypes) {
+                    const events = [
+                        makeEvent('COMPILE_GATE_PASSED', 0),
+                        makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'test' }),
+                        makeEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
+                        makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                            skill_id: 'testing-strategy',
+                            reference_path: '/repo/garda-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
+                        }),
+                        makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                            review_type: 'test',
+                            reviewer_execution_mode: 'delegated_subagent'
+                        }),
+                        makeEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
+                        makeEvent('REVIEW_PHASE_STARTED', 6, { review_type: upstreamReviewType }),
+                        makeEvent('SKILL_SELECTED', 7, { skill_id: skillIds[upstreamReviewType] }),
+                        makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                            skill_id: skillIds[upstreamReviewType],
+                            reference_path: `/repo/garda-agent-orchestrator/live/skills/${skillIds[upstreamReviewType]}/SKILL.md`
+                        }),
+                        makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                            review_type: upstreamReviewType,
+                            reviewer_execution_mode: 'delegated_subagent'
+                        }),
+                        makeEvent('REVIEW_RECORDED', 10, { review_type: upstreamReviewType }),
+                        makeEvent('REVIEW_GATE_PASSED', 11)
+                    ];
+                    const requiredReviews = { [upstreamReviewType]: true, test: true };
+                    const reviewArtifacts = {
+                        [upstreamReviewType]: {
+                            path: `/reviews/T-123-${upstreamReviewType}.md`,
+                            reviewContext: {
+                                reviewer_routing: {
+                                    actual_execution_mode: 'delegated_subagent',
+                                    reviewer_session_id: `agent:${upstreamReviewType}-reviewer`
+                                }
+                            },
+                            receipt: {
+                                schema_version: 2,
+                                task_id: 'T-123',
+                                review_type: upstreamReviewType,
+                                preflight_sha256: null,
+                                scope_sha256: null,
+                                review_context_sha256: null,
+                                review_artifact_sha256: null,
+                                reviewer_execution_mode: 'delegated_subagent',
+                                reviewer_identity: `agent:${upstreamReviewType}-reviewer`,
+                                reviewer_fallback_reason: null,
+                                recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                            }
+                        },
+                        test: {
+                            path: '/reviews/T-123-test.md',
+                            reviewContext: {
+                                reviewer_routing: {
+                                    actual_execution_mode: 'delegated_subagent',
+                                    reviewer_session_id: 'agent:test-reviewer'
+                                }
+                            },
+                            receipt: {
+                                schema_version: 2,
+                                task_id: 'T-123',
+                                review_type: 'test',
+                                preflight_sha256: null,
+                                scope_sha256: null,
+                                review_context_sha256: null,
+                                review_artifact_sha256: null,
+                                reviewer_execution_mode: 'delegated_subagent',
+                                reviewer_identity: 'agent:test-reviewer',
+                                reviewer_fallback_reason: null,
+                                recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                            }
+                        }
+                    };
+
+                    fsMock.existsSync = (p: string) => (
+                        norm(p).includes(`T-123-${upstreamReviewType}.md`)
+                        || norm(p).includes('T-123-test.md')
+                        || originalExists(p)
+                    );
+                    fsMock.readFileSync = (p: string, e: string) => {
+                        if (norm(p).includes(`T-123-${upstreamReviewType}.md`)) {
+                            return `# Review\nValidated the ${upstreamReviewType} sequencing contract with enough detail to satisfy authenticity checks.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\n${verdictTokens[upstreamReviewType]}`;
+                        }
+                        if (norm(p).includes('T-123-test.md')) {
+                            return '# Review\nValidated the downstream test review artifact for the sequencing contract with enough detail to satisfy authenticity checks.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nTEST REVIEW PASSED';
+                        }
+                        return originalRead(p, e);
+                    };
+
+                    const result = validateReviewSkillEvidence(
+                        events,
+                        requiredReviews,
+                        reviewArtifacts,
+                        true,
+                        '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                        'Codex'
+                    );
+                    assert.ok(
+                        result.violations.some((entry) => entry.includes(`Required review 'test' started before upstream review '${upstreamReviewType}' completed`)),
+                        `${upstreamReviewType}: ${JSON.stringify(result, null, 2)}`
+                    );
+                }
             } finally {
                 fsMock.existsSync = originalExists;
                 fsMock.readFileSync = originalRead;
