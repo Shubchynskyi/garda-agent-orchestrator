@@ -26,6 +26,16 @@ export interface AggregateRetentionApplyResult {
     telemetry?: AcquireLockTelemetry;
 }
 
+function parseAggregateTaskId(line: string): string | null {
+    try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const taskId = String(parsed.task_id || '').trim();
+        return /^T-\d+$/i.test(taskId) ? taskId : null;
+    } catch {
+        return null;
+    }
+}
+
 function toNonNegativeInteger(value: unknown, fallback: number): number {
     const parsed = Number.parseInt(String(value), 10);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -68,7 +78,8 @@ function countLinesStreaming(filePath: string): number {
 export function pruneAggregateLog(
     allTasksPath: string,
     maxLines: number = DEFAULT_AGGREGATE_MAX_LINES,
-    knownLineCount?: number
+    knownLineCount?: number,
+    protectedTaskIds: ReadonlySet<string> = new Set<string>()
 ): AggregateRetentionResult {
     if (maxLines <= 0) {
         return { pruned: false, lines_before: 0, lines_after: 0 };
@@ -81,6 +92,37 @@ export function pruneAggregateLog(
     const linesBefore = knownLineCount ?? countLinesStreaming(allTasksPath);
     if (linesBefore <= maxLines) {
         return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
+    }
+
+    if (protectedTaskIds.size > 0) {
+        try {
+            const lines = fs.readFileSync(allTasksPath, 'utf8')
+                .split('\n')
+                .filter((line) => line.trim().length > 0);
+            if (lines.length <= maxLines) {
+                return { pruned: false, lines_before: lines.length, lines_after: lines.length };
+            }
+            let removable = lines.length - maxLines;
+            const keptLines: string[] = [];
+            let pruned = false;
+            for (const line of lines) {
+                const taskId = parseAggregateTaskId(line);
+                const protectedLine = taskId ? protectedTaskIds.has(taskId) : true;
+                if (!protectedLine && removable > 0) {
+                    removable -= 1;
+                    pruned = true;
+                    continue;
+                }
+                keptLines.push(line);
+            }
+            if (!pruned) {
+                return { pruned: false, lines_before: lines.length, lines_after: lines.length };
+            }
+            fs.writeFileSync(allTasksPath, keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '', 'utf8');
+            return { pruned: true, lines_before: lines.length, lines_after: keptLines.length };
+        } catch {
+            return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
+        }
     }
 
     const linesToSkip = linesBefore - maxLines;
@@ -152,12 +194,13 @@ export function pruneAggregateLog(
 export function pruneAggregateLogLocked(
     eventsRoot: string,
     maxLines: number = DEFAULT_AGGREGATE_MAX_LINES,
-    lockOptions: LockOptions = {}
+    lockOptions: LockOptions = {},
+    protectedTaskIds: ReadonlySet<string> = new Set<string>()
 ): AggregateRetentionResult {
     const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
     const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
     const lockResult = withFilesystemLock(aggregateLockPath, lockOptions, function (): AggregateRetentionResult {
-        return pruneAggregateLog(allTasksPath, maxLines);
+        return pruneAggregateLog(allTasksPath, maxLines, undefined, protectedTaskIds);
     });
     return lockResult.result;
 }

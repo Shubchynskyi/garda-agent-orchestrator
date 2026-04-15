@@ -70,6 +70,28 @@ function createTaskEventFile(eventsDir: string, taskId: string): string {
     return filePath;
 }
 
+function writeTaskTimeline(
+    eventsDir: string,
+    taskId: string,
+    events: Array<{ event_type: string; details?: Record<string, unknown> }>
+): string {
+    const filePath = path.join(eventsDir, `${taskId}.jsonl`);
+    fs.writeFileSync(
+        filePath,
+        events.map((event, index) => JSON.stringify({
+            timestamp_utc: `2026-04-15T12:00:${String(index).padStart(2, '0')}.000Z`,
+            task_id: taskId,
+            outcome: 'INFO',
+            actor: 'test',
+            message: event.event_type,
+            event_type: event.event_type,
+            details: event.details || {}
+        })).join('\n') + '\n',
+        'utf8'
+    );
+    return filePath;
+}
+
 function createReviewArtifacts(reviewsDir: string, taskId: string): string[] {
     const files = [
         `${taskId}-preflight.json`,
@@ -83,6 +105,27 @@ function createReviewArtifacts(reviewsDir: string, taskId: string): string[] {
         paths.push(filePath);
     }
     return paths;
+}
+
+function writeTaskQueue(
+    targetRoot: string,
+    tasks: Array<{ id: string; status: string; title?: string }>
+): void {
+    const lines = [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|'
+    ];
+
+    for (const task of tasks) {
+        lines.push(
+            `| ${task.id} | ${task.status} | P2 | reliability/test | ${task.title || 'Task'} | gpt-5.4 | 2026-04-15 | balanced | note |`
+        );
+    }
+
+    fs.writeFileSync(path.join(targetRoot, 'TASK.md'), `${lines.join('\n')}\n`, 'utf8');
 }
 
 describe('buildDefaultRetentionPolicy', () => {
@@ -144,6 +187,242 @@ describe('runCleanup', () => {
         assert.equal(result.result, 'SUCCESS');
     });
 
+    it('preserves active task review and task-event artifacts resolved from TASK.md', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Active task' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const activeReviewPaths = createReviewArtifacts(reviewsDir, 'T-001');
+        const inactiveReviewPaths = createReviewArtifacts(reviewsDir, 'T-002');
+        const activeEventPath = createTaskEventFile(eventsDir, 'T-001');
+        const inactiveEventPath = createTaskEventFile(eventsDir, 'T-002');
+        const activeCachePath = path.join(eventsDir, 'T-001.completeness.json');
+        const inactiveCachePath = path.join(eventsDir, 'T-002.completeness.json');
+        fs.writeFileSync(activeCachePath, '{}', 'utf8');
+        fs.writeFileSync(inactiveCachePath, '{}', 'utf8');
+
+        const past = daysAgo(45);
+        for (const entryPath of [
+            ...activeReviewPaths,
+            ...inactiveReviewPaths,
+            activeEventPath,
+            inactiveEventPath,
+            activeCachePath,
+            inactiveCachePath
+        ]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            retentionPolicy: { maxAgeDays: 30, maxReviews: 100, maxTaskEvents: 100 }
+        });
+
+        assert.ok(result.removed.some((item) => item.path.endsWith('T-002.jsonl')));
+        assert.ok(result.removed.some((item) => item.path.endsWith('T-002.completeness.json')));
+        assert.ok(result.removed.some((item) => item.path.endsWith('T-002-task-mode.json')));
+        assert.equal(fs.existsSync(activeEventPath), true, 'active task timeline should be preserved');
+        assert.equal(fs.existsSync(activeCachePath), true, 'active task completeness cache should be preserved');
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), true, 'active task review artifacts should be preserved');
+        assert.equal(fs.existsSync(inactiveEventPath), false, 'inactive task timeline should be removed');
+        assert.equal(fs.existsSync(inactiveCachePath), false, 'inactive task completeness cache should be removed');
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'inactive task review artifacts should be removed');
+    });
+
+    it('fails closed for task artifacts when TASK.md cannot be read', () => {
+        const taskMdPath = path.join(tmpDir, 'TASK.md');
+        fs.mkdirSync(taskMdPath, { recursive: true });
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        const backupsDir = path.join(runtimeDir, 'backups');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(backupsDir, { recursive: true });
+
+        const reviewPaths = createReviewArtifacts(reviewsDir, 'T-001');
+        const eventPath = writeTaskTimeline(eventsDir, 'T-001', [
+            { event_type: 'TASK_MODE_ENTERED' }
+        ]);
+        const backupPath = createTimestampDir(backupsDir, daysAgo(45));
+
+        const past = daysAgo(45);
+        for (const entryPath of [...reviewPaths, eventPath]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            retentionPolicy: { maxAgeDays: 30, maxBackups: 0, maxReviews: 0, maxTaskEvents: 0 }
+        });
+
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), true, 'review artifacts should be preserved when TASK.md is unreadable');
+        assert.equal(fs.existsSync(eventPath), true, 'task-event artifacts should be preserved when TASK.md is unreadable');
+        assert.equal(fs.existsSync(backupPath), false, 'non-task artifacts may still be cleaned');
+        assert.ok(result.removed.some((item) => item.path === backupPath), 'cleanup should still remove ordinary retention candidates');
+    });
+
+    it('fails closed for task artifacts when TASK.md is missing', () => {
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        const backupsDir = path.join(runtimeDir, 'backups');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(backupsDir, { recursive: true });
+
+        const reviewPaths = createReviewArtifacts(reviewsDir, 'T-001');
+        const eventPath = writeTaskTimeline(eventsDir, 'T-001', [
+            { event_type: 'TASK_MODE_ENTERED' }
+        ]);
+        const backupPath = createTimestampDir(backupsDir, daysAgo(45));
+
+        const past = daysAgo(45);
+        for (const entryPath of [...reviewPaths, eventPath]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            retentionPolicy: { maxAgeDays: 30, maxBackups: 0, maxReviews: 0, maxTaskEvents: 0 }
+        });
+
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), true, 'review artifacts should be preserved when TASK.md is missing');
+        assert.equal(fs.existsSync(eventPath), true, 'task-event artifacts should be preserved when TASK.md is missing');
+        assert.equal(fs.existsSync(backupPath), false, 'non-task artifacts may still be cleaned');
+        assert.ok(result.removed.some((item) => item.path === backupPath), 'cleanup should still remove ordinary retention candidates');
+    });
+
+    it('merges runtime activity with TASK.md so stale queue snapshots do not prune live artifacts', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟩 DONE', title: 'Stale queue entry' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const activeReviewPaths = createReviewArtifacts(reviewsDir, 'T-001');
+        const inactiveReviewPaths = createReviewArtifacts(reviewsDir, 'T-002');
+        const activeEventPath = writeTaskTimeline(eventsDir, 'T-001', [
+            { event_type: 'TASK_MODE_ENTERED' },
+            { event_type: 'STATUS_CHANGED', details: { previous_status: 'TODO', new_status: 'IN_PROGRESS' } }
+        ]);
+        const inactiveEventPath = writeTaskTimeline(eventsDir, 'T-002', [
+            { event_type: 'TASK_MODE_ENTERED' },
+            { event_type: 'STATUS_CHANGED', details: { previous_status: 'IN_REVIEW', new_status: 'DONE' } }
+        ]);
+
+        const past = daysAgo(45);
+        for (const entryPath of [
+            ...activeReviewPaths,
+            ...inactiveReviewPaths,
+            activeEventPath,
+            inactiveEventPath
+        ]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            retentionPolicy: { maxAgeDays: 30, maxReviews: 0, maxTaskEvents: 0 }
+        });
+
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), true, 'runtime-active task review artifacts should survive stale TASK.md state');
+        assert.equal(fs.existsSync(activeEventPath), true, 'runtime-active task timeline should survive stale TASK.md state');
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'terminal runtime task review artifacts should still be eligible for cleanup');
+        assert.equal(fs.existsSync(inactiveEventPath), false, 'terminal runtime task timeline should still be eligible for cleanup');
+        assert.ok(result.removed.some((item) => item.path.endsWith('T-002-task-mode.json')));
+    });
+
+    it('preserves a fresh lifecycle restart after an older terminal status', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟩 DONE', title: 'Recovered task' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        createReviewArtifacts(reviewsDir, 'T-001');
+        createReviewArtifacts(reviewsDir, 'T-002');
+        const restartedEventPath = writeTaskTimeline(eventsDir, 'T-001', [
+            { event_type: 'STATUS_CHANGED', details: { previous_status: 'IN_REVIEW', new_status: 'DONE' } },
+            { event_type: 'TASK_MODE_ENTERED' }
+        ]);
+        const inactiveEventPath = writeTaskTimeline(eventsDir, 'T-002', [
+            { event_type: 'STATUS_CHANGED', details: { previous_status: 'IN_REVIEW', new_status: 'DONE' } }
+        ]);
+
+        const past = daysAgo(45);
+        for (const entryPath of [
+            path.join(reviewsDir, 'T-002-preflight.json'),
+            path.join(reviewsDir, 'T-002-task-mode.json'),
+            path.join(reviewsDir, 'T-002-compile-gate.json'),
+            inactiveEventPath
+        ]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            retentionPolicy: { maxAgeDays: 30, maxReviews: 0, maxTaskEvents: 0 }
+        });
+
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), true, 'fresh lifecycle restart should preserve recovered task artifacts');
+        assert.equal(fs.existsSync(restartedEventPath), true, 'fresh lifecycle restart should preserve recovered task timeline');
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'older terminal task should still be eligible for cleanup');
+        assert.equal(fs.existsSync(inactiveEventPath), false, 'older terminal task timeline should still be eligible for cleanup');
+        assert.ok(result.removed.some((item) => item.path.endsWith('T-002-task-mode.json')));
+    });
+
+    it('does not keep completed tasks active when terminal evidence is followed only by terminal tail events', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Stale active row' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        createReviewArtifacts(reviewsDir, 'T-001');
+        const completedEventPath = writeTaskTimeline(eventsDir, 'T-001', [
+            { event_type: 'STATUS_CHANGED', details: { previous_status: 'IN_REVIEW', new_status: 'DONE' } },
+            { event_type: 'TASK_DONE' }
+        ]);
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            retentionPolicy: { maxAgeDays: 30, maxReviews: 0, maxTaskEvents: 0 }
+        });
+
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), false, 'terminal runtime evidence should override stale active TASK.md rows');
+        assert.equal(fs.existsSync(completedEventPath), false, 'terminal tail events should not keep task timelines active');
+        assert.ok(result.removed.some((item) => item.path.endsWith('T-001-task-mode.json')));
+    });
+
     it('prunes aggregate log when over maxAggregateLines', () => {
         const eventsDir = path.join(runtimeDir, 'task-events');
         fs.mkdirSync(eventsDir, { recursive: true });
@@ -169,6 +448,35 @@ describe('runCleanup', () => {
             .filter(l => l.trim());
         assert.equal(remaining.length, 10);
         assert.equal(JSON.parse(remaining[0]).seq, 15);
+    });
+
+    it('prunes aggregate log without deleting lines for active tasks', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Active task' }
+        ]);
+
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(eventsDir, { recursive: true });
+        const allTasksPath = path.join(eventsDir, 'all-tasks.jsonl');
+        const lines = Array.from({ length: 25 }, (_, i) =>
+            JSON.stringify({ seq: i, task_id: i < 5 ? 'T-001' : 'T-900' })
+        );
+        fs.writeFileSync(allTasksPath, lines.join('\n') + '\n', 'utf8');
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            retentionPolicy: { maxAggregateLines: 10 }
+        });
+
+        assert.ok(result.aggregateRetention, 'aggregate pruning should still run');
+        const remaining = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter(l => l.trim())
+            .map((line) => JSON.parse(line) as { seq: number; task_id: string });
+        assert.ok(remaining.some((entry) => entry.task_id === 'T-001' && entry.seq === 0), 'active task lines should be preserved');
+        assert.equal(remaining.filter((entry) => entry.task_id === 'T-001').length, 5, 'all active-task lines should survive pruning');
+        assert.equal(remaining.length, 10, 'pruning should still trim unrelated aggregate lines');
     });
 
     it('does not prune aggregate log in dry-run mode', () => {
@@ -1301,6 +1609,54 @@ describe('runGc with storage policy', () => {
 
         assert.equal(result.storagePolicyResult, undefined);
     });
+
+    it('preserves active task artifacts resolved from TASK.md during gc candidate collection and storage policy', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟧 IN_REVIEW', title: 'Active review task' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const activeReviewPaths = createReviewArtifacts(reviewsDir, 'T-001');
+        const inactiveReviewPaths = createReviewArtifacts(reviewsDir, 'T-002');
+        const activeEventPath = createTaskEventFile(eventsDir, 'T-001');
+        const inactiveEventPath = createTaskEventFile(eventsDir, 'T-002');
+
+        const past = daysAgo(45);
+        for (const entryPath of [
+            ...activeReviewPaths,
+            ...inactiveReviewPaths,
+            activeEventPath,
+            inactiveEventPath
+        ]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxAgeDays: 30, maxReviews: 0, maxTaskEvents: 0 },
+            storagePolicy: {
+                retentionMode: 'none',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: false,
+                gateReceiptSuffixes: []
+            }
+        });
+
+        assert.ok(result.storagePolicyResult, 'storage policy should run in confirm mode');
+        assert.ok(result.storagePolicyResult!.preserved.includes('T-001-task-mode.json'));
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), true, 'active review artifact should survive gc');
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'inactive review artifact should be removed');
+        assert.equal(fs.existsSync(activeEventPath), true, 'active task timeline should survive gc');
+        assert.equal(fs.existsSync(inactiveEventPath), false, 'inactive task timeline should be removed by gc');
+    });
 });
 
 describe('runGc aggregate retention', () => {
@@ -1368,6 +1724,35 @@ describe('runGc aggregate retention', () => {
             .split('\n')
             .filter(l => l.trim());
         assert.equal(remaining.length, 25, 'original lines should be preserved');
+    });
+
+    it('prunes aggregate log during gc without deleting lines for active tasks', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟧 IN_REVIEW', title: 'Active review task' }
+        ]);
+
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(eventsDir, { recursive: true });
+        const allTasksPath = path.join(eventsDir, 'all-tasks.jsonl');
+        const lines = Array.from({ length: 25 }, (_, i) =>
+            JSON.stringify({ seq: i, task_id: i < 5 ? 'T-001' : 'T-900' })
+        );
+        fs.writeFileSync(allTasksPath, lines.join('\n') + '\n', 'utf8');
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxAggregateLines: 10 }
+        });
+
+        assert.ok(result.aggregateRetention, 'gc aggregate pruning should still run');
+        const remaining = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter(l => l.trim())
+            .map((line) => JSON.parse(line) as { seq: number; task_id: string });
+        assert.equal(remaining.filter((entry) => entry.task_id === 'T-001').length, 5, 'all active-task lines should survive gc pruning');
+        assert.equal(remaining.length, 10, 'gc pruning should still trim unrelated aggregate lines');
     });
 
     it('reports maxAggregateLines in default retention policy', () => {

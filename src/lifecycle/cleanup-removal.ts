@@ -184,7 +184,13 @@ function collectUpdateNamedDirs(dirPath: string, category: string, maxCount: num
     return items;
 }
 
-function collectReviewArtifacts(reviewsDir: string, maxReviews: number, maxAgeDays: number, now: Date): CleanupItem[] {
+function collectReviewArtifacts(
+    reviewsDir: string,
+    maxReviews: number,
+    maxAgeDays: number,
+    now: Date,
+    activeTaskIds: ReadonlySet<string>
+): CleanupItem[] {
     if (!fs.existsSync(reviewsDir)) return [];
     const items: CleanupItem[] = [];
     const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
@@ -201,6 +207,9 @@ function collectReviewArtifacts(reviewsDir: string, maxReviews: number, maxAgeDa
         const match = /^(T-\d+)-/.exec(entry);
         if (match) {
             const taskId = match[1];
+            if (activeTaskIds.has(taskId)) {
+                continue;
+            }
             const group = taskGroups.get(taskId) || [];
             group.push(entry);
             taskGroups.set(taskId, group);
@@ -244,14 +253,26 @@ function collectReviewArtifacts(reviewsDir: string, maxReviews: number, maxAgeDa
     return items;
 }
 
-function collectTaskEventFiles(eventsDir: string, maxTaskEvents: number, maxAgeDays: number, now: Date): CleanupItem[] {
+function collectTaskEventFiles(
+    eventsDir: string,
+    maxTaskEvents: number,
+    maxAgeDays: number,
+    now: Date,
+    activeTaskIds: ReadonlySet<string>
+): CleanupItem[] {
     if (!fs.existsSync(eventsDir)) return [];
     const items: CleanupItem[] = [];
     const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
 
     let entries: string[];
     try {
-        entries = fs.readdirSync(eventsDir).filter((entry) => entry.endsWith('.jsonl') && entry !== 'all-tasks.jsonl');
+        entries = fs.readdirSync(eventsDir).filter((entry) => {
+            if (!entry.endsWith('.jsonl') || entry === 'all-tasks.jsonl') {
+                return false;
+            }
+            const taskId = entry.replace(/\.jsonl$/, '');
+            return !activeTaskIds.has(taskId);
+        });
     } catch {
         return [];
     }
@@ -298,6 +319,10 @@ function collectTaskEventFiles(eventsDir: string, maxTaskEvents: number, maxAgeD
         const timelineSet = new Set(entries);
         for (const cacheName of cacheEntries) {
             const timelineName = cacheName.replace(/\.completeness\.json$/, '.jsonl');
+            const taskId = timelineName.replace(/\.jsonl$/, '');
+            if (activeTaskIds.has(taskId)) {
+                continue;
+            }
             if (!timelineSet.has(timelineName)) {
                 const orphanPath = path.join(eventsDir, cacheName);
                 items.push({ path: orphanPath, category: 'task-events', reason: 'orphaned-cache', sizeBytes: fileSizeBytes(orphanPath) });
@@ -398,7 +423,12 @@ export function buildCategorySummary(items: CleanupItem[]): Record<string, { cou
     return summary;
 }
 
-export function collectStandardCandidates(runtimeDir: string, policy: RetentionPolicy, now: Date): CleanupItem[] {
+export function collectStandardCandidates(
+    runtimeDir: string,
+    policy: RetentionPolicy,
+    now: Date,
+    activeTaskIds: ReadonlySet<string> = new Set<string>()
+): CleanupItem[] {
     const backupsDir = path.join(runtimeDir, 'backups');
     const taskEventsDir = path.join(runtimeDir, 'task-events');
     const reviewsDir = path.join(runtimeDir, 'reviews');
@@ -409,8 +439,8 @@ export function collectStandardCandidates(runtimeDir: string, policy: RetentionP
     return [
         ...collectTimestampedDirs(backupsDir, 'backups', policy.maxBackups, policy.maxAgeDays, now),
         ...collectTimestampedDirs(bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
-        ...collectTaskEventFiles(taskEventsDir, policy.maxTaskEvents, policy.maxAgeDays, now),
-        ...collectReviewArtifacts(reviewsDir, policy.maxReviews, policy.maxAgeDays, now),
+        ...collectTaskEventFiles(taskEventsDir, policy.maxTaskEvents, policy.maxAgeDays, now, activeTaskIds),
+        ...collectReviewArtifacts(reviewsDir, policy.maxReviews, policy.maxAgeDays, now, activeTaskIds),
         ...collectUpdateNamedDirs(updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
         ...collectUpdateNamedDirs(updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
     ];
