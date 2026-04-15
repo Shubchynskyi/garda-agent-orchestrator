@@ -25,6 +25,7 @@ import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../gates/review-reuse';
+import { resolveCanonicalReviewContextPath } from '../../gates/review-context-paths';
 import { getReviewContextContractViolations } from '../../gates/review-context-contract';
 import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
 import {
@@ -121,12 +122,13 @@ function resolveCanonicalReviewPaths(
 
     const reviewsRoot = path.dirname(preflightPath);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
-    const preferredContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
-    const fallbackContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-context.json`);
-    const resolvedContextOverride = reviewContextPathValue
-        ? gateHelpers.resolvePathInsideRepo(String(reviewContextPathValue), repoRoot, { allowMissing: true })
-        : null;
-    const contextPath = resolvedContextOverride || (fs.existsSync(preferredContextPath) ? preferredContextPath : fallbackContextPath);
+    const contextPath = resolveCanonicalReviewContextPath({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        explicitPath: reviewContextPathValue ? String(reviewContextPathValue) : '',
+        repoRoot
+    });
     if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
     }
@@ -487,12 +489,13 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-routing', 'review_phase');
     const reviewsRoot = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
-    const preferredContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
-    const fallbackContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-context.json`);
-    const resolvedContextOverride = options.reviewContextPath
-        ? gateHelpers.resolvePathInsideRepo(String(options.reviewContextPath), repoRoot, { allowMissing: true })
-        : null;
-    const contextPath = resolvedContextOverride || (fs.existsSync(preferredContextPath) ? preferredContextPath : fallbackContextPath);
+    const contextPath = resolveCanonicalReviewContextPath({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        explicitPath: options.reviewContextPath ? String(options.reviewContextPath) : '',
+        repoRoot
+    });
     if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
     }

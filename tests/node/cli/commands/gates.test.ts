@@ -5068,6 +5068,164 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('required-reviews-check and completion prefer canonical review-context artifacts over stale legacy default files', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-canonical-review-context-preferred';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-canonical-review-context-preferred.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Prefer canonical review-context artifacts over stale legacy default files',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
+            mode: 'FULL_PATH',
+            changed_files_count: 1,
+            changed_lines_total: 8,
+            required_reviews: { code: true }
+        });
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const canonicalContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const legacyContextPath = path.join(reviewsRoot, `${taskId}-code-context.json`);
+        const reviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        let buildExitCode = 0;
+        let recordExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', canonicalContextPath
+            ]);
+            buildExitCode = Number(process.exitCode ?? 0);
+
+            fs.writeFileSync(reviewOutputPath, [
+                '# Review',
+                '',
+                'Validated `src/cli/commands/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts`, confirming that review gates now resolve the canonical review-context artifact deterministically and ignore stale legacy default siblings.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--review-context-path', canonicalContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            recordExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(buildExitCode, 0);
+        assert.equal(recordExitCode, 0);
+
+        const canonicalContext = JSON.parse(fs.readFileSync(canonicalContextPath, 'utf8')) as Record<string, unknown>;
+        const staleLegacyContext = {
+            ...canonicalContext,
+            preflight_sha256: 'stale-legacy-hash',
+            reviewer_routing: {
+                source_of_truth: 'Codex',
+                actual_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:stale-legacy-reviewer'
+            }
+        };
+        fs.writeFileSync(legacyContextPath, JSON.stringify(staleLegacyContext, null, 2) + '\n', 'utf8');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Canonical review-context path selection is an internal gate-contract change.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('build-review-context keeps downstream test review blocked when upstream code review uses a legacy custom context path without strict binding metadata', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904b-custom-code-context-legacy-blocked';

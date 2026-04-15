@@ -25,6 +25,7 @@ import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshak
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { getReviewContextContractViolations } from './review-context-contract';
+import { getCanonicalReviewContextPath, resolveCanonicalReviewContextPath } from './review-context-paths';
 import {
     getRequiredUpstreamReviewsFromRecord,
     normalizeRequiredReviewRecord
@@ -1445,14 +1446,17 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
 
     for (const [reviewKey] of REVIEW_CONTRACTS) {
         const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
-        const reviewContextPreferredPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}-review-context.json`);
-        const reviewContextFallbackPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}-context.json`);
         const recordedReviewContextPath = findLatestRecordedReviewContextPath(orderedEvents, reviewKey);
-        const reviewContextPath = recordedReviewContextPath
-            || (fs.existsSync(reviewContextPreferredPath) ? reviewContextPreferredPath : reviewContextFallbackPath);
+        const reviewContextPath = resolveCanonicalReviewContextPath({
+            reviewsRoot,
+            taskId: resolvedTaskId,
+            reviewType: reviewKey,
+            explicitPath: recordedReviewContextPath
+        });
         const normalizedReviewContextPath = normalizePath(reviewContextPath);
-        const requireStrictBindingMetadata = normalizedReviewContextPath !== normalizePath(reviewContextPreferredPath)
-            && normalizedReviewContextPath !== normalizePath(reviewContextFallbackPath);
+        const requireStrictBindingMetadata = normalizedReviewContextPath !== normalizePath(
+            getCanonicalReviewContextPath(reviewsRoot, resolvedTaskId, reviewKey)
+        );
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
         const required = !!requiredReviews[reviewKey];

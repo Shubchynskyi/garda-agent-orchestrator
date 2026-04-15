@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as gateHelpers from '../../gates/helpers';
+import { resolveCanonicalReviewContextPath } from '../../gates/review-context-paths';
 import { writeReviewArtifactJson, writeReviewArtifactText } from '../../gate-runtime/review-artifacts';
 
 export interface TerminalLogCleanupResult {
@@ -99,9 +100,6 @@ export function writeCompileEvidence(
 }
 
 export function resolveReviewContextPath(reviewsRoot: string, taskId: string | null, reviewKey: string): string {
-    if (!taskId) {
-        return path.join(reviewsRoot, `${reviewKey}-context.json`);
-    }
     const timelinePath = path.resolve(reviewsRoot, '..', 'task-events', `${taskId}.jsonl`);
     if (fs.existsSync(timelinePath) && fs.statSync(timelinePath).isFile()) {
         const lines = fs.readFileSync(timelinePath, 'utf8')
@@ -122,18 +120,23 @@ export function resolveReviewContextPath(reviewsRoot: string, taskId: string | n
                     && fs.existsSync(reviewContextPath)
                     && fs.statSync(reviewContextPath).isFile()
                 ) {
-                    return reviewContextPath;
+                    return resolveCanonicalReviewContextPath({
+                        reviewsRoot,
+                        taskId,
+                        reviewType: reviewKey,
+                        explicitPath: reviewContextPath
+                    });
                 }
             } catch {
                 // Ignore malformed timeline lines here; downstream validators will surface integrity issues separately.
             }
         }
     }
-    const preferred = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
-    if (fs.existsSync(preferred) && fs.statSync(preferred).isFile()) {
-        return preferred;
-    }
-    return path.join(reviewsRoot, `${taskId}-${reviewKey}-context.json`);
+    return resolveCanonicalReviewContextPath({
+        reviewsRoot,
+        taskId,
+        reviewType: reviewKey
+    });
 }
 
 export function writeReviewEvidence(

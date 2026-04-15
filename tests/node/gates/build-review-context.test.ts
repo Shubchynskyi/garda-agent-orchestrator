@@ -5,6 +5,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { buildReviewContext, getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../../../src/gates/build-review-context';
+import {
+    getCanonicalReviewContextPath,
+    getLegacyDefaultReviewContextPath,
+    resolveCanonicalReviewContextPath
+} from '../../../src/gates/review-context-paths';
 import { buildTaskModeArtifact, resolveTaskModeArtifactPath } from '../../../src/gates/task-mode';
 import { resolveReviewerRoutingPolicy } from '../../../src/gates/reviewer-routing';
 
@@ -71,7 +76,7 @@ describe('gates/build-review-context', () => {
     describe('resolveContextOutputPath', () => {
         it('derives from preflight path when explicit is empty', () => {
             const result = resolveContextOutputPath('', '/repo/reviews/T-001-preflight.json', 'code', '/repo');
-            assert.ok(result!.includes('T-001-code-context.json'));
+            assert.ok(result!.includes('T-001-code-review-context.json'));
         });
     });
 
@@ -79,6 +84,33 @@ describe('gates/build-review-context', () => {
         it('derives from preflight path when explicit is empty', () => {
             const result = resolveScopedDiffMetadataPath('', '/repo/reviews/T-001-preflight.json', 'db', '/repo');
             assert.ok(result!.includes('T-001-db-scoped.json'));
+        });
+    });
+
+    describe('resolveCanonicalReviewContextPath', () => {
+        it('materializes canonical default path from legacy default artifact when needed', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-paths-'));
+            const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+
+            const canonicalPath = getCanonicalReviewContextPath(reviewsRoot, 'T-001', 'code');
+            const legacyPath = getLegacyDefaultReviewContextPath(reviewsRoot, 'T-001', 'code');
+            fs.writeFileSync(legacyPath, JSON.stringify({ review_type: 'code', legacy: true }, null, 2) + '\n', 'utf8');
+
+            const resolvedPath = resolveCanonicalReviewContextPath({
+                reviewsRoot,
+                taskId: 'T-001',
+                reviewType: 'code'
+            });
+
+            assert.equal(resolvedPath, canonicalPath);
+            assert.equal(fs.existsSync(canonicalPath), true);
+            assert.deepEqual(
+                JSON.parse(fs.readFileSync(canonicalPath, 'utf8')),
+                JSON.parse(fs.readFileSync(legacyPath, 'utf8'))
+            );
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
         });
     });
 

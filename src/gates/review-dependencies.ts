@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { extractReviewVerdictToken, type ReviewReceipt } from '../gate-runtime/review-context';
 import * as gateHelpers from './helpers';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from './required-reviews-check';
+import { resolveCanonicalReviewContextPath } from './review-context-paths';
 import { readRuntimeReviewerProvider } from './reviewer-routing';
 
 const REVIEW_DEPENDENCY_ORDER: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -104,14 +105,14 @@ function resolveReviewContextPath(
     const explicitPath = gateHelpers.normalizePath(
         recordedReviewEvent.details?.review_context_path ?? recordedReviewEvent.details?.reviewContextPath
     );
-    if (explicitPath && fs.existsSync(explicitPath) && fs.statSync(explicitPath).isFile()) {
-        return explicitPath;
-    }
     const reviewsRoot = path.dirname(preflightPath);
     const taskId = path.basename(preflightPath, path.extname(preflightPath)).replace(/-preflight$/, '');
-    const preferredContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
-    const fallbackContextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-context.json`);
-    return fs.existsSync(preferredContextPath) ? preferredContextPath : fallbackContextPath;
+    return resolveCanonicalReviewContextPath({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        explicitPath
+    });
 }
 
 function resolveRepoRootFromPreflightPath(preflightPath: string): string {

@@ -5,6 +5,7 @@ import { buildReviewContextSections } from '../gate-runtime/review-context';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { fileSha256, normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPath, resolveGateExecutionPathPosix } from './isolation-sandbox';
+import { getCanonicalReviewContextPath } from './review-context-paths';
 import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 
@@ -98,7 +99,7 @@ export function resolveContextOutputPath(explicitOutputPath: string, preflightPa
     }
     const preflightDir = path.dirname(preflightPath);
     const baseName = path.basename(preflightPath, path.extname(preflightPath)).replace(/-preflight$/, '');
-    return path.resolve(preflightDir, `${baseName}-${reviewType}-context.json`);
+    return getCanonicalReviewContextPath(preflightDir, baseName, reviewType);
 }
 
 /**

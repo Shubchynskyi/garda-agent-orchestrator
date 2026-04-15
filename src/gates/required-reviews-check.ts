@@ -196,13 +196,11 @@ export function validateReviewArtifactGateEligibility(options: {
 
     if (artifactPath && artifactContent) {
         const canonicalPreferredContextPath = artifactPath.replace(/\.md$/, '-review-context.json');
-        const canonicalFallbackContextPath = artifactPath.replace(/\.md$/, '-context.json');
         const normalizedReviewContextPath = reviewArtifact.reviewContextPath
             ? normalizePath(reviewArtifact.reviewContextPath)
             : null;
         const requireStrictBindingMetadata = normalizedReviewContextPath != null
-            && normalizedReviewContextPath !== normalizePath(canonicalPreferredContextPath)
-            && normalizedReviewContextPath !== normalizePath(canonicalFallbackContextPath);
+            && normalizedReviewContextPath !== normalizePath(canonicalPreferredContextPath);
         compactionAudit = auditReviewArtifactCompaction({
             artifactPath,
             content: artifactContent,
