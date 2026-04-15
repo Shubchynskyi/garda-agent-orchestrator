@@ -9,6 +9,7 @@ import {
     EXIT_GENERAL_FAILURE
 } from '../../../../src/cli/exit-codes';
 import * as gateReviewHandlers from '../../../../src/cli/commands/gate-review-handlers';
+import { handleEnterTaskMode } from '../../../../src/cli/commands/gate-task-handlers';
 import {
     runClassifyChangeCommand,
     runCompileGateCommand,
@@ -36,6 +37,30 @@ import {
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import * as childProcess from 'node:child_process';
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function captureExpectedError(callback: () => void): Error {
+    try {
+        callback();
+    } catch (error) {
+        assert.ok(error instanceof Error);
+        return error;
+    }
+    assert.fail('Expected command to throw an error.');
+}
+
+async function captureExpectedAsyncError(callback: () => Promise<void>): Promise<Error> {
+    try {
+        await callback();
+    } catch (error) {
+        assert.ok(error instanceof Error);
+        return error;
+    }
+    assert.fail('Expected command to throw an error.');
+}
 
 function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
@@ -904,6 +929,135 @@ describe('cli/commands/gates', () => {
             /Trusted protected control-plane manifest drift detected before preflight classification/
         );
         assert.equal(fs.existsSync(outputPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails enter-task-mode early when planned scope includes protected orchestrator files without orchestrator-work', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-handoff';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = captureExpectedError(() => runEnterTaskModeCommand({
+                repoRoot,
+                taskId,
+                taskSummary: 'Require explicit orchestrator-work handoff for protected planned scope',
+                plannedChangedFiles: ['.github/agents/orchestrator.md']
+            }));
+        assert.match(
+            error.message,
+            new RegExp(
+                `Planned task scope includes protected orchestrator files: \\.github/agents/orchestrator\\.md\\.` +
+                `.*Suggested command: node garda-agent-orchestrator/bin/garda\\.js gate enter-task-mode` +
+                `.*--repo-root '${escapeRegExp(path.resolve(repoRoot))}'` +
+                `.*--orchestrator-work` +
+                `.*--planned-changed-file '\\.github/agents/orchestrator\\.md'`,
+                'i'
+            )
+        );
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('uses the source-checkout CLI prefix in the orchestrator-work handoff command', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-source-checkout';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2), 'utf8');
+
+        const error = captureExpectedError(() => runEnterTaskModeCommand({
+                repoRoot,
+                taskId,
+                taskSummary: 'Require explicit orchestrator-work handoff for source-checkout protected scope',
+                plannedChangedFiles: ['src/cli/main.ts']
+            }));
+        assert.match(
+            error.message,
+            new RegExp(
+                `Planned task scope includes protected orchestrator files: src/cli/main\\.ts\\.` +
+                `.*Suggested command: node bin/garda\\.js gate enter-task-mode` +
+                `.*--repo-root '${escapeRegExp(path.resolve(repoRoot))}'` +
+                `.*--orchestrator-work` +
+                `.*--planned-changed-file 'src/cli/main\\.ts'`,
+                'i'
+            )
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('parses --planned-changed-files through handleEnterTaskMode before emitting the orchestrator-work handoff', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-handler-alias';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = await captureExpectedAsyncError(() => handleEnterTaskMode([
+            '--repo-root', repoRoot,
+            '--task-id', taskId,
+            '--task-summary', 'Require explicit orchestrator-work handoff through the CLI alias path',
+            '--planned-changed-files', '.github/agents/orchestrator.md'
+        ]));
+        assert.match(
+            error.message,
+            new RegExp(
+                `Planned task scope includes protected orchestrator files: \\.github/agents/orchestrator\\.md\\.` +
+                `.*Suggested command: node garda-agent-orchestrator/bin/garda\\.js gate enter-task-mode` +
+                `.*--repo-root '${escapeRegExp(path.resolve(repoRoot))}'` +
+                `.*--orchestrator-work` +
+                `.*--planned-changed-file '\\.github/agents/orchestrator\\.md'`,
+                'i'
+            )
+        );
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects invalid planned-changed-files lists that escape the repo root', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-handler-invalid-list';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = await captureExpectedAsyncError(() => handleEnterTaskMode([
+            '--repo-root', repoRoot,
+            '--task-id', taskId,
+            '--task-summary', 'Reject planned changed files that escape repo root',
+            '--planned-changed-files', 'src/app.ts,../outside.ts'
+        ]));
+        assert.match(error.message, /PlannedChangedFile must stay inside repo root/);
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('allows enter-task-mode when protected planned scope is declared with orchestrator-work', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-allowed';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const result = runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow explicit orchestrator-work handoff for protected planned scope',
+            orchestratorWork: true,
+            plannedChangedFiles: ['.github/agents/orchestrator.md']
+        });
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.includes('PlannedChangedFilesCount: 1'));
+        assert.ok(result.outputLines.includes('PlannedProtectedFilesCount: 1'));
+        assert.equal(artifact.orchestrator_work, true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -2,6 +2,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../exit-codes';
 import {
+    getBundleCliCommand,
+    getSourceCliCommand,
+    resolveBundleName
+} from '../../../core/constants';
+import {
     emitHandshakeDiagnosticsEvent,
     emitShellSmokePreflightEvent,
     emitCommandTimeoutDiagnosticsEvent,
@@ -40,6 +45,7 @@ import {
     buildTaskModeArtifact,
     getTaskModeEvidence,
     getTaskModeEvidenceViolations,
+    normalizeTaskModeEntryMode,
     parseTaskModeDepth,
     resolveTaskModeArtifactPath,
     type TaskModePlanMetadata
@@ -83,6 +89,7 @@ export interface EnterTaskModeCommandOptions {
     requestedDepth?: unknown;
     effectiveDepth?: unknown;
     taskSummary?: unknown;
+    plannedChangedFiles?: unknown;
     orchestratorWork?: unknown;
     provider?: unknown;
     routedTo?: unknown;
@@ -153,6 +160,87 @@ export interface CommandTimeoutDiagnosticsCommandOptions {
     emitMetrics?: unknown;
 }
 
+function quotePowerShellCliValue(value: string): string {
+    return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function normalizePlannedChangedFiles(repoRoot: string, rawValues: unknown): string[] {
+    const normalizedRepoRoot = path.resolve(repoRoot);
+    const unique = new Set<string>();
+    for (const rawValue of expandValueList(rawValues || [], { splitDelimiters: true })) {
+        const rawPath = String(rawValue || '').trim();
+        if (!rawPath) {
+            continue;
+        }
+        const resolvedPath = gateHelpers.resolvePathInsideRepo(rawPath, normalizedRepoRoot, { allowMissing: true });
+        if (!resolvedPath) {
+            continue;
+        }
+        const relativePath = gateHelpers.normalizePath(path.relative(normalizedRepoRoot, resolvedPath));
+        if (!relativePath || relativePath === '.' || relativePath.startsWith('../')) {
+            throw new Error(`PlannedChangedFile must stay inside repo root. Got '${rawPath}'.`);
+        }
+        unique.add(relativePath);
+    }
+    return [...unique].sort();
+}
+
+function buildOrchestratorWorkHandoffCommand(
+    repoRoot: string,
+    taskId: string,
+    options: EnterTaskModeCommandOptions,
+    plannedChangedFiles: string[]
+): string {
+    const cliPrefix = gateHelpers.isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleName());
+    const parts: string[] = [
+        `${cliPrefix} gate enter-task-mode`,
+        `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
+        `--task-id ${quotePowerShellCliValue(taskId)}`,
+        `--entry-mode ${quotePowerShellCliValue(normalizeTaskModeEntryMode(options.entryMode || 'EXPLICIT_TASK_EXECUTION'))}`,
+        `--requested-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)))}`,
+        `--task-summary ${quotePowerShellCliValue(String(options.taskSummary || '').trim())}`,
+        '--orchestrator-work'
+    ];
+
+    const effectiveDepthRaw = String(options.effectiveDepth || '').trim();
+    if (effectiveDepthRaw) {
+        parts.push(`--effective-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(effectiveDepthRaw, 'EffectiveDepth', 2)))}`);
+    }
+    const provider = String(options.provider || '').trim();
+    if (provider) {
+        parts.push(`--provider ${quotePowerShellCliValue(provider)}`);
+    }
+    const routedTo = String(options.routedTo || '').trim();
+    if (routedTo) {
+        parts.push(`--routed-to ${quotePowerShellCliValue(routedTo)}`);
+    }
+    const actor = String(options.actor || '').trim();
+    if (actor) {
+        parts.push(`--actor ${quotePowerShellCliValue(actor)}`);
+    }
+    const planPath = String(options.planPath || '').trim();
+    if (planPath) {
+        parts.push(`--plan-path ${quotePowerShellCliValue(planPath)}`);
+    }
+    const artifactPath = String(options.artifactPath || '').trim();
+    if (artifactPath) {
+        parts.push(`--artifact-path ${quotePowerShellCliValue(artifactPath)}`);
+    }
+    const metricsPath = String(options.metricsPath || '').trim();
+    if (metricsPath) {
+        parts.push(`--metrics-path ${quotePowerShellCliValue(metricsPath)}`);
+    }
+    if (options.emitMetrics === false || String(options.emitMetrics || '').trim().toLowerCase() === 'false') {
+        parts.push('--emit-metrics false');
+    }
+    for (const plannedChangedFile of plannedChangedFiles) {
+        parts.push(`--planned-changed-file ${quotePowerShellCliValue(plannedChangedFile)}`);
+    }
+    return parts.join(' ');
+}
+
 export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -160,6 +248,11 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const artifactPath = resolveTaskModeArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
     const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
     const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot);
+    const plannedChangedFiles = normalizePlannedChangedFiles(repoRoot, options.plannedChangedFiles);
+    const protectedPlannedFiles = plannedChangedFiles.filter((entry) =>
+        gateHelpers.testPathPrefix(entry, gateHelpers.getProtectedControlPlaneRoots(repoRoot))
+    );
+    const orchestratorWork = parseBooleanOption(options.orchestratorWork, false);
 
     let planMetadata: TaskModePlanMetadata | null = null;
     const rawPlanPath = String(options.planPath || '').trim();
@@ -185,6 +278,15 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             plan_sha256: digest,
             plan_summary: validated.goal
         };
+    }
+
+    if (!orchestratorWork && protectedPlannedFiles.length > 0) {
+        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles);
+        throw new Error(
+            `Planned task scope includes protected orchestrator files: ${protectedPlannedFiles.join(', ')}. ` +
+            'Re-run enter-task-mode with --orchestrator-work before preflight so the intent stays explicit and auditable. ' +
+            `Suggested command: ${rerunCommand}`
+        );
     }
 
     let activeProfile: string | null = null;
@@ -214,7 +316,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         requestedDepth: parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2),
         effectiveDepth: parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)),
         taskSummary: String(options.taskSummary || ''),
-        orchestratorWork: parseBooleanOption(options.orchestratorWork, false),
+        orchestratorWork,
         provider: routingDecision.provider,
         routedTo: routingDecision.routedTo,
         actor: String(options.actor || 'orchestrator'),
@@ -322,6 +424,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : []),
             ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`]),
             ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : []),
+            ...(plannedChangedFiles.length > 0 ? [`PlannedChangedFilesCount: ${plannedChangedFiles.length}`] : []),
+            ...(protectedPlannedFiles.length > 0 ? [`PlannedProtectedFilesCount: ${protectedPlannedFiles.length}`] : []),
             `DirtyWorkspaceBaselineCount: ${taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0}`
         ],
         exitCode: 0

@@ -44,6 +44,20 @@ normally.
 > **Rule of thumb:** If the task changes any file listed in the protected
 > paths table below, start it with `--orchestrator-work`.
 
+### Early intent handoff
+
+If the likely task file list is already known before preflight, pass it to
+`enter-task-mode` via repeated `--planned-changed-file` arguments.
+
+If any planned path falls under protected orchestrator roots and
+`--orchestrator-work` is missing, `enter-task-mode` now fails **before**
+preflight with a ready-to-rerun command that includes explicit
+`--orchestrator-work`.
+
+This keeps the protection boundary fail-closed while avoiding the older
+workflow where a legitimate orchestrator task first had to trip a later
+protected-manifest failure and only then restart in the correct mode.
+
 ---
 
 ## Protected Control-Plane Paths
