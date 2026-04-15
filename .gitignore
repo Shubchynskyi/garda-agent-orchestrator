@@ -30,6 +30,7 @@ tsc-target-errors.txt
 # Local repo-only scripts and workspace state
 scripts/test/
 docs_local
+/TASK_DONE.md
 
 # garda-agent-orchestrator managed ignores
 .agents/workflows/start-task.md
@@ -49,3 +50,4 @@ QWEN.md
 TASK.md
 garda-agent-orchestrator/
 /TASK.md
+

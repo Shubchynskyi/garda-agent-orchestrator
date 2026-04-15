@@ -6,10 +6,34 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
+const {
+    acquireBuildRootLock,
+    getBuildRootLockPath,
+    releaseBuildRootLock
+} = require('../../../scripts/node-foundation/build-root-lock.cjs') as {
+    acquireBuildRootLock: (
+        lockPath: string,
+        options?: {
+            timeoutMs?: number;
+            metadataGraceMs?: number;
+            staleMs?: number;
+            backoffBaseMs?: number;
+            backoffMultiplier?: number;
+            backoffMaxMs?: number;
+        }
+    ) => void;
+    getBuildRootLockPath: (buildRoot: string) => string;
+    releaseBuildRootLock: (lockPath: string) => void;
+};
 
 function writeTextFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function agePath(targetPath: string, ageMs: number): void {
+    const oldTime = new Date(Date.now() - ageMs);
+    fs.utimesSync(targetPath, oldTime, oldTime);
 }
 
 function parseSerializedRanges(logPath: string): Array<{ pid: number; acquiredAt: number; releasedAt: number; }> {
@@ -145,6 +169,248 @@ test('withBuildRootLock serializes concurrent workers without leaving lock direc
     }
 });
 
+test('acquireBuildRootLock reclaims orphaned lock directory without owner metadata after grace period', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-orphan-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        agePath(lockPath, 5000);
+
+        acquireBuildRootLock(lockPath, {
+            timeoutMs: 250,
+            metadataGraceMs: 2000,
+            backoffBaseMs: 5,
+            backoffMaxMs: 10
+        });
+
+        const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(owner.pid, process.pid);
+    } finally {
+        releaseBuildRootLock(lockPath);
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('acquireBuildRootLock reclaims orphaned lock directory with corrupt owner metadata after grace period', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-corrupt-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), 'NOT VALID JSON{{{', 'utf8');
+        agePath(lockPath, 5000);
+
+        acquireBuildRootLock(lockPath, {
+            timeoutMs: 250,
+            metadataGraceMs: 2000,
+            backoffBaseMs: 5,
+            backoffMaxMs: 10
+        });
+
+        const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(owner.pid, process.pid);
+    } finally {
+        releaseBuildRootLock(lockPath);
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('acquireBuildRootLock does not reclaim orphaned lock directory within metadata grace period and reports diagnostics', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-fresh-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+
+        assert.throws(
+            () => acquireBuildRootLock(lockPath, {
+                timeoutMs: 80,
+                metadataGraceMs: 2000,
+                backoffBaseMs: 5,
+                backoffMaxMs: 10
+            }),
+            function (error: unknown) {
+                assert.ok(error instanceof Error);
+                assert.match(error.message, /Timed out acquiring build root lock/);
+                assert.match(error.message, /metadata_status=missing/);
+                assert.match(error.message, /stale_reason=none/);
+                return true;
+            }
+        );
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('acquireBuildRootLock does not reclaim aged lock when owner PID is still alive', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-live-owner-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            startedAtUtc: new Date().toISOString()
+        }), 'utf8');
+        agePath(lockPath, 5000);
+
+        assert.throws(
+            () => acquireBuildRootLock(lockPath, {
+                timeoutMs: 80,
+                metadataGraceMs: 2000,
+                backoffBaseMs: 5,
+                backoffMaxMs: 10
+            }),
+            function (error: unknown) {
+                assert.ok(error instanceof Error);
+                assert.match(error.message, /Timed out acquiring build root lock/);
+                assert.match(error.message, /metadata_status=ok/);
+                assert.match(error.message, /owner_alive=true/);
+                assert.match(error.message, /stale_reason=none/);
+                return true;
+            }
+        );
+        assert.ok(fs.existsSync(lockPath), 'live-owner lock must remain in place after timeout');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('acquireBuildRootLock keeps foreign-host partial metadata until stale timeout and then reclaims it', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-foreign-partial-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            hostname: 'foreign-host-for-build-lock'
+        }), 'utf8');
+        agePath(lockPath, 5000);
+
+        assert.throws(
+            () => acquireBuildRootLock(lockPath, {
+                timeoutMs: 80,
+                metadataGraceMs: 2000,
+                staleMs: 20000,
+                backoffBaseMs: 5,
+                backoffMaxMs: 10
+            }),
+            function (error: unknown) {
+                assert.ok(error instanceof Error);
+                assert.match(error.message, /metadata_status=invalid_shape/);
+                assert.match(error.message, /owner_host=foreign:/);
+                assert.match(error.message, /stale_reason=none/);
+                return true;
+            }
+        );
+
+        fs.rmSync(lockPath, { recursive: true, force: true });
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            hostname: 'foreign-host-for-build-lock'
+        }), 'utf8');
+        agePath(lockPath, 25000);
+
+        acquireBuildRootLock(lockPath, {
+            timeoutMs: 250,
+            metadataGraceMs: 2000,
+            staleMs: 20000,
+            backoffBaseMs: 5,
+            backoffMaxMs: 10
+        });
+
+        const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(owner.pid, process.pid);
+    } finally {
+        releaseBuildRootLock(lockPath);
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('acquireBuildRootLock does not reclaim missing owner metadata during extended initialization grace', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-init-grace-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        agePath(lockPath, 5000);
+
+        assert.throws(
+            () => acquireBuildRootLock(lockPath, {
+                timeoutMs: 80,
+                metadataGraceMs: 30000,
+                backoffBaseMs: 5,
+                backoffMaxMs: 10
+            }),
+            function (error: unknown) {
+                assert.ok(error instanceof Error);
+                assert.match(error.message, /metadata_status=missing/);
+                assert.match(error.message, /stale_reason=none/);
+                return true;
+            }
+        );
+        assert.ok(fs.existsSync(lockPath), 'lock should remain during extended initialization grace');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('acquireBuildRootLock does not treat transient owner metadata read failures as corruption', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-transient-read-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+    const ownerPath = path.join(lockPath, 'owner.json');
+    const mutableFs = require('node:fs') as typeof fs & { readFileSync: typeof fs.readFileSync };
+    const originalReadFileSync = mutableFs.readFileSync;
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(ownerPath, JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            startedAtUtc: new Date().toISOString()
+        }), 'utf8');
+        agePath(lockPath, 5000);
+
+        mutableFs.readFileSync = function (filePath: fs.PathOrFileDescriptor, options?: Parameters<typeof originalReadFileSync>[1]) {
+            if (String(filePath).replace(/\\/g, '/').endsWith('/owner.json')) {
+                const error = new Error('owner metadata temporarily busy') as NodeJS.ErrnoException;
+                error.code = 'EBUSY';
+                throw error;
+            }
+            return (originalReadFileSync as typeof fs.readFileSync)(filePath, options as never);
+        } as typeof fs.readFileSync;
+
+        assert.throws(
+            () => acquireBuildRootLock(lockPath, {
+                timeoutMs: 80,
+                metadataGraceMs: 2000,
+                staleMs: 20000,
+                backoffBaseMs: 5,
+                backoffMaxMs: 10
+            }),
+            function (error: unknown) {
+                assert.ok(error instanceof Error);
+                assert.match(error.message, /metadata_status=transient_read_error/);
+                assert.match(error.message, /stale_reason=none/);
+                return true;
+            }
+        );
+        assert.ok(fs.existsSync(lockPath), 'transient read failures must not reclaim a live lock');
+    } finally {
+        mutableFs.readFileSync = originalReadFileSync;
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('build-scripts wrapper serializes concurrent workers and leaves a usable scripts build', async () => {
     const repoRoot = getRepoRoot();
     const tempRoot = createBuildScriptsFixture(repoRoot);
@@ -176,6 +442,32 @@ test('build-scripts wrapper serializes concurrent workers and leaves a usable sc
         assert.ok(fs.existsSync(path.join(fixtureRoot, '.scripts-build', 'scripts', 'node-foundation', 'build.js')));
         assert.ok(fs.existsSync(path.join(fixtureRoot, 'bin', 'garda.js')));
         assert.ok(!fs.existsSync(path.join(fixtureRoot, '.scripts-build.lock')), 'wrapper lock directory must be removed after build');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('build-scripts wrapper reclaims orphaned lock directory without owner metadata after grace period', async () => {
+    const repoRoot = getRepoRoot();
+    const tempRoot = createBuildScriptsFixture(repoRoot);
+    const fixtureRoot = path.join(tempRoot, 'repo');
+    const wrapperPath = path.join(fixtureRoot, 'scripts', 'node-foundation', 'build-scripts.cjs');
+    const lockPath = path.join(fixtureRoot, '.scripts-build.lock');
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        agePath(lockPath, 35000);
+
+        await runWorker(process.execPath, [wrapperPath], {
+            cwd: fixtureRoot,
+            env: {
+                ...process.env,
+                GARDA_BUILD_SCRIPTS_LOCK_HOLD_MS: '0'
+            }
+        });
+
+        assert.ok(fs.existsSync(path.join(fixtureRoot, '.scripts-build', 'scripts', 'node-foundation', 'build.js')));
+        assert.ok(!fs.existsSync(lockPath), 'wrapper should reclaim abandoned lock directory and remove it after build');
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
