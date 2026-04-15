@@ -70,6 +70,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - audited no-op recorded through `node garda-agent-orchestrator/bin/garda.js gate record-no-op --task-id "<task-id>" --reason "<rationale>"`;
   - explicit `BLOCKED` state explaining why no changes were produced.
 - After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...` with the actual task-specific downstream rules that were opened.
+- Treat `classify-change -> load-rule-pack --stage "POST_PREFLIGHT" -> compile-gate` as one strict same-task chain. Do not parallelize these transitions; a newer `PREFLIGHT_CLASSIFIED` invalidates older post-preflight rule-pack or compile attempts.
 - Compile gate command must pass before `IN_REVIEW`:
   `node garda-agent-orchestrator/bin/garda.js gate compile-gate`.
 - Compile lifecycle telemetry must show `IMPLEMENTATION_STARTED` before `COMPILE_GATE_PASSED`.

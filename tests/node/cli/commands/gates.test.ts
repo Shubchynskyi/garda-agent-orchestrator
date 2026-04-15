@@ -124,6 +124,48 @@ function writePreflight(
     return preflightPath;
 }
 
+function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
+    const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
+    const existingEvents = readTaskTimelineEvents(repoRoot, taskId);
+    const latestMatchingEvent = [...existingEvents].reverse().find((event) => (
+        event.event_type === 'PREFLIGHT_CLASSIFIED'
+        && String((event.details as Record<string, unknown> | undefined)?.output_path || '') === normalizedPreflightPath
+    ));
+    if (latestMatchingEvent) {
+        return;
+    }
+
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : {};
+    const mode = String(preflight.mode || 'FULL_PATH');
+    const changedFilesCount = Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0;
+    const changedLinesTotal = Number(metrics.changed_lines_total || 0);
+    const zeroDiffGuard = preflight.zero_diff_guard && typeof preflight.zero_diff_guard === 'object' && !Array.isArray(preflight.zero_diff_guard)
+        ? preflight.zero_diff_guard
+        : (changedFilesCount === 0 && changedLinesTotal === 0
+            ? { zero_diff_detected: true, status: 'BASELINE_ONLY' }
+            : null);
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'PREFLIGHT_CLASSIFIED',
+        'INFO',
+        zeroDiffGuard
+            ? `Preflight completed with mode ${mode} (zero-diff baseline only).`
+            : `Preflight completed with mode ${mode}.`,
+        {
+            mode,
+            output_path: normalizedPreflightPath,
+            changed_files_count: changedFilesCount,
+            changed_lines_total: changedLinesTotal,
+            required_reviews: preflight.required_reviews || {},
+            zero_diff_guard: zeroDiffGuard
+        }
+    );
+}
+
 function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPath: string): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     const crypto = require('node:crypto');
@@ -485,7 +527,15 @@ function loadTaskEntryRulePack(repoRoot: string, taskId: string) {
     });
 }
 
-function loadPostPreflightRulePack(repoRoot: string, taskId: string, preflightPath: string) {
+function loadPostPreflightRulePack(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    ensurePreflightClassified = true
+) {
+    if (ensurePreflightClassified) {
+        appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
+    }
     return runLoadRulePackCommand({
         repoRoot,
         taskId,
@@ -1074,6 +1124,115 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('rejects POST_PREFLIGHT rule-pack when the current preflight has not completed classify-change sequencing', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-order';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject POST_PREFLIGHT load-rule-pack before classify-change completes'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = loadPostPreflightRulePack(repoRoot, taskId, preflightPath, false);
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT')));
+        assert.equal(artifact.stages.post_preflight.status, 'FAILED');
+        assert.equal(artifact.stages.post_preflight.preflight_event_sequence, null);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate with explicit sequencing remediation when POST_PREFLIGHT rule-pack already failed for the current preflight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-failed-artifact';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-failed.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Surface compile remediation after failed POST_PREFLIGHT sequencing'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, false).exitCode, EXIT_GATE_FAILURE);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects POST_PREFLIGHT rule-pack when a newer preflight already superseded the requested preflight artifact', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-stale-preflight';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale preflight artifacts during POST_PREFLIGHT rule-pack load'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const stalePreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale preflight artifacts during POST_PREFLIGHT rule-pack load',
+            ['src/app.ts'],
+            `${taskId}-stale-preflight.json`
+        );
+        const latestPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale preflight artifacts during POST_PREFLIGHT rule-pack load',
+            ['src/app.ts']
+        );
+
+        const result = loadPostPreflightRulePack(repoRoot, taskId, stalePreflightPath);
+
+        assert.equal(latestPreflightPath.endsWith(`${taskId}-preflight.json`), true);
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('not the latest PREFLIGHT_CLASSIFIED evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails compile gate when preflight already recorded trusted protected manifest drift before task start', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-manifest-drift';
@@ -1374,6 +1533,125 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(secondCompile.exitCode, 0);
         assert.equal(secondCompile.outputLines[0], 'COMPILE_GATE_PASSED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('records sequence evidence on the successful sequential POST_PREFLIGHT and compile path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-sequence-evidence';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-sequence.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Emit sequence evidence for successful sequential compile flow'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Emit sequence evidence for successful sequential compile flow',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const rulePackArtifact = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`), 'utf8')
+        );
+        const compileArtifact = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`), 'utf8')
+        );
+
+        assert.equal(typeof rulePackArtifact.stages.post_preflight.preflight_event_sequence, 'number');
+        assert.equal(typeof compileArtifact.post_preflight_sequence.latest_preflight_sequence, 'number');
+        assert.equal(typeof compileArtifact.post_preflight_sequence.latest_post_preflight_rule_pack_sequence, 'number');
+        assert.ok(
+            compileArtifact.post_preflight_sequence.latest_post_preflight_rule_pack_sequence
+            > compileArtifact.post_preflight_sequence.latest_preflight_sequence
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate with explicit unsafe parallelism guidance when a newer preflight supersedes POST_PREFLIGHT rule-pack evidence', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-overlap';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        fs.writeFileSync(appPath, 'const a = 10;\nconst b = 2;\nconsole.log(a - b);\n', 'utf8');
+
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle',
+            ['src/app.ts']
+        );
+        assert.equal(refreshedPreflightPath, preflightPath);
+
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-overlap.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
+        assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1710,16 +1988,6 @@ describe('cli/commands/gates', () => {
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
-        // T-003: code-changing tasks must carry PREFLIGHT_CLASSIFIED evidence
-        appendTaskEvent(
-            getOrchestratorRoot(repoRoot),
-            taskId,
-            'PREFLIGHT_CLASSIFIED',
-            'INFO',
-            'Preflight completed with mode FULL_PATH.',
-            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
-        );
-
         await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -1845,15 +2113,6 @@ describe('cli/commands/gates', () => {
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
-        appendTaskEvent(
-            getOrchestratorRoot(repoRoot),
-            taskId,
-            'PREFLIGHT_CLASSIFIED',
-            'INFO',
-            'Preflight completed with mode FULL_PATH.',
-            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
-        );
-
         await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -1968,15 +2227,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        appendTaskEvent(
-            getOrchestratorRoot(repoRoot),
-            taskId,
-            'PREFLIGHT_CLASSIFIED',
-            'INFO',
-            'Initial preflight completed with mode FULL_PATH.',
-            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
-        );
 
         await runCompileGateCommand({
             repoRoot,
@@ -2121,15 +2371,6 @@ describe('cli/commands/gates', () => {
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
-        appendTaskEvent(
-            getOrchestratorRoot(repoRoot),
-            taskId,
-            'PREFLIGHT_CLASSIFIED',
-            'INFO',
-            'Initial preflight completed with mode FULL_PATH.',
-            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
-        );
-
         await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -2272,21 +2513,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-
-        appendTaskEvent(
-            getOrchestratorRoot(repoRoot),
-            taskId,
-            'PREFLIGHT_CLASSIFIED',
-            'INFO',
-            'Preflight completed with mode FULL_PATH (zero-diff baseline only).',
-            {
-                mode: 'FULL_PATH',
-                changed_files_count: 0,
-                changed_lines_total: 0,
-                required_reviews: { code: false },
-                zero_diff_guard: { zero_diff_detected: true, status: 'BASELINE_ONLY' }
-            }
-        );
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -4418,12 +4644,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 1,
-            changed_lines_total: 3,
-            required_reviews: { test: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -4572,12 +4792,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 2,
-            changed_lines_total: 12,
-            required_reviews: { code: true, test: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -4775,12 +4989,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 2,
-            changed_lines_total: 12,
-            required_reviews: { code: true, test: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -4931,12 +5139,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 2,
-            changed_lines_total: 12,
-            required_reviews: { code: true, test: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -5068,12 +5270,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 2,
-            changed_lines_total: 12,
-            required_reviews: { code: true, test: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -5264,12 +5460,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 1,
-            changed_lines_total: 8,
-            required_reviews: { code: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -5422,12 +5612,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 2,
-            changed_lines_total: 12,
-            required_reviews: { code: true, test: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,
@@ -5609,12 +5793,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 2,
-            changed_lines_total: 10,
-            required_reviews: { code: true, test: true }
-        });
         writeCompilePassEvidence(repoRoot, taskId, preflightPath);
 
         const reviewsRoot = getReviewsRoot(repoRoot);
@@ -5733,12 +5911,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 1,
-            changed_lines_total: 3,
-            required_reviews: { code: true }
-        });
         writeCompilePassEvidence(repoRoot, taskId, preflightPath);
 
         const reviewsRoot = getReviewsRoot(repoRoot);
@@ -5940,12 +6112,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId, 'Antigravity');
         runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', 'Preflight completed with mode FULL_PATH.', {
-            mode: 'FULL_PATH',
-            changed_files_count: 1,
-            changed_lines_total: 3,
-            required_reviews: { code: true }
-        });
 
         const compileResult = await runCompileGateCommand({
             repoRoot,

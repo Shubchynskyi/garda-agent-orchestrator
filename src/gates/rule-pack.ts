@@ -43,6 +43,7 @@ interface RulePackStageArtifact {
     effective_depth: number | null;
     preflight_path: string | null;
     preflight_hash_sha256: string | null;
+    preflight_event_sequence: number | null;
     required_reviews: Record<string, boolean> | null;
     violations: string[];
 }
@@ -89,6 +90,21 @@ export interface RulePackEvidenceResult {
     missing_rule_files: string[];
 }
 
+interface TimelineEventEntry {
+    event_type: string;
+    sequence: number;
+    details: Record<string, unknown> | null;
+}
+
+export interface PostPreflightSequenceEvidence {
+    timeline_path: string;
+    latest_preflight_sequence: number | null;
+    latest_preflight_path: string | null;
+    latest_post_preflight_rule_pack_sequence: number | null;
+    latest_post_preflight_rule_pack_path: string | null;
+    violations: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -99,6 +115,10 @@ function getRulePackStageKey(stage: RulePackStageLabel): 'task_entry' | 'post_pr
 
 function getRulePackRulesRoot(repoRoot: string): string {
     return resolveGateExecutionPath(repoRoot, path.join('live', 'docs', 'agent-rules'));
+}
+
+function getTaskTimelinePath(repoRoot: string, taskId: string): string {
+    return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
 }
 
 function getRulePackRequiredEntryFiles(repoRoot: string): string[] {
@@ -183,6 +203,191 @@ function buildRuleFileHashes(ruleFiles: string[]): Record<string, string | null>
     }));
 }
 
+function collectOrderedTimelineEvents(timelinePath: string, violations: string[]): TimelineEventEntry[] {
+    const resolvedPath = path.resolve(String(timelinePath || ''));
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        violations.push(`Task timeline not found: ${normalizePath(resolvedPath)}`);
+        return [];
+    }
+
+    const events: TimelineEventEntry[] = [];
+    const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n').filter(function (line) {
+        return line.trim().length > 0;
+    });
+
+    let sequence = 0;
+    for (const line of lines) {
+        try {
+            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const eventType = String(parsed.event_type || '').trim().toUpperCase();
+            const details = isRecord(parsed.details) ? parsed.details : null;
+            if (eventType) {
+                events.push({
+                    event_type: eventType,
+                    sequence,
+                    details
+                });
+            }
+            sequence += 1;
+        } catch {
+            violations.push(`Task timeline contains invalid JSON line: ${normalizePath(resolvedPath)}`);
+            return [];
+        }
+    }
+
+    return events;
+}
+
+function findLatestTimelineEvent(
+    events: readonly TimelineEventEntry[],
+    predicate: (entry: TimelineEventEntry) => boolean
+): TimelineEventEntry | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const entry = events[index];
+        if (predicate(entry)) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+function normalizeTimelinePathDetail(value: unknown): string | null {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+        return null;
+    }
+    return normalizePath(rawValue);
+}
+
+function getPreflightClassificationBinding(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string
+): {
+    timeline_path: string;
+    latest_preflight_sequence: number | null;
+    latest_preflight_path: string | null;
+    violations: string[];
+} {
+    const normalizedPreflightPath = normalizePath(preflightPath);
+    const timelinePath = getTaskTimelinePath(repoRoot, taskId);
+    const violations: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, violations);
+    if (violations.length > 0) {
+        return {
+            timeline_path: normalizePath(timelinePath),
+            latest_preflight_sequence: null,
+            latest_preflight_path: null,
+            violations
+        };
+    }
+    const latestPreflight = findLatestTimelineEvent(events, function (entry) {
+        return entry.event_type === 'PREFLIGHT_CLASSIFIED';
+    });
+    if (!latestPreflight) {
+        violations.push(
+            `Task timeline '${normalizePath(timelinePath)}' is missing PREFLIGHT_CLASSIFIED for '${normalizedPreflightPath}'. ` +
+            'Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT or compile-gate.'
+        );
+        return {
+            timeline_path: normalizePath(timelinePath),
+            latest_preflight_sequence: null,
+            latest_preflight_path: null,
+            violations
+        };
+    }
+
+    const latestPreflightPath = normalizeTimelinePathDetail(
+        latestPreflight.details?.output_path ?? latestPreflight.details?.outputPath
+    );
+    if (!latestPreflightPath) {
+        violations.push(
+            `Latest PREFLIGHT_CLASSIFIED evidence in '${normalizePath(timelinePath)}' is missing output_path details. ` +
+            'Re-run classify-change before continuing the current task cycle.'
+        );
+    } else if (latestPreflightPath.toLowerCase() !== normalizedPreflightPath.toLowerCase()) {
+        violations.push(
+            `Current preflight artifact '${normalizedPreflightPath}' is not the latest PREFLIGHT_CLASSIFIED evidence in ` +
+            `'${normalizePath(timelinePath)}'. Latest classified preflight path='${latestPreflightPath}'. ` +
+            'Rejecting stale or parallel same-task overlap. Use the latest preflight artifact, then rerun downstream gates sequentially ' +
+            "(classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate)."
+        );
+    }
+
+    return {
+        timeline_path: normalizePath(timelinePath),
+        latest_preflight_sequence: latestPreflight.sequence,
+        latest_preflight_path: latestPreflightPath,
+        violations
+    };
+}
+
+export function getPostPreflightSequenceEvidence(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string
+): PostPreflightSequenceEvidence {
+    const binding = getPreflightClassificationBinding(repoRoot, taskId, preflightPath);
+    const result: PostPreflightSequenceEvidence = {
+        timeline_path: binding.timeline_path,
+        latest_preflight_sequence: binding.latest_preflight_sequence,
+        latest_preflight_path: binding.latest_preflight_path,
+        latest_post_preflight_rule_pack_sequence: null,
+        latest_post_preflight_rule_pack_path: null,
+        violations: [...binding.violations]
+    };
+    if (binding.violations.length > 0) {
+        return result;
+    }
+
+    const normalizedPreflightPath = normalizePath(preflightPath);
+    const events = collectOrderedTimelineEvents(result.timeline_path, result.violations);
+    if (result.violations.length > 0) {
+        return result;
+    }
+
+    const latestPostPreflightRulePack = findLatestTimelineEvent(events, function (entry) {
+        if (entry.event_type !== 'RULE_PACK_LOADED') {
+            return false;
+        }
+        const stage = String(entry.details?.stage || '').trim().toUpperCase();
+        if (stage !== 'POST_PREFLIGHT') {
+            return false;
+        }
+        const eventPreflightPath = normalizeTimelinePathDetail(
+            entry.details?.preflight_path ?? entry.details?.preflightPath
+        );
+        return (eventPreflightPath || '').toLowerCase() === normalizedPreflightPath.toLowerCase();
+    });
+
+    if (!latestPostPreflightRulePack) {
+        result.violations.push(
+            `Task timeline '${result.timeline_path}' is missing POST_PREFLIGHT RULE_PACK_LOADED evidence for '${normalizedPreflightPath}'. ` +
+            'Run load-rule-pack --stage POST_PREFLIGHT after classify-change completes. These same-task transitions are not safe to parallelize.'
+        );
+        return result;
+    }
+
+    result.latest_post_preflight_rule_pack_sequence = latestPostPreflightRulePack.sequence;
+    result.latest_post_preflight_rule_pack_path = normalizeTimelinePathDetail(
+        latestPostPreflightRulePack.details?.preflight_path ?? latestPostPreflightRulePack.details?.preflightPath
+    );
+
+    if (
+        binding.latest_preflight_sequence != null
+        && latestPostPreflightRulePack.sequence <= binding.latest_preflight_sequence
+    ) {
+        result.violations.push(
+            `Unsafe same-task overlap detected in '${result.timeline_path}': POST_PREFLIGHT RULE_PACK_LOADED (seq ${latestPostPreflightRulePack.sequence}) ` +
+            `does not occur after the latest PREFLIGHT_CLASSIFIED (seq ${binding.latest_preflight_sequence}) for '${normalizedPreflightPath}'. ` +
+            'Re-run load-rule-pack --stage POST_PREFLIGHT after classify-change completes, then rerun compile-gate. ' +
+            'Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate for the same task cycle.'
+        );
+    }
+
+    return result;
+}
+
 function readExistingRulePackArtifact(artifactPath: string): RulePackArtifact | null {
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
         return null;
@@ -227,6 +432,7 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
     let requiredReviews: Record<string, boolean> | null = null;
     let effectiveDepth: number | null = null;
     let requiredRuleFiles: string[] = [];
+    let preflightEventSequence: number | null = null;
 
     if (stage === 'TASK_ENTRY') {
         const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, String(options.taskModePath || ''));
@@ -269,6 +475,10 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
             requiredReviews,
             effectiveDepth || 2
         );
+
+        const preflightBinding = getPreflightClassificationBinding(repoRoot, taskId, preflightPath);
+        preflightEventSequence = preflightBinding.latest_preflight_sequence;
+        violations.push(...preflightBinding.violations);
     }
 
     const requiredRuleSet = new Set(requiredRuleFiles.map(function (ruleFile) {
@@ -306,6 +516,7 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
         effective_depth: effectiveDepth,
         preflight_path: preflightPath,
         preflight_hash_sha256: preflightHash,
+        preflight_event_sequence: preflightEventSequence,
         required_reviews: requiredReviews,
         violations
     };
@@ -521,9 +732,15 @@ export function getRulePackEvidenceViolations(result: RulePackEvidenceResult): s
         case 'EVIDENCE_PREFLIGHT_REQUIRED':
             return ['Rule-pack evidence for POST_PREFLIGHT requires the current preflight artifact path.'];
         case 'EVIDENCE_PREFLIGHT_PATH_MISMATCH':
-            return [`Rule-pack evidence preflight path mismatch. Evidence path='${result.evidence_preflight_path}'.`];
+            return [
+                `Rule-pack evidence preflight path mismatch. Evidence path='${result.evidence_preflight_path}'. ` +
+                'Refresh the current task cycle sequentially: classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate.'
+            ];
         case 'EVIDENCE_PREFLIGHT_HASH_MISMATCH':
-            return ['Rule-pack evidence preflight hash mismatch. Re-run load-rule-pack for the current preflight artifact.'];
+            return [
+                'Rule-pack evidence preflight hash mismatch. Re-run load-rule-pack --stage POST_PREFLIGHT for the current preflight artifact, ' +
+                'then rerun compile-gate. Do not parallelize classify-change, POST_PREFLIGHT load-rule-pack, and compile-gate for the same task cycle.'
+            ];
         case 'EVIDENCE_TASK_MODE_INVALID':
             return ['Rule-pack evidence cannot be verified because task-mode evidence is missing or invalid for the same task.'];
         case 'EVIDENCE_RULE_SET_INVALID':

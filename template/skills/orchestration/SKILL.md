@@ -121,6 +121,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 11. Refresh downstream rule-pack evidence for the actual required review set:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>"`
    - `load-rule-pack` must include every downstream rule file actually opened after preflight, including risk-specific rule packs required by the selected reviews.
+   - This step is order-dependent: do not parallelize it with `classify-change` or `compile-gate` for the same task cycle.
 12. Execute implementation path:
    - `FULL_PATH` runtime => tests first, then implementation.
    - non-runtime or `FAST_PATH` runtime => objective validations, then implementation.
@@ -130,6 +131,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
    - Node: `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate auto-emits `IMPLEMENTATION_STARTED` before execution and then writes `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED`.
    - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun `classify-change` for the current scope, rerun `load-rule-pack --stage POST_PREFLIGHT`, and then rerun `compile-gate` when scope changes.
+   - A newer `PREFLIGHT_CLASSIFIED` also invalidates older post-preflight rule-pack evidence; rerun downstream gates sequentially instead of overlapping the same task cycle.
    - If preflight was created from planned `--changed-file` inputs in a clean workspace before implementation, that refresh is expected once the real diff exists.
    - On failure, do not move to review phase; fix and rerun until pass.
 14. Move task to `IN_REVIEW`.

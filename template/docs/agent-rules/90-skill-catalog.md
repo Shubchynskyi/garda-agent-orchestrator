@@ -51,6 +51,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   `node garda-agent-orchestrator/bin/garda.js gate classify-change --use-staged --task-intent "<task summary>" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - After preflight, re-run `load-rule-pack --stage "POST_PREFLIGHT"` with the actual downstream rule files opened for the required review set:
   `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>"`
+- Do not parallelize `classify-change`, `load-rule-pack --stage "POST_PREFLIGHT"`, and `compile-gate` for the same task cycle. If preflight is refreshed, rerun downstream gates sequentially from `load-rule-pack --stage "POST_PREFLIGHT"`.
 - Before each required reviewer invocation, run `node garda-agent-orchestrator/bin/garda.js gate build-review-context --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - `test` review is downstream: prepare it only after every required upstream non-`test` review for the current cycle is already recorded as PASS.
 - On pure test-scope reruns, run `build-review-context` for reusable upstream `code` review first so the current-cycle reuse receipt exists before launching `test` review.

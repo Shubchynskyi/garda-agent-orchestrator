@@ -219,6 +219,7 @@ Notes:
 - Enter task mode explicitly before preflight; downstream compile/review/completion gates fail without `runtime/reviews/<task-id>-task-mode.json` and timeline event `TASK_MODE_ENTERED`.
 - After opening baseline downstream rules, record them explicitly via `load-rule-pack --stage TASK_ENTRY`; `classify-change` fails without rule-pack evidence and timeline event `RULE_PACK_LOADED`.
 - After preflight decides the required reviews, re-run `load-rule-pack --stage POST_PREFLIGHT --preflight-path ...` with the actual downstream rule files loaded for this task.
+- For one task cycle, `classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate` is a strict sequence, not a parallelizable set. If a newer preflight is classified, rerun downstream gates from `load-rule-pack --stage POST_PREFLIGHT` against that latest preflight before compile.
 - `record-review-result` accepts exactly one reviewer-output source: `--review-output-path` or `--review-output-stdin`.
 - `--review-output-stdin` is not a bypass path: the gate must first persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md`, then run the same verdict, routing, receipt, and telemetry validation used for file-based ingest.
 - In a dirty workspace, prefer `--use-staged` after staging task-related tracked files.

@@ -57,6 +57,7 @@ import {
 import type { PlanDriftResult } from '../../../schemas/task-plan';
 import {
     getRulePackEvidence,
+    getPostPreflightSequenceEvidence,
     getRulePackEvidenceViolations
 } from '../../../gates/rule-pack';
 import * as gateHelpers from '../../../gates/helpers';
@@ -584,6 +585,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let planDriftResult: PlanDriftResult | null = null;
     let dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(repoRoot, null);
     let protectedManifestGuard: ReturnType<typeof getProtectedManifestLifecycleGuard> | null = null;
+    let postPreflightSequenceEvidence: ReturnType<typeof getPostPreflightSequenceEvidence> | null = null;
 
     try {
         const commandsPathValue = options.commandsPath
@@ -647,6 +649,22 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         } else if (!exceptionMessage && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
+        }
+
+        const shouldExplainPostPreflightSequence = !!resolvedPreflightPath && (
+            !exceptionMessage
+            || rulePackEvidence.evidence_status === 'EVIDENCE_FILE_MISSING'
+            || rulePackEvidence.evidence_status === 'EVIDENCE_STAGE_MISSING'
+            || rulePackEvidence.evidence_status === 'EVIDENCE_PREFLIGHT_PATH_MISMATCH'
+            || rulePackEvidence.evidence_status === 'EVIDENCE_PREFLIGHT_HASH_MISMATCH'
+            || rulePackEvidence.evidence_status === 'EVIDENCE_NOT_PASS'
+        );
+        if (shouldExplainPostPreflightSequence && resolvedPreflightPath && timelineErrors.length === 0) {
+            postPreflightSequenceEvidence = getPostPreflightSequenceEvidence(repoRoot, resolvedTaskId, resolvedPreflightPath);
+            if (postPreflightSequenceEvidence.violations.length > 0) {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = postPreflightSequenceEvidence.violations.join(' ');
+            }
         }
 
         budgetTokensForOutputFilters = resolveBudgetTokensFromForecast(
@@ -821,6 +839,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         preflight_changed_files_sha256: preflightContext ? preflightContext.changed_files_sha256 : null,
         task_mode: taskModeEvidence,
         rule_pack: rulePackEvidence,
+        post_preflight_sequence: postPreflightSequenceEvidence,
         scope_detection_source: workspaceSnapshot ? workspaceSnapshot.detection_source : null,
         scope_use_staged: workspaceSnapshot ? !!workspaceSnapshot.use_staged : null,
         scope_include_untracked: workspaceSnapshot ? !!workspaceSnapshot.include_untracked : null,
