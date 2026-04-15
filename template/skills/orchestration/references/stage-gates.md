@@ -67,7 +67,7 @@ Pass criteria:
 - Final PASS review artifacts keep active `Findings by Severity` and `Residual Risks` empty (`none`), or record accepted non-blocking follow-up only in `Deferred Findings` with `Justification:`.
 - Task marked `DONE`.
 - Artifact contract fields are valid for path mode, required verdicts, and evidence.
-- User report is delivered in mandatory order: implementation summary -> `git commit -m "<message>"` suggestion -> `Do you want me to commit now? (yes/no)`.
+- User report is delivered in mandatory order: implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 
 ## Failure Policy
 - Any failed gate blocks next gates.

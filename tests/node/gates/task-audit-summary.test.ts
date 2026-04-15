@@ -260,6 +260,151 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_report_contract.blocker, null);
         });
 
+        it('infers a conventional-style commit suggestion from task metadata and changed scope', () => {
+            const now = new Date().toISOString();
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P2 | ux/conventional-commit-suggestion | Make the final agent report suggest conventional-style commit messages by default | gpt-5.4 | 2026-04-15 | balanced | |'
+            ].join('\n'), 'utf8');
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: [
+                    'src/gates/task-audit-summary.ts',
+                    'template/docs/agent-rules/80-task-workflow.md'
+                ],
+                metrics: { changed_lines_total: 42 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_report_contract.commit_command_template, 'git commit -m "<type>(<scope>): <summary>"');
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'git commit -m "fix(orchestration): conventional commit suggestion"');
+            assert.equal(result.final_report_contract.required_order[1], 'git commit -m "fix(orchestration): conventional commit suggestion"');
+        });
+
+        it('keeps task metadata inference working when TASK.md notes cell is empty', () => {
+            const now = new Date().toISOString();
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P2 | reliability/review-context-canonicalization | Unify review-context artifact naming and make all review gates use one canonical path family | gpt-5.4 | 2026-04-15 | strict | |'
+            ].join('\n'), 'utf8');
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'git commit -m "fix(orchestration): review context canonicalization"');
+        });
+
+        it('keeps scope inference deterministic when changed_files order differs', () => {
+            const now = new Date().toISOString();
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P2 | reliability/deterministic-commit-scope | Keep final report commit scope deterministic | gpt-5.4 | 2026-04-15 | balanced | |'
+            ].join('\n'), 'utf8');
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/validators/verify.ts', 'src/materialization/init.ts'],
+                metrics: { changed_lines_total: 18 },
+                required_reviews: {}
+            });
+            const first = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/materialization/init.ts', 'src/validators/verify.ts'],
+                metrics: { changed_lines_total: 18 },
+                required_reviews: {}
+            });
+            const second = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(first.final_report_contract.commit_command_suggestion, second.final_report_contract.commit_command_suggestion);
+            assert.equal(first.final_report_contract.commit_command_suggestion, 'git commit -m "fix(materialization): deterministic commit scope"');
+        });
+
+        it('falls back to the conventional commit template when task metadata is unavailable', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 8 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_report_contract.commit_command_template, 'git commit -m "<type>(<scope>): <summary>"');
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'git commit -m "<type>(<scope>): <summary>"');
+            assert.equal(result.final_report_contract.required_order[1], 'git commit -m "<type>(<scope>): <summary>"');
+        });
+
         it('marks final report contract as NOT_READY before completion passes cleanly', () => {
             fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
             writePreflight(reviewsDir, TASK_ID, {
@@ -733,11 +878,12 @@ describe('gates/task-audit-summary', () => {
                     blocker: 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
                     required_order: [
                         'implementation summary',
-                        'git commit -m "<message>"',
+                        'git commit -m "fix(orchestration): <summary>"',
                         'Do you want me to commit now? (yes/no)'
                     ],
                     implementation_summary_requirements: ['depth', 'path mode', 'review verdicts', 'docs updated'],
-                    commit_command_template: 'git commit -m "<message>"',
+                    commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                    commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
                     commit_question: 'Do you want me to commit now? (yes/no)'
                 }
             };
@@ -756,7 +902,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(text.includes('Blockers:'));
             assert.ok(text.includes('code-review'));
             assert.ok(text.includes('FinalReportContract: NOT_READY'));
-            assert.ok(text.includes('git commit -m "<message>"'));
+            assert.ok(text.includes('git commit -m "fix(orchestration): <summary>"'));
         });
 
         it('omits blockers section when empty', () => {
@@ -782,11 +928,12 @@ describe('gates/task-audit-summary', () => {
                     blocker: null,
                     required_order: [
                         'implementation summary',
-                        'git commit -m "<message>"',
+                        'git commit -m "fix(orchestration): <summary>"',
                         'Do you want me to commit now? (yes/no)'
                     ],
                     implementation_summary_requirements: ['depth', 'path mode', 'review verdicts', 'docs updated'],
-                    commit_command_template: 'git commit -m "<message>"',
+                    commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                    commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
                     commit_question: 'Do you want me to commit now? (yes/no)'
                 }
             };

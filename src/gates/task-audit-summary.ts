@@ -41,7 +41,13 @@ interface FinalReportContract {
     required_order: string[];
     implementation_summary_requirements: string[];
     commit_command_template: string;
+    commit_command_suggestion: string;
     commit_question: string;
+}
+
+interface TaskQueueMetadata {
+    area: string | null;
+    title: string | null;
 }
 
 export interface TaskAuditSummaryResult {
@@ -164,6 +170,142 @@ function resolveEventsRoot(repoRoot: string, explicit?: string | null): string {
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
 }
 
+function readTaskQueueMetadata(repoRoot: string, taskId: string): TaskQueueMetadata | null {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
+        return null;
+    }
+
+    const lines = fs.readFileSync(taskPath, 'utf8').split('\n');
+    for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (!trimmed.startsWith('|')) {
+            continue;
+        }
+        const cells = trimmed
+            .split('|')
+            .slice(1, -1)
+            .map((cell) => cell.trim());
+        if (cells.length < 9 || cells[0] !== taskId) {
+            continue;
+        }
+        if (cells[0].toLowerCase() === 'id' || cells[0].startsWith('-') || cells[0].startsWith('=')) {
+            continue;
+        }
+        return {
+            area: cells[3] || null,
+            title: cells[4] || null
+        };
+    }
+
+    return null;
+}
+
+function normalizeCommitToken(value: string): string {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+function normalizeCommitSubject(value: string): string {
+    const normalized = String(value || '')
+        .trim()
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/[.]+$/g, '')
+        .replace(/"/g, '\'');
+    if (!normalized) {
+        return '<summary>';
+    }
+    return normalized.charAt(0).toLowerCase() + normalized.slice(1);
+}
+
+function inferCommitType(taskMetadata: TaskQueueMetadata | null): 'feat' | 'fix' {
+    const text = `${taskMetadata?.area || ''} ${taskMetadata?.title || ''}`.toLowerCase();
+    const featureKeywords = ['add', 'introduce', 'support', 'enable', 'create', 'implement', 'allow', 'reuse', 'automate', 'generate', 'install'];
+    return featureKeywords.some((keyword) => new RegExp(`\\b${keyword}\\b`, 'i').test(text)) ? 'feat' : 'fix';
+}
+
+function inferCommitScope(changedFiles: string[], taskMetadata: TaskQueueMetadata | null): string {
+    const scopeMatchers: Array<{ scope: string; patterns: RegExp[] }> = [
+        {
+            scope: 'orchestration',
+            patterns: [
+                /^src\/gates\//,
+                /^src\/cli\/commands\/gate-/,
+                /^template\/docs\/agent-rules\//,
+                /^template\/skills\/orchestration\//,
+                /^tests\/node\/gates\/task-audit-summary\.test\.ts$/,
+                /^tests\/node\/validators\/verify\.test\.ts$/
+            ]
+        },
+        { scope: 'runtime', patterns: [/^src\/gate-runtime\//] },
+        { scope: 'validators', patterns: [/^src\/validators\//] },
+        { scope: 'materialization', patterns: [/^src\/materialization\//] },
+        { scope: 'setup', patterns: [/^src\/cli\/commands\/setup\.ts$/, /^src\/lifecycle\/setup/i] },
+        { scope: 'update', patterns: [/^src\/lifecycle\/update\.ts$/, /^src\/lifecycle\/check-update/i] }
+    ];
+    const scopeScores = new Map<string, number>();
+    const normalizedChangedFiles = [...new Set(changedFiles.map((changedFile) => toPosix(String(changedFile || ''))))]
+        .sort((left, right) => left.localeCompare(right));
+    for (const normalizedPath of normalizedChangedFiles) {
+        for (const matcher of scopeMatchers) {
+            if (matcher.patterns.some((pattern) => pattern.test(normalizedPath))) {
+                scopeScores.set(matcher.scope, (scopeScores.get(matcher.scope) || 0) + 1);
+            }
+        }
+    }
+
+    let bestScope: string | null = null;
+    let bestScore = -1;
+    for (const [scope, score] of [...scopeScores.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
+        if (score > bestScore || (score === bestScore && bestScope != null && scope.localeCompare(bestScope) < 0)) {
+            bestScope = scope;
+            bestScore = score;
+        }
+    }
+    if (bestScope) {
+        return bestScope;
+    }
+
+    const rawArea = String(taskMetadata?.area || '').trim();
+    const [areaPrefix = ''] = rawArea.split('/');
+    const normalizedAreaPrefix = normalizeCommitToken(areaPrefix);
+    if (normalizedAreaPrefix && !['ux', 'reliability', 'performance', 'security', 'docs', 'feature', 'feat'].includes(normalizedAreaPrefix)) {
+        return normalizedAreaPrefix;
+    }
+
+    return 'orchestration';
+}
+
+function inferCommitSubject(taskMetadata: TaskQueueMetadata | null): string {
+    const rawArea = String(taskMetadata?.area || '').trim();
+    const areaSuffix = rawArea.includes('/') ? rawArea.split('/').pop() || '' : rawArea;
+    const normalizedAreaSubject = normalizeCommitSubject(areaSuffix);
+    if (normalizedAreaSubject !== '<summary>' && normalizedAreaSubject.length >= 6) {
+        return normalizedAreaSubject;
+    }
+
+    return normalizeCommitSubject(String(taskMetadata?.title || ''));
+}
+
+function buildCommitCommandSuggestion(changedFiles: string[], taskMetadata: TaskQueueMetadata | null): { template: string; suggestion: string } {
+    const template = 'git commit -m "<type>(<scope>): <summary>"';
+    const subject = inferCommitSubject(taskMetadata);
+    if (subject === '<summary>') {
+        return { template, suggestion: template };
+    }
+
+    const type = inferCommitType(taskMetadata);
+    const scope = inferCommitScope(changedFiles, taskMetadata);
+    return {
+        template,
+        suggestion: `git commit -m "${type}(${scope}): ${subject}"`
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Core builder
 // ---------------------------------------------------------------------------
@@ -173,6 +315,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const safeTaskId = assertValidTaskId(options.taskId);
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
+    const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId);
 
     // -----------------------------------------------------------------------
     // 1. Parse task events timeline
@@ -495,6 +638,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         status = 'INCOMPLETE';
     }
 
+    const commitCommand = buildCommitCommandSuggestion(changedFiles, taskMetadata);
     const finalReportContract: FinalReportContract = {
         status: status === 'PASS' ? 'READY' : 'NOT_READY',
         blocker: status === 'PASS'
@@ -502,7 +646,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             : 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
         required_order: [
             'implementation summary',
-            'git commit -m "<message>"',
+            commitCommand.suggestion,
             'Do you want me to commit now? (yes/no)'
         ],
         implementation_summary_requirements: [
@@ -511,7 +655,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             'review verdicts',
             'docs updated'
         ],
-        commit_command_template: 'git commit -m "<message>"',
+        commit_command_template: commitCommand.template,
+        commit_command_suggestion: commitCommand.suggestion,
         commit_question: 'Do you want me to commit now? (yes/no)'
     };
 

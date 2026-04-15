@@ -13,7 +13,7 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 2. Keep responses {{ASSISTANT_RESPONSE_BREVITY}} unless the user explicitly asks for more or less detail.
 3. Keep code in English (variables, functions, classes, comments in code).
 4. Keep documentation in English (README, docs, file content).
-5. Task completion always ends with: implementation summary, suggested `git commit -m "<message>"`, and explicit `Do you want me to commit now? (yes/no)` question (see `80-task-workflow.md`, Mandatory Gate Contract).
+5. Task completion always ends with: implementation summary, suggested conventional-style `git commit -m "<type>(<scope>): <summary>"` command (prefer the inferred type/scope from `task-audit-summary` when available), and explicit `Do you want me to commit now? (yes/no)` question (see `80-task-workflow.md`, Mandatory Gate Contract).
 
 ## Project Memory — Storage Directive
 1. Durable project knowledge (architecture, conventions, stack details, domain constraints, design decisions) must be written to `garda-agent-orchestrator/live/docs/project-memory/`.

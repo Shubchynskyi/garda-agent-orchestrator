@@ -308,7 +308,7 @@ test('detectCoreRuleViolations validates language and brevity lines', () => {
     fs.mkdirSync(coreDir, { recursive: true });
     fs.writeFileSync(
         path.join(coreDir, '00-core.md'),
-        'Respond in English for explanations and assistance.\nDefault response brevity: concise.\nimplementation summary\ngit commit -m "<message>"\nDo you want me to commit now? (yes/no)\n80-task-workflow.md\n',
+        'Respond in English for explanations and assistance.\nDefault response brevity: concise.\nimplementation summary\ngit commit -m "<type>(<scope>): <summary>"\nDo you want me to commit now? (yes/no)\n80-task-workflow.md\n',
         'utf8'
     );
 

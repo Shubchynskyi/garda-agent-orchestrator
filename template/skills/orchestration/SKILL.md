@@ -178,7 +178,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
        - format savings as `Saved tokens: ~<total> (~<percent>%) (<part> <label> + <part> <label> + ...)` when the baseline is known;
        - keep spaces between numeric values and labels and around `+`; do not emit compressed fragments like `824code review context` or `+25DB review context`;
        - localized summaries may translate the wording, but must preserve the numeric structure; example: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
-    2. commit suggestion as exact command form: `git commit -m "<message>"`
+    2. commit suggestion as exact command form, defaulting to conventional style: `git commit -m "<type>(<scope>): <summary>"`
+       - if `final_report_contract.commit_command_suggestion` is populated, use it verbatim by default; otherwise fall back to the conventional template above.
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
 26. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
 27. Never commit unless user explicitly requests commit.
