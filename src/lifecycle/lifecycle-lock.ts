@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -35,14 +36,33 @@ export interface LifecycleLockTelemetry {
 
 export interface LifecycleLockOptions {
     allowForeignHostStaleRecovery?: unknown;
+    queueTimeoutMs?: unknown;
+}
+
+interface LifecycleAsyncQueueEntry {
+    operation: string;
+    enqueuedAtMs: number;
+    started: boolean;
+    startPromise: Promise<void>;
+    resolveStart: () => void;
+}
+
+interface LifecycleAsyncQueueState {
+    entries: LifecycleAsyncQueueEntry[];
+}
+
+interface LifecycleAsyncContextState {
+    heldTargets: Map<string, number>;
 }
 
 const LIFECYCLE_LOCK_METADATA_GRACE_MS = 2000;
 const LIFECYCLE_LOCK_STALE_MS = 30 * 60 * 1000;
+const DEFAULT_LIFECYCLE_ASYNC_QUEUE_TIMEOUT_MS = 10 * 60 * 1000;
 const FOREIGN_HOST_LIFECYCLE_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS';
 const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
 const ACTIVE_LIFECYCLE_OPERATION_LOCKS = new Map<string, number>();
-const LIFECYCLE_ASYNC_QUEUES = new Map<string, Promise<void>>();
+const LIFECYCLE_ASYNC_QUEUES = new Map<string, LifecycleAsyncQueueState>();
+const LIFECYCLE_ASYNC_CONTEXT = new AsyncLocalStorage<LifecycleAsyncContextState>();
 
 let lastLifecycleLockTelemetry: LifecycleLockTelemetry | null = null;
 
@@ -87,6 +107,11 @@ function isCurrentHostOwner(hostname: string | null): boolean | null {
 function parseBooleanLike(value: unknown): boolean {
     const raw = String(value ?? '').trim().toLowerCase();
     return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function toPositiveInteger(value: unknown, fallback: number): number {
+    const normalized = Number(value);
+    return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
 }
 
 function isForeignHostLifecycleStaleRecoveryEnabled(options: LifecycleLockOptions = {}): boolean {
@@ -191,6 +216,189 @@ function writeLifecycleOperationLockMetadata(lockPath: string, targetRoot: strin
         target_root: targetRoot
     };
     fs.writeFileSync(ownerPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function getCurrentLifecycleAsyncTargetDepth(normalizedTarget: string): number {
+    const store = LIFECYCLE_ASYNC_CONTEXT.getStore();
+    return store?.heldTargets.get(normalizedTarget) || 0;
+}
+
+async function runWithinLifecycleAsyncContext<T>(normalizedTarget: string, callback: () => Promise<T>): Promise<T> {
+    const currentStore = LIFECYCLE_ASYNC_CONTEXT.getStore();
+    if (currentStore) {
+        const nextDepth = (currentStore.heldTargets.get(normalizedTarget) || 0) + 1;
+        currentStore.heldTargets.set(normalizedTarget, nextDepth);
+        try {
+            return await callback();
+        } finally {
+            if (nextDepth <= 1) {
+                currentStore.heldTargets.delete(normalizedTarget);
+            } else {
+                currentStore.heldTargets.set(normalizedTarget, nextDepth - 1);
+            }
+        }
+    }
+
+    const initialStore: LifecycleAsyncContextState = {
+        heldTargets: new Map([[normalizedTarget, 1]])
+    };
+    return await LIFECYCLE_ASYNC_CONTEXT.run(initialStore, callback);
+}
+
+function buildLifecycleAsyncQueueTimeoutMessage(
+    normalizedTarget: string,
+    requestedOperation: string,
+    blockingEntry: LifecycleAsyncQueueEntry,
+    waitedMs: number,
+    timeoutMs: number
+): string {
+    const redactedTarget = redactPath(normalizedTarget, normalizedTarget);
+    const blockingElapsedMs = Math.max(0, Date.now() - blockingEntry.enqueuedAtMs);
+    return (
+        `Lifecycle async queue wait exceeded ${timeoutMs}ms for '${redactedTarget}' ` +
+        `(requested_operation='${requestedOperation}', blocking_operation='${blockingEntry.operation}', ` +
+        `waited_ms=${waitedMs}, blocking_elapsed_ms=${blockingElapsedMs}). ` +
+        'This usually means a hung lifecycle callback or same-root nested async lifecycle work that never completed.'
+    );
+}
+
+function createLifecycleAsyncQueueEntry(operation: string): LifecycleAsyncQueueEntry {
+    let resolveStart!: () => void;
+    const startPromise = new Promise<void>((resolve) => {
+        resolveStart = resolve;
+    });
+    return {
+        operation,
+        enqueuedAtMs: Date.now(),
+        started: false,
+        startPromise,
+        resolveStart
+    };
+}
+
+function getOrCreateLifecycleAsyncQueueState(normalizedTarget: string): LifecycleAsyncQueueState {
+    const existing = LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget);
+    if (existing) {
+        return existing;
+    }
+
+    const created: LifecycleAsyncQueueState = { entries: [] };
+    LIFECYCLE_ASYNC_QUEUES.set(normalizedTarget, created);
+    return created;
+}
+
+function startLifecycleAsyncQueueEntry(entry: LifecycleAsyncQueueEntry): void {
+    if (entry.started) {
+        return;
+    }
+
+    entry.started = true;
+    entry.resolveStart();
+}
+
+function enqueueLifecycleAsyncQueueEntry(
+    normalizedTarget: string,
+    operation: string
+): { queueState: LifecycleAsyncQueueState; queueEntry: LifecycleAsyncQueueEntry } {
+    const queueState = getOrCreateLifecycleAsyncQueueState(normalizedTarget);
+    const queueEntry = createLifecycleAsyncQueueEntry(operation);
+    queueState.entries.push(queueEntry);
+    if (queueState.entries[0] === queueEntry) {
+        startLifecycleAsyncQueueEntry(queueEntry);
+    }
+    return { queueState, queueEntry };
+}
+
+function getLifecycleAsyncQueueBlockingEntry(
+    queueState: LifecycleAsyncQueueState,
+    queueEntry: LifecycleAsyncQueueEntry
+): LifecycleAsyncQueueEntry {
+    const headEntry = queueState.entries[0];
+    if (headEntry && headEntry !== queueEntry) {
+        return headEntry;
+    }
+
+    return queueEntry;
+}
+
+function removeLifecycleAsyncQueueEntry(
+    normalizedTarget: string,
+    queueState: LifecycleAsyncQueueState,
+    queueEntry: LifecycleAsyncQueueEntry
+): void {
+    const index = queueState.entries.indexOf(queueEntry);
+    if (index < 0) {
+        if (queueState.entries.length === 0 && LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget) === queueState) {
+            LIFECYCLE_ASYNC_QUEUES.delete(normalizedTarget);
+        }
+        return;
+    }
+
+    const wasHead = index === 0;
+    queueState.entries.splice(index, 1);
+    if (queueState.entries.length === 0) {
+        if (LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget) === queueState) {
+            LIFECYCLE_ASYNC_QUEUES.delete(normalizedTarget);
+        }
+        return;
+    }
+
+    if (wasHead) {
+        startLifecycleAsyncQueueEntry(queueState.entries[0]);
+    }
+}
+
+async function waitForLifecycleAsyncQueueTurn(
+    normalizedTarget: string,
+    operation: string,
+    queueState: LifecycleAsyncQueueState,
+    queueEntry: LifecycleAsyncQueueEntry,
+    options: LifecycleLockOptions = {}
+): Promise<number> {
+    if (queueEntry.started) {
+        return 0;
+    }
+
+    const queueStartedAt = Date.now();
+    const queueTimeoutMs = toPositiveInteger(options.queueTimeoutMs, DEFAULT_LIFECYCLE_ASYNC_QUEUE_TIMEOUT_MS);
+
+    const completed = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            resolve(false);
+        }, queueTimeoutMs);
+        queueEntry.startPromise.then(
+            () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(true);
+            },
+            () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(true);
+            }
+        );
+    });
+
+    if (!completed) {
+        const totalWaitedMs = Date.now() - queueStartedAt;
+        throw new Error(
+            buildLifecycleAsyncQueueTimeoutMessage(
+                normalizedTarget,
+                operation,
+                getLifecycleAsyncQueueBlockingEntry(queueState, queueEntry),
+                totalWaitedMs,
+                queueTimeoutMs
+            )
+        );
+    }
+
+    return Date.now() - queueStartedAt;
 }
 
 export function getLifecycleOperationLockPath(targetRoot: string): string {
@@ -303,32 +511,29 @@ export async function withLifecycleOperationLockAsync<T>(
     options: LifecycleLockOptions = {}
 ): Promise<T> {
     const normalizedTarget = path.resolve(targetRoot);
-    const queueStartedAt = Date.now();
-
-    let previous = LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget);
-    while (previous) {
-        await previous;
-        previous = LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget);
+    if (getCurrentLifecycleAsyncTargetDepth(normalizedTarget) > 0) {
+        const lockResult = acquireLifecycleOperationLock(targetRoot, operation, options);
+        lastLifecycleLockTelemetry = { ...lockResult.telemetry, queueWaitMs: 0 };
+        try {
+            return await runWithinLifecycleAsyncContext(normalizedTarget, callback);
+        } finally {
+            lockResult.release();
+        }
     }
 
-    const queueWaitMs = Date.now() - queueStartedAt;
-    let resolveQueue!: () => void;
-    const queueEntry = new Promise<void>((resolve) => { resolveQueue = resolve; });
-    LIFECYCLE_ASYNC_QUEUES.set(normalizedTarget, queueEntry);
+    const { queueState, queueEntry } = enqueueLifecycleAsyncQueueEntry(normalizedTarget, operation);
 
     let release: (() => void) | null = null;
     try {
+        const queueWaitMs = await waitForLifecycleAsyncQueueTurn(normalizedTarget, operation, queueState, queueEntry, options);
         const lockResult = acquireLifecycleOperationLock(targetRoot, operation, options);
         release = lockResult.release;
         lastLifecycleLockTelemetry = { ...lockResult.telemetry, queueWaitMs };
-        return await callback();
+        return await runWithinLifecycleAsyncContext(normalizedTarget, callback);
     } finally {
         if (release) {
             release();
         }
-        if (LIFECYCLE_ASYNC_QUEUES.get(normalizedTarget) === queueEntry) {
-            LIFECYCLE_ASYNC_QUEUES.delete(normalizedTarget);
-        }
-        resolveQueue();
+        removeLifecycleAsyncQueueEntry(normalizedTarget, queueState, queueEntry);
     }
 }

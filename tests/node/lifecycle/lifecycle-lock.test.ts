@@ -345,7 +345,39 @@ test('withLifecycleOperationLockAsync releases lock on callback error', async ()
     }
 });
 
-test('withLifecycleOperationLockAsync serializes concurrent callers', async () => {
+test('withLifecycleOperationLockAsync supports same-root nested async re-entrancy', { concurrency: false }, async () => {
+    const tmp = mkTmpDir();
+    const executionOrder: string[] = [];
+    try {
+        const result = await withLifecycleOperationLockAsync(tmp, 'outer', async () => {
+            executionOrder.push('outer-start');
+            const nested = await withLifecycleOperationLockAsync(tmp, 'inner', async () => {
+                executionOrder.push('inner-start');
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                executionOrder.push('inner-end');
+                return 'nested-ok';
+            });
+            executionOrder.push('outer-end');
+            return nested;
+        });
+
+        assert.equal(result, 'nested-ok');
+        assert.deepEqual(executionOrder, [
+            'outer-start',
+            'inner-start',
+            'inner-end',
+            'outer-end'
+        ]);
+        assert.ok(!fs.existsSync(getLifecycleOperationLockPath(tmp)), 'lock should be released after nested async callback');
+        const telemetry = getLastLifecycleLockTelemetry();
+        assert.ok(telemetry != null, 'telemetry should be available after nested async callback');
+        assert.equal(telemetry!.queueWaitMs, 0);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync serializes concurrent callers', { concurrency: false }, async () => {
     const tmp = mkTmpDir();
     const executionOrder: string[] = [];
     try {
@@ -369,7 +401,121 @@ test('withLifecycleOperationLockAsync serializes concurrent callers', async () =
     }
 });
 
-test('withLifecycleOperationLockAsync serializes three concurrent callers', async () => {
+test('withLifecycleOperationLockAsync bounds queue wait time and leaves later calls recoverable', { concurrency: false }, async () => {
+    const tmp = mkTmpDir();
+    try {
+        let timedWaiterRan = false;
+        let releaseBlocker!: () => void;
+        const blockerReleasePromise = new Promise<void>((resolve) => {
+            releaseBlocker = resolve;
+        });
+
+        const blocker = withLifecycleOperationLockAsync(tmp, 'blocker', async () => {
+            await blockerReleasePromise;
+            return 'blocker-done';
+        });
+
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        const waitForLockStartedAt = Date.now();
+        while (!fs.existsSync(lockPath)) {
+            if (Date.now() - waitForLockStartedAt > 500) {
+                throw new Error('timed out waiting for blocker lifecycle lock to appear');
+            }
+            await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+
+        await assert.rejects(
+            () => withLifecycleOperationLockAsync(tmp, 'timed-waiter', async () => {
+                timedWaiterRan = true;
+                return 'should-timeout';
+            }, {
+                queueTimeoutMs: 40
+            }),
+            /Lifecycle async queue wait exceeded 40ms.*requested_operation='timed-waiter'.*blocking_operation='blocker'/
+        );
+        assert.equal(timedWaiterRan, false);
+
+        releaseBlocker();
+        await blocker;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(timedWaiterRan, false);
+
+        const recoveryResult = await withLifecycleOperationLockAsync(tmp, 'recovered', async () => 'recovered-ok');
+        assert.equal(recoveryResult, 'recovered-ok');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync keeps later waiters queued behind the blocker after a middle timeout', { concurrency: false }, async () => {
+    const tmp = mkTmpDir();
+    const executionOrder: string[] = [];
+    try {
+        let timedWaiterRan = false;
+        let releaseBlocker!: () => void;
+        const blockerReleasePromise = new Promise<void>((resolve) => {
+            releaseBlocker = resolve;
+        });
+
+        const blocker = withLifecycleOperationLockAsync(tmp, 'blocker', async () => {
+            executionOrder.push('blocker-start');
+            await blockerReleasePromise;
+            executionOrder.push('blocker-end');
+            return 'blocker-done';
+        });
+
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        const waitForLockStartedAt = Date.now();
+        while (!fs.existsSync(lockPath)) {
+            if (Date.now() - waitForLockStartedAt > 500) {
+                throw new Error('timed out waiting for blocker lifecycle lock to appear');
+            }
+            await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+
+        const timedWaiter = withLifecycleOperationLockAsync(tmp, 'timed-waiter', async () => {
+            timedWaiterRan = true;
+            return 'should-timeout';
+        }, {
+            queueTimeoutMs: 40
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        const laterWaiter = withLifecycleOperationLockAsync(tmp, 'later-waiter', async () => {
+            executionOrder.push('later-start');
+            executionOrder.push('later-end');
+            return 'later-ok';
+        });
+
+        await assert.rejects(
+            () => timedWaiter,
+            /Lifecycle async queue wait exceeded 40ms.*requested_operation='timed-waiter'.*blocking_operation='blocker'/
+        );
+        assert.equal(timedWaiterRan, false);
+
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        assert.deepEqual(executionOrder, ['blocker-start']);
+
+        releaseBlocker();
+        await blocker;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(timedWaiterRan, false);
+
+        const laterResult = await laterWaiter;
+        assert.equal(laterResult, 'later-ok');
+        assert.deepEqual(executionOrder, [
+            'blocker-start',
+            'blocker-end',
+            'later-start',
+            'later-end'
+        ]);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync serializes three concurrent callers', { concurrency: false }, async () => {
     const tmp = mkTmpDir();
     const executionOrder: string[] = [];
     try {
@@ -399,7 +545,7 @@ test('withLifecycleOperationLockAsync serializes three concurrent callers', asyn
     }
 });
 
-test('withLifecycleOperationLockAsync allows independent targets concurrently', async () => {
+test('withLifecycleOperationLockAsync allows independent targets concurrently', { concurrency: false }, async () => {
     const tmp1 = mkTmpDir();
     const tmp2 = mkTmpDir();
     const executionOrder: string[] = [];
