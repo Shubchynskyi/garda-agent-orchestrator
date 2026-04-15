@@ -153,6 +153,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
    - `required-reviews-check` fails if post-preflight rule-pack evidence is missing (missing `RULE_PACK_LOADED` / missing `runtime/reviews/<task-id>-rule-pack.json`).
    - `required-reviews-check` fails if compile evidence is missing in `runtime/task-events/<task-id>.jsonl` (missing `COMPILE_GATE_PASSED`).
    - `required-reviews-check` fails if workspace changed after compile evidence; rerun compile gate after post-compile edits.
+   - If explicit `--*-review-verdict` flags are omitted, the gate defaults expected required verdicts from `preflight.required_reviews` for the current cycle.
+   - This defaulting is only a contract convenience; the gate still validates current-cycle artifacts, receipts, review-context bindings, and exact pass tokens, and must not auto-scan `runtime/reviews` for a convenient PASS.
 18. Resolve every review finding before `DONE` and repeat required reviews + gate check until the final PASS artifacts are clean.
    - blocking findings must be fixed before rerun.
    - non-blocking findings may be deferred only in `Deferred Findings` with `Justification:` after the active `Findings by Severity` and `Residual Risks` sections are cleared to `none`.
@@ -236,6 +238,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
   - `required_reviews.dependency=true` => skill `garda-agent-orchestrator/live/skills/dependency-review/SKILL.md` => pass token `DEPENDENCY REVIEW PASSED` => gate parameter `-DependencyReviewVerdict`
 - After all required verdicts are collected, run gate script with all verdict parameters:
   - Node: `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "<path>" --task-id "<task-id>" --code-review-verdict "<...>" --db-review-verdict "<...>" --security-review-verdict "<...>" --refactor-review-verdict "<...>" --api-review-verdict "<...>" --test-review-verdict "<...>" --performance-review-verdict "<...>" --infra-review-verdict "<...>" --dependency-review-verdict "<...>"`
+  - Explicit verdict flags are optional when the expected required review set already comes from `preflight.required_reviews`; omitted review types default to their required pass tokens for this task cycle.
 - After review gate pass, run doc impact gate:
   - Node: `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "<path>" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
 - After review gate pass, run completion gate before `DONE`:

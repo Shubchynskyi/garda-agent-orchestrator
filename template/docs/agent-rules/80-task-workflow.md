@@ -87,6 +87,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check`.
+- If explicit `--*-review-verdict` flags are omitted, the review gate defaults the expected required verdicts from `preflight.required_reviews` for the current task cycle.
+- Those defaults are only a CLI convenience; `required-reviews-check` still validates current-cycle artifacts, receipts, review-context bindings, and pass tokens, and must not auto-pick a stale PASS from `runtime/reviews/`.
 - Review gate command validates compile evidence (`COMPILE_GATE_PASSED`) from task timeline for the same task id.
 - Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.
 - Review gate command validates post-preflight rule-pack evidence (`RULE_PACK_LOADED`) for the same task id and preflight artifact.

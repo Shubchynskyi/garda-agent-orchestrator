@@ -26,6 +26,29 @@ export const REVIEW_CONTRACTS = [
     ['dependency', 'DEPENDENCY REVIEW PASSED']
 ];
 
+export function resolveExpectedReviewVerdicts(
+    requiredReviews: Record<string, boolean>,
+    verdicts?: Record<string, string>,
+    skipReviews?: string[]
+): Record<string, string> {
+    const providedVerdicts = verdicts || {};
+    const skipSet = new Set((skipReviews || []).map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
+    const resolved: Record<string, string> = {};
+
+    for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
+        const explicitVerdict = String(providedVerdicts[reviewKey] || '').trim();
+        if (explicitVerdict) {
+            resolved[reviewKey] = explicitVerdict;
+            continue;
+        }
+        resolved[reviewKey] = requiredReviews[reviewKey] && !skipSet.has(reviewKey)
+            ? passToken
+            : 'NOT_REQUIRED';
+    }
+
+    return resolved;
+}
+
 /**
  * Parse skip-reviews value into a sorted unique array.
  */
@@ -394,7 +417,6 @@ export interface CheckRequiredReviewsOptions {
  */
 export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const validatedPreflight = options.validatedPreflight;
-    const verdicts = options.verdicts || {};
     const skipReviews = options.skipReviews || [];
     const compileGateEvidence = options.compileGateEvidence || null;
     const reviewArtifacts = options.reviewArtifacts || {};
@@ -402,6 +424,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const errors = [...validatedPreflight.errors];
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const requiredReviews = validatedPreflight.required_reviews;
+    const verdicts = resolveExpectedReviewVerdicts(requiredReviews, options.verdicts, skipReviews);
 
     // Validate compile gate
     if (compileGateEvidence) {

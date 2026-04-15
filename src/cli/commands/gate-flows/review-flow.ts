@@ -17,6 +17,7 @@ import { assessDocImpact } from '../../../gates/doc-impact';
 import {
     checkRequiredReviews,
     parseSkipReviews,
+    resolveExpectedReviewVerdicts,
     validatePreflightForReview,
     validateZeroDiffForReviewGate
 } from '../../../gates/required-reviews-check';
@@ -275,16 +276,16 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         return { outputLines, exitCode: EXIT_GATE_FAILURE };
     }
     const skipReviewsList = parseSkipReviews(options.skipReviews || '');
-    const verdicts: Record<string, string> = {
-        code: options.codeReviewVerdict || 'NOT_REQUIRED',
-        db: options.dbReviewVerdict || 'NOT_REQUIRED',
-        security: options.securityReviewVerdict || 'NOT_REQUIRED',
-        refactor: options.refactorReviewVerdict || 'NOT_REQUIRED',
-        api: options.apiReviewVerdict || 'NOT_REQUIRED',
-        test: options.testReviewVerdict || 'NOT_REQUIRED',
-        performance: options.performanceReviewVerdict || 'NOT_REQUIRED',
-        infra: options.infraReviewVerdict || 'NOT_REQUIRED',
-        dependency: options.dependencyReviewVerdict || 'NOT_REQUIRED'
+    const providedVerdicts: Record<string, string> = {
+        code: String(options.codeReviewVerdict || '').trim(),
+        db: String(options.dbReviewVerdict || '').trim(),
+        security: String(options.securityReviewVerdict || '').trim(),
+        refactor: String(options.refactorReviewVerdict || '').trim(),
+        api: String(options.apiReviewVerdict || '').trim(),
+        test: String(options.testReviewVerdict || '').trim(),
+        performance: String(options.performanceReviewVerdict || '').trim(),
+        infra: String(options.infraReviewVerdict || '').trim(),
+        dependency: String(options.dependencyReviewVerdict || '').trim()
     };
 
     const compileGateEvidence = getCompileGateEvidence(
@@ -401,6 +402,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
 
     const required = validatedPreflight.required_reviews;
     const skipCode = skipReviewsList.includes('code');
+    const verdicts = resolveExpectedReviewVerdicts(required, providedVerdicts, skipReviewsList);
     const canSkipCode = !!required.code
         && !required.db
         && !required.security

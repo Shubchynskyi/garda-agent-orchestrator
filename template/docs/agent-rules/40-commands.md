@@ -235,6 +235,8 @@ Notes:
 - `required-reviews-check` additionally validates compile evidence in `runtime/task-events/<task-id>.jsonl`; without `COMPILE_GATE_PASSED` the review gate fails.
 - `required-reviews-check` additionally validates explicit task-mode entry evidence (`TASK_MODE_ENTERED`) before review pass can succeed.
 - `required-reviews-check` additionally validates post-preflight rule-pack evidence (`runtime/reviews/<task-id>-rule-pack.json`) before review pass can succeed.
+- If explicit `--*-review-verdict` flags are omitted, `required-reviews-check` defaults the expected required verdicts from `preflight.required_reviews` for the current task cycle.
+- These defaults do not relax validation: the gate still requires current-cycle artifacts, receipts, review-context bindings, and exact pass tokens; it must not auto-scan `runtime/reviews` for a convenient PASS.
 - `required-reviews-check` validates workspace drift against compile evidence scope snapshot; any post-compile changes require re-run of compile gate.
 - `required-reviews-check` supports audited override only for code review in tiny low-risk scopes; all other review overrides are rejected.
 - `doc-impact-gate` is mandatory before completion; it writes `runtime/reviews/<task-id>-doc-impact.json`. When the preflight detected `api`, `security`, `infra`, `dependency`, or `db` triggers, `NO_DOC_UPDATES` requires `--sensitive-scope-reviewed true` with a rationale explaining why no documentation updates are needed.

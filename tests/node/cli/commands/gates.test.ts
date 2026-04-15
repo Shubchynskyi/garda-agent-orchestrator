@@ -1747,6 +1747,139 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('defaults required review verdicts from preflight when CLI verdict flags are omitted', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-defaulted-verdicts';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-defaulted-verdicts.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Default required review verdicts from preflight'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+        writeCleanReviewArtifact(repoRoot, taskId, 'test', 'TEST REVIEW PASSED');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.outputLines[0], 'REVIEW_GATE_PASSED');
+        assert.equal(evidence.verdicts.code, 'REVIEW PASSED');
+        assert.equal(evidence.verdicts.test, 'TEST REVIEW PASSED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails required reviews gate when a preflight-defaulted required review artifact is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-defaulted-verdicts-missing-artifact';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-defaulted-verdicts-missing-artifact.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep defaulted required reviews strict when artifacts are missing'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const result = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.equal(evidence.verdicts.test, 'TEST REVIEW PASSED');
+        assert.ok(result.outputLines.some((line) => line.includes("Review artifact not found for claimed 'TEST REVIEW PASSED'")));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails required reviews gate when review artifact is missing mandatory findings sections', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-invalid-sections';
