@@ -29,6 +29,10 @@ import { resolveCanonicalReviewContextPath } from '../../gates/review-context-pa
 import { getReviewContextContractViolations } from '../../gates/review-context-contract';
 import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
 import {
+    getReviewArtifactFindingsEvidence,
+    isTrivialReview
+} from '../../gates/completion';
+import {
     runDocImpactGateCommand,
     runRequiredReviewsCheckCommand
 } from './gates';
@@ -278,6 +282,53 @@ function restoreReviewArtifactFromRollbackState(
     }
     const content = rollbackState.content || '';
     writeReviewArtifactText(artifactPath, content.endsWith('\n') ? content : `${content}\n`);
+}
+
+function getEarlyReviewMaterializationViolations(options: {
+    artifactPath: string;
+    reviewContent: string;
+    verdictToken: string;
+    expectedPassVerdict: string;
+}): string[] {
+    const { artifactPath, reviewContent, verdictToken, expectedPassVerdict } = options;
+    const violations: string[] = [];
+    const normalizedArtifactPath = normalizePath(artifactPath);
+    if (isTrivialReview(reviewContent)) {
+        violations.push(
+            `Review artifact '${normalizedArtifactPath}' is trivial or obviously synthetic. ` +
+            'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
+        );
+    }
+
+    const findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, reviewContent);
+    const requireCleanPassArtifact = verdictToken === expectedPassVerdict;
+    const passOnlyActiveViolations = new Set<string>();
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+        if (findingsEvidence.findings_by_severity[severity].length === 0) {
+            continue;
+        }
+        const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+        passOnlyActiveViolations.add(
+            `Review artifact '${normalizedArtifactPath}' still contains active ${severityLabel} findings. ` +
+            "Resolve them or move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:'."
+        );
+    }
+    if (findingsEvidence.residual_risks.length > 0) {
+        passOnlyActiveViolations.add(
+            `Review artifact '${normalizedArtifactPath}' still contains active residual risks. ` +
+            "Move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:' before DONE."
+        );
+    }
+    for (const violation of findingsEvidence.violations) {
+        // Every recorded review must remain structurally auditable. Only the
+        // "clean pass" requirement is verdict-specific; failed reviews still
+        // materialize with active findings when the lifecycle sections exist.
+        if (!passOnlyActiveViolations.has(violation) || requireCleanPassArtifact) {
+            violations.push(violation);
+        }
+    }
+
+    return violations;
 }
 
 function assertRoutingCompatibility(
@@ -710,6 +761,18 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         throw new Error(
             `Review output must contain a recognized verdict token for '${reviewType}'. ` +
             `Expected '${expectedPassVerdict}' or '${expectedFailVerdict}'.`
+        );
+    }
+    const materializationViolations = getEarlyReviewMaterializationViolations({
+        artifactPath,
+        reviewContent,
+        verdictToken,
+        expectedPassVerdict
+    });
+    if (materializationViolations.length > 0) {
+        throw new Error(
+            `Review output is not eligible for '${reviewType}' materialization:\n` +
+            materializationViolations.map((violation) => `- ${violation}`).join('\n')
         );
     }
 
