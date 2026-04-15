@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { withFilesystemLock } from './task-events-locking';
 
 // ---------------------------------------------------------------------------
 // Reviews Index — bounded metadata cache for runtime/reviews artifacts
@@ -13,6 +14,9 @@ import * as path from 'node:path';
 // ---------------------------------------------------------------------------
 
 const INDEX_FILE_NAME = 'reviews-index.json';
+const DEFAULT_INDEX_LOCK_TIMEOUT_MS = 1000;
+const DEFAULT_INDEX_LOCK_RETRY_MS = 25;
+const DEFAULT_INDEX_LOCK_STALE_MS = 30 * 1000;
 
 // Known artifact type suffixes used to split task-id from artifact-type.
 // Ordered longest-first so greedy suffix matching selects the right boundary.
@@ -102,7 +106,10 @@ function getDirectoryTimestampSnapshot(dirPath: string): { mtimeMs: number; ctim
 
 function getDirectoryEntryCount(dirPath: string): number {
     try {
-        return fs.readdirSync(dirPath).filter((entryName) => entryName !== INDEX_FILE_NAME).length;
+        return fs.readdirSync(dirPath).filter((entryName) => (
+            entryName !== INDEX_FILE_NAME
+            && !entryName.endsWith('.lock')
+        )).length;
     } catch {
         return 0;
     }
@@ -276,6 +283,19 @@ export function resolveIndexPath(reviewsDir: string): string {
     return path.join(reviewsDir, INDEX_FILE_NAME);
 }
 
+export function resolveIndexLockPath(reviewsDir: string): string {
+    return path.join(path.dirname(reviewsDir), '.reviews-index.lock');
+}
+
+function withIndexUpdateLock<T>(reviewsDir: string, callback: () => T): T {
+    const { result } = withFilesystemLock(resolveIndexLockPath(reviewsDir), {
+        timeoutMs: DEFAULT_INDEX_LOCK_TIMEOUT_MS,
+        retryMs: DEFAULT_INDEX_LOCK_RETRY_MS,
+        staleMs: DEFAULT_INDEX_LOCK_STALE_MS
+    }, callback);
+    return result;
+}
+
 /**
  * Load the reviews index, rebuilding from disk only when stale.
  *
@@ -295,15 +315,26 @@ export function loadIndex(
         }
     }
 
-    const index = rebuildIndex(reviewsDir);
-    if (!options.readOnly) {
+    if (options.readOnly) {
+        return { index: rebuildIndex(reviewsDir), source: 'rebuilt' };
+    }
+
+    return withIndexUpdateLock(reviewsDir, () => {
+        if (!options.forceRebuild && !isIndexStale(indexPath, reviewsDir, options.maxStalenessMs)) {
+            const cached = readIndexFile(indexPath);
+            if (cached) {
+                return { index: cached, source: 'cache' as const };
+            }
+        }
+
+        const index = rebuildIndex(reviewsDir);
         try {
             writeIndex(indexPath, index);
         } catch {
             // Non-fatal: return the fresh index even if we can't persist it
         }
-    }
-    return { index, source: 'rebuilt' };
+        return { index, source: 'rebuilt' as const };
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -318,48 +349,50 @@ export function upsertEntry(reviewsDir: string, fileName: string): void {
     const parsed = parseArtifactType(fileName);
     if (!parsed) return;
 
-    const fullPath = path.join(reviewsDir, fileName);
-    let stat: fs.Stats;
-    try {
-        stat = fs.statSync(fullPath);
-        if (!stat.isFile()) return;
-    } catch {
-        return;
-    }
-
     const indexPath = resolveIndexPath(reviewsDir);
-    let index = readIndexFile(indexPath);
-
-    if (!index) {
-        index = rebuildIndex(reviewsDir);
-    } else {
-        const existingIdx = index.entries.findIndex(e => e.fileName === fileName);
-        const entry: ReviewsIndexEntry = {
-            fileName,
-            taskId: parsed.taskId,
-            artifactType: parsed.artifactType,
-            mtimeMs: stat.mtimeMs,
-            sizeBytes: stat.size
-        };
-
-        if (existingIdx >= 0) {
-            index.entries[existingIdx] = entry;
-        } else {
-            index.entries.push(entry);
+    withIndexUpdateLock(reviewsDir, () => {
+        const fullPath = path.join(reviewsDir, fileName);
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(fullPath);
+            if (!stat.isFile()) return;
+        } catch {
+            return;
         }
 
-        const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
-        index.directoryMtimeMs = dirSnapshot.mtimeMs;
-        index.directoryCtimeMs = dirSnapshot.ctimeMs;
-        index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
-        index.generatedAtMs = Date.now();
-    }
+        let index = readIndexFile(indexPath);
 
-    try {
-        writeIndex(indexPath, index);
-    } catch {
-        // Non-fatal
-    }
+        if (!index) {
+            index = rebuildIndex(reviewsDir);
+        } else {
+            const existingIdx = index.entries.findIndex(e => e.fileName === fileName);
+            const entry: ReviewsIndexEntry = {
+                fileName,
+                taskId: parsed.taskId,
+                artifactType: parsed.artifactType,
+                mtimeMs: stat.mtimeMs,
+                sizeBytes: stat.size
+            };
+
+            if (existingIdx >= 0) {
+                index.entries[existingIdx] = entry;
+            } else {
+                index.entries.push(entry);
+            }
+
+            const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
+            index.directoryMtimeMs = dirSnapshot.mtimeMs;
+            index.directoryCtimeMs = dirSnapshot.ctimeMs;
+            index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
+            index.generatedAtMs = Date.now();
+        }
+
+        try {
+            writeIndex(indexPath, index);
+        } catch {
+            // Non-fatal
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -373,39 +406,43 @@ export function upsertEntry(reviewsDir: string, fileName: string): void {
 export function removeEntries(reviewsDir: string, fileNames: string[]): void {
     if (fileNames.length === 0) return;
 
-    const indexPath = resolveIndexPath(reviewsDir);
-    const index = readIndexFile(indexPath);
-    if (!index) return;
+    withIndexUpdateLock(reviewsDir, () => {
+        const indexPath = resolveIndexPath(reviewsDir);
+        const index = readIndexFile(indexPath);
+        if (!index) return;
 
-    const removeSet = new Set(fileNames);
-    const originalLength = index.entries.length;
-    index.entries = index.entries.filter(e => !removeSet.has(e.fileName));
+        const removeSet = new Set(fileNames);
+        const originalLength = index.entries.length;
+        index.entries = index.entries.filter(e => !removeSet.has(e.fileName));
 
-    if (index.entries.length === originalLength) return;
+        if (index.entries.length === originalLength) return;
 
-    const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
-    index.directoryMtimeMs = dirSnapshot.mtimeMs;
-    index.directoryCtimeMs = dirSnapshot.ctimeMs;
-    index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
-    index.generatedAtMs = Date.now();
+        const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
+        index.directoryMtimeMs = dirSnapshot.mtimeMs;
+        index.directoryCtimeMs = dirSnapshot.ctimeMs;
+        index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
+        index.generatedAtMs = Date.now();
 
-    try {
-        writeIndex(indexPath, index);
-    } catch {
-        // Non-fatal
-    }
+        try {
+            writeIndex(indexPath, index);
+        } catch {
+            // Non-fatal
+        }
+    });
 }
 
 /**
  * Invalidate (delete) the index file, forcing a full rebuild on next load.
  */
 export function invalidateIndex(reviewsDir: string): void {
-    const indexPath = resolveIndexPath(reviewsDir);
-    try {
-        fs.rmSync(indexPath, { force: true });
-    } catch {
-        // Non-fatal
-    }
+    withIndexUpdateLock(reviewsDir, () => {
+        const indexPath = resolveIndexPath(reviewsDir);
+        try {
+            fs.rmSync(indexPath, { force: true });
+        } catch {
+            // Non-fatal
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

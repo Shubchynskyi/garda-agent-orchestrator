@@ -28,7 +28,14 @@ function resolveTaskEventsModulePath() {
     return path.resolve(__dirname, '../../../src/gate-runtime/task-events.js');
 }
 
-function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string, startSignalPath: string, attempts: number, delayMs: number) {
+function runConcurrentAppendWorker(
+    modulePath: string,
+    orchestratorRoot: string,
+    startSignalPath: string,
+    attempts: number,
+    delayMs: number,
+    aggregateMaxLines?: number
+) {
     return new Promise<void>((resolve, reject) => {
         const workerScript = [
             "const fs = require('node:fs');",
@@ -37,11 +44,15 @@ function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string,
             "const startSignalPath = process.argv[3];",
             "const attempts = Number.parseInt(process.argv[4], 10);",
             "const delayMs = Number.parseInt(process.argv[5], 10);",
+            "const aggregateMaxLinesArg = process.argv[6];",
+            "const aggregateMaxLines = aggregateMaxLinesArg ? Number.parseInt(aggregateMaxLinesArg, 10) : null;",
             "const sleepArray = new Int32Array(new SharedArrayBuffer(4));",
             "while (!fs.existsSync(startSignalPath)) { Atomics.wait(sleepArray, 0, 0, 10); }",
             "(async () => {",
             "  for (let index = 0; index < attempts; index += 1) {",
-            "    const result = await appendTaskEventAsync(orchestratorRoot, 'T-CONCURRENT', 'test', 'PASS', `Event ${index + 1}`, { worker: process.pid, attempt: index }, { passThru: true, lockTimeoutMs: 30000, lockRetryMs: 1, preWriteDelayMs: delayMs });",
+            "    const options = { passThru: true, lockTimeoutMs: 30000, lockRetryMs: 1, preWriteDelayMs: delayMs };",
+            "    if (Number.isFinite(aggregateMaxLines)) { options.aggregateMaxLines = aggregateMaxLines; }",
+            "    const result = await appendTaskEventAsync(orchestratorRoot, 'T-CONCURRENT', 'test', 'PASS', `Event ${index + 1}`, { worker: process.pid, attempt: index }, options);",
             "    if (!result || (Array.isArray(result.warnings) && result.warnings.length > 0)) {",
             "      const warningText = result && Array.isArray(result.warnings) ? result.warnings.join('; ') : 'appendTaskEventAsync returned null';",
             "      throw new Error(warningText);",
@@ -61,7 +72,8 @@ function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string,
             orchestratorRoot,
             startSignalPath,
             String(attempts),
-            String(delayMs)
+            String(delayMs),
+            aggregateMaxLines == null ? '' : String(aggregateMaxLines)
         ], {
             stdio: ['ignore', 'pipe', 'pipe']
         });
@@ -78,6 +90,63 @@ function runConcurrentAppendWorker(modulePath: string, orchestratorRoot: string,
                 return;
             }
             reject(new Error(stderr || `append worker exited with code ${code}`));
+        });
+    });
+}
+
+function runConcurrentPruneWorker(
+    modulePath: string,
+    eventsRoot: string,
+    startSignalPath: string,
+    attempts: number,
+    maxLines: number
+) {
+    return new Promise<void>((resolve, reject) => {
+        const workerScript = [
+            "const fs = require('node:fs');",
+            "const { pruneAggregateLogLocked } = require(process.argv[1]);",
+            "const eventsRoot = process.argv[2];",
+            "const startSignalPath = process.argv[3];",
+            "const attempts = Number.parseInt(process.argv[4], 10);",
+            "const maxLines = Number.parseInt(process.argv[5], 10);",
+            "const sleepArray = new Int32Array(new SharedArrayBuffer(4));",
+            "while (!fs.existsSync(startSignalPath)) { Atomics.wait(sleepArray, 0, 0, 10); }",
+            "try {",
+            "  for (let index = 0; index < attempts; index += 1) {",
+            "    pruneAggregateLogLocked(eventsRoot, maxLines, { timeoutMs: 30000, retryMs: 1 });",
+            "    Atomics.wait(sleepArray, 0, 0, 5);",
+            "  }",
+            "} catch (error) {",
+            "  process.stderr.write(String(error && error.stack ? error.stack : error));",
+            "  process.exitCode = 1;",
+            "}"
+        ].join('\n');
+
+        const child = spawn(process.execPath, [
+            '--input-type=commonjs',
+            '--eval',
+            workerScript,
+            modulePath,
+            eventsRoot,
+            startSignalPath,
+            String(attempts),
+            String(maxLines)
+        ], {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        let stderr = '';
+        child.stderr.on('data', (chunk) => {
+            stderr += String(chunk);
+        });
+
+        child.on('error', reject);
+        child.on('exit', (code) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            reject(new Error(stderr || `prune worker exited with code ${code}`));
         });
     });
 }
@@ -1509,24 +1578,21 @@ test('appendTaskEventAsync reclaims aged foreign-host lock when explicit overrid
 
 // --- aggregate (all-tasks) lock contention ---
 
-test('appendTaskEventAsync succeeds with lock-free aggregate append even when .all-tasks.lock is held', async () => {
+test('appendTaskEventAsync waits for aggregate lock and records contention telemetry when .all-tasks.lock is held', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-aggregate-contention-'));
+    let cleanupChild: (() => Promise<void>) | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-        fs.mkdirSync(aggregateLockPath, { recursive: true });
-        fs.writeFileSync(path.join(aggregateLockPath, 'owner.json'), JSON.stringify({
-            pid: process.pid,
-            hostname: os.hostname(),
-            created_at_utc: new Date().toISOString()
-        }, null, 2) + '\n', 'utf8');
+        cleanupChild = await holdTaskEventLockInChildProcess(aggregateLockPath, 140);
 
+        const startedAt = Date.now();
         const result = await appendTaskEventAsync(
             tempDir,
             'T-AGG-CONTEND',
             'test',
             'PASS',
-            'Lock-free aggregate append should bypass the aggregate lock',
+            'Aggregate append should wait for the aggregate lock',
             null,
             {
                 passThru: true,
@@ -1535,25 +1601,22 @@ test('appendTaskEventAsync succeeds with lock-free aggregate append even when .a
                 lockStaleMs: 60000
             }
         );
+        const elapsedMs = Date.now() - startedAt;
 
         assert.ok(result !== null);
-        assert.equal(result!.warnings.length, 0, 'Lock-free append should succeed without warnings');
+        assert.equal(result!.warnings.length, 0, 'aggregate append should wait instead of warning');
         assert.ok(result!.lock_telemetry != null, 'lock_telemetry must be present');
-
-        // Task lock should have no contention
         assert.equal(result!.lock_telemetry!.task_lock_retries, 0, 'task lock should acquire on first attempt');
-
-        // Aggregate lock should show zero contention (lock-free path)
         assert.equal(
-            result!.lock_telemetry!.aggregate_lock_retries, 0,
-            'aggregate lock retries should be 0 in lock-free mode'
+            result!.lock_telemetry!.aggregate_append_mode, 'locked',
+            'aggregate append mode should record serialized append'
         );
-        assert.equal(
-            result!.lock_telemetry!.aggregate_append_mode, 'lock_free',
-            'aggregate append mode should be lock_free'
+        assert.ok(result!.lock_telemetry!.aggregate_lock_retries > 0, 'aggregate lock should show contention');
+        assert.ok(
+            result!.lock_telemetry!.aggregate_lock_elapsed_ms >= 100 || elapsedMs >= 100,
+            `aggregate append should wait for held lock (telemetry=${result!.lock_telemetry!.aggregate_lock_elapsed_ms}, elapsed=${elapsedMs})`
         );
 
-        // Verify the event was written to both files
         const taskFile = path.join(eventsRoot, 'T-AGG-CONTEND.jsonl');
         const allTasksFile = path.join(eventsRoot, 'all-tasks.jsonl');
         assert.ok(fs.existsSync(taskFile), 'task event file must exist');
@@ -1563,59 +1626,56 @@ test('appendTaskEventAsync succeeds with lock-free aggregate append even when .a
         assert.equal(taskLines.length, 1, 'exactly one task event line');
         assert.equal(aggLines.length, 1, 'exactly one aggregate event line');
     } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });
 
-test('appendTaskEventAsync aggregate append succeeds without lock even when .all-tasks.lock is held by live process', async () => {
+test('appendTaskEventAsync warns instead of bypassing held aggregate lock when timeout expires', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-timeout-'));
+    let cleanupChild: (() => Promise<void>) | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-        fs.mkdirSync(aggregateLockPath, { recursive: true });
-        fs.writeFileSync(path.join(aggregateLockPath, 'owner.json'), JSON.stringify({
-            pid: process.pid,
-            hostname: os.hostname(),
-            created_at_utc: new Date().toISOString()
-        }, null, 2) + '\n', 'utf8');
+        cleanupChild = await holdTaskEventLockInChildProcess(aggregateLockPath, 220);
 
-        // With lock-free aggregate append, the append succeeds even though
-        // the aggregate lock directory exists.
         const result = await appendTaskEventAsync(
             tempDir,
             'T-AGG-TIMEOUT',
             'test',
             'PASS',
-            'Lock-free aggregate append bypasses the lock entirely',
+            'Aggregate append should not bypass a timed-out lock',
             null,
             {
                 passThru: true,
-                lockTimeoutMs: 80,
+                lockTimeoutMs: 40,
                 lockRetryMs: 5,
                 lockStaleMs: 60000
             }
         );
 
         assert.ok(result !== null);
-        assert.equal(result!.warnings.length, 0, 'no warnings expected for lock-free append');
+        assert.equal(result!.warnings.length, 1, 'aggregate timeout should surface as a warning');
+        assert.match(result!.warnings[0], /aggregate append\/prune failed/i);
+        assert.match(result!.warnings[0], /\.all-tasks\.lock/i);
+        assert.match(result!.warnings[0], /timeout_ms=/i);
         assert.ok(result!.integrity !== null, 'task integrity should still be set');
-        assert.equal(
-            result!.lock_telemetry!.aggregate_append_mode, 'lock_free',
-            'aggregate append mode should be lock_free'
-        );
 
-        // Task file should exist
         const taskFile = path.join(eventsRoot, 'T-AGG-TIMEOUT.jsonl');
         assert.ok(fs.existsSync(taskFile), 'task event file must exist');
-        // Aggregate file should exist
         const allTasksFile = path.join(eventsRoot, 'all-tasks.jsonl');
-        assert.ok(fs.existsSync(allTasksFile), 'all-tasks aggregate file must exist');
+        assert.ok(!fs.existsSync(allTasksFile), 'aggregate file must not be written through a bypass path');
     } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });
 
-test('appendTaskEvent reports aggregate_append_mode=lock_free in lock_telemetry', () => {
+test('appendTaskEvent reports aggregate_append_mode=locked in lock_telemetry', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-mode-'));
     try {
         const result = appendTaskEvent(
@@ -1631,36 +1691,32 @@ test('appendTaskEvent reports aggregate_append_mode=lock_free in lock_telemetry'
         assert.ok(result !== null);
         assert.ok(result!.lock_telemetry != null, 'lock_telemetry must be present');
         assert.equal(
-            result!.lock_telemetry!.aggregate_append_mode, 'lock_free',
-            'default append mode should be lock_free'
+            result!.lock_telemetry!.aggregate_append_mode, 'locked',
+            'default append mode should be locked'
         );
         assert.equal(
             result!.lock_telemetry!.aggregate_lock_retries, 0,
-            'aggregate lock retries should be 0 in lock-free mode'
+            'aggregate lock retries should be 0 without contention'
         );
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });
 
-test('appendTaskEvent sync aggregate append succeeds with held .all-tasks.lock', () => {
+test('appendTaskEvent sync aggregate append warns instead of bypassing held .all-tasks.lock', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-sync-lockfree-'));
+    let cleanupChild: (() => Promise<void>) | null = null;
     try {
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-        fs.mkdirSync(aggregateLockPath, { recursive: true });
-        fs.writeFileSync(path.join(aggregateLockPath, 'owner.json'), JSON.stringify({
-            pid: process.pid,
-            hostname: os.hostname(),
-            created_at_utc: new Date().toISOString()
-        }, null, 2) + '\n', 'utf8');
+        cleanupChild = await holdTaskEventLockInChildProcess(aggregateLockPath, 220);
 
         const result = appendTaskEvent(
             tempDir,
             'T-SYNC-LOCKFREE',
             'test',
             'PASS',
-            'Sync lock-free aggregate append should succeed despite held lock',
+            'Sync aggregate append should not bypass a held lock',
             null,
             {
                 passThru: true,
@@ -1671,13 +1727,18 @@ test('appendTaskEvent sync aggregate append succeeds with held .all-tasks.lock',
         );
 
         assert.ok(result !== null);
-        assert.equal(result!.warnings.length, 0, 'lock-free append should succeed');
-        assert.equal(result!.lock_telemetry!.aggregate_append_mode, 'lock_free');
+        assert.equal(result!.warnings.length, 1, 'timed-out sync aggregate append should warn');
+        assert.match(result!.warnings[0], /aggregate append\/prune failed/i);
+        assert.match(result!.warnings[0], /\.all-tasks\.lock/i);
+        assert.match(result!.warnings[0], /timeout_ms=/i);
         assert.ok(result!.integrity !== null, 'task integrity should be set');
 
         const allTasksFile = path.join(eventsRoot, 'all-tasks.jsonl');
-        assert.ok(fs.existsSync(allTasksFile), 'all-tasks aggregate file must exist');
+        assert.ok(!fs.existsSync(allTasksFile), 'all-tasks aggregate file must not be written through a bypass path');
     } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });
@@ -1728,6 +1789,144 @@ test('appendTaskEvent triggers locked prune when aggregate log exceeds size thre
         assert.ok(
             result!.aggregate_retention!.lines_after <= 5,
             `pruned lines should be at most 5 (got ${result!.aggregate_retention!.lines_after})`
+        );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync preserves concurrent aggregate entries when each append triggers locked pruning', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-concurrent-prune-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
+        const modulePath = resolveTaskEventsModulePath();
+        const startSignalPath = path.join(tempDir, 'start.signal');
+        const workerCount = 4;
+        const attemptsPerWorker = 10;
+        const aggregateMaxLines = 260;
+        fs.mkdirSync(eventsRoot, { recursive: true });
+
+        const fillerLines = Array.from({ length: 320 }, (_, index) =>
+            JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: `T-FILL-${index}`,
+                event_type: 'filler',
+                outcome: 'PASS',
+                actor: 'test',
+                message: 'y'.repeat(700),
+                details: { index }
+            })
+        );
+        fs.writeFileSync(allTasksPath, fillerLines.join('\n') + '\n', 'utf8');
+
+        const workers = Array.from({ length: workerCount }, () =>
+            runConcurrentAppendWorker(
+                modulePath,
+                tempDir,
+                startSignalPath,
+                attemptsPerWorker,
+                1,
+                aggregateMaxLines
+            )
+        );
+
+        fs.writeFileSync(startSignalPath, 'go\n', 'utf8');
+        await Promise.all(workers);
+
+        const expectedAppends = workerCount * attemptsPerWorker;
+        const taskFile = path.join(eventsRoot, 'T-CONCURRENT.jsonl');
+        const taskLines = fs.readFileSync(taskFile, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim());
+        assert.equal(taskLines.length, expectedAppends, 'per-task log should retain every concurrent append');
+
+        const aggregateEntries = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as { task_id?: string });
+        const concurrentEntries = aggregateEntries.filter((entry) => entry.task_id === 'T-CONCURRENT');
+        assert.equal(
+            concurrentEntries.length,
+            expectedAppends,
+            'aggregate log should retain every concurrent append even while pruning'
+        );
+        assert.ok(
+            aggregateEntries.length <= aggregateMaxLines,
+            `aggregate log should remain pruned to ${aggregateMaxLines} lines (got ${aggregateEntries.length})`
+        );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync preserves concurrent aggregate entries while pruneAggregateLogLocked runs in parallel', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-append-vs-prune-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
+        const modulePath = resolveTaskEventsModulePath();
+        const startSignalPath = path.join(tempDir, 'start-prune.signal');
+        const workerCount = 4;
+        const attemptsPerWorker = 10;
+        const pruneAttempts = 8;
+        const aggregateMaxLines = 260;
+        fs.mkdirSync(eventsRoot, { recursive: true });
+
+        const fillerLines = Array.from({ length: 320 }, (_, index) =>
+            JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: `T-PRUNE-FILL-${index}`,
+                event_type: 'filler',
+                outcome: 'PASS',
+                actor: 'test',
+                message: 'z'.repeat(900),
+                details: { index }
+            })
+        );
+        fs.writeFileSync(allTasksPath, fillerLines.join('\n') + '\n', 'utf8');
+
+        const appendWorkers = Array.from({ length: workerCount }, () =>
+            runConcurrentAppendWorker(
+                modulePath,
+                tempDir,
+                startSignalPath,
+                attemptsPerWorker,
+                1,
+                aggregateMaxLines
+            )
+        );
+        const pruneWorker = runConcurrentPruneWorker(
+            modulePath,
+            eventsRoot,
+            startSignalPath,
+            pruneAttempts,
+            aggregateMaxLines
+        );
+
+        fs.writeFileSync(startSignalPath, 'go\n', 'utf8');
+        await Promise.all([...appendWorkers, pruneWorker]);
+
+        const expectedAppends = workerCount * attemptsPerWorker;
+        const taskFile = path.join(eventsRoot, 'T-CONCURRENT.jsonl');
+        const taskLines = fs.readFileSync(taskFile, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim());
+        assert.equal(taskLines.length, expectedAppends, 'per-task log should retain every append during prune overlap');
+
+        const aggregateEntries = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as { task_id?: string });
+        const concurrentEntries = aggregateEntries.filter((entry) => entry.task_id === 'T-CONCURRENT');
+        assert.equal(
+            concurrentEntries.length,
+            expectedAppends,
+            'aggregate log should retain every append even when pruneAggregateLogLocked runs in parallel'
+        );
+        assert.ok(
+            aggregateEntries.length <= aggregateMaxLines,
+            `aggregate log should remain pruned to ${aggregateMaxLines} lines (got ${aggregateEntries.length})`
         );
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });

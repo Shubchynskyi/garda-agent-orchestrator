@@ -175,7 +175,7 @@ test('buildLockWaitDiagnostics returns no contention for clean telemetry', () =>
         aggregate_lock_contention_level: 'none',
         aggregate_lock_stale_recovered: false,
         aggregate_lock_stale_reason: null,
-        aggregate_append_mode: 'lock_free'
+        aggregate_append_mode: 'locked'
     });
     assert.equal(diagnostics.overall_contention_level, 'none');
     assert.equal(diagnostics.summary, 'No lock contention detected.');
@@ -214,7 +214,7 @@ test('buildLockWaitDiagnostics includes stale recovery in summary', () => {
         aggregate_lock_contention_level: 'none',
         aggregate_lock_stale_recovered: false,
         aggregate_lock_stale_reason: null,
-        aggregate_append_mode: 'lock_free'
+        aggregate_append_mode: 'locked'
     });
     assert.equal(diagnostics.overall_contention_level, 'moderate');
     assert.ok(diagnostics.summary.includes('stale_recovered=true'));

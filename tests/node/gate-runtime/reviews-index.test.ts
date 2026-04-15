@@ -1,14 +1,17 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { acquireFilesystemLock, releaseFilesystemLock } from '../../../src/gate-runtime/task-events';
 
 import {
     rebuildIndex,
     loadIndex,
     writeIndex,
     resolveIndexPath,
+    resolveIndexLockPath,
     isIndexStale,
     upsertEntry,
     removeEntries,
@@ -35,6 +38,51 @@ function writeArtifact(reviewsDir: string, fileName: string, content: string = '
     const filePath = path.join(reviewsDir, fileName);
     fs.writeFileSync(filePath, content, 'utf8');
     return filePath;
+}
+
+function getBuiltReviewsIndexModulePath(): string {
+    return path.join(process.cwd(), '.node-build', 'src', 'gate-runtime', 'reviews-index.js');
+}
+
+function spawnUpsertWorker(reviewsDir: string, fileName: string): ReturnType<typeof spawn> {
+    return spawn(process.execPath, [
+        '-e',
+        'const { upsertEntry } = require(process.env.REVIEWS_INDEX_MODULE_PATH); upsertEntry(process.env.REVIEWS_DIR, process.env.REVIEWS_FILE_NAME);'
+    ], {
+        cwd: process.cwd(),
+        env: {
+            ...process.env,
+            REVIEWS_INDEX_MODULE_PATH: getBuiltReviewsIndexModulePath(),
+            REVIEWS_DIR: reviewsDir,
+            REVIEWS_FILE_NAME: fileName
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+}
+
+async function waitForChildExit(child: ReturnType<typeof spawn>): Promise<{ code: number | null; stdout: string; stderr: string; }> {
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk) => {
+        stdout += String(chunk);
+    });
+    child.stderr?.on('data', (chunk) => {
+        stderr += String(chunk);
+    });
+    if (child.exitCode !== null) {
+        return { code: child.exitCode, stdout, stderr };
+    }
+    return await new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', (code) => {
+            resolve({ code, stdout, stderr });
+        });
+    });
+}
+
+async function delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe('reviews-index', () => {
@@ -287,6 +335,62 @@ describe('reviews-index', () => {
             const indexPath = resolveIndexPath(reviewsDir);
             const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
             assert.equal(index.entries.length, 0);
+        });
+
+        it('keeps the index fresh after the index lock is released', () => {
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+
+            upsertEntry(reviewsDir, 'T-001-task-mode.json');
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            assert.equal(isIndexStale(indexPath, reviewsDir), false);
+
+            const second = loadIndex(reviewsDir);
+            assert.equal(second.source, 'cache');
+            assert.equal(second.index.entries.length, 1);
+        });
+
+        it('serializes parallel writers through a dedicated index lock', { concurrency: false }, async () => {
+            const builtModulePath = getBuiltReviewsIndexModulePath();
+            assert.equal(fs.existsSync(builtModulePath), true, `Built module missing: ${builtModulePath}`);
+
+            writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            writeArtifact(reviewsDir, 'T-002-preflight.json');
+
+            const lockPath = resolveIndexLockPath(reviewsDir);
+            const { handle } = acquireFilesystemLock(lockPath, { timeoutMs: 2_000, retryMs: 10 });
+            let lockReleased = false;
+            const firstWorker = spawnUpsertWorker(reviewsDir, 'T-001-task-mode.json');
+            const secondWorker = spawnUpsertWorker(reviewsDir, 'T-002-preflight.json');
+            try {
+                await delay(150);
+                assert.equal(firstWorker.exitCode, null, 'first worker should wait on the index lock');
+                assert.equal(secondWorker.exitCode, null, 'second worker should wait on the index lock');
+
+                releaseFilesystemLock(handle);
+                lockReleased = true;
+
+                const [firstExit, secondExit] = await Promise.all([
+                    waitForChildExit(firstWorker),
+                    waitForChildExit(secondWorker)
+                ]);
+                assert.equal(firstExit.code, 0, firstExit.stderr || firstExit.stdout);
+                assert.equal(secondExit.code, 0, secondExit.stderr || secondExit.stdout);
+
+                const persistedIndex = JSON.parse(fs.readFileSync(resolveIndexPath(reviewsDir), 'utf8')) as ReviewsIndex;
+                assert.ok(persistedIndex.entries.some((entry) => entry.fileName === 'T-001-task-mode.json'));
+                assert.ok(persistedIndex.entries.some((entry) => entry.fileName === 'T-002-preflight.json'));
+            } finally {
+                if (!lockReleased) {
+                    releaseFilesystemLock(handle);
+                }
+                if (firstWorker.exitCode === null) {
+                    firstWorker.kill();
+                }
+                if (secondWorker.exitCode === null) {
+                    secondWorker.kill();
+                }
+            }
         });
     });
 

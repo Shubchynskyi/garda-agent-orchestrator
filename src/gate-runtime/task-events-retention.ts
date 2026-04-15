@@ -12,7 +12,7 @@ export const DEFAULT_AGGREGATE_MAX_LINES = 10000;
 export const AGGREGATE_BYTES_PER_LINE_ESTIMATE = 512;
 const AGGREGATE_PRUNE_CHUNK_SIZE = 64 * 1024;
 
-export type AggregateAppendMode = 'lock_free' | 'locked_prune';
+export type AggregateAppendMode = 'lock_free' | 'locked' | 'locked_prune';
 
 export interface AggregateRetentionResult {
     pruned: boolean;
@@ -203,6 +203,88 @@ export function pruneAggregateLogLocked(
         return pruneAggregateLog(allTasksPath, maxLines, undefined, protectedTaskIds);
     });
     return lockResult.result;
+}
+
+export function appendAggregateEventSync(
+    allTasksPath: string,
+    aggregateLockPath: string,
+    line: string,
+    maxLines: unknown,
+    lockOptions: LockOptions = {}
+): AggregateRetentionApplyResult {
+    const resolvedMaxLines = toNonNegativeInteger(maxLines, DEFAULT_AGGREGATE_MAX_LINES);
+    const lockResult = withFilesystemLock(
+        aggregateLockPath,
+        lockOptions,
+        function (): AggregateRetentionResult | null {
+            fs.mkdirSync(path.dirname(allTasksPath), { recursive: true });
+            fs.appendFileSync(allTasksPath, `${line}\n`, 'utf8');
+
+            if (resolvedMaxLines <= 0) {
+                return null;
+            }
+
+            const aggregateSizeTrigger = resolvedMaxLines * AGGREGATE_BYTES_PER_LINE_ESTIMATE;
+            try {
+                const fileSize = fs.statSync(allTasksPath).size;
+                if (fileSize <= aggregateSizeTrigger) {
+                    return null;
+                }
+            } catch {
+                return null;
+            }
+
+            return pruneAggregateLog(allTasksPath, resolvedMaxLines);
+        }
+    );
+
+    const retention = lockResult.result ?? undefined;
+    return {
+        appendMode: retention ? 'locked_prune' : 'locked',
+        retention,
+        telemetry: lockResult.telemetry
+    };
+}
+
+export async function appendAggregateEventAsync(
+    allTasksPath: string,
+    aggregateLockPath: string,
+    line: string,
+    maxLines: unknown,
+    lockOptions: LockOptions = {}
+): Promise<AggregateRetentionApplyResult> {
+    const resolvedMaxLines = toNonNegativeInteger(maxLines, DEFAULT_AGGREGATE_MAX_LINES);
+    const lockResult = await withFilesystemLockAsync(
+        aggregateLockPath,
+        lockOptions,
+        async function (): Promise<AggregateRetentionResult | null> {
+            fs.mkdirSync(path.dirname(allTasksPath), { recursive: true });
+            fs.appendFileSync(allTasksPath, `${line}\n`, 'utf8');
+
+            if (resolvedMaxLines <= 0) {
+                return null;
+            }
+
+            const aggregateSizeTrigger = resolvedMaxLines * AGGREGATE_BYTES_PER_LINE_ESTIMATE;
+            try {
+                const fileSize = fs.statSync(allTasksPath).size;
+                if (fileSize <= aggregateSizeTrigger) {
+                    return null;
+                }
+            } catch {
+                return null;
+            }
+
+            return pruneAggregateLog(allTasksPath, resolvedMaxLines);
+        }
+    );
+
+    const retention = lockResult.result ?? undefined;
+    return {
+        appendMode: retention ? 'locked_prune' : 'locked',
+        retention,
+        telemetry: lockResult.telemetry
+    };
 }
 
 export function applyAggregateRetentionSync(

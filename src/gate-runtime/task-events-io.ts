@@ -2,8 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
-    applyAggregateRetentionAsync,
-    applyAggregateRetentionSync,
+    appendAggregateEventAsync,
+    appendAggregateEventSync,
     type AggregateAppendMode,
     type AggregateRetentionResult
 } from './task-events-retention';
@@ -277,7 +277,7 @@ function createAppendResult(paths: TaskEventPaths): AppendTaskEventResult {
             aggregate_lock_contention_level: 'none',
             aggregate_lock_stale_recovered: false,
             aggregate_lock_stale_reason: null,
-            aggregate_append_mode: 'lock_free'
+            aggregate_append_mode: 'locked'
         }
     };
 }
@@ -451,18 +451,10 @@ export function appendTaskEvent(
     }
 
     try {
-        fs.appendFileSync(paths.allTasksPath, (line || '') + '\n', 'utf8');
-        applyAggregateLockTelemetry(result, 'lock_free');
-    } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event aggregate append failed', error);
-        result.warnings.push(warning);
-        process.stderr.write(`WARNING: ${warning}\n`);
-    }
-
-    try {
-        const retentionResult = applyAggregateRetentionSync(
+        const retentionResult = appendAggregateEventSync(
             paths.allTasksPath,
             paths.aggregateLockPath,
+            line || '',
             options.aggregateMaxLines,
             lockOptions
         );
@@ -471,7 +463,7 @@ export function appendTaskEvent(
         }
         applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
     } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event aggregate prune failed', error);
+        const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
         result.warnings.push(warning);
         process.stderr.write(`WARNING: ${warning}\n`);
     }
@@ -533,18 +525,10 @@ export async function appendTaskEventAsync(
     }
 
     try {
-        fs.appendFileSync(paths.allTasksPath, (line || '') + '\n', 'utf8');
-        applyAggregateLockTelemetry(result, 'lock_free');
-    } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event aggregate append failed', error);
-        result.warnings.push(warning);
-        process.stderr.write(`WARNING: ${warning}\n`);
-    }
-
-    try {
-        const retentionResult = await applyAggregateRetentionAsync(
+        const retentionResult = await appendAggregateEventAsync(
             paths.allTasksPath,
             paths.aggregateLockPath,
+            line || '',
             options.aggregateMaxLines,
             lockOptions
         );
@@ -553,7 +537,7 @@ export async function appendTaskEventAsync(
         }
         applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
     } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event aggregate prune failed', error);
+        const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
         result.warnings.push(warning);
         process.stderr.write(`WARNING: ${warning}\n`);
     }
