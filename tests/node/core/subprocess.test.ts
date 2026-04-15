@@ -1,7 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
+    buildWindowsBatchCommandLine,
     DEFAULT_COMPILE_TIMEOUT_MS,
     DEFAULT_GIT_CLONE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
@@ -10,6 +14,20 @@ import {
     spawnShellCommand,
     spawnSyncWithTimeout
 } from '../../../src/core/subprocess';
+
+function createNodeBatchFixture(scriptSource = 'console.log("shelltest")'): { scriptPath: string; cleanup: () => void } {
+    const batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-batch-'));
+    const jsPath = path.join(batchRoot, 'payload.js');
+    const scriptPath = path.join(batchRoot, 'run-node.cmd');
+    fs.writeFileSync(jsPath, `${scriptSource}\n`, 'utf8');
+    fs.writeFileSync(scriptPath, `@echo off\r\n"${process.execPath}" "${jsPath}"\r\n`, 'utf8');
+    return {
+        scriptPath,
+        cleanup() {
+            fs.rmSync(batchRoot, { recursive: true, force: true });
+        }
+    };
+}
 
 describe('spawnStreamed', () => {
     it('captures stdout from a successful process', async () => {
@@ -278,6 +296,33 @@ describe('timeout constants', () => {
 });
 
 describe('shell-surface hardening', () => {
+    it('buildWindowsBatchCommandLine quotes absolute batch paths and literal args', () => {
+        const commandLine = buildWindowsBatchCommandLine('C:\\Program Files\\Tools\\npm.cmd', ['run', 'build script']);
+        assert.equal(commandLine, 'call "C:\\Program Files\\Tools\\npm.cmd" run "build script"');
+    });
+
+    it('buildWindowsBatchCommandLine rejects unsafe cmd.exe expansion literals', () => {
+        assert.throws(
+            () => buildWindowsBatchCommandLine('C:\\Tools\\npm.cmd', ['%PATH%']),
+            /cmd\.exe expansion, quoting, or control characters/
+        );
+        assert.throws(
+            () => buildWindowsBatchCommandLine('C:\\Tools\\npm.cmd', ['bang!']),
+            /cmd\.exe expansion, quoting, or control characters/
+        );
+        assert.throws(
+            () => buildWindowsBatchCommandLine('C:\\Tools\\npm.cmd', ['safe" & echo INJECTED']),
+            /cmd\.exe expansion, quoting, or control characters/
+        );
+    });
+
+    it('buildWindowsBatchCommandLine rejects non-batch executables', () => {
+        assert.throws(
+            () => buildWindowsBatchCommandLine('C:\\Tools\\node.exe', ['-v']),
+            /restricted to Windows \.cmd\/\.bat execution/
+        );
+    });
+
     it('spawnStreamed ignores shell property even if force-cast at runtime', async () => {
         // Prove that even if a caller bypasses TypeScript and sneaks in shell: true,
         // spawnStreamed does NOT pass it to child_process.spawn.
@@ -304,149 +349,192 @@ describe('shell-surface hardening', () => {
 
     it('spawnShellCommand rejects on non-Windows platforms', async () => {
         if (process.platform === 'win32') {
-            // On Windows spawnShellCommand is allowed; verify it runs a simple cmd
-            const result = await spawnShellCommand('echo shelltest', { timeoutMs: 5000 });
-            assert.equal(result.exitCode, 0);
-            assert.match(result.stdout, /shelltest/);
+            const fixture = createNodeBatchFixture('console.log("shelltest")');
+            try {
+                const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000 });
+                assert.equal(result.exitCode, 0);
+                assert.match(result.stdout, /shelltest/);
+            } finally {
+                fixture.cleanup();
+            }
         } else {
             await assert.rejects(
-                () => spawnShellCommand('echo test', { timeoutMs: 5000 }),
+                () => spawnShellCommand('C:\\temp\\echo.cmd', [], { timeoutMs: 5000 }),
                 (err) => (err as Error).message.includes('restricted to Windows')
             );
         }
     });
 
+    it('spawnShellCommand rejects relative batch paths on Windows', () => {
+        if (process.platform !== 'win32') return;
+        assert.throws(
+            () => spawnShellCommand('relative-script.cmd', [], { timeoutMs: 5000 }),
+            /absolute executable path/
+        );
+    });
+
     it('spawnShellCommand supports timeout', async () => {
         if (process.platform !== 'win32') return;
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "setTimeout(()=>{},60000)"`,
-            { timeoutMs: 500 }
-        );
-        assert.equal(result.timedOut, true);
-        assert.notEqual(result.exitCode, 0);
+        const fixture = createNodeBatchFixture('setTimeout(()=>{},60000)');
+        try {
+            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 500 });
+            assert.equal(result.timedOut, true);
+            assert.notEqual(result.exitCode, 0);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand supports AbortController cancellation', async () => {
         if (process.platform !== 'win32') return;
-        const ac = new AbortController();
-        const promise = spawnShellCommand(
-            `"${process.execPath}" -e "setTimeout(()=>{},60000)"`,
-            { signal: ac.signal, timeoutMs: 30000 }
-        );
-        setTimeout(() => ac.abort(), 300);
-        const result = await promise;
-        assert.equal(result.cancelled, true);
+        const fixture = createNodeBatchFixture('setTimeout(()=>{},60000)');
+        try {
+            const ac = new AbortController();
+            const promise = spawnShellCommand(fixture.scriptPath, [], { signal: ac.signal, timeoutMs: 30000 });
+            setTimeout(() => ac.abort(), 300);
+            const result = await promise;
+            assert.equal(result.cancelled, true);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand exposes truncation flags under normal output', async () => {
         if (process.platform !== 'win32') return;
-        const result = await spawnShellCommand('echo shelltrunctest', { timeoutMs: 5000 });
-        assert.equal(result.exitCode, 0);
-        assert.equal(result.stdoutTruncated, false);
-        assert.equal(result.stderrTruncated, false);
+        const fixture = createNodeBatchFixture('console.log("shelltrunctest")');
+        try {
+            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000 });
+            assert.equal(result.exitCode, 0);
+            assert.equal(result.stdoutTruncated, false);
+            assert.equal(result.stderrTruncated, false);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand sets stdoutTruncated when stdout exceeds maxBuffer', async () => {
         if (process.platform !== 'win32') return;
-        // Use single-quoted strings to avoid cmd.exe double-quote escaping issues
-        const script = "for(let i=0;i<20;i++) process.stdout.write('0123456789')";
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "${script}"`,
-            { timeoutMs: 5000, maxBuffer: 64 }
-        );
-        assert.equal(result.stdoutTruncated, true);
-        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+        const fixture = createNodeBatchFixture("for(let i=0;i<20;i++) process.stdout.write('0123456789')");
+        try {
+            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 64 });
+            assert.equal(result.stdoutTruncated, true);
+            assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand retains the buffered prefix of an overflowing stdout chunk', async () => {
         if (process.platform !== 'win32') return;
         const payload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(8);
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "process.stdout.write(${JSON.stringify(payload).replace(/"/g, '\\"')})"`,
-            { timeoutMs: 5000, maxBuffer: 64 }
-        );
-        assert.equal(result.stdoutTruncated, true);
-        assert.ok(result.stdout.length > 0, 'expected buffered prefix to be retained');
-        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
-        assert.equal(payload.startsWith(result.stdout), true);
+        const fixture = createNodeBatchFixture(`process.stdout.write(${JSON.stringify(payload)})`);
+        try {
+            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 64 });
+            assert.equal(result.stdoutTruncated, true);
+            assert.ok(result.stdout.length > 0, 'expected buffered prefix to be retained');
+            assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+            assert.equal(payload.startsWith(result.stdout), true);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand retains a valid UTF-8 stdout prefix at multibyte boundaries', async () => {
         if (process.platform !== 'win32') return;
         const payload = '😀AB'.repeat(20);
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "process.stdout.write(${JSON.stringify(payload).replace(/"/g, '\\"')})"`,
-            { timeoutMs: 5000, maxBuffer: 5 }
-        );
-        assert.equal(result.stdoutTruncated, true);
-        assert.equal(result.stdout, '😀A');
-        assert.equal(Buffer.byteLength(result.stdout, 'utf8'), 5);
+        const fixture = createNodeBatchFixture(`process.stdout.write(${JSON.stringify(payload)})`);
+        try {
+            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 5 });
+            assert.equal(result.stdoutTruncated, true);
+            assert.equal(result.stdout, '😀A');
+            assert.equal(Buffer.byteLength(result.stdout, 'utf8'), 5);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand sets stderrTruncated when stderr exceeds maxBuffer', async () => {
         if (process.platform !== 'win32') return;
-        const script = "for(let i=0;i<20;i++) process.stderr.write('0123456789')";
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "${script}"`,
-            { timeoutMs: 5000, maxBuffer: 64 }
-        );
-        assert.equal(result.stderrTruncated, true);
-        assert.ok(Buffer.byteLength(result.stderr, 'utf8') <= 64);
+        const fixture = createNodeBatchFixture("for(let i=0;i<20;i++) process.stderr.write('0123456789')");
+        try {
+            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 64 });
+            assert.equal(result.stderrTruncated, true);
+            assert.ok(Buffer.byteLength(result.stderr, 'utf8') <= 64);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand retains a valid UTF-8 stderr prefix at multibyte boundaries', async () => {
         if (process.platform !== 'win32') return;
         const payload = '😀AB'.repeat(20);
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "process.stderr.write(${JSON.stringify(payload).replace(/"/g, '\\"')})"`,
-            { timeoutMs: 5000, maxBuffer: 5 }
-        );
-        assert.equal(result.stderrTruncated, true);
-        assert.equal(result.stderr, '😀A');
-        assert.equal(Buffer.byteLength(result.stderr, 'utf8'), 5);
+        const fixture = createNodeBatchFixture(`process.stderr.write(${JSON.stringify(payload)})`);
+        try {
+            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 5 });
+            assert.equal(result.stderrTruncated, true);
+            assert.equal(result.stderr, '😀A');
+            assert.equal(Buffer.byteLength(result.stderr, 'utf8'), 5);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand delivers stdout callbacks for all chunks even when buffer is truncated', async () => {
         if (process.platform !== 'win32') return;
-        const allChunks: string[] = [];
-        const script = "for(let i=0;i<20;i++) process.stdout.write('0123456789')";
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "${script}"`,
-            {
-                timeoutMs: 5000,
-                maxBuffer: 64,
-                onStdout(chunk) { allChunks.push(chunk); }
-            }
-        );
-        assert.equal(result.stdoutTruncated, true);
-        const callbackTotal = allChunks.join('').length;
-        assert.ok(callbackTotal >= 200, `Expected >=200 chars via shell stdout callback, got ${callbackTotal}`);
+        const fixture = createNodeBatchFixture("for(let i=0;i<20;i++) process.stdout.write('0123456789')");
+        try {
+            const allChunks: string[] = [];
+            const result = await spawnShellCommand(
+                fixture.scriptPath,
+                [],
+                {
+                    timeoutMs: 5000,
+                    maxBuffer: 64,
+                    onStdout(chunk) { allChunks.push(chunk); }
+                }
+            );
+            assert.equal(result.stdoutTruncated, true);
+            const callbackTotal = allChunks.join('').length;
+            assert.ok(callbackTotal >= 200, `Expected >=200 chars via shell stdout callback, got ${callbackTotal}`);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand delivers stderr callbacks for all chunks even when buffer is truncated', async () => {
         if (process.platform !== 'win32') return;
-        const allChunks: string[] = [];
-        const script = "for(let i=0;i<20;i++) process.stderr.write('0123456789')";
-        const result = await spawnShellCommand(
-            `"${process.execPath}" -e "${script}"`,
-            {
-                timeoutMs: 5000,
-                maxBuffer: 64,
-                onStderr(chunk) { allChunks.push(chunk); }
-            }
-        );
-        assert.equal(result.stderrTruncated, true);
-        const callbackTotal = allChunks.join('').length;
-        assert.ok(callbackTotal >= 200, `Expected >=200 chars via shell stderr callback, got ${callbackTotal}`);
+        const fixture = createNodeBatchFixture("for(let i=0;i<20;i++) process.stderr.write('0123456789')");
+        try {
+            const allChunks: string[] = [];
+            const result = await spawnShellCommand(
+                fixture.scriptPath,
+                [],
+                {
+                    timeoutMs: 5000,
+                    maxBuffer: 64,
+                    onStderr(chunk) { allChunks.push(chunk); }
+                }
+            );
+            assert.equal(result.stderrTruncated, true);
+            const callbackTotal = allChunks.join('').length;
+            assert.ok(callbackTotal >= 200, `Expected >=200 chars via shell stderr callback, got ${callbackTotal}`);
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('spawnShellCommand reports truncated false for pre-aborted signal', async () => {
         if (process.platform !== 'win32') return;
-        const ac = new AbortController();
-        ac.abort();
-        const result = await spawnShellCommand('echo nope', { signal: ac.signal });
-        assert.equal(result.cancelled, true);
-        assert.equal(result.stdoutTruncated, false);
-        assert.equal(result.stderrTruncated, false);
+        const fixture = createNodeBatchFixture();
+        try {
+            const ac = new AbortController();
+            ac.abort();
+            const result = await spawnShellCommand(fixture.scriptPath, [], { signal: ac.signal });
+            assert.equal(result.cancelled, true);
+            assert.equal(result.stdoutTruncated, false);
+            assert.equal(result.stderrTruncated, false);
+        } finally {
+            fixture.cleanup();
+        }
     });
 });

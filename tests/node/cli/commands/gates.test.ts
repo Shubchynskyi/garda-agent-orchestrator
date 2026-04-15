@@ -20,7 +20,8 @@ import {
     runRecordNoOpCommand,
     runRequiredReviewsCheckCommand,
     splitCommandLine,
-    executeCommand
+    executeCommand,
+    executeCommandAsync
 } from '../../../../src/cli/commands/gates';
 import { runCliMainWithHandling } from '../../../../src/cli/main';
 import { runCompletionGate } from '../../../../src/gates/completion';
@@ -44,6 +45,24 @@ function createTempRepo(): string {
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
     return root;
+}
+
+function createWindowsBatchNodeFixture(
+    scriptSource: string,
+    options: { forwardArgs?: boolean } = {}
+): { batchPath: string; cleanup: () => void } {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-batch-gates-'));
+    const jsPath = path.join(root, 'payload.js');
+    const batchPath = path.join(root, 'run-fixture.cmd');
+    const forwardArgs = options.forwardArgs ? ' %*' : '';
+    fs.writeFileSync(jsPath, `${scriptSource}\n`, 'utf8');
+    fs.writeFileSync(batchPath, `@echo off\r\n"${process.execPath}" "${jsPath}"${forwardArgs}\r\n`, 'utf8');
+    return {
+        batchPath,
+        cleanup() {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    };
 }
 
 function seedRuleFiles(repoRoot: string): void {
@@ -614,6 +633,13 @@ describe('cli/commands/gates', () => {
         assert.deepEqual(
             splitCommandLine('node -e "console.log(\'ok\')"'),
             ['node', '-e', "console.log('ok')"]
+        );
+    });
+
+    it('preserves backslashes in quoted Windows executable paths', () => {
+        assert.deepEqual(
+            splitCommandLine('"C:\\Program Files\\nodejs\\npm.cmd" --version'),
+            ['C:\\Program Files\\nodejs\\npm.cmd', '--version']
         );
     });
 
@@ -6437,5 +6463,92 @@ describe('executeCommand timeout protection (T-061)', () => {
             () => executeCommand('__nonexistent_executable_12345__', { cwd: process.cwd() }),
             /not found in PATH/
         );
+    });
+
+    it('prefers the resolved PATH batch executable over a cwd shadow for sync execution on Windows', () => {
+        if (process.platform !== 'win32') return;
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-batch-shadow-'));
+        try {
+            fs.writeFileSync(path.join(repoRoot, 'npm.cmd'), '@echo off\r\necho HIJACKED_SYNC\r\n', 'utf8');
+            const result = executeCommand('npm --version', { cwd: repoRoot });
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.some((line) => /^\d+\.\d+\.\d+/.test(line)), 'expected real npm version output');
+            assert.ok(!result.outputLines.some((line) => line.includes('HIJACKED_SYNC')));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('prefers the resolved PATH batch executable over a cwd shadow for async execution on Windows', async () => {
+        if (process.platform !== 'win32') return;
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-batch-shadow-'));
+        try {
+            fs.writeFileSync(path.join(repoRoot, 'npm.cmd'), '@echo off\r\necho HIJACKED_ASYNC\r\n', 'utf8');
+            const result = await executeCommandAsync('npm --version', { cwd: repoRoot, timeoutMs: 10_000 });
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.some((line) => /^\d+\.\d+\.\d+/.test(line)), 'expected real npm version output');
+            assert.ok(!result.outputLines.some((line) => line.includes('HIJACKED_ASYNC')));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('forwards quoted batch arguments through executeCommand on Windows', () => {
+        if (process.platform !== 'win32') return;
+        const fixture = createWindowsBatchNodeFixture('process.stdout.write(process.argv[2] || "")', { forwardArgs: true });
+        try {
+            const result = executeCommand(`"${fixture.batchPath}" "safe literal"`, { cwd: process.cwd() });
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.some((line) => line.includes('safe literal')));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('forwards quoted batch arguments through executeCommandAsync on Windows', async () => {
+        if (process.platform !== 'win32') return;
+        const fixture = createWindowsBatchNodeFixture('process.stdout.write(process.argv[2] || "")', { forwardArgs: true });
+        try {
+            const result = await executeCommandAsync(`"${fixture.batchPath}" "safe literal"`, {
+                cwd: process.cwd(),
+                timeoutMs: 10_000
+            });
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.some((line) => line.includes('safe literal')));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('reports timedOut for batch execution through executeCommandAsync on Windows', async () => {
+        if (process.platform !== 'win32') return;
+        const fixture = createWindowsBatchNodeFixture('setTimeout(() => {}, 60000)');
+        try {
+            const result = await executeCommandAsync(`"${fixture.batchPath}"`, {
+                cwd: process.cwd(),
+                timeoutMs: 500
+            });
+            assert.equal(result.timedOut, true);
+            assert.equal(result.exitCode, EXIT_GENERAL_FAILURE);
+            assert.ok(result.outputLines.some((line) => /timed out/i.test(line)));
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('reports timedOut for batch execution through executeCommand on Windows', () => {
+        if (process.platform !== 'win32') return;
+        const fixture = createWindowsBatchNodeFixture('setTimeout(() => {}, 60000)');
+        try {
+            const result = executeCommand(`"${fixture.batchPath}"`, {
+                cwd: process.cwd(),
+                timeoutMs: 500
+            });
+            assert.equal(result.timedOut, true);
+            assert.equal(result.exitCode, EXIT_GENERAL_FAILURE);
+            assert.ok(result.outputLines.some((line) => /timed out/i.test(line)));
+        } finally {
+            fixture.cleanup();
+        }
     });
 });

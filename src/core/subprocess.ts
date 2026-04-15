@@ -1,4 +1,5 @@
 import * as childProcess from 'node:child_process';
+import * as path from 'node:path';
 import type { ChildProcess, SpawnSyncReturns, SpawnSyncOptions, StdioOptions } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,89 @@ function appendChunkWithinLimit(chunks: string[], chunk: string, currentBytes: n
         nextBytes: currentBytes,
         truncated: true
     };
+}
+
+const WINDOWS_BATCH_FILE_PATTERN = /\.(?:cmd|bat)$/i;
+const WINDOWS_BATCH_UNSAFE_LITERAL_PATTERN = /[\0\r\n%!"]/u;
+const WINDOWS_BATCH_QUOTED_TOKEN_PATTERN = /[ \t"&|<>()^]/u;
+
+function quoteWindowsBatchArgument(argument: string): string {
+    const text = String(argument ?? '');
+    let escaped = '"';
+    let backslashCount = 0;
+    for (const character of text) {
+        if (character === '\\') {
+            backslashCount += 1;
+            continue;
+        }
+        if (character === '"') {
+            escaped += '\\'.repeat(backslashCount * 2 + 1);
+            escaped += '"';
+            backslashCount = 0;
+            continue;
+        }
+        if (backslashCount > 0) {
+            escaped += '\\'.repeat(backslashCount);
+            backslashCount = 0;
+        }
+        escaped += character;
+    }
+    if (backslashCount > 0) {
+        escaped += '\\'.repeat(backslashCount * 2);
+    }
+    escaped += '"';
+    return escaped;
+}
+
+function formatWindowsBatchToken(argument: string, alwaysQuote = false): string {
+    const text = String(argument ?? '');
+    if (!alwaysQuote && text && !WINDOWS_BATCH_QUOTED_TOKEN_PATTERN.test(text)) {
+        return text;
+    }
+    return quoteWindowsBatchArgument(text);
+}
+
+function assertSafeWindowsBatchLiteral(value: string, label: string): void {
+    if (!value) {
+        throw new Error(`${label} must not be empty.`);
+    }
+    if (WINDOWS_BATCH_UNSAFE_LITERAL_PATTERN.test(value)) {
+        throw new Error(
+            `${label} contains cmd.exe expansion, quoting, or control characters that are not allowed for Windows batch execution.`
+        );
+    }
+}
+
+function assertBatchCommandToken(commandToken: string, label: string, requireAbsolute = false): string {
+    const normalized = String(commandToken || '').trim();
+    if (!normalized) {
+        throw new Error(`${label} must not be empty.`);
+    }
+    if (requireAbsolute && !path.isAbsolute(normalized)) {
+        throw new Error(`Windows batch execution requires an absolute executable path. Received: ${commandToken}`);
+    }
+    if (!WINDOWS_BATCH_FILE_PATTERN.test(normalized)) {
+        throw new Error(
+            `spawnShellCommand is restricted to Windows .cmd/.bat execution. Received: ${commandToken}`
+        );
+    }
+    assertSafeWindowsBatchLiteral(normalized, label);
+    return normalized;
+}
+
+function getWindowsCommandProcessor(): string {
+    return process.env.ComSpec || 'cmd.exe';
+}
+
+export function buildWindowsBatchCommandLine(executablePath: string, args: readonly string[] = []): string {
+    const batchCommandToken = assertBatchCommandToken(executablePath, 'Batch command token');
+    const commandParts = ['call', formatWindowsBatchToken(batchCommandToken)];
+    for (let index = 0; index < args.length; index += 1) {
+        const argument = String(args[index] ?? '');
+        assertSafeWindowsBatchLiteral(argument, `Batch argument #${index + 1}`);
+        commandParts.push(formatWindowsBatchToken(argument));
+    }
+    return commandParts.join(' ');
 }
 
 export function spawnStreamed(command: string, args: string[], options?: SpawnStreamedOptions): Promise<SpawnStreamedResult> {
@@ -253,8 +337,9 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
 // to the single scenario that genuinely requires them: running Windows
 // .cmd/.bat executables where the OS needs cmd.exe to resolve the script.
 //
-// Callers must supply a fully pre-built command string; argument arrays are
-// NOT accepted so that no user-controlled token can alter shell semantics.
+// Callers must supply the resolved batch executable path and literal argument
+// array. This helper owns the cmd.exe command-line construction so future
+// call sites cannot widen shell semantics by assembling raw command strings.
 
 export interface SpawnShellCommandOptions {
     cwd?: string;
@@ -267,7 +352,8 @@ export interface SpawnShellCommandOptions {
 }
 
 export function spawnShellCommand(
-    commandLine: string,
+    executablePath: string,
+    args: string[] = [],
     options?: SpawnShellCommandOptions
 ): Promise<SpawnStreamedResult> {
     if (process.platform !== 'win32') {
@@ -281,6 +367,8 @@ export function spawnShellCommand(
     const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 0;
     const signal = opts.signal || null;
     const maxBuffer = opts.maxBuffer || 50 * 1024 * 1024;
+    const batchExecutablePath = assertBatchCommandToken(executablePath, 'Batch executable path', true);
+    const commandLine = buildWindowsBatchCommandLine(batchExecutablePath, args);
 
     return new Promise(function (resolve, reject) {
         if (signal && signal.aborted) {
@@ -306,12 +394,22 @@ export function spawnShellCommand(
         let stdoutTruncated = false;
         let stderrTruncated = false;
 
-        const child: ChildProcess = childProcess.spawn(commandLine, [], {
+        const spawnOptions: {
+            cwd: string;
+            windowsHide: boolean;
+            stdio: ['ignore', 'pipe', 'pipe'];
+            env?: NodeJS.ProcessEnv;
+            windowsVerbatimArguments: boolean;
+        } = {
             cwd,
             windowsHide: true,
             stdio: ['ignore', 'pipe', 'pipe'],
-            shell: true
-        });
+            windowsVerbatimArguments: true
+        };
+        if (opts.env) {
+            spawnOptions.env = { ...process.env, ...opts.env };
+        }
+        const child: ChildProcess = childProcess.spawn(getWindowsCommandProcessor(), ['/d', '/s', '/c', commandLine], spawnOptions);
 
         function cleanup(): void {
             if (timeoutHandle) {

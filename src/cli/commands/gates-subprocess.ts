@@ -4,6 +4,7 @@ import {
     EXIT_GENERAL_FAILURE
 } from '../exit-codes';
 import {
+    buildWindowsBatchCommandLine,
     spawnShellCommand,
     spawnStreamed,
     spawnSyncWithTimeout
@@ -62,12 +63,14 @@ export function splitCommandLine(commandText: unknown): string[] {
             continue;
         }
 
-        if (character === '\\' && quote === '"') {
-            escaping = true;
-            continue;
-        }
-
         if (quote) {
+            if (quote === '"' && character === '\\') {
+                const nextCharacter = text[index + 1];
+                if (nextCharacter === '"' || nextCharacter === '\\') {
+                    escaping = true;
+                    continue;
+                }
+            }
             if (character === quote) {
                 quote = '';
             } else {
@@ -152,37 +155,6 @@ export function resolveExecutablePath(executableName: unknown, cwd?: string, env
     throw new Error(`${requested} is required but was not found in PATH.`);
 }
 
-function quoteWindowsArgument(argument: string): string {
-    const text = String(argument || '');
-    if (!text || !/[ \t"]/u.test(text)) {
-        return text;
-    }
-    let escaped = '"';
-    let backslashCount = 0;
-    for (const character of text) {
-        if (character === '\\') {
-            backslashCount += 1;
-            continue;
-        }
-        if (character === '"') {
-            escaped += '\\'.repeat(backslashCount * 2 + 1);
-            escaped += '"';
-            backslashCount = 0;
-            continue;
-        }
-        if (backslashCount > 0) {
-            escaped += '\\'.repeat(backslashCount);
-            backslashCount = 0;
-        }
-        escaped += character;
-    }
-    if (backslashCount > 0) {
-        escaped += '\\'.repeat(backslashCount * 2);
-    }
-    escaped += '"';
-    return escaped;
-}
-
 export async function executeCommandAsync(commandText: string, options: ExecuteCommandOptions = {}): Promise<AsyncCommandExecutionResult> {
     const cwd = options.cwd || process.cwd();
     const tokens = splitCommandLine(commandText);
@@ -195,7 +167,7 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_SUBPROCESS_TIMEOUT_MS;
 
     const result = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)
-        ? await spawnShellCommand(`"${executablePath}" ${args.map(quoteWindowsArgument).join(' ')}`, {
+        ? await spawnShellCommand(executablePath, args, {
             cwd,
             timeoutMs,
             signal: options.signal ?? undefined
@@ -255,13 +227,13 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_SUBPROCESS_TIMEOUT_MS;
 
     const result = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)
-        ? spawnSyncWithTimeout(`"${executablePath}" ${args.map(quoteWindowsArgument).join(' ')}`, [], {
+        ? spawnSyncWithTimeout(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', buildWindowsBatchCommandLine(executablePath, args)], {
             cwd,
             windowsHide: true,
+            windowsVerbatimArguments: true,
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'pipe'],
-            timeoutMs,
-            shell: true
+            timeoutMs
         })
         : spawnSyncWithTimeout(executablePath, args, {
             cwd,
