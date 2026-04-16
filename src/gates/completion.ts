@@ -20,6 +20,7 @@ import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
 } from './dirty-worktree-protection';
+import { getProtectedManifestLifecycleGuard } from './protected-manifest-guard';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshake-diagnostics';
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
@@ -1273,10 +1274,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const preflightProtectedSnapshotDigest = String(preflightTriggers.protected_control_plane_snapshot_sha256 || '').trim().toLowerCase();
     const hasProtectedSnapshotDigest = /^[a-f0-9]{64}$/.test(preflightProtectedSnapshotDigest);
     const orchestratorWork = !!taskModeEvidence.orchestrator_work;
-    const preflightManifestStatus = String(preflightTriggers.protected_control_plane_manifest_status || '').trim().toUpperCase();
-    const preflightManifestChangedFiles = Array.isArray(preflightTriggers.protected_control_plane_manifest_changed_files)
-        ? preflightTriggers.protected_control_plane_manifest_changed_files.map((entry) => String(entry)).filter(Boolean)
-        : [];
 
     // T-1010: Re-scan protected paths at completion to detect tampering
     // T-1011: When isolation mode is enabled, enforcement level governs
@@ -1320,25 +1317,18 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     }
 
     const protectedManifestEvidence = evaluateProtectedControlPlaneManifest(repoRoot, currentProtectedSnapshot);
-    if (!orchestratorWork) {
-        if (protectedManifestEvidence.status === 'INVALID') {
-            errors.push(
-                `Trusted protected control-plane manifest is invalid: ${protectedManifestEvidence.manifest_path}. ` +
-                'Re-run setup/update/reinit before executing ordinary tasks.'
-            );
-        } else if (protectedManifestEvidence.status === 'DRIFT') {
-            const driftFiles = preflightManifestStatus === 'DRIFT'
-                ? (preflightManifestChangedFiles.join(', ') || protectedManifestEvidence.changed_files.join(', '))
-                : protectedManifestEvidence.changed_files.join(', ');
-            const manifestDriftMessage = preflightManifestStatus === 'DRIFT'
-                ? `Trusted protected control-plane manifest was already drifted before task start: ${driftFiles}.`
-                : `Trusted protected control-plane manifest drift detected: ${driftFiles}. ` +
-                  'Run setup/update/reinit to refresh the trusted lifecycle baseline, or start the task with --orchestrator-work if it intentionally changes the orchestrator.';
-            if (isolationConfig.enabled && isolationConfig.enforcement === 'LOG_ONLY') {
-                isolationWarnings.push(manifestDriftMessage + ' (LOG_ONLY mode — logged as warning)');
-            } else {
-                errors.push(manifestDriftMessage);
-            }
+    const protectedManifestGuard = getProtectedManifestLifecycleGuard({
+        repoRoot,
+        orchestratorWork,
+        phaseLabel: 'completion gate',
+        preflight,
+        manifestEvidence: protectedManifestEvidence
+    });
+    if (!orchestratorWork && protectedManifestGuard.status === 'BLOCK') {
+        if (isolationConfig.enabled && isolationConfig.enforcement === 'LOG_ONLY') {
+            isolationWarnings.push(`${protectedManifestGuard.violations.join(' ')} (LOG_ONLY mode — logged as warning)`);
+        } else {
+            errors.push(...protectedManifestGuard.violations);
         }
     }
 

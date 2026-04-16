@@ -162,6 +162,15 @@ garda gate enter-task-mode \
 The trusted manifest was already stale before the task started — usually
 because a prior `update`, `reinit`, or manual edit did not refresh it.
 
+If that drift is entirely inherited from the task-entry dirty baseline and
+the current task uses explicit scope isolation (`--changed-file` or
+`--use-staged`) that stays outside protected roots, ordinary tasks may now
+continue through preflight, compile, and completion without forcing
+`--orchestrator-work`. The inherited protected baseline still stays pinned:
+if those pre-existing protected files change again, or if the current task
+widens protected drift beyond that inherited baseline, the lifecycle gates
+fail closed.
+
 **Fix:** Refresh the manifest and re-run the failing gate:
 
 ```bash

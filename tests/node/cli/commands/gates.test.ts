@@ -172,8 +172,15 @@ function getOrchestratorRoot(repoRoot: string): string {
 
 function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] = ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']): void {
     const manifestPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'protected-control-plane-manifest.json');
+    const rulesRoot = path.join(getOrchestratorRoot(repoRoot), 'live', 'docs', 'agent-rules');
+    const crypto = require('node:crypto');
     fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
     const protectedSnapshot: Record<string, string> = {};
+    for (const ruleFile of fs.readdirSync(rulesRoot).filter((entry) => entry.endsWith('.md')).sort()) {
+        const relativePath = `garda-agent-orchestrator/live/docs/agent-rules/${ruleFile}`;
+        const contents = fs.readFileSync(path.join(rulesRoot, ruleFile), 'utf8');
+        protectedSnapshot[relativePath] = crypto.createHash('sha256').update(contents).digest('hex');
+    }
     for (const changedFile of changedFiles) {
         protectedSnapshot[changedFile] = 'stale-manifest-hash';
     }
@@ -1006,6 +1013,53 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('allows classify-change when trusted protected manifest drift is inherited from the dirty baseline only', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900manifest-drift-baseline-only';
+        const outputPath = path.join(repoRoot, 'preflight-manifest-drift-baseline-only.json');
+        const protectedRulePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(protectedRulePath, '# baseline protected drift\n', 'utf8');
+        writeDriftedProtectedManifest(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow inherited protected manifest drift on an ordinary scoped task'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId,
+            taskIntent: 'Allow inherited protected manifest drift on an ordinary scoped task',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, taskId);
+        assert.equal(payload.triggers.protected_control_plane_manifest_status, 'DRIFT');
+        assert.deepEqual(
+            payload.triggers.dirty_workspace_protected_files,
+            ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']
+        );
+        assert.equal(
+            payload.triggers.protected_control_plane_manifest_baseline_allowance_status,
+            'INHERITED_BASELINE_ONLY'
+        );
+        assert.equal(fs.existsSync(outputPath), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails enter-task-mode early when planned scope includes protected orchestrator files without orchestrator-work', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900planned-protected-handoff';
@@ -1632,6 +1686,62 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest was already drifted before task start')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when inherited protected baseline drift expands after preflight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-manifest-drift-expanded';
+        const baselineProtectedPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md');
+        const extraProtectedPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '40-commands.md');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(baselineProtectedPath, '# baseline protected drift\n', 'utf8');
+        writeDriftedProtectedManifest(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block manifest drift that expands beyond the inherited protected baseline'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Block manifest drift that expands beyond the inherited protected baseline',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        fs.writeFileSync(extraProtectedPath, '# expanded protected drift\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-manifest-drift-expanded.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile gate')));
+        assert.ok(result.outputLines.some((line) => line.includes('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -3265,6 +3375,89 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.outcome, 'FAIL');
         assert.ok(completionResult.violations.some((item: string) => item.includes('Protected pre-existing workspace edits changed outside task scope')));
         assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'DRIFT_DETECTED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('passes completion gate when protected manifest drift is inherited baseline only', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903manifest-drift-baseline-only';
+        const protectedRulePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(protectedRulePath, '# baseline protected drift\n', 'utf8');
+        writeDriftedProtectedManifest(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow inherited protected manifest drift through completion'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow inherited protected manifest drift through completion',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const commandsPath = path.join(repoRoot, 'commands-manifest-drift-completion.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Ordinary task scope stayed non-protected; no operator-facing docs changed.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'PASS');
+        assert.equal(completionResult.status, 'PASSED');
+        assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'PASS');
+        assert.deepEqual(completionResult.isolation_mode_warnings, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

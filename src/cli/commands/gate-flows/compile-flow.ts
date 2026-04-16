@@ -41,7 +41,10 @@ import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
 } from '../../../gates/dirty-worktree-protection';
-import { getProtectedManifestLifecycleGuard } from '../../../gates/protected-manifest-guard';
+import {
+    evaluateProtectedManifestBaselineAllowance,
+    getProtectedManifestLifecycleGuard
+} from '../../../gates/protected-manifest-guard';
 import {
     collectTaskTimelineEventTypes,
     getTaskModeEvidence,
@@ -333,6 +336,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             (result.triggers as any).dirty_workspace_protection_status = dirtyWorkspaceProtectionDrift.status;
             (result.triggers as any).dirty_workspace_protection_changed_files = dirtyWorkspaceProtectionDrift.changed_files;
         }
+        const protectedManifestBaselineAllowance = evaluateProtectedManifestBaselineAllowance({
+            orchestratorWork: taskModeEvidence.orchestrator_work === true,
+            manifestStatus: protectedManifestEvidence.status,
+            manifestChangedFiles: protectedManifestEvidence.changed_files,
+            dirtyWorkspaceProtectionStatus: dirtyWorkspaceProtectionDrift.status,
+            dirtyWorkspaceProtectedFiles: dirtyWorkspaceProtectedScope?.protected_files || []
+        });
+        (result.triggers as any).protected_control_plane_manifest_baseline_allowance_status =
+            protectedManifestBaselineAllowance.status;
 
         const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
             artifactPath: String(options.rulePackPath || '')
@@ -388,7 +400,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 repoRoot,
                 orchestratorWork: taskModeEvidence.orchestrator_work === true,
                 phaseLabel: 'preflight classification',
-                manifestEvidence: protectedManifestEvidence
+                manifestEvidence: protectedManifestEvidence,
+                dirtyWorkspaceProtectionStatus: dirtyWorkspaceProtectionDrift.status,
+                dirtyWorkspaceProtectedFiles: dirtyWorkspaceProtectedScope?.protected_files || []
             });
             preflightErrors.push(...protectedManifestGuard.violations);
         }
