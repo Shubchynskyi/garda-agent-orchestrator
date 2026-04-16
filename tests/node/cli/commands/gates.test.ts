@@ -4836,6 +4836,12 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
         assert.ok(capturedErrors.some((line) => line.includes('trivial or obviously synthetic')));
+        assert.ok(capturedErrors.some((line) => line.includes('Minimal compliant PASS review template')));
+        assert.ok(capturedErrors.some((line) => line.includes('## Findings by Severity')));
+        assert.ok(capturedErrors.some((line) => line.includes('## Residual Risks')));
+        assert.ok(capturedErrors.some((line) => line.includes('## Verdict')));
+        assert.ok(capturedErrors.some((line) => line.includes('REVIEW PASSED')));
+        assert.ok(capturedErrors.some((line) => line.includes('Deferred Findings')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
@@ -5011,6 +5017,7 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
         assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Residual Risks'")));
+        assert.ok(!capturedErrors.some((line) => line.includes('Minimal compliant PASS review template')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);

@@ -284,6 +284,46 @@ function restoreReviewArtifactFromRollbackState(
     writeReviewArtifactText(artifactPath, content.endsWith('\n') ? content : `${content}\n`);
 }
 
+function getReviewHeading(reviewType: string): string {
+    const normalized = String(reviewType || '').trim().toLowerCase();
+    switch (normalized) {
+        case 'api':
+            return 'API Review';
+        case 'db':
+            return 'DB Review';
+        case 'infra':
+            return 'Infra Review';
+        case 'security':
+            return 'Security Review';
+        case 'refactor':
+            return 'Refactor Review';
+        case 'performance':
+            return 'Performance Review';
+        case 'dependency':
+            return 'Dependency Review';
+        case 'test':
+            return 'Test Review';
+        case 'code':
+        default:
+            return 'Code Review';
+    }
+}
+
+function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerdict: string): string {
+    return [
+        'Minimal compliant PASS review template (structure only; substantive analysis is still required):',
+        `# ${getReviewHeading(reviewType)}`,
+        'Validated the relevant files with concrete scope notes, file references, and enough detail to exceed the trivial-review filter.',
+        '## Findings by Severity',
+        'none',
+        '## Residual Risks',
+        'none',
+        '## Verdict',
+        expectedPassVerdict,
+        "If accepted non-blocking follow-up remains, move it to '## Deferred Findings' and include 'Justification:' for every deferred entry."
+    ].join('\n');
+}
+
 function getEarlyReviewMaterializationViolations(options: {
     artifactPath: string;
     reviewContent: string;
@@ -329,6 +369,17 @@ function getEarlyReviewMaterializationViolations(options: {
     }
 
     return violations;
+}
+
+function buildPassReviewTemplateHintMessage(options: {
+    reviewType: string;
+    verdictToken: string;
+    expectedPassVerdict: string;
+}): string | null {
+    if (options.verdictToken !== options.expectedPassVerdict) {
+        return null;
+    }
+    return buildMinimalPassReviewTemplateHint(options.reviewType, options.expectedPassVerdict);
 }
 
 function assertRoutingCompatibility(
@@ -770,9 +821,15 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         expectedPassVerdict
     });
     if (materializationViolations.length > 0) {
+        const passTemplateHint = buildPassReviewTemplateHintMessage({
+            reviewType,
+            verdictToken,
+            expectedPassVerdict
+        });
         throw new Error(
             `Review output is not eligible for '${reviewType}' materialization:\n` +
-            materializationViolations.map((violation) => `- ${violation}`).join('\n')
+            materializationViolations.map((violation) => `- ${violation}`).join('\n') +
+            (passTemplateHint ? `\n\n${passTemplateHint}` : '')
         );
     }
 
