@@ -87,11 +87,14 @@ node garda-agent-orchestrator/bin/garda.js install --target-root "." --init-answ
     - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
     - Ask the user a mandatory code-style policy question in `<assistant-language>` before finalizing `30-code-style.md`:
     - Ask this mandatory question in a deterministic format:
-      - `StylePolicy (answer must be exactly one token: default or custom):`
+      - In `<assistant-language>`, ask a localized equivalent of `StylePolicy (answer must be exactly one token: default or custom):`
+      - In `<assistant-language>`, ask a localized equivalent of `Choose style-policy for `30-code-style.md`:`
+      - The surrounding question text and option descriptions must follow `<assistant-language>`, but the answer tokens must remain exactly `default` and `custom`.
+      - Do not ask the style-policy question as the English literal `Choose style-policy for `30-code-style.md`: default|custom` unless `<assistant-language>` is English.
+      - Present the answer tokens visibly in the prompt as `default|custom`.
         - `default`: `explicit project rules` first, `formatter/linter/static-analysis rules` second, and `common best practices` only if both are absent; do not copy weak, inconsistent, or legacy code patterns.
         - `custom`: keep the above priority order but add project-specific style rules now.
-      - Ask with this exact shape:
-        - Choose style-policy for `30-code-style.md`: default|custom
+      - In `<assistant-language>`, explain the options in deterministic order:
         - `default`: use the repository bootstrap policy
         - `custom`: record repository-specific style rules now
       - If answer is `default`, insert this canonical default paragraph verbatim into `30-code-style.md`:

@@ -48,8 +48,12 @@ test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositori
     assert.match(content, /ask the user a mandatory code-style policy question/i);
     assert.match(content, /use common best practices instead of copying weak, inconsistent, or legacy code patterns/i);
     assert.match(content, /do not treat inconsistent or obviously low-quality existing code as automatic style source of truth/i);
-    assert.match(content, /StylePolicy \(answer must be exactly one token: default or custom\)/i);
-    assert.match(content, /Choose style-policy for `30-code-style\.md`: default\|custom/i);
+    assert.match(content, /localized equivalent of `StylePolicy \(answer must be exactly one token: default or custom\):`/i);
+    assert.match(content, /localized equivalent of `Choose style-policy for `30-code-style\.md`:`/i);
+    assert.match(content, /answer tokens must remain exactly `default` and `custom`/i);
+    assert.match(content, /do not ask the style-policy question as the English literal `Choose style-policy for `30-code-style\.md`: default\|custom` unless `<assistant-language>` is English/i);
+    assert.match(content, /Present the answer tokens visibly in the prompt as `default\|custom`\./i);
+    assert.doesNotMatch(content, /Ask with this exact shape:/i);
     assert.match(content, /The user accepted the default policy for this repository: follow explicit project rules first, formatter\/linter\/static-analysis rules second/i);
 });
 
