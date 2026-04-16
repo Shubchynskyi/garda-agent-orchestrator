@@ -729,6 +729,14 @@ describe('cross-provider-router-matrix: drift detection', () => {
                 content.includes('Parallel reviewer fan-out is allowed only between independent review types'),
                 `${profile.providerLabel} bridge missing independent fan-out restriction`
             );
+            assert.ok(
+                content.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'),
+                `${profile.providerLabel} bridge missing raw-shell producer-consumer prohibition`
+            );
+            assert.ok(
+                content.includes('build:node-foundation'),
+                `${profile.providerLabel} bridge missing concrete producer-consumer validation example`
+            );
         }
     });
 });

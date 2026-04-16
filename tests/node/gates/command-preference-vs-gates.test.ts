@@ -156,6 +156,18 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
                 '40-commands.md must include an example showing compile-gate build execution is allowed'
             );
         });
+
+        it('forbids raw-shell fan-out for producer-consumer validation chains', () => {
+            const content = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
+            assert.ok(
+                content.includes('Known producer-consumer validation chains'),
+                '40-commands.md must explicitly name producer-consumer validation chains'
+            );
+            assert.ok(
+                content.includes('raw shell sidecars') && content.includes('build:node-foundation'),
+                '40-commands.md must forbid raw-shell fan-out for generated-artifact validation flows'
+            );
+        });
     });
 
     describe('40-commands.md (template)', () => {
@@ -179,6 +191,17 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
             assert.ok(
                 content.includes('### Ad-Hoc vs Mandatory Gate Commands'),
                 'template 40-commands.md must include ad-hoc vs gate section'
+            );
+        });
+
+        it('forbids raw-shell fan-out for producer-consumer validation chains', () => {
+            assert.ok(
+                content.includes('Known producer-consumer validation chains'),
+                'template 40-commands.md must explicitly name producer-consumer validation chains'
+            );
+            assert.ok(
+                content.includes('raw shell sidecars') && content.includes('build:node-foundation'),
+                'template 40-commands.md must forbid raw-shell fan-out for generated-artifact validation flows'
             );
         });
     });
@@ -227,6 +250,14 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
                 'start-task.md must include hard-stop about mandatory gates not being exempted'
             );
         });
+
+        it('includes hard-stop banning raw-shell producer-consumer fan-out', () => {
+            const content = readMaterializedProjectFile('.agents/workflows/start-task.md');
+            assert.ok(
+                content.includes('raw shell sidecars') && content.includes('build:node-foundation'),
+                'start-task.md must forbid raw-shell fan-out for producer-consumer validation flows'
+            );
+        });
     });
 
     describe('start-task router (template)', () => {
@@ -236,6 +267,13 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
             assert.ok(
                 content.includes('does NOT exempt mandatory gates'),
                 'template start-task.md must include hard-stop about mandatory gates not being exempted'
+            );
+        });
+
+        it('includes hard-stop banning raw-shell producer-consumer fan-out', () => {
+            assert.ok(
+                content.includes('raw shell sidecars') && content.includes('build:node-foundation'),
+                'template start-task.md must forbid raw-shell fan-out for producer-consumer validation flows'
             );
         });
     });
@@ -302,6 +340,14 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
             assert.ok(
                 generated.includes('compile-gate'),
                 'Generated start-task content must reference compile-gate in the mandatory gate exemption hard-stop'
+            );
+        });
+
+        it('buildSharedStartTaskWorkflowContent includes producer-consumer raw-shell prohibition', () => {
+            const generated = buildSharedStartTaskWorkflowContent('CLAUDE.md');
+            assert.ok(
+                generated.includes('raw shell sidecars') && generated.includes('build:node-foundation'),
+                'Generated start-task content must forbid raw-shell producer-consumer validation fan-out'
             );
         });
     });

@@ -83,6 +83,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Before each required reviewer invocation, run `node garda-agent-orchestrator/bin/garda.js gate build-review-context ...` for that review type.
 - Reviewer preparation must emit `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` before the review gate can satisfy completion for code-changing tasks.
 - Downstream `test` review preparation must not start until every required upstream non-`test` review for the current cycle has a clean PASS artifact and receipt.
+- Known producer-consumer validation flows are launch blockers too. Do not fan out raw shell commands such as `npm run build:node-foundation` and direct `node --test .node-build/...` in parallel; use the guarded workflow path or run producer then consumer strictly sequentially.
 - If a later cycle changes only test scope, still run `build-review-context` for reusable upstream `code` review first so current-cycle reuse evidence exists before `test` review starts.
 - Required reviews must be launched only from preflight `required_reviews.*`.
 - Review gate command must pass before `DONE`:

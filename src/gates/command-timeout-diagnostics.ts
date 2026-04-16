@@ -91,6 +91,95 @@ export interface BuildCommandTimeoutDiagnosticsOptions {
     commands?: CommandPhaseRecord[];
 }
 
+type ValidationChainRole = 'producer' | 'consumer';
+
+interface ValidationChainCommandMatch {
+    ruleId: string;
+    role: ValidationChainRole;
+    commandText: string;
+    label: string;
+}
+
+const NODE_FOUNDATION_BUILD_PRODUCER_PATTERN = /\bnpm(?:\.cmd)?\s+(?:run\s+build:node-foundation|test)\b/i;
+const NODE_BUILD_DIRECT_CONSUMER_PATTERN = /\bnode(?:\.exe)?\b(?=.*\s--test\b)(?=.*\.node-build[\\/])/i;
+
+function parseUtcToMs(value: string | null): number | null {
+    if (!value) {
+        return null;
+    }
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function detectValidationChainCommand(command: CommandPhaseRecord): ValidationChainCommandMatch | null {
+    const commandText = String(command.command_text || '').trim();
+    if (!commandText) {
+        return null;
+    }
+    if (NODE_FOUNDATION_BUILD_PRODUCER_PATTERN.test(commandText)) {
+        return {
+            ruleId: 'node_foundation_build_to_compiled_tests',
+            role: 'producer',
+            commandText,
+            label: String(command.command_label || '').trim() || 'producer'
+        };
+    }
+    if (NODE_BUILD_DIRECT_CONSUMER_PATTERN.test(commandText)) {
+        return {
+            ruleId: 'node_foundation_build_to_compiled_tests',
+            role: 'consumer',
+            commandText,
+            label: String(command.command_label || '').trim() || 'consumer'
+        };
+    }
+    return null;
+}
+
+function detectValidationChainOverlapViolations(commands: readonly CommandPhaseRecord[]): string[] {
+    const matches = commands
+        .map((command) => ({
+            command,
+            match: detectValidationChainCommand(command)
+        }))
+        .filter((entry): entry is { command: CommandPhaseRecord; match: ValidationChainCommandMatch } => entry.match != null);
+
+    const violations = new Set<string>();
+    for (const producerEntry of matches) {
+        if (producerEntry.match.role !== 'producer') {
+            continue;
+        }
+        const producerStartMs = parseUtcToMs(producerEntry.command.start_time_utc);
+        const producerEndMs = parseUtcToMs(producerEntry.command.end_time_utc);
+        if (producerStartMs == null || producerEndMs == null) {
+            continue;
+        }
+        for (const consumerEntry of matches) {
+            if (
+                consumerEntry.match.role !== 'consumer'
+                || consumerEntry.match.ruleId !== producerEntry.match.ruleId
+            ) {
+                continue;
+            }
+            const consumerStartMs = parseUtcToMs(consumerEntry.command.start_time_utc);
+            const consumerEndMs = parseUtcToMs(consumerEntry.command.end_time_utc);
+            if (consumerStartMs == null || consumerEndMs == null) {
+                continue;
+            }
+            const overlap = producerStartMs < consumerEndMs && consumerStartMs < producerEndMs;
+            if (!overlap) {
+                continue;
+            }
+            violations.add(
+                `Raw shell producer-consumer overlap detected for validation chain '${producerEntry.match.ruleId}': ` +
+                `producer '${producerEntry.match.label}' overlapped consumer '${consumerEntry.match.label}'. ` +
+                `Command records show '${producerEntry.match.commandText}' and '${consumerEntry.match.commandText}' ` +
+                'running concurrently. Use guarded workflow or keep the producer and consumer strictly sequential.'
+            );
+        }
+    }
+    return [...violations];
+}
+
 // ---------------------------------------------------------------------------
 // Phase tracker — used by callers to build CommandPhaseRecord instances
 // ---------------------------------------------------------------------------
@@ -296,9 +385,12 @@ export function buildCommandTimeoutDiagnostics(options: BuildCommandTimeoutDiagn
         }
     }
 
+    violations.push(...detectValidationChainOverlapViolations(commands));
+
     const hasTimeout = commands.some(c => c.timed_out);
     const hasPreLaunchFailure = commands.some(c => c.timeout_phase === 'pre_launch');
-    const hasErrors = hasTimeout || hasPreLaunchFailure;
+    const hasValidationChainOverlap = violations.some((violation) => violation.includes("validation chain 'node_foundation_build_to_compiled_tests'"));
+    const hasErrors = hasTimeout || hasPreLaunchFailure || hasValidationChainOverlap;
 
     if (hasPreLaunchFailure) {
         for (const cmd of commands) {
@@ -313,9 +405,11 @@ export function buildCommandTimeoutDiagnostics(options: BuildCommandTimeoutDiagn
     const completedCount = commands.filter(c => c.timeout_phase === 'completed').length;
     const timedOutCount = commands.filter(c => c.timed_out).length;
     const preLaunchCount = commands.filter(c => c.timeout_phase === 'pre_launch').length;
+    const validationOverlapCount = violations.filter((violation) => violation.includes("validation chain 'node_foundation_build_to_compiled_tests'")).length;
 
     const summary = `${commands.length} commands tracked: ` +
-        `${completedCount} completed, ${timedOutCount} timed out, ${preLaunchCount} never launched.`;
+        `${completedCount} completed, ${timedOutCount} timed out, ${preLaunchCount} never launched, ` +
+        `${validationOverlapCount} validation-chain overlaps.`;
 
     return {
         schema_version: 1,

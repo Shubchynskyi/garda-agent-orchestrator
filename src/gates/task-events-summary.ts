@@ -275,6 +275,32 @@ const NOISY_COMMAND_PATTERNS: ReadonlyArray<NoisyPattern> = [
     }
 ];
 
+const NODE_BUILD_DIRECT_CONSUMER_PATTERN = /\bnode(?:\.exe)?\b(?=.*\s--test\b)(?=.*\.node-build[\\/])/i;
+
+function appendValidationChainWarnings(
+    commandText: string,
+    mode: string,
+    _justification: string,
+    _suppressWarningsWithJustification: boolean,
+    warnings: string[],
+    matchedCategories: string[]
+): void {
+    const normalizedMode = String(mode || '').trim().toLowerCase();
+    if (normalizedMode === 'gate') {
+        return;
+    }
+
+    if (NODE_BUILD_DIRECT_CONSUMER_PATTERN.test(commandText)) {
+        warnings.push(
+            'Direct `.node-build` test consumer detected: refresh `.node-build` first with ' +
+            '`npm run build:node-foundation` or `npm test`, and never fan out producer and consumer as raw shell sidecars.'
+        );
+        if (!matchedCategories.includes('validation_chain')) {
+            matchedCategories.push('validation_chain');
+        }
+    }
+}
+
 /**
  * Audit command compactness against the compact-command protocol from 40-commands.md.
  * Returns structured audit with matched categories for enforcement telemetry.
@@ -299,6 +325,15 @@ export function auditCommandCompactness(commandText: string, options: AuditComma
             }
         }
     }
+
+    appendValidationChainWarnings(
+        commandText,
+        mode,
+        justification,
+        suppressWarningsWithJustification,
+        warnings,
+        matchedCategories
+    );
 
     return {
         command: commandText,

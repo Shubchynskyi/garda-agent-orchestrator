@@ -202,6 +202,24 @@ describe('gates/task-events-summary', () => {
             const result = auditCommandCompactness('npm ls --json');
             assert.equal(result.warning_count, 0);
         });
+        it('warns about direct .node-build consumer outside guarded workflow', () => {
+            const result = auditCommandCompactness('node --test .node-build/tests/node/materialization/install.test.js');
+            assert.ok(result.warning_count > 0);
+            assert.ok(result.matched_categories.includes('validation_chain'));
+            assert.ok(result.warnings.some((warning) => warning.includes('Direct `.node-build` test consumer')));
+        });
+        it('does not warn about allowed standalone npm test producer path', () => {
+            const result = auditCommandCompactness('npm test');
+            assert.ok(!result.matched_categories.includes('validation_chain'));
+        });
+        it('does not suppress validation-chain warnings when a justification is present', () => {
+            const result = auditCommandCompactness(
+                'node --test .node-build/tests/node/materialization/install.test.js',
+                { justification: 'localized reproduction of a generated-artifact chain issue' }
+            );
+            assert.ok(result.warning_count > 0);
+            assert.ok(result.matched_categories.includes('validation_chain'));
+        });
         it('warns about unbounded rg without scope or limit', () => {
             const result = auditCommandCompactness('rg pattern');
             assert.ok(result.warning_count > 0);
@@ -579,6 +597,10 @@ describe('gates/task-events-summary', () => {
             assert.ok(result.warning_count > 0, 'gate commands should still be audited');
             assert.ok(result.warnings.length > 0);
         });
+        it('does not warn about validation-chain producer inside lifecycle-required gate execution', () => {
+            const result = auditGateCommand('npm run build:node-foundation', 'compile-gate');
+            assert.ok(!result.matched_categories.includes('validation_chain'));
+        });
     });
 
     describe('getCommandAuditFromDetails', () => {
@@ -636,6 +658,31 @@ describe('gates/task-events-summary', () => {
             assert.equal(summary.timeline.length, 2);
             assert.equal(summary.timeline[0].event_type, 'PREFLIGHT_CLASSIFIED');
             assert.equal(summary.timeline[1].event_type, 'COMPILE_GATE_PASSED');
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('surfaces validation-chain warnings through aggregated task summary details', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-004',
+                    event_type: 'SHELL_COMMAND_EXECUTED',
+                    outcome: 'INFO',
+                    actor: 'agent',
+                    message: 'Direct compiled test consumer launched outside guarded workflow.',
+                    details: {
+                        command_text: 'node.exe --test .node-build\\tests\\node\\materialization\\install.test.js',
+                        command_mode: 'scan'
+                    }
+                }
+            ];
+            const eventsRoot = createTaskEvents(tmpDir, 'T-004', events);
+            const summary = buildTaskEventsSummary({ taskId: 'T-004', eventsRoot });
+            assert.equal(summary.command_policy_warning_count, 1);
+            assert.ok(summary.command_policy_warnings.some((warning) => warning.includes('Direct `.node-build` test consumer')));
+            assert.ok(summary.timeline[0].command_policy_audit);
+            assert.deepEqual(summary.timeline[0].command_policy_audit?.matched_categories, ['validation_chain']);
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 

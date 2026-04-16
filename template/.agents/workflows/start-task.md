@@ -31,6 +31,7 @@ Mandatory gate order:
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
 - Do not make code edits before `enter-task-mode`; unscoped pre-task diffs must be isolated first.
+- Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as `npm run build:node-foundation` -> direct `node --test .node-build/...` must use the guarded workflow path or run strictly sequentially, never in parallel.
 - Do not mark `DONE` without `COMPLETION_GATE_PASSED`.
 - Do not create fake review artifacts or bypass reviewer routing.
 - The `40-commands.md` preference to avoid ad-hoc manual commands does NOT exempt mandatory gates. Gates such as `compile-gate` must execute their underlying build/test commands when the workflow requires them.

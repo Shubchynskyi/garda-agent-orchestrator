@@ -766,8 +766,12 @@ describe('runInstall', () => {
             assert.ok(bridge.includes('dependent downstream reviewer'));
             assert.ok(bridge.includes('upstream PASS artifact and receipt'));
             assert.ok(bridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(bridge.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
+            assert.ok(bridge.includes('build:node-foundation'));
             assert.ok(workflow.includes('gate enter-task-mode'));
             assert.ok(workflow.includes('gate completion-gate'));
+            assert.ok(workflow.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
+            assert.ok(workflow.includes('build:node-foundation'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
@@ -806,6 +810,10 @@ describe('runInstall', () => {
                 .replace(
                     'Parallel reviewer fan-out is allowed only between independent review types with no dependency edge for the current cycle.',
                     'Do not treat downstream reviewers as speculative sidecars.'
+                )
+                .replace(
+                    'Do not fan out known producer-consumer validation commands as raw shell sidecars around the gate flow. Flows such as `npm run build:node-foundation` -> direct `node --test .node-build/...` must use the guarded workflow path or run strictly sequentially, never in parallel.',
+                    'Treat generated-artifact validation as best-effort shell fan-out and let local runners coordinate freshness opportunistically.'
                 );
             const staleWorkflow = fs.readFileSync(workflowPath, 'utf8')
                 .replace(
@@ -815,15 +823,21 @@ describe('runInstall', () => {
                 .replace(
                     '- Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.',
                     '- Do not parallelize dependent reviews.'
+                )
+                .replace(
+                    '- Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as `npm run build:node-foundation` -> direct `node --test .node-build/...` must use the guarded workflow path or run strictly sequentially, never in parallel.',
+                    '- Treat generated-artifact validation fan-out as acceptable when it is only local shell coordination.'
                 );
             assert.notEqual(staleBridge, fs.readFileSync(bridgePath, 'utf8'));
             assert.ok(staleBridge.includes('Treat downstream `test` review as dependency-ordered even on delegation-capable platforms'));
             assert.ok(staleBridge.includes('Do not treat downstream reviewers as speculative sidecars.'));
             assert.ok(!staleBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(staleBridge.includes('Treat generated-artifact validation as best-effort shell fan-out'));
             assert.notEqual(staleWorkflow, fs.readFileSync(workflowPath, 'utf8'));
             assert.ok(staleWorkflow.includes('Do not spawn downstream `test` reviewers before upstream code review finishes.'));
             assert.ok(staleWorkflow.includes('Do not parallelize dependent reviews.'));
             assert.ok(!staleWorkflow.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(staleWorkflow.includes('Treat generated-artifact validation fan-out as acceptable'));
             fs.writeFileSync(bridgePath, staleBridge, 'utf8');
             fs.writeFileSync(workflowPath, staleWorkflow, 'utf8');
 
@@ -842,8 +856,12 @@ describe('runInstall', () => {
             assert.ok(refreshedBridge.includes('dependent downstream reviewer'));
             assert.ok(refreshedBridge.includes('upstream PASS artifact and receipt'));
             assert.ok(refreshedBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(refreshedBridge.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
+            assert.ok(refreshedBridge.includes('build:node-foundation'));
             assert.ok(refreshedWorkflow.includes('Do not spawn or pre-launch a dependent downstream reviewer'));
             assert.ok(refreshedWorkflow.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(refreshedWorkflow.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
+            assert.ok(refreshedWorkflow.includes('build:node-foundation'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

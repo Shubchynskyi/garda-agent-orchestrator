@@ -11,6 +11,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 The "prefer manual commands" preference and mandatory gate execution are separate concerns:
 - **Ad-hoc commands** (`npm run build`, `npm test`, `npm run lint` executed directly) — avoid unless the user requests them or you have an explicit justification.
 - **Mandatory gate commands** (`node garda-agent-orchestrator/bin/garda.js gate compile-gate`, etc.) — always execute when required by the workflow, even when the gate internally runs `npm run build` or similar. A gate wrapping a build/test command is not an ad-hoc execution; it is lifecycle-required infrastructure.
+- **Known producer-consumer validation chains** (`npm run build:node-foundation` -> direct `node --test .node-build/...`, similar generated-artifact consumers) — do not fan these out through raw shell sidecars. Use the guarded workflow path, `npm test`, or run producer then consumer strictly sequentially.
 
 Example (materialized/deployed workspace):
 ```
@@ -54,6 +55,10 @@ npm test
 npm run test:integration
 npm run test:e2e
 ```
+
+Rules:
+- Direct generated-artifact test consumers are producer-consumer flows: refresh the artifact producer first, then run the consumer sequentially.
+- Do not launch producer and generated-artifact consumer commands as parallel raw shell sidecars; that bypasses guarded validation-chain checks.
 
 ### Quality
 ```bash

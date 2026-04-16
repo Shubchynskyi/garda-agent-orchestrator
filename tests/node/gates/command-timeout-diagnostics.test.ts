@@ -38,9 +38,14 @@ function scaffoldWorkspace(root: string, options: { sourceCheckout?: boolean } =
 function makeCompletedRecord(label: string, elapsedMs: number): CommandPhaseRecord {
     const start = Date.now() - elapsedMs;
     const end = Date.now();
+    return makeCompletedRecordWithTiming(label, `run ${label}`, start, end);
+}
+
+function makeCompletedRecordWithTiming(label: string, commandText: string, start: number, end: number): CommandPhaseRecord {
+    const elapsedMs = Math.max(0, end - start);
     return {
         command_label: label,
-        command_text: `run ${label}`,
+        command_text: commandText,
         start_time_utc: new Date(start).toISOString(),
         first_output_time_utc: new Date(start + 10).toISOString(),
         last_output_time_utc: new Date(end - 5).toISOString(),
@@ -296,6 +301,126 @@ describe('gates/command-timeout-diagnostics', () => {
             });
 
             assert.equal(artifact.provider, 'Antigravity');
+        });
+
+        it('fails when build producer overlaps direct .node-build consumer in command records', () => {
+            scaffoldWorkspace(tempDir, { sourceCheckout: true });
+            const base = Date.now() - 10_000;
+            const commands = [
+                makeCompletedRecordWithTiming(
+                    'build-node-foundation',
+                    'npm run build:node-foundation',
+                    base,
+                    base + 2_000
+                ),
+                makeCompletedRecordWithTiming(
+                    'compiled-tests',
+                    'node --test .node-build/tests/node/materialization/install.test.js',
+                    base + 500,
+                    base + 1_500
+                )
+            ];
+
+            const artifact = buildCommandTimeoutDiagnostics({
+                taskId: 'T-905',
+                repoRoot: tempDir,
+                commands
+            });
+
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.outcome, 'FAIL');
+            assert.ok(artifact.violations.some((violation) => violation.includes('validation chain')));
+            assert.ok(artifact.summary.includes('1 validation-chain overlaps'));
+        });
+
+        it('passes when build producer and direct .node-build consumer stay sequential', () => {
+            scaffoldWorkspace(tempDir, { sourceCheckout: true });
+            const base = Date.now() - 10_000;
+            const commands = [
+                makeCompletedRecordWithTiming(
+                    'build-node-foundation',
+                    'npm run build:node-foundation',
+                    base,
+                    base + 2_000
+                ),
+                makeCompletedRecordWithTiming(
+                    'compiled-tests',
+                    'node --test .node-build/tests/node/materialization/install.test.js',
+                    base + 2_100,
+                    base + 3_100
+                )
+            ];
+
+            const artifact = buildCommandTimeoutDiagnostics({
+                taskId: 'T-906',
+                repoRoot: tempDir,
+                commands
+            });
+
+            assert.equal(artifact.status, 'PASSED');
+            assert.equal(artifact.outcome, 'PASS');
+            assert.ok(!artifact.violations.some((violation) => violation.includes('validation chain')));
+            assert.ok(artifact.summary.includes('0 validation-chain overlaps'));
+        });
+
+        it('fails when npm test overlaps direct .node-build consumer in command records', () => {
+            scaffoldWorkspace(tempDir, { sourceCheckout: true });
+            const base = Date.now() - 10_000;
+            const commands = [
+                makeCompletedRecordWithTiming(
+                    'npm-test',
+                    'npm test',
+                    base,
+                    base + 3_000
+                ),
+                makeCompletedRecordWithTiming(
+                    'compiled-tests',
+                    'node --test .node-build/tests/node/materialization/install.test.js',
+                    base + 800,
+                    base + 1_800
+                )
+            ];
+
+            const artifact = buildCommandTimeoutDiagnostics({
+                taskId: 'T-907',
+                repoRoot: tempDir,
+                commands
+            });
+
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.outcome, 'FAIL');
+            assert.ok(artifact.violations.some((violation) => violation.includes('validation chain')));
+            assert.ok(artifact.summary.includes('1 validation-chain overlaps'));
+        });
+
+        it('fails for Windows producer-consumer overlap with npm.cmd and node.exe direct compiled tests', () => {
+            scaffoldWorkspace(tempDir, { sourceCheckout: true });
+            const base = Date.now() - 10_000;
+            const commands = [
+                makeCompletedRecordWithTiming(
+                    'build-node-foundation-windows',
+                    'npm.cmd run build:node-foundation',
+                    base,
+                    base + 2_500
+                ),
+                makeCompletedRecordWithTiming(
+                    'compiled-tests-windows',
+                    'node.exe --test .node-build\\tests\\node\\materialization\\install.test.js',
+                    base + 750,
+                    base + 1_750
+                )
+            ];
+
+            const artifact = buildCommandTimeoutDiagnostics({
+                taskId: 'T-908',
+                repoRoot: tempDir,
+                commands
+            });
+
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.outcome, 'FAIL');
+            assert.ok(artifact.violations.some((violation) => violation.includes('validation chain')));
+            assert.ok(artifact.summary.includes('1 validation-chain overlaps'));
         });
     });
 
