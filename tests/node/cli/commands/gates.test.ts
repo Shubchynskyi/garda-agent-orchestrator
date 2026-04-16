@@ -24,7 +24,10 @@ import {
     executeCommand,
     executeCommandAsync
 } from '../../../../src/cli/commands/gates';
-import { runCliMainWithHandling } from '../../../../src/cli/main';
+import {
+    runCliMain,
+    runCliMainWithHandling
+} from '../../../../src/cli/main';
 import { runCompletionGate } from '../../../../src/gates/completion';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import {
@@ -1040,6 +1043,55 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('runs enter-task-mode through CLI main and merges mixed planned scope hints', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-cli-main-smoke';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalStdoutWrite = process.stdout.write;
+        const capturedStdout: string[] = [];
+        process.exitCode = 0;
+        process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): boolean => {
+            capturedStdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString(typeof encoding === 'string' ? encoding : 'utf8'));
+            if (typeof encoding === 'function') {
+                encoding();
+            } else if (typeof callback === 'function') {
+                callback();
+            }
+            return true;
+        }) as typeof process.stdout.write;
+
+        try {
+            process.chdir(repoRoot);
+            await runCliMain([
+                'gate',
+                'enter-task-mode',
+                '--repo-root', repoRoot,
+                '--task-id', taskId,
+                '--task-summary', 'Exercise the full CLI main path for mixed planned scope hints',
+                '--planned-changed-file', 'src/app.ts',
+                '--planned-changed-files', 'src/feature.ts,src/app.ts'
+            ]);
+        } finally {
+            process.stdout.write = originalStdoutWrite;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const output = capturedStdout.join('');
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(timelinePath), true);
+        assert.match(output, /TASK_MODE_ENTERED/);
+        assert.match(output, /PlannedChangedFilesCount: 2/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('parses --planned-changed-files through handleEnterTaskMode before emitting the orchestrator-work handoff', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900planned-protected-handler-alias';
@@ -1065,6 +1117,34 @@ describe('cli/commands/gates', () => {
             )
         );
         assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('deduplicates mixed planned scope hints before emitting the orchestrator-work handoff', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-handler-merged-aliases';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const error = await captureExpectedAsyncError(() => handleEnterTaskMode([
+            '--repo-root', repoRoot,
+            '--task-id', taskId,
+            '--task-summary', 'Deduplicate mixed planned scope aliases before suggesting orchestrator-work handoff',
+            '--planned-changed-file', '.github/agents/orchestrator.md',
+            '--planned-changed-files', 'src/app.ts,.github/agents/orchestrator.md',
+            '--planned-changed-file', 'src/app.ts'
+        ]));
+        assert.match(
+            error.message,
+            new RegExp(
+                `Suggested command: node garda-agent-orchestrator/bin/garda\\.js gate enter-task-mode` +
+                `.*--planned-changed-file '\\.github/agents/orchestrator\\.md'` +
+                `.*--planned-changed-file 'src/app\\.ts'`,
+                'i'
+            )
+        );
+        assert.equal((error.message.match(/--planned-changed-file /g) || []).length, 2);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
