@@ -12,8 +12,10 @@ import {
     runCompletionGate,
     validateStageSequence,
     detectCodeChanged,
+    preflightRequiresAnyReview,
     validateReviewSkillEvidence,
     STAGE_SEQUENCE_ORDER,
+    NON_CODE_STAGE_SEQUENCE_ORDER,
     isTrivialReview
 } from '../../../src/gates/completion';
 import { computeProtectedSnapshotDigest, fileSha256, normalizePath } from '../../../src/gates/helpers';
@@ -198,6 +200,8 @@ describe('gates/completion', () => {
                     { event_type: 'RULE_PACK_LOADED', timestamp_utc: '2026-04-02T17:00:01.000Z' },
                     { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED', timestamp_utc: '2026-04-02T16:59:59.500Z', details: { artifact_hash: handshakeArtifactHash } },
                     { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED', timestamp_utc: '2026-04-02T16:59:59.700Z', details: { artifact_hash: shellSmokeArtifactHash } },
+                    { event_type: 'PREFLIGHT_CLASSIFIED', timestamp_utc: '2026-04-02T17:00:01.500Z' },
+                    { event_type: 'IMPLEMENTATION_STARTED', timestamp_utc: '2026-04-02T17:00:01.750Z' },
                     { event_type: 'COMPILE_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:02.000Z' },
                     { event_type: 'REVIEW_PHASE_STARTED', timestamp_utc: '2026-04-02T17:00:03.000Z' },
                     { event_type: 'REVIEW_GATE_PASSED', timestamp_utc: '2026-04-02T17:00:04.000Z' }
@@ -354,6 +358,292 @@ describe('gates/completion', () => {
                 fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
             }
         });
+
+        it('passes docs-only completion cycles with no required reviews and no recorded review artifacts', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.scope_category = 'docs-only';
+                preflight.changed_files = ['docs/runbook.md'];
+                preflight.metrics = {
+                    ...preflight.metrics,
+                    changed_lines_total: 12,
+                    code_like_changed_count: 0,
+                    runtime_code_like_changed_count: 0
+                };
+                preflight.required_reviews = {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+                assert.equal(
+                    result.violations.some((entry) => String(entry).includes('REVIEW_RECORDED')),
+                    false
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('ignores stale optional review artifacts when the latest cycle requires no reviews', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.scope_category = 'docs-only';
+                preflight.changed_files = ['docs/runbook.md'];
+                preflight.metrics = {
+                    ...preflight.metrics,
+                    changed_lines_total: 12,
+                    code_like_changed_count: 0,
+                    runtime_code_like_changed_count: 0
+                };
+                preflight.required_reviews = {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+
+                const staleReviewPath = path.join(path.dirname(workspace.preflightPath), 'T-1010-code.md');
+                fs.writeFileSync(
+                    staleReviewPath,
+                    [
+                        '# Review',
+                        '## Findings by Severity',
+                        '- High: stale historical finding that should not block a no-review cycle.',
+                        '## Residual Risks',
+                        '- none',
+                        '## Verdict',
+                        'REVIEW FAILED'
+                    ].join('\n') + '\n',
+                    'utf8'
+                );
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('passes docs-only completion cycles for legacy minimal preflight artifacts without recorded reviews', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.changed_files = ['docs/runbook.md'];
+                preflight.metrics = {
+                    changed_lines_total: 12
+                };
+                preflight.required_reviews = {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                };
+                delete preflight.scope_category;
+                delete preflight.triggers?.runtime_code_changed;
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+                assert.equal(
+                    result.violations.some((entry) => String(entry).includes('REVIEW_RECORDED')),
+                    false
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('passes fast-path code completion cycles when preflight required no reviews and no reviews were recorded', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.scope_category = 'code';
+                preflight.changed_files = ['src/small-fast-path.ts'];
+                preflight.metrics = {
+                    changed_lines_total: 8,
+                    code_like_changed_count: 1,
+                    runtime_code_like_changed_count: 1
+                };
+                preflight.required_reviews = {
+                    code: false,
+                    test: false
+                };
+                preflight.triggers = {
+                    ...preflight.triggers,
+                    runtime_code_changed: true
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+                assert.equal(
+                    result.violations.some((entry) => String(entry).includes('REVIEW_RECORDED')),
+                    false
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('fails when the current cycle required reviews but REVIEW_RECORDED is missing', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.scope_category = 'code';
+                preflight.changed_files = ['src/review-required.ts'];
+                preflight.metrics = {
+                    changed_lines_total: 24,
+                    code_like_changed_count: 1,
+                    runtime_code_like_changed_count: 1
+                };
+                preflight.required_reviews = {
+                    code: true,
+                    test: false
+                };
+                preflight.triggers = {
+                    ...preflight.triggers,
+                    runtime_code_changed: true
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(
+                    result.violations.some((entry) => String(entry).includes('REVIEW_RECORDED')),
+                    true
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
     });
 
     describe('collectOrderedTimelineEvents', () => {
@@ -455,6 +745,74 @@ describe('gates/completion', () => {
             assert.equal(result.violations.length, 0);
         });
 
+        it('requires canonical preflight and implementation stages for non-code tasks too', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, false, '/timeline.jsonl');
+            assert.equal(result.violations.length, 0);
+            assert.deepEqual(result.observed_order, [...NON_CODE_STAGE_SEQUENCE_ORDER]);
+        });
+
+        it('rejects non-code latest-cycle review evidence when preflight and implementation only exist in an older cycle', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, false, '/timeline.jsonl');
+            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'PREFLIGHT_CLASSIFIED' from an older execution cycle.")));
+            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'IMPLEMENTATION_STARTED' from an older execution cycle.")));
+        });
+
+        it('does not require REVIEW_RECORDED when the current code-changing cycle required zero reviews', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, true, '/timeline.jsonl', false);
+            assert.equal(result.violations.length, 0);
+            assert.deepEqual(result.expected_order, [...NON_CODE_STAGE_SEQUENCE_ORDER]);
+        });
+
+        it('still requires REVIEW_RECORDED when the current code-changing cycle required reviews', () => {
+            const events = makeEvents(
+                'TASK_MODE_ENTERED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED'
+            );
+            const result = validateStageSequence(events, true, '/timeline.jsonl', true);
+            assert.ok(result.violations.some((item) => item.includes("latest 'REVIEW_GATE_PASSED' evidence")));
+            assert.ok(result.violations.some((item) => item.includes("'REVIEW_RECORDED'")));
+        });
+
         it('uses the latest coherent cycle instead of the first stale stage occurrences', () => {
             const events = makeEvents(
                 'TASK_MODE_ENTERED',
@@ -531,6 +889,123 @@ describe('gates/completion', () => {
             const result = validateStageSequence(events, true, '/timeline.jsonl');
             assert.ok(result.violations.some((item) => item.includes("Do not backfill 'IMPLEMENTATION_STARTED' from an older execution cycle.")));
             assert.ok(result.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
+        });
+    });
+
+    describe('detectCodeChanged', () => {
+        it('detects when preflight requires any review', () => {
+            assert.equal(preflightRequiresAnyReview({
+                required_reviews: {
+                    code: false,
+                    test: true
+                }
+            }), true);
+            assert.equal(preflightRequiresAnyReview({
+                required_reviews: {
+                    code: false,
+                    test: false
+                }
+            }), false);
+        });
+
+        it('returns false for docs-only preflight with non-zero diff but no code-like changes or required reviews', () => {
+            const result = detectCodeChanged({
+                scope_category: 'docs-only',
+                changed_files: ['docs/runbook.md'],
+                metrics: {
+                    changed_lines_total: 12,
+                    code_like_changed_count: 0,
+                    runtime_code_like_changed_count: 0
+                },
+                required_reviews: {
+                    code: false,
+                    test: false
+                },
+                triggers: {
+                    runtime_code_changed: false
+                }
+            });
+
+            assert.equal(result, false);
+        });
+
+        it('returns false for other explicit non-code scope categories without required reviews', () => {
+            const scopeCategories = ['config-only', 'audit-only', 'empty'];
+            for (const scopeCategory of scopeCategories) {
+                const result = detectCodeChanged({
+                    scope_category: scopeCategory,
+                    changed_files: scopeCategory === 'empty' ? [] : [`meta/${scopeCategory}.txt`],
+                    metrics: {
+                        changed_lines_total: scopeCategory === 'empty' ? 0 : 5,
+                        code_like_changed_count: 0,
+                        runtime_code_like_changed_count: 0
+                    },
+                    required_reviews: {
+                        code: false,
+                        test: false
+                    },
+                    triggers: {
+                        runtime_code_changed: false
+                    }
+                });
+
+                assert.equal(result, false, `Expected ${scopeCategory} to remain non-code.`);
+            }
+        });
+
+        it('returns false for legacy docs-only preflight artifacts without new classifier fields', () => {
+            const result = detectCodeChanged({
+                changed_files: ['docs/runbook.md'],
+                metrics: {
+                    changed_lines_total: 12
+                },
+                required_reviews: {
+                    code: false,
+                    test: false
+                }
+            });
+
+            assert.equal(result, false);
+        });
+
+        it('uses workspace paths config for legacy fallback classification', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-completion-paths-'));
+
+            try {
+                const configPath = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+                fs.mkdirSync(path.dirname(configPath), { recursive: true });
+                fs.writeFileSync(configPath, JSON.stringify({
+                    runtime_roots: ['docs/'],
+                    code_like_regexes: ['\\.md$']
+                }, null, 2), 'utf8');
+
+                const result = detectCodeChanged({
+                    changed_files: ['docs/runbook.md'],
+                    metrics: {
+                        changed_lines_total: 12
+                    },
+                    required_reviews: {
+                        code: false,
+                        test: false
+                    }
+                }, tempDir);
+
+                assert.equal(result, true);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('returns true when reviews are required even if code-like metrics are absent', () => {
+            const result = detectCodeChanged({
+                changed_files: ['src/main.ts'],
+                required_reviews: {
+                    code: true,
+                    test: true
+                }
+            });
+
+            assert.equal(result, true);
         });
     });
 

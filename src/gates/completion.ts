@@ -16,6 +16,7 @@ import {
     scanProtectedPathHashes,
     evaluateProtectedControlPlaneManifest
 } from './helpers';
+import { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
 import { evaluateIsolationModePostTask, loadIsolationModeConfig } from './isolation-mode';
 import { validateSandbox, compareSandboxToLive } from './isolation-sandbox';
 import {
@@ -52,6 +53,14 @@ export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
     'REVIEW_RECORDED',
     'REVIEW_GATE_PASSED'
 ]);
+
+export const NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze(
+    STAGE_SEQUENCE_ORDER.filter((stage) => stage !== 'REVIEW_RECORDED')
+);
+
+export const NON_CODE_STAGE_SEQUENCE_ORDER = NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER;
+
+export { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
 
 export interface TimelineEventEntry {
     event_type: string;
@@ -210,25 +219,31 @@ function findLatestTimelineEvent(
 export function validateStageSequence(
     events: TimelineEventEntry[],
     codeChanged: boolean,
-    timelinePath: string
+    timelinePath: string,
+    reviewRecordedRequired: boolean = codeChanged
 ): StageSequenceEvidence {
     const normalizedTimelinePath = normalizePath(timelinePath);
     const violations: string[] = [];
     const observedOrder: string[] = [];
-    const expectedStages = codeChanged
+    const expectedStages = reviewRecordedRequired
         ? [...STAGE_SEQUENCE_ORDER]
-        : ['TASK_MODE_ENTERED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED'];
+        : [...NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER];
 
     const anchorStage = expectedStages[expectedStages.length - 1];
     const anchorEntry = anchorStage
         ? findLatestStageOccurrence(events, anchorStage, Number.POSITIVE_INFINITY)
         : null;
 
-    const cycleLocalStages = new Set(
-        codeChanged
-            ? ['PREFLIGHT_CLASSIFIED', 'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_RECORDED', 'REVIEW_GATE_PASSED']
-            : ['COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED']
-    );
+    const cycleLocalStages = new Set([
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        'PREFLIGHT_CLASSIFIED',
+        'IMPLEMENTATION_STARTED',
+        'COMPILE_GATE_PASSED',
+        'REVIEW_PHASE_STARTED',
+        'REVIEW_GATE_PASSED',
+        ...(reviewRecordedRequired ? ['REVIEW_RECORDED'] : [])
+    ]);
 
     let cycleFloorExclusive = Number.NEGATIVE_INFINITY;
     if (anchorEntry) {
@@ -344,23 +359,10 @@ export function validateStageSequence(
 
 /**
  * Detect whether a task changed code, based on the preflight artifact.
- * Returns true when the preflight indicates runtime code changes (changed_lines_total > 0
- * and the task is classified as FULL_PATH or required reviews include code).
+ * Returns true when the preflight indicates code-like/runtime changes or any
+ * review-requiring scope. Non-code categories such as docs/config/audit-only
+ * must not force REVIEW_RECORDED evidence during completion.
  */
-export function detectCodeChanged(preflight: Record<string, unknown> | null): boolean {
-    if (!preflight) return false;
-    const metrics = preflight.metrics as Record<string, unknown> | undefined;
-    const changedLinesTotal = metrics?.changed_lines_total;
-    if (typeof changedLinesTotal === 'number' && changedLinesTotal > 0) {
-        return true;
-    }
-    const changedFiles = preflight.changed_files;
-    if (Array.isArray(changedFiles) && changedFiles.length > 0) {
-        return true;
-    }
-    return false;
-}
-
 function detectZeroDiffPreflight(preflight: Record<string, unknown> | null): boolean {
     if (!preflight) return false;
     const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
@@ -1434,6 +1436,8 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const timelineErrors: string[] = [];
     const orderedEvents = collectOrderedTimelineEvents(timelinePath, timelineErrors);
     const timelineEventTypes = new Set(orderedEvents.map(e => e.event_type));
+    const codeChanged = detectCodeChanged(validatedPreflight.preflight, repoRoot);
+    const reviewRecordedRequired = preflightRequiresAnyReview(validatedPreflight.preflight);
 
     // Propagate timeline parse errors
     errors.push(...timelineErrors);
@@ -1460,8 +1464,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing REVIEW_GATE_PASSED.`);
     }
 
-    // Detect code changes from preflight
-    const codeChanged = detectCodeChanged(validatedPreflight.preflight);
     const zeroDiffEvidence = validateZeroDiffCompletionEvidence(
         validatedPreflight.preflight,
         resolvedTaskId || '',
@@ -1471,7 +1473,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     errors.push(...zeroDiffEvidence.violations);
 
     // Validate stage sequence ordering
-    const stageSequence = validateStageSequence(orderedEvents, codeChanged, timelinePath);
+    const stageSequence = validateStageSequence(orderedEvents, codeChanged, timelinePath, reviewRecordedRequired);
     errors.push(...stageSequence.violations);
 
     const requiredReviews = validatedPreflight.preflight && typeof validatedPreflight.preflight.required_reviews === 'object'
@@ -1487,6 +1489,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const sourceOfTruth = readRuntimeReviewerProvider(repoRoot, resolvedTaskId);
 
     for (const [reviewKey] of REVIEW_CONTRACTS) {
+        const required = !!requiredReviews[reviewKey];
+        if (!required) {
+            continue;
+        }
         const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
         const recordedReviewContextPath = findLatestRecordedReviewContextPath(orderedEvents, reviewKey);
         const reviewContextPath = resolveCanonicalReviewContextPath({
@@ -1501,7 +1507,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         );
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
-        const required = !!requiredReviews[reviewKey];
 
         if (!artifactExists) {
             if (required) {

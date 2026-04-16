@@ -209,9 +209,13 @@ describe('golden: validateStageSequence', () => {
         assert.ok(evidence.violations.some(v => v.includes('COMPILE_GATE_PASSED')));
     });
 
-    it('non-code-changing task uses minimal expected order', () => {
+    it('non-code-changing task uses canonical expected order without review-recorded stage', () => {
         const events = makeEvents([
             'TASK_MODE_ENTERED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
             'COMPILE_GATE_PASSED',
             'REVIEW_PHASE_STARTED',
             'REVIEW_GATE_PASSED'
@@ -222,6 +226,10 @@ describe('golden: validateStageSequence', () => {
         assert.deepEqual(evidence.violations, []);
         assert.deepEqual(evidence.expected_order, [
             'TASK_MODE_ENTERED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
             'COMPILE_GATE_PASSED',
             'REVIEW_PHASE_STARTED',
             'REVIEW_GATE_PASSED'

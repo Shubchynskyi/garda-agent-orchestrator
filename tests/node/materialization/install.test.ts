@@ -683,8 +683,12 @@ describe('runInstall', () => {
             assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'orchestrator.md')));
             assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'code-review.md')));
             assert.ok(fs.existsSync(path.join(projectRoot, '.github', 'agents', 'reviewer.md')));
+            const orchestratorBridge = fs.readFileSync(path.join(projectRoot, '.github', 'agents', 'orchestrator.md'), 'utf8');
             const apiBridge = fs.readFileSync(path.join(projectRoot, '.github', 'agents', 'api-review.md'), 'utf8');
             const infraBridge = fs.readFileSync(path.join(projectRoot, '.github', 'agents', 'infra-review.md'), 'utf8');
+            assert.ok(orchestratorBridge.includes('dependent downstream reviewer'));
+            assert.ok(orchestratorBridge.includes('upstream PASS artifact and receipt'));
+            assert.ok(orchestratorBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
             assert.ok(apiBridge.includes('api-contract-review'));
             assert.ok(infraBridge.includes('devops-k8s'));
         } finally {
@@ -721,6 +725,8 @@ describe('runInstall', () => {
             const workflow = fs.readFileSync(workflowPath, 'utf8');
             const entrypoint = fs.readFileSync(entrypointPath, 'utf8');
             assert.ok(workflow.includes('shared start-task router'));
+            assert.ok(workflow.includes('Do not spawn or pre-launch a dependent downstream reviewer'));
+            assert.ok(workflow.includes('Parallel reviewer fan-out is allowed only between independent review types'));
             assert.ok(entrypoint.includes('.agents/workflows/start-task.md'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
@@ -757,8 +763,87 @@ describe('runInstall', () => {
             const bridge = fs.readFileSync(bridgePath, 'utf8');
             const workflow = fs.readFileSync(workflowPath, 'utf8');
             assert.ok(bridge.includes('.agents/workflows/start-task.md'));
+            assert.ok(bridge.includes('dependent downstream reviewer'));
+            assert.ok(bridge.includes('upstream PASS artifact and receipt'));
+            assert.ok(bridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
             assert.ok(workflow.includes('gate enter-task-mode'));
             assert.ok(workflow.includes('gate completion-gate'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('refreshes stale managed dependent-reviewer wording on rerun install', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'GitHubCopilot',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'GitHubCopilot',
+                initAnswersPath: answersPath
+            });
+
+            const bridgePath = path.join(projectRoot, '.github', 'agents', 'orchestrator.md');
+            const workflowPath = path.join(projectRoot, '.agents', 'workflows', 'start-task.md');
+            const staleBridge = fs.readFileSync(bridgePath, 'utf8')
+                .replace(
+                    'Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.',
+                    'Treat downstream `test` review as dependency-ordered even on delegation-capable platforms; do not fan it out in parallel with required upstream non-`test` reviews.'
+                )
+                .replace(
+                    'Parallel reviewer fan-out is allowed only between independent review types with no dependency edge for the current cycle.',
+                    'Do not treat downstream reviewers as speculative sidecars.'
+                );
+            const staleWorkflow = fs.readFileSync(workflowPath, 'utf8')
+                .replace(
+                    '- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.',
+                    '- Do not spawn downstream `test` reviewers before upstream code review finishes.'
+                )
+                .replace(
+                    '- Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.',
+                    '- Do not parallelize dependent reviews.'
+                );
+            assert.notEqual(staleBridge, fs.readFileSync(bridgePath, 'utf8'));
+            assert.ok(staleBridge.includes('Treat downstream `test` review as dependency-ordered even on delegation-capable platforms'));
+            assert.ok(staleBridge.includes('Do not treat downstream reviewers as speculative sidecars.'));
+            assert.ok(!staleBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.notEqual(staleWorkflow, fs.readFileSync(workflowPath, 'utf8'));
+            assert.ok(staleWorkflow.includes('Do not spawn downstream `test` reviewers before upstream code review finishes.'));
+            assert.ok(staleWorkflow.includes('Do not parallelize dependent reviews.'));
+            assert.ok(!staleWorkflow.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            fs.writeFileSync(bridgePath, staleBridge, 'utf8');
+            fs.writeFileSync(workflowPath, staleWorkflow, 'utf8');
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'GitHubCopilot',
+                initAnswersPath: answersPath
+            });
+
+            const refreshedBridge = fs.readFileSync(bridgePath, 'utf8');
+            const refreshedWorkflow = fs.readFileSync(workflowPath, 'utf8');
+            assert.ok(refreshedBridge.includes('dependent downstream reviewer'));
+            assert.ok(refreshedBridge.includes('upstream PASS artifact and receipt'));
+            assert.ok(refreshedBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(refreshedWorkflow.includes('Do not spawn or pre-launch a dependent downstream reviewer'));
+            assert.ok(refreshedWorkflow.includes('Parallel reviewer fan-out is allowed only between independent review types'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

@@ -711,6 +711,26 @@ describe('cross-provider-router-matrix: drift detection', () => {
             );
         }
     });
+
+    it('every provider bridge states general dependent-reviewer launch discipline', () => {
+        for (const profile of PROVIDER_BRIDGE_PROFILES) {
+            const content = buildProviderOrchestratorAgentContent(
+                profile.providerLabel, 'CLAUDE.md', profile.orchestratorRelativePath
+            );
+            assert.ok(
+                content.includes('dependent downstream reviewer'),
+                `${profile.providerLabel} bridge missing dependent reviewer launch blocker`
+            );
+            assert.ok(
+                content.includes('upstream PASS artifact and receipt'),
+                `${profile.providerLabel} bridge missing upstream PASS receipt requirement`
+            );
+            assert.ok(
+                content.includes('Parallel reviewer fan-out is allowed only between independent review types'),
+                `${profile.providerLabel} bridge missing independent fan-out restriction`
+            );
+        }
+    });
 });
 
 // ===========================================================================

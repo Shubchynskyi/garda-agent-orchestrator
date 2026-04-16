@@ -140,7 +140,7 @@ test('getWhyBlocked returns empty in_progress_tasks when timeline is complete', 
 
         // Write complete non-code-change timeline
         const events = [
-            'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'COMPILE_GATE_PASSED',
+            'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PREFLIGHT_CLASSIFIED', 'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED',
             'REVIEW_PHASE_STARTED', 'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
         ];
         const lines = events.map(function (eventType) {
@@ -157,6 +157,67 @@ test('getWhyBlocked returns empty in_progress_tasks when timeline is complete', 
 
         const result = getWhyBlocked(tmpDir);
         // With complete timeline and no failed gates => not stalled
+        assert.equal(result.in_progress_tasks.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getWhyBlocked does not stall docs-only tasks when canonical non-code review phase is present', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+    const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+
+    try {
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-012 | 🟨 IN_PROGRESS | P1 | docs | Docs-only task | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(reviewsDir, 'T-012-preflight.json'),
+            JSON.stringify({
+                task_id: 'T-012',
+                changed_files: ['docs/runbook.md'],
+                metrics: {
+                    changed_lines_total: 8
+                },
+                required_reviews: {
+                    code: false,
+                    test: false
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const events = [
+            'TASK_MODE_ENTERED',
+            'RULE_PACK_LOADED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_GATE_PASSED',
+            'COMPLETION_GATE_PASSED'
+        ];
+        const lines = events.map(function (eventType) {
+            return JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: 'T-012',
+                event_type: eventType,
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Test'
+            });
+        });
+        fs.writeFileSync(path.join(eventsDir, 'T-012.jsonl'), lines.join('\n') + '\n', 'utf8');
+
+        const result = getWhyBlocked(tmpDir);
         assert.equal(result.in_progress_tasks.length, 0);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -187,6 +248,70 @@ test('getWhyBlocked surfaces stale task-event lock as blocking reason for matchi
         assert.ok(result.in_progress_tasks[0].blocking_reasons.some(function (reason) {
             return reason.reason_code === 'STALE_TASK_EVENT_LOCK';
         }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getWhyBlocked marks code-changing tasks stalled when handshake lifecycle evidence is missing', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-code-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+    const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+
+    try {
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-013 | 🟨 IN_PROGRESS | P1 | runtime | Code task | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(reviewsDir, 'T-013-preflight.json'),
+            JSON.stringify({
+                task_id: 'T-013',
+                changed_files: ['src/main.ts'],
+                scope_category: 'code',
+                metrics: {
+                    changed_lines_total: 8,
+                    code_like_changed_count: 1,
+                    runtime_code_like_changed_count: 1
+                },
+                required_reviews: {
+                    code: true,
+                    test: false
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const events = [
+            'TASK_MODE_ENTERED',
+            'RULE_PACK_LOADED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_GATE_PASSED',
+            'COMPLETION_GATE_PASSED'
+        ];
+        const lines = events.map(function (eventType) {
+            return JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: 'T-013',
+                event_type: eventType,
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Test'
+            });
+        });
+        fs.writeFileSync(path.join(eventsDir, 'T-013.jsonl'), lines.join('\n') + '\n', 'utf8');
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.in_progress_tasks.length, 1);
+        assert.ok(result.in_progress_tasks[0].missing_events.includes('HANDSHAKE_DIAGNOSTICS_RECORDED'));
+        assert.ok(result.in_progress_tasks[0].missing_events.includes('SHELL_SMOKE_PREFLIGHT_RECORDED'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

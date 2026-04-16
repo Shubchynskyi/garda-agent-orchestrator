@@ -5,7 +5,7 @@ import {
     type TimelineCompletenessResult
 } from './lifecycle-events';
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 
 /**
  * Persisted completeness summary for a single task timeline.

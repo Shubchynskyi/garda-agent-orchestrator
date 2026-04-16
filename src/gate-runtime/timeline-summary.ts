@@ -6,8 +6,9 @@ import {
 } from './lifecycle-events';
 import { inspectTaskEventFile } from './task-events';
 import { withFilesystemLock } from './task-events-locking';
+import { detectCodeChanged } from '../gates/preflight-code-change';
 
-const SUMMARY_VERSION = 1;
+const SUMMARY_VERSION = 2;
 const SUMMARY_FILE_NAME = '.timeline-summary.json';
 const SUMMARY_LOCK_FILE_NAME = '.timeline-summary.lock';
 const DEFAULT_SUMMARY_LOCK_TIMEOUT_MS = 500;
@@ -47,6 +48,7 @@ interface TimelineSummaryTestHooks {
 }
 
 let timelineSummaryTestHooks: TimelineSummaryTestHooks | null = null;
+const preflightCodeChangedCache = new Map<string, { file_size_bytes: number; file_mtime_ms: number; code_changed: boolean }>();
 
 // Test-only hook for deterministic race simulation; no production callers should use this.
 export function __setTimelineSummaryTestHooks(hooks: TimelineSummaryTestHooks | null): void {
@@ -213,13 +215,19 @@ export function updateTimelineSummaryForTask(
     taskId: string,
     codeChanged?: boolean
 ): void {
-    // When codeChanged is not provided, auto-detect from the preflight
-    // artifact so the write-side uses the same logic as the read-side
-    // (collectTimelineSummaryForStatus / collectTimelineSummaryForDoctor).
+    // Prefer an explicit hint from the latest PREFLIGHT_CLASSIFIED event.
+    // Otherwise reuse the current summary entry's stable code_changed bit
+    // to avoid re-reading preflight JSON on every append, and only fall
+    // back to preflight parsing when no summary entry exists yet.
     const bundlePath = path.resolve(eventsRoot, '..', '..');
     const effectiveCodeChanged = typeof codeChanged === 'boolean'
         ? codeChanged
-        : detectCodeChangedFromPreflight(bundlePath, taskId);
+        : (() => {
+            const existingSummaryCodeChanged = readTimelineSummaryIndex(eventsRoot)?.entries?.[taskId]?.code_changed;
+            return typeof existingSummaryCodeChanged === 'boolean'
+                ? existingSummaryCodeChanged
+                : detectCodeChangedFromPreflight(bundlePath, taskId);
+        })();
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const entry = buildTimelineSummaryEntry(timelinePath, taskId, effectiveCodeChanged);
     if (!entry) return;
@@ -337,14 +345,22 @@ function detectCodeChangedFromPreflight(bundlePath: string, taskId: string): boo
     const preflightPath = path.join(bundlePath, 'runtime', 'reviews', `${taskId}-preflight.json`);
     try {
         if (!fs.existsSync(preflightPath)) return false;
-        const parsed = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-        const metrics = parsed.metrics && typeof parsed.metrics === 'object' && !Array.isArray(parsed.metrics)
-            ? parsed.metrics as Record<string, unknown>
-            : null;
-        if (metrics && typeof metrics.changed_lines_total === 'number' && metrics.changed_lines_total > 0) {
-            return true;
+        const stat = fs.statSync(preflightPath);
+        if (!stat.isFile()) return false;
+        const cached = preflightCodeChangedCache.get(preflightPath);
+        const file_size_bytes = stat.size;
+        const file_mtime_ms = Math.floor(stat.mtimeMs);
+        if (cached && cached.file_size_bytes === file_size_bytes && cached.file_mtime_ms === file_mtime_ms) {
+            return cached.code_changed;
         }
-        return Array.isArray(parsed.changed_files) && parsed.changed_files.length > 0;
+        const parsed = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const code_changed = detectCodeChanged(parsed, bundlePath);
+        preflightCodeChangedCache.set(preflightPath, {
+            file_size_bytes,
+            file_mtime_ms,
+            code_changed
+        });
+        return code_changed;
     } catch {
         return false;
     }

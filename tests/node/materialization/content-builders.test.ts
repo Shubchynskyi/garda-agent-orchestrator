@@ -308,6 +308,13 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('40-commands.md'));
     });
 
+    it('includes general dependent-reviewer launch discipline in full provider bridges', () => {
+        const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'CLAUDE.md', '.github/agents/orchestrator.md');
+        assert.ok(result!.includes('dependent downstream reviewer'));
+        assert.ok(result!.includes('upstream PASS artifact and receipt'));
+        assert.ok(result!.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+    });
+
     it('builds a compact Antigravity router instead of a full duplicate workflow', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result.includes('Antigravity Agent: Orchestrator'));
@@ -319,6 +326,13 @@ describe('buildProviderOrchestratorAgentContent', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result!.includes('compact command protocol'));
         assert.ok(result!.includes('40-commands.md'));
+    });
+
+    it('includes general dependent-reviewer launch discipline in Antigravity bridge', () => {
+        const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result!.includes('dependent downstream reviewer'));
+        assert.ok(result!.includes('upstream PASS artifact and receipt'));
+        assert.ok(result!.includes('Parallel reviewer fan-out is allowed only between independent review types'));
     });
 });
 
@@ -340,6 +354,12 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
         assert.ok(result.includes('compact command protocol'));
         assert.ok(result.includes('40-commands.md'));
+    });
+
+    it('includes dependent-reviewer launch blockers in hard stops', () => {
+        const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
+        assert.ok(result.includes('Do not spawn or pre-launch a dependent downstream reviewer'));
+        assert.ok(result.includes('Parallel reviewer fan-out is allowed only between independent review types'));
     });
 });
 

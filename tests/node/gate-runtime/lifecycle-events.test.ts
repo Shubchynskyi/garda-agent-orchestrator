@@ -73,7 +73,8 @@ describe('gate-runtime/lifecycle-events', () => {
         it('returns non-code mandatory events when codeChanged is false', () => {
             const events = getMandatoryEvents(false);
             assert.deepStrictEqual([...events], [...MANDATORY_NON_CODE_EVENTS]);
-            assert.ok(!events.includes('PREFLIGHT_CLASSIFIED'));
+            assert.ok(events.includes('PREFLIGHT_CLASSIFIED'));
+            assert.ok(events.includes('IMPLEMENTATION_STARTED'));
         });
 
         it('both sets include COMPLETION_GATE_PASSED', () => {
@@ -113,6 +114,10 @@ describe('gate-runtime/lifecycle-events', () => {
             const events = [
                 'TASK_MODE_ENTERED',
                 'RULE_PACK_LOADED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
                 'COMPILE_GATE_PASSED',
                 'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED',
@@ -144,6 +149,10 @@ describe('gate-runtime/lifecycle-events', () => {
             const events = [
                 'TASK_MODE_ENTERED',
                 'RULE_PACK_LOADED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
                 'COMPILE_GATE_PASSED',
                 'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED'
@@ -202,6 +211,10 @@ describe('gate-runtime/lifecycle-events', () => {
             const events = [
                 'TASK_MODE_ENTERED',
                 'RULE_PACK_LOADED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
                 'COMPILE_GATE_PASSED',
                 'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED_WITH_OVERRIDE',

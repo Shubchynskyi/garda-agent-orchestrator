@@ -2,7 +2,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists } from '../core/fs';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, resolveBundleName } from '../core/constants';
+import { getMandatoryEvents } from '../gate-runtime/lifecycle-event-types';
 import { scanTaskEventLocks, type TaskEventLockHealth } from '../gate-runtime/task-events';
+import { detectCodeChanged } from '../gates/preflight-code-change';
 
 export interface TaskStatus {
     id: string;
@@ -176,26 +178,6 @@ function readTimelineEvents(timelinePath: string): string[] {
     return eventTypes;
 }
 
-const MANDATORY_EVENTS_CODE_CHANGE = Object.freeze([
-    'TASK_MODE_ENTERED',
-    'RULE_PACK_LOADED',
-    'PREFLIGHT_CLASSIFIED',
-    'IMPLEMENTATION_STARTED',
-    'COMPILE_GATE_PASSED',
-    'REVIEW_PHASE_STARTED',
-    'REVIEW_GATE_PASSED',
-    'COMPLETION_GATE_PASSED'
-]);
-
-const MANDATORY_EVENTS_NO_CODE = Object.freeze([
-    'TASK_MODE_ENTERED',
-    'RULE_PACK_LOADED',
-    'COMPILE_GATE_PASSED',
-    'REVIEW_PHASE_STARTED',
-    'REVIEW_GATE_PASSED',
-    'COMPLETION_GATE_PASSED'
-]);
-
 function hasEvent(events: string[], eventType: string): boolean {
     if (eventType === 'REVIEW_GATE_PASSED') {
         return events.includes('REVIEW_GATE_PASSED') || events.includes('REVIEW_GATE_PASSED_WITH_OVERRIDE');
@@ -322,18 +304,13 @@ function analyseTask(task: TaskStatus, bundlePath: string, lockObservations: Tas
     if (pathExists(preflightPath)) {
         try {
             const parsed = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-            const metrics = parsed.metrics as Record<string, unknown> | null;
-            if (metrics && typeof metrics.changed_lines_total === 'number' && metrics.changed_lines_total > 0) {
-                codeChanged = true;
-            } else if (Array.isArray(parsed.changed_files) && parsed.changed_files.length > 0) {
-                codeChanged = true;
-            }
+            codeChanged = detectCodeChanged(parsed, bundlePath);
         } catch {
             // Ignore
         }
     }
 
-    const mandatory = codeChanged ? MANDATORY_EVENTS_CODE_CHANGE : MANDATORY_EVENTS_NO_CODE;
+    const mandatory = getMandatoryEvents(codeChanged);
     const missingEvents = mandatory.filter(function (ev) { return !hasEvent(events, ev); });
     const relatedLocks = lockObservations.filter(function (lock) {
         return lock.scope === 'aggregate' || lock.task_id === task.id;

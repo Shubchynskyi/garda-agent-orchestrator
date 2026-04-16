@@ -51,9 +51,15 @@ function waitForChildExit(child: childProcess.ChildProcess): Promise<{ code: num
     });
 }
 
+const SUMMARY_VERSION = 2;
+
 const ALL_MANDATORY_NON_CODE = [
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
+    'HANDSHAKE_DIAGNOSTICS_RECORDED',
+    'SHELL_SMOKE_PREFLIGHT_RECORDED',
+    'PREFLIGHT_CLASSIFIED',
+    'IMPLEMENTATION_STARTED',
     'COMPILE_GATE_PASSED',
     'REVIEW_PHASE_STARTED',
     'REVIEW_GATE_PASSED',
@@ -101,7 +107,31 @@ function writePreflight(dirPath: string, taskId: string, changedFilesCount: numb
     fs.writeFileSync(preflightPath, JSON.stringify(content), 'utf8');
 }
 
+function writeDocsOnlyPreflight(dirPath: string, taskId: string): void {
+    const reviewsDir = path.join(dirPath, 'runtime', 'reviews');
+    fs.mkdirSync(reviewsDir, { recursive: true });
+    const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+    const content = {
+        task_id: taskId,
+        changed_files: ['docs/runbook.md'],
+        metrics: {
+            changed_lines_total: 10
+        },
+        required_reviews: {
+            code: false,
+            test: false
+        }
+    };
+    fs.writeFileSync(preflightPath, JSON.stringify(content), 'utf8');
+}
+
 describe('gate-runtime/timeline-summary', () => {
+
+    it('uses the lightweight preflight code-change helper instead of importing completion.ts', () => {
+        const source = fs.readFileSync(path.resolve(process.cwd(), 'src/gate-runtime/timeline-summary.ts'), 'utf8');
+        assert.match(source, /from\s+['"]\.\.\/gates\/preflight-code-change['"]/);
+        assert.doesNotMatch(source, /from\s+['"]\.\.\/gates\/completion['"]/);
+    });
 
     describe('getTimelineSummaryPath', () => {
         it('returns path to .timeline-summary.json in the events root', () => {
@@ -132,7 +162,7 @@ describe('gate-runtime/timeline-summary', () => {
 
         it('reads a valid summary index', () => {
             const index: TimelineSummaryIndex = {
-                version: 1,
+                version: SUMMARY_VERSION,
                 updated_at_utc: new Date().toISOString(),
                 entries: {
                     'T-001': {
@@ -154,7 +184,7 @@ describe('gate-runtime/timeline-summary', () => {
             fs.writeFileSync(path.join(tempDir, '.timeline-summary.json'), JSON.stringify(index), 'utf8');
             const result = readTimelineSummaryIndex(tempDir);
             assert.notEqual(result, null);
-            assert.equal(result!.version, 1);
+            assert.equal(result!.version, SUMMARY_VERSION);
             assert.ok(result!.entries['T-001']);
             assert.equal(result!.entries['T-001'].task_id, 'T-001');
         });
@@ -167,14 +197,14 @@ describe('gate-runtime/timeline-summary', () => {
 
         it('writes a valid summary index that can be read back', () => {
             const index: TimelineSummaryIndex = {
-                version: 1,
+                version: SUMMARY_VERSION,
                 updated_at_utc: new Date().toISOString(),
                 entries: {}
             };
             writeTimelineSummaryIndex(tempDir, index);
             const result = readTimelineSummaryIndex(tempDir);
             assert.notEqual(result, null);
-            assert.equal(result!.version, 1);
+            assert.equal(result!.version, SUMMARY_VERSION);
         });
     });
 
@@ -334,7 +364,7 @@ describe('gate-runtime/timeline-summary', () => {
                         if (!clobbered) {
                         clobbered = true;
                         const staleIndex: TimelineSummaryIndex = {
-                            version: 1,
+                            version: SUMMARY_VERSION,
                             updated_at_utc: new Date().toISOString(),
                             entries: {
                                 'T-001': {
@@ -628,6 +658,40 @@ describe('gate-runtime/timeline-summary', () => {
             assert.equal(result.evidence[0].completeness_status, 'COMPLETE');
             assert.equal(result.warnings.length, 0);
         });
+
+        it('ignores old summary-cache versions and falls back to fresh doctor evidence', () => {
+            const bundlePath = tempDir;
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
+            writeDocsOnlyPreflight(tempDir, 'T-001');
+            writeTimelineSummaryIndex(eventsRoot, {
+                version: 1,
+                updated_at_utc: new Date().toISOString(),
+                entries: {
+                    'T-001': {
+                        task_id: 'T-001',
+                        file_size_bytes: 0,
+                        file_mtime_ms: 0,
+                        code_changed: true,
+                        completeness_status: 'INCOMPLETE',
+                        events_found: ['TASK_MODE_ENTERED'],
+                        events_missing: ['PREFLIGHT_CLASSIFIED'],
+                        completeness_violations: ['stale summary entry'],
+                        integrity_status: 'PASSED',
+                        events_scanned: 1,
+                        integrity_event_count: 0,
+                        integrity_violations: []
+                    }
+                }
+            });
+
+            const result = collectTimelineSummaryForDoctor(bundlePath);
+            assert.equal(result.evidence.length, 1);
+            assert.equal(result.evidence[0].task_id, 'T-001');
+            assert.equal(result.evidence[0].completeness_status, 'COMPLETE');
+            assert.equal(result.evidence[0].code_changed, false);
+            assert.equal(result.warnings.length, 0);
+        });
     });
 
     describe('read-only contract', () => {
@@ -701,7 +765,7 @@ describe('gate-runtime/timeline-summary', () => {
             assert.equal(result.healthy, 1);
         });
 
-        it('code_changed flag is respected in completeness checks', () => {
+        it('code_changed flag does not downgrade a timeline that already satisfies the canonical lifecycle', () => {
             const bundlePath = tempDir;
             // Write a timeline with only non-code mandatory events
             writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
@@ -713,10 +777,53 @@ describe('gate-runtime/timeline-summary', () => {
             // Add a preflight that says code changed
             writePreflight(tempDir, 'T-001', 5);
 
-            // Now it needs code-change events too → should be INCOMPLETE
+            // Canonical lifecycle evidence is already complete, so health should remain green
             const result2 = collectTimelineSummaryForStatus(bundlePath);
-            assert.equal(result2.healthy, 0);
-            assert.ok(result2.warnings.some(w => w.includes('Incomplete')));
+            assert.equal(result2.healthy, 1);
+            assert.equal(result2.warnings.length, 0);
+        });
+
+        it('docs-only preflight keeps canonical non-code timelines healthy without recorded reviews', () => {
+            const bundlePath = tempDir;
+            writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
+            writeDocsOnlyPreflight(tempDir, 'T-001');
+
+            const result = collectTimelineSummaryForStatus(bundlePath);
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 1);
+            assert.equal(result.warnings.length, 0);
+        });
+
+        it('ignores old summary-cache versions and falls back to fresh timeline validation', () => {
+            const bundlePath = tempDir;
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
+            writeDocsOnlyPreflight(tempDir, 'T-001');
+            writeTimelineSummaryIndex(eventsRoot, {
+                version: 1,
+                updated_at_utc: new Date().toISOString(),
+                entries: {
+                    'T-001': {
+                        task_id: 'T-001',
+                        file_size_bytes: 0,
+                        file_mtime_ms: 0,
+                        code_changed: true,
+                        completeness_status: 'INCOMPLETE',
+                        events_found: ['TASK_MODE_ENTERED'],
+                        events_missing: ['PREFLIGHT_CLASSIFIED'],
+                        completeness_violations: ['stale summary entry'],
+                        integrity_status: 'PASSED',
+                        events_scanned: 1,
+                        integrity_event_count: 0,
+                        integrity_violations: []
+                    }
+                }
+            });
+
+            const result = collectTimelineSummaryForStatus(bundlePath);
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 1);
+            assert.equal(result.warnings.length, 0);
         });
     });
 });

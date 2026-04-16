@@ -22,6 +22,7 @@ import {
     pruneAggregateLog,
     pruneAggregateLogLocked
 } from '../../../src/gate-runtime/task-events';
+import { collectTimelineSummaryForDoctor } from '../../../src/gate-runtime/timeline-summary';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
 function resolveTaskEventsModulePath() {
@@ -760,6 +761,228 @@ test('appendTaskEvent reclaims aged foreign-host lock when explicit override is 
         } else {
             process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
         }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent summary updates auto-detect code_changed from preflight when reviews are not required', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-summary-code-changed-'));
+    try {
+        const reviewsDir = path.join(tempDir, 'runtime', 'reviews');
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(reviewsDir, 'T-TEST-preflight.json'),
+            JSON.stringify({
+                task_id: 'T-TEST',
+                scope_category: 'code',
+                changed_files: ['src/small-fast-path.ts'],
+                metrics: {
+                    changed_lines_total: 8,
+                    code_like_changed_count: 1,
+                    runtime_code_like_changed_count: 1
+                },
+                required_reviews: {
+                    code: false,
+                    test: false
+                },
+                triggers: {
+                    runtime_code_changed: true
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'TASK_MODE_ENTERED',
+            'PASS',
+            'Seed summary update',
+            null,
+            { passThru: true }
+        );
+
+        assert.ok(result !== null);
+        const summaryPath = path.join(eventsRoot, '.timeline-summary.json');
+        assert.ok(fs.existsSync(summaryPath));
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as {
+            entries?: Record<string, { code_changed?: boolean }>;
+        };
+        assert.equal(summary.entries?.['T-TEST']?.code_changed, true);
+        const doctorSummary = collectTimelineSummaryForDoctor(tempDir);
+        assert.equal(doctorSummary.evidence.length, 1);
+        assert.equal(doctorSummary.evidence[0].task_id, 'T-TEST');
+        assert.equal(doctorSummary.evidence[0].code_changed, true);
+
+        fs.writeFileSync(path.join(reviewsDir, 'T-TEST-preflight.json'), '{invalid json', 'utf8');
+        const secondResult = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'PLAN_CREATED',
+            'INFO',
+            'Reuse existing summary code_changed flag',
+            null,
+            { passThru: true }
+        );
+
+        assert.ok(secondResult !== null);
+        const refreshedSummary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as {
+            entries?: Record<string, { code_changed?: boolean }>;
+        };
+        assert.equal(refreshedSummary.entries?.['T-TEST']?.code_changed, true);
+        const refreshedDoctorSummary = collectTimelineSummaryForDoctor(tempDir);
+        assert.equal(refreshedDoctorSummary.evidence.length, 1);
+        assert.equal(refreshedDoctorSummary.evidence[0].task_id, 'T-TEST');
+        assert.equal(refreshedDoctorSummary.evidence[0].code_changed, true);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent summary updates preserve code_changed=false for docs-only no-review preflight', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-summary-non-code-'));
+    try {
+        const reviewsDir = path.join(tempDir, 'runtime', 'reviews');
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(reviewsDir, 'T-DOCS-preflight.json'),
+            JSON.stringify({
+                task_id: 'T-DOCS',
+                scope_category: 'docs',
+                changed_files: ['docs/usage.md'],
+                metrics: {
+                    changed_lines_total: 12,
+                    code_like_changed_count: 0,
+                    runtime_code_like_changed_count: 0
+                },
+                required_reviews: {
+                    code: false,
+                    test: false
+                },
+                triggers: {
+                    runtime_code_changed: false
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-DOCS',
+            'TASK_MODE_ENTERED',
+            'PASS',
+            'Seed non-code summary update',
+            null,
+            { passThru: true }
+        );
+
+        assert.ok(result !== null);
+        const summaryPath = path.join(eventsRoot, '.timeline-summary.json');
+        assert.ok(fs.existsSync(summaryPath));
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as {
+            entries?: Record<string, { code_changed?: boolean }>;
+        };
+        assert.equal(summary.entries?.['T-DOCS']?.code_changed, false);
+        const doctorSummary = collectTimelineSummaryForDoctor(tempDir);
+        assert.equal(doctorSummary.evidence.length, 1);
+        assert.equal(doctorSummary.evidence[0].task_id, 'T-DOCS');
+        assert.equal(doctorSummary.evidence[0].code_changed, false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent does not refresh summary for telemetry-only non-lifecycle events', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-summary-skip-telemetry-'));
+    try {
+        const reviewsDir = path.join(tempDir, 'runtime', 'reviews');
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(reviewsDir, 'T-TEST-preflight.json'),
+            JSON.stringify({
+                task_id: 'T-TEST',
+                scope_category: 'code',
+                changed_files: ['src/small-fast-path.ts'],
+                metrics: {
+                    changed_lines_total: 8,
+                    code_like_changed_count: 1,
+                    runtime_code_like_changed_count: 1
+                },
+                required_reviews: {
+                    code: false,
+                    test: false
+                },
+                triggers: {
+                    runtime_code_changed: true
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'TASK_MODE_ENTERED',
+            'PASS',
+            'Seed summary update',
+            null,
+            { passThru: true }
+        );
+
+        const summaryPath = path.join(eventsRoot, '.timeline-summary.json');
+        const before = fs.readFileSync(summaryPath, 'utf8');
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-TEST',
+            'SKILL_SELECTED',
+            'INFO',
+            'Telemetry-only event should not rewrite summary',
+            { skill_id: 'code-review' },
+            { passThru: true }
+        );
+
+        assert.ok(result !== null);
+        const after = fs.readFileSync(summaryPath, 'utf8');
+        assert.equal(after, before);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent summary uses PREFLIGHT_CLASSIFIED code_changed hint when preflight is unreadable', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-summary-preflight-hint-'));
+    try {
+        const reviewsDir = path.join(tempDir, 'runtime', 'reviews');
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(path.join(reviewsDir, 'T-HINT-preflight.json'), '{invalid json', 'utf8');
+
+        const result = appendTaskEvent(
+            tempDir,
+            'T-HINT',
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'Seed summary from lifecycle hint',
+            { code_changed: true },
+            { passThru: true }
+        );
+
+        assert.ok(result !== null);
+        const summaryPath = path.join(eventsRoot, '.timeline-summary.json');
+        assert.ok(fs.existsSync(summaryPath));
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as {
+            entries?: Record<string, { code_changed?: boolean }>;
+        };
+        assert.equal(summary.entries?.['T-HINT']?.code_changed, true);
+        const doctorSummary = collectTimelineSummaryForDoctor(tempDir);
+        assert.equal(doctorSummary.evidence.length, 1);
+        assert.equal(doctorSummary.evidence[0].task_id, 'T-HINT');
+        assert.equal(doctorSummary.evidence[0].code_changed, true);
+    } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 });

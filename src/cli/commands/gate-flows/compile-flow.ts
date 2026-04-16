@@ -28,6 +28,7 @@ import { auditGateCommand } from '../../../gates/task-events-summary';
 import type { CommandCompactnessAudit } from '../../../gates/task-events-summary';
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../gates/classify-change';
+import { detectCodeChanged } from '../../../gates/preflight-code-change';
 import {
     getCompileCommandProfile,
     getCompileCommands,
@@ -540,6 +541,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }, parseBooleanOption(options.emitMetrics, true));
 
     if (resolvedTaskId) {
+        const codeChanged = detectCodeChanged(result as unknown as Record<string, unknown>, repoRoot);
         try {
             appendMandatoryTaskEvent(
                 orchestratorRoot,
@@ -554,6 +556,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     output_path: normalizeOptionalPath(outputPath),
                     changed_files_count: result.metrics.changed_files_count,
                     changed_lines_total: result.metrics.changed_lines_total,
+                    code_changed: codeChanged,
                     required_reviews: result.required_reviews,
                     zero_diff_guard: result.zero_diff_guard,
                     budget_forecast: (result as any).budget_forecast || null,

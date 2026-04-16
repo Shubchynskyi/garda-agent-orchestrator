@@ -13,6 +13,21 @@ import {
     type TimelineCompletenessSummary
 } from '../../../src/gate-runtime/timeline-completeness-cache';
 
+const CACHE_VERSION = 2;
+
+const COMPLETE_NON_CODE_EVENTS = [
+    'TASK_MODE_ENTERED',
+    'RULE_PACK_LOADED',
+    'HANDSHAKE_DIAGNOSTICS_RECORDED',
+    'SHELL_SMOKE_PREFLIGHT_RECORDED',
+    'PREFLIGHT_CLASSIFIED',
+    'IMPLEMENTATION_STARTED',
+    'COMPILE_GATE_PASSED',
+    'REVIEW_PHASE_STARTED',
+    'REVIEW_GATE_PASSED',
+    'COMPLETION_GATE_PASSED'
+];
+
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-cache-test-'));
 }
@@ -87,7 +102,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         it('returns valid summary for correct cache', () => {
             const p = path.join(tempDir, 'ok.json');
             const summary: TimelineCompletenessSummary = {
-                cache_version: 1,
+                cache_version: CACHE_VERSION,
                 task_id: 'T-001',
                 timeline_size_bytes: 200,
                 timeline_mtime_ms: 1000,
@@ -107,7 +122,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
 
         it('returns null when required fields are missing', () => {
             const p = path.join(tempDir, 'partial.json');
-            fs.writeFileSync(p, JSON.stringify({ cache_version: 1 }), 'utf8');
+            fs.writeFileSync(p, JSON.stringify({ cache_version: CACHE_VERSION }), 'utf8');
             assert.equal(readCompletenessSummary(p), null);
         });
     });
@@ -120,7 +135,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         it('writes and reads back a summary', () => {
             const p = path.join(tempDir, 'write.json');
             const summary: TimelineCompletenessSummary = {
-                cache_version: 1,
+                cache_version: CACHE_VERSION,
                 task_id: 'T-042',
                 timeline_size_bytes: 500,
                 timeline_mtime_ms: 2000,
@@ -141,7 +156,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         it('creates parent directories if needed', () => {
             const deep = path.join(tempDir, 'a', 'b', 'c', 'summary.json');
             const summary: TimelineCompletenessSummary = {
-                cache_version: 1,
+                cache_version: CACHE_VERSION,
                 task_id: 'T-001',
                 timeline_size_bytes: 0,
                 timeline_mtime_ms: 0,
@@ -166,7 +181,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
             fs.writeFileSync(filePath, 'line1\nline2\n', 'utf8');
             const stat = fs.statSync(filePath);
             const summary: TimelineCompletenessSummary = {
-                cache_version: 1,
+                cache_version: CACHE_VERSION,
                 task_id: 'T-001',
                 timeline_size_bytes: stat.size,
                 timeline_mtime_ms: Math.floor(stat.mtimeMs),
@@ -184,7 +199,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
             fs.writeFileSync(filePath, 'line1\n', 'utf8');
             const stat = fs.statSync(filePath);
             const summary: TimelineCompletenessSummary = {
-                cache_version: 1,
+                cache_version: CACHE_VERSION,
                 task_id: 'T-001',
                 timeline_size_bytes: stat.size + 100,
                 timeline_mtime_ms: Math.floor(stat.mtimeMs),
@@ -202,7 +217,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
             fs.writeFileSync(filePath, 'data\n', 'utf8');
             const stat = fs.statSync(filePath);
             const summary: TimelineCompletenessSummary = {
-                cache_version: 1,
+                cache_version: CACHE_VERSION,
                 task_id: 'T-001',
                 timeline_size_bytes: stat.size,
                 timeline_mtime_ms: Math.floor(stat.mtimeMs),
@@ -217,7 +232,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
 
         it('returns false when file does not exist', () => {
             const summary: TimelineCompletenessSummary = {
-                cache_version: 1,
+                cache_version: CACHE_VERSION,
                 task_id: 'T-001',
                 timeline_size_bytes: 50,
                 timeline_mtime_ms: 1000,
@@ -249,12 +264,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('populates cache on first call and uses cache on second call', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-CACHE', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-CACHE', COMPLETE_NON_CODE_EVENTS);
             const cachePath = getCompletenessCachePath(timelinePath);
 
             // First call: cache miss, full read
@@ -271,12 +281,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('invalidates cache when timeline is modified', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-STALE', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-STALE', COMPLETE_NON_CODE_EVENTS);
 
             // Populate cache
             const r1 = validateTimelineCompletenessWithCache(timelinePath, 'T-STALE', false);
@@ -300,21 +305,19 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('invalidates cache when codeChanged flag changes', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-FLAG', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-FLAG', COMPLETE_NON_CODE_EVENTS);
+            const cachePath = getCompletenessCachePath(timelinePath);
 
             // Populate with codeChanged=false
             const r1 = validateTimelineCompletenessWithCache(timelinePath, 'T-FLAG', false);
             assert.equal(r1.status, 'COMPLETE');
 
-            // Same file but different codeChanged flag; cache should invalidate
+            // Same file but different codeChanged flag; cache should invalidate and rewrite metadata
             const r2 = validateTimelineCompletenessWithCache(timelinePath, 'T-FLAG', true);
-            assert.equal(r2.status, 'INCOMPLETE');
-            assert.ok(r2.events_missing.length > 0);
+            assert.equal(r2.status, 'COMPLETE');
+            const refreshed = readCompletenessSummary(cachePath);
+            assert.ok(refreshed);
+            assert.equal(refreshed.code_changed, true);
         });
 
         it('returns INCOMPLETE for incomplete timeline and caches that state', () => {
@@ -335,12 +338,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('tolerates corrupted cache file and falls back to full read', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-CORRUPT', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-CORRUPT', COMPLETE_NON_CODE_EVENTS);
             const cachePath = getCompletenessCachePath(timelinePath);
 
             // Write garbage to cache
@@ -352,12 +350,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('handles task_id mismatch in cache by re-reading', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-ID1', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-ID1', COMPLETE_NON_CODE_EVENTS);
             const cachePath = getCompletenessCachePath(timelinePath);
 
             // Populate cache for T-ID1
@@ -377,12 +370,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('invalidates cache on mtime-only change (same file size)', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-MTIME', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-MTIME', COMPLETE_NON_CODE_EVENTS);
             const cachePath = getCompletenessCachePath(timelinePath);
 
             // Populate cache
@@ -414,12 +402,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('proves cache hit skips full re-read by verifying cache file is not rewritten', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-PROOF', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-PROOF', COMPLETE_NON_CODE_EVENTS);
             const cachePath = getCompletenessCachePath(timelinePath);
 
             // First call: populates cache
@@ -439,12 +422,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('readOnly=true does not write a cache file on cache miss', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-RO', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-RO', COMPLETE_NON_CODE_EVENTS);
             const cachePath = getCompletenessCachePath(timelinePath);
 
             const result = validateTimelineCompletenessWithCache(timelinePath, 'T-RO', false, true);
@@ -453,12 +431,7 @@ describe('gate-runtime/timeline-completeness-cache', () => {
         });
 
         it('readOnly=true still uses existing cache for reads', () => {
-            const nonCodeEvents = [
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED',
-                'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED', 'COMPLETION_GATE_PASSED'
-            ];
-            const timelinePath = writeTimeline(tempDir, 'T-RO2', nonCodeEvents);
+            const timelinePath = writeTimeline(tempDir, 'T-RO2', COMPLETE_NON_CODE_EVENTS);
             const cachePath = getCompletenessCachePath(timelinePath);
 
             // First call with readOnly=false populates the cache
@@ -468,6 +441,31 @@ describe('gate-runtime/timeline-completeness-cache', () => {
             // Second call with readOnly=true should still return correct result from cache
             const r2 = validateTimelineCompletenessWithCache(timelinePath, 'T-RO2', false, true);
             assert.equal(r2.status, 'COMPLETE');
+        });
+
+        it('rejects cached summaries from the previous lifecycle contract version', () => {
+            const timelinePath = writeTimeline(tempDir, 'T-OLD', COMPLETE_NON_CODE_EVENTS);
+            const cachePath = getCompletenessCachePath(timelinePath);
+            const stat = fs.statSync(timelinePath);
+            fs.writeFileSync(cachePath, JSON.stringify({
+                cache_version: 1,
+                task_id: 'T-OLD',
+                timeline_size_bytes: stat.size,
+                timeline_mtime_ms: Math.floor(stat.mtimeMs),
+                code_changed: false,
+                status: 'COMPLETE',
+                events_found: ['TASK_MODE_ENTERED'],
+                events_missing: [],
+                violations: []
+            }, null, 2), 'utf8');
+
+            const result = validateTimelineCompletenessWithCache(timelinePath, 'T-OLD', false);
+            assert.equal(result.status, 'COMPLETE');
+            const refreshed = readCompletenessSummary(cachePath);
+            assert.ok(refreshed);
+            assert.equal(refreshed.cache_version, CACHE_VERSION);
+            assert.ok(refreshed.events_found.includes('PREFLIGHT_CLASSIFIED'));
+            assert.ok(refreshed.events_found.includes('IMPLEMENTATION_STARTED'));
         });
     });
 });

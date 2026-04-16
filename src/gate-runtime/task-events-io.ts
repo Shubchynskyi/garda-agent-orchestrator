@@ -20,8 +20,32 @@ import {
     toTrimmedLowerCaseString,
     toTrimmedString
 } from './task-events-helpers';
+import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
 
 const TAIL_READ_CHUNK_SIZE = 4096;
+const SUMMARY_REFRESH_EVENT_TYPES = new Set<string>([
+    LIFECYCLE_EVENT_TYPES.TASK_MODE_ENTERED,
+    LIFECYCLE_EVENT_TYPES.PLAN_CREATED,
+    LIFECYCLE_EVENT_TYPES.RULE_PACK_LOADED,
+    LIFECYCLE_EVENT_TYPES.RULE_PACK_LOAD_FAILED,
+    LIFECYCLE_EVENT_TYPES.HANDSHAKE_DIAGNOSTICS_RECORDED,
+    LIFECYCLE_EVENT_TYPES.SHELL_SMOKE_PREFLIGHT_RECORDED,
+    LIFECYCLE_EVENT_TYPES.PREFLIGHT_STARTED,
+    LIFECYCLE_EVENT_TYPES.PREFLIGHT_CLASSIFIED,
+    LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED,
+    LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED,
+    LIFECYCLE_EVENT_TYPES.COMPILE_GATE_PASSED,
+    LIFECYCLE_EVENT_TYPES.COMPILE_GATE_FAILED,
+    LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
+    LIFECYCLE_EVENT_TYPES.REVIEW_RECORDED,
+    LIFECYCLE_EVENT_TYPES.REVIEW_GATE_PASSED,
+    LIFECYCLE_EVENT_TYPES.REVIEW_GATE_PASSED_WITH_OVERRIDE,
+    LIFECYCLE_EVENT_TYPES.REVIEW_GATE_FAILED,
+    LIFECYCLE_EVENT_TYPES.DOC_IMPACT_ASSESSED,
+    LIFECYCLE_EVENT_TYPES.DOC_IMPACT_ASSESSMENT_FAILED,
+    LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_PASSED,
+    LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_FAILED
+]);
 
 export interface TaskEventAppendState {
     matching_events: number;
@@ -324,10 +348,25 @@ function applyAggregateLockTelemetry(
     result.lock_telemetry.aggregate_lock_stale_reason = telemetry.staleLockReason;
 }
 
-function updateTimelineSummaryBestEffort(eventsRoot: string, taskId: string): void {
+function getCodeChangedHintFromEvent(event: TaskEvent | null): boolean | undefined {
+    if (!event || event.event_type !== 'PREFLIGHT_CLASSIFIED') {
+        return undefined;
+    }
+    if (!event.details || typeof event.details !== 'object' || Array.isArray(event.details)) {
+        return undefined;
+    }
+    const details = event.details as Record<string, unknown>;
+    return typeof details.code_changed === 'boolean' ? details.code_changed : undefined;
+}
+
+function shouldRefreshTimelineSummary(event: TaskEvent): boolean {
+    return SUMMARY_REFRESH_EVENT_TYPES.has(event.event_type);
+}
+
+function updateTimelineSummaryBestEffortForEvent(eventsRoot: string, taskId: string, event: TaskEvent | null): void {
     try {
         const { updateTimelineSummaryForTask } = require('./timeline-summary') as typeof import('./timeline-summary');
-        updateTimelineSummaryForTask(eventsRoot, taskId, false);
+        updateTimelineSummaryForTask(eventsRoot, taskId, getCodeChangedHintFromEvent(event));
     } catch {
         // Summary update failure is non-fatal.
     }
@@ -468,7 +507,9 @@ export function appendTaskEvent(
         process.stderr.write(`WARNING: ${warning}\n`);
     }
 
-    updateTimelineSummaryBestEffort(paths.eventsRoot, safeTaskId);
+    if (shouldRefreshTimelineSummary(event)) {
+        updateTimelineSummaryBestEffortForEvent(paths.eventsRoot, safeTaskId, event);
+    }
     return passThru ? result : null;
 }
 
@@ -542,7 +583,9 @@ export async function appendTaskEventAsync(
         process.stderr.write(`WARNING: ${warning}\n`);
     }
 
-    updateTimelineSummaryBestEffort(paths.eventsRoot, safeTaskId);
+    if (shouldRefreshTimelineSummary(event)) {
+        updateTimelineSummaryBestEffortForEvent(paths.eventsRoot, safeTaskId, event);
+    }
     return passThru ? result : null;
 }
 
