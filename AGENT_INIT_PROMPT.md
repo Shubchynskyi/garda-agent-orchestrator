@@ -26,6 +26,7 @@ Create a fully working agent orchestration workspace where canonical rules live 
        2. if the answer is `multiple`, ask again with the full supported option list and allow comma-separated selection;
      - do not collapse this required question into only `Only <canonical>` plus a generic `Type your answer` fallback;
      - treat this active-agent-files confirmation as a required agent-initialization question before the workspace can be considered fully initialized.
+     - if this step already collected or explicitly confirmed `<active-agent-files>`, treat that answer as satisfying the mandatory `ActiveAgentFiles` question in step 3 and do not ask the identical file-list prompt again.
    - If the file is missing, invalid, or incomplete, ask only the missing mandatory answers in the exact sequence below while preserving every already valid answer.
 3. When questions are required, ask missing mandatory first-run questions in this exact sequence:
    - Ask: `Which language should be used for assistant explanations and help in this project?`
@@ -35,10 +36,12 @@ Create a fully working agent orchestration workspace where canonical rules live 
    - Immediately switch all subsequent user-facing messages to `<assistant-language>`, starting with the next question.
    - In `<assistant-language>`, ask: `What response brevity should be default: concise or detailed?`
    - Wait for answer and store as `<assistant-brevity>`.
+   - Only ask the `ActiveAgentFiles` question in this step if `<active-agent-files>` has not already been explicitly confirmed in step 2.
    - In `<assistant-language>`, ask: `Which agent entrypoint files do you actively use in this project? You may select multiple from CLAUDE.md, AGENTS.md, GEMINI.md, QWEN.md, .github/copilot-instructions.md, .windsurf/rules/rules.md, .junie/guidelines.md, and .antigravity/rules.md. Recommendation: include the agent files you work with most often.`
    - For that question, visibly present the supported files themselves as selectable options; do not leave them hidden only inside the sentence text.
    - If the UI supports multi-select, show the full supported option set directly.
    - If the UI does not support multi-select, first ask whether the user wants `canonical-only` or `multiple active files`, then show the full supported option set and allow comma-separated selection.
+   - If step 2 already collected `<active-agent-files>`, reuse that answer here and continue to the next missing mandatory question instead of repeating the same list-selection prompt.
    - Store the answer as `<active-agent-files>`. If the user wants canonical-only usage, save exactly that canonical entrypoint as the explicit answer.
    - In `<assistant-language>`, ask: `Which source-of-truth file should be canonical for rules: Claude (CLAUDE.md), Codex (AGENTS.md), Gemini (GEMINI.md), Qwen (QWEN.md), GitHubCopilot (.github/copilot-instructions.md), Windsurf (.windsurf/rules/rules.md), Junie (.junie/guidelines.md), or Antigravity (.antigravity/rules.md)? All non-selected entrypoint files will redirect to this selected file. Recommendation: choose the agent file you work with most often, ideally from the active files you just selected.`
    - Wait for answer and store as `<source-of-truth>`.
@@ -172,6 +175,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - After `garda setup`, treat the 6 answers as already collected; the agent must not repeat them unless the file is missing, invalid, incomplete, or `AssistantLanguage` cannot be confidently recognized.
 - After `garda setup`, if `ActiveAgentFiles` is still missing, empty, or canonical-only, the agent must explicitly ask the user to confirm which agent entrypoint files are actively used before declaring the workspace ready.
 - When asking about `ActiveAgentFiles`, the agent must expose the supported entrypoint files as explicit visible options; it is not acceptable to offer only `Only <canonical>` plus a generic free-text input.
+- When the single-choice fallback is used for `ActiveAgentFiles`, the agent may ask at most one follow-up selection question after `multiple`; once the user has provided the supported file list, do not repeat the identical file-list prompt.
 - Always validate and normalize `AssistantLanguage` into a clear agent-readable label before saving or re-saving init answers.
 - If `AssistantLanguage` cannot be confidently recognized, ask the user for clarification before continuing.
 - Never silently infer or expand `ActiveAgentFiles`.

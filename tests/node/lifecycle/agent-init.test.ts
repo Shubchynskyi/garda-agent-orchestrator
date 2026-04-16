@@ -4,11 +4,32 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
+import { getSetupAnswerDefaults } from '../../../src/cli/commands/setup';
 import { runAgentInit } from '../../../src/lifecycle/agent-init';
+import { getStatusSnapshot } from '../../../src/validators/status';
+import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../../src/core/constants';
+
+const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
+const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
 
 function writeJson(filePath: string, value: unknown) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
+}
+
+function writeText(filePath: string, value: string) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, value, 'utf8');
+}
+
+function makeCompliantEntrypoint(name: string): string {
+    return [
+        MANAGED_START,
+        `# ${name}`,
+        'This file is a redirect.',
+        'Hard stop: open `.agents/workflows/start-task.md`.',
+        MANAGED_END
+    ].join('\n');
 }
 
 test('runAgentInit writes finalized init answers and agent-init state', () => {
@@ -61,6 +82,81 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         assert.equal(persistedState.VerificationPassed, true);
         assert.equal(persistedState.ManifestValidationPassed, true);
         assert.deepEqual(persistedState.ActiveAgentFiles, ['CLAUDE.md', 'AGENTS.md']);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup/status/agent-init handoff keeps ActiveAgentFiles as a single pending checkpoint until one explicit confirmation clears it', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-handoff-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const runtimeRoot = path.join(bundleRoot, 'runtime');
+    const defaults = getSetupAnswerDefaults(workspaceRoot, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+        sourceOfTruth: 'Codex'
+    });
+
+    try {
+        assert.equal(defaults.activeAgentFiles, 'AGENTS.md');
+
+        writeJson(path.join(runtimeRoot, 'init-answers.json'), {
+            AssistantLanguage: defaults.assistantLanguage,
+            AssistantBrevity: defaults.assistantBrevity,
+            SourceOfTruth: defaults.sourceOfTruth,
+            EnforceNoAutoCommit: String(defaults.enforceNoAutoCommit),
+            ClaudeOrchestratorFullAccess: String(defaults.claudeOrchestratorFullAccess),
+            TokenEconomyEnabled: String(defaults.tokenEconomyEnabled),
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: defaults.activeAgentFiles
+        });
+        writeJson(path.join(runtimeRoot, 'agent-init-state.json'), {
+            Version: 1,
+            UpdatedAt: new Date().toISOString(),
+            OrchestratorVersion: '9.9.9-test',
+            AssistantLanguage: 'English',
+            SourceOfTruth: 'Codex',
+            AssistantLanguageConfirmed: true,
+            ActiveAgentFilesConfirmed: false,
+            ProjectRulesUpdated: false,
+            SkillsPromptCompleted: false,
+            VerificationPassed: false,
+            ManifestValidationPassed: false,
+            ActiveAgentFiles: ['AGENTS.md']
+        });
+
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeText(path.join(bundleRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2));
+        writeText(path.join(bundleRoot, 'live', 'USAGE.md'), '# Usage\n');
+        writeText(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
+        writeText(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        writeText(path.join(workspaceRoot, '.agents', 'workflows', 'start-task.md'), [MANAGED_START, '# Start Task', 'Shared router.', MANAGED_END].join('\n'));
+        writeText(path.join(workspaceRoot, 'AGENTS.md'), makeCompliantEntrypoint('AGENTS.md'));
+        writeText(path.join(workspaceRoot, 'CLAUDE.md'), makeCompliantEntrypoint('CLAUDE.md'));
+
+        const pendingSnapshot = getStatusSnapshot(workspaceRoot);
+        assert.equal(pendingSnapshot.agentInitializationPendingReason, 'ACTIVE_AGENT_FILES_PENDING');
+        assert.equal(pendingSnapshot.activeAgentFiles, 'AGENTS.md');
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md, CLAUDE.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.readyForTasks, true);
+
+        const readySnapshot = getStatusSnapshot(workspaceRoot);
+        assert.equal(readySnapshot.agentInitializationPendingReason, null);
+        assert.equal(readySnapshot.readyForTasks, true);
+        assert.equal(readySnapshot.activeAgentFiles, 'CLAUDE.md, AGENTS.md');
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

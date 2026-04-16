@@ -24,6 +24,14 @@ test('AGENT_INIT_PROMPT requires explicit active-agent-files confirmation', () =
     assert.doesNotMatch(content, /decide yourself whether additional managed entrypoint files are actually needed/i);
 });
 
+test('AGENT_INIT_PROMPT avoids duplicate active-agent-files follow-up after step-2 confirmation', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
+    assert.match(content, /treat that answer as satisfying the mandatory `ActiveAgentFiles` question in step 3 and do not ask the identical file-list prompt again/i);
+    assert.match(content, /Only ask the `ActiveAgentFiles` question in this step if `<active-agent-files>` has not already been explicitly confirmed in step 2\./i);
+    assert.match(content, /If step 2 already collected `<active-agent-files>`, reuse that answer here and continue to the next missing mandatory question instead of repeating the same list-selection prompt\./i);
+    assert.match(content, /the agent may ask at most one follow-up selection question after `multiple`; once the user has provided the supported file list, do not repeat the identical file-list prompt\./i);
+});
+
 test('AGENT_INIT_PROMPT promotes CollectedVia to AGENT_INIT_PROMPT on language or agent-file clarification', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
     assert.match(content, /set `CollectedVia` to `AGENT_INIT_PROMPT\.md` if the agent had to collect one or more missing mandatory answers, clarify `AssistantLanguage`, or ask\/confirm `ActiveAgentFiles`\./);
