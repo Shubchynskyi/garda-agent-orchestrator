@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
+import { inspectCompletionGateFinalizationLock } from './finalization-lock';
 import { fileSha256, joinOrchestratorPath, resolvePathInsideRepo, toPosix } from './helpers';
 import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './task-events-summary';
 
@@ -109,8 +110,17 @@ export interface TaskAuditSummaryResult {
     profile_review_decisions: ProfileReviewDecisionSummary | null;
     evidence: EvidenceArtifact[];
     blockers: BlockerEntry[];
+    point_in_time_snapshot: PointInTimeSnapshot;
     final_report_contract: FinalReportContract;
     final_closeout: FinalCloseoutArtifact;
+}
+
+export interface PointInTimeSnapshot {
+    status: 'STABLE' | 'FINALIZATION_IN_FLIGHT';
+    gate: 'completion-gate' | null;
+    message: string | null;
+    recommended_action: string | null;
+    lock_path: string | null;
 }
 
 interface ProfileReviewDecisionSummary {
@@ -480,6 +490,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     // -----------------------------------------------------------------------
     const gates: GateOutcome[] = [];
     const blockers: BlockerEntry[] = [];
+    let pointInTimeSnapshot: PointInTimeSnapshot = {
+        status: 'STABLE',
+        gate: null,
+        message: null,
+        recommended_action: null,
+        lock_path: null
+    };
 
     for (const { gate, pass_event, fail_events } of LIFECYCLE_GATES) {
         // Also accept REVIEW_GATE_PASSED_WITH_OVERRIDE as a pass
@@ -727,7 +744,23 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         (g) => g.gate === 'completion-gate' && g.status === 'PASS'
     );
     const hasFailedGate = gates.some((g) => g.status === 'FAIL');
+    const failedGateNames = gates.filter((g) => g.status === 'FAIL').map((g) => g.gate);
+    const hasNonCompletionFailure = failedGateNames.some((gateName) => gateName !== 'completion-gate');
     const hasIntegrityFailure = integrityStatus === 'FAILED';
+    const completionGateLock = inspectCompletionGateFinalizationLock(reviewsRoot, safeTaskId);
+    if (completionGateLock.active || completionGateLock.stale) {
+        pointInTimeSnapshot = {
+            status: 'FINALIZATION_IN_FLIGHT',
+            gate: 'completion-gate',
+            message: completionGateLock.active
+                ? 'Completion gate is currently in flight, so this audit summary is a point-in-time snapshot and may still reflect an older completion result.'
+                : 'Completion finalization lock is stale or missing owner metadata, so this audit summary is treated as a point-in-time snapshot and may still reflect an older completion result.',
+            recommended_action: completionGateLock.active
+                ? 'Re-run task-audit-summary sequentially after completion-gate finishes.'
+                : 'Verify that no completion-gate process is still running, then re-run task-audit-summary sequentially.',
+            lock_path: toPosix(completionGateLock.lock_path)
+        };
+    }
 
     if (hasIntegrityFailure) {
         blockers.push({
@@ -736,8 +769,26 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         });
     }
 
+    const hasNonCompletionBlockers = blockers.some((blocker) => blocker.gate !== 'completion-gate');
+    if (
+        pointInTimeSnapshot.status === 'FINALIZATION_IN_FLIGHT'
+        && !hasIntegrityFailure
+        && !hasNonCompletionBlockers
+        && !hasNonCompletionFailure
+    ) {
+        for (let index = blockers.length - 1; index >= 0; index--) {
+            if (blockers[index].gate === 'completion-gate') {
+                blockers.splice(index, 1);
+            }
+        }
+    }
+
     let status: 'PASS' | 'BLOCKED' | 'INCOMPLETE';
-    if (hasCompletionPass && blockers.length === 0 && !hasIntegrityFailure) {
+    if (pointInTimeSnapshot.status === 'FINALIZATION_IN_FLIGHT') {
+        status = !hasIntegrityFailure && blockers.length === 0 && !hasNonCompletionFailure
+            ? 'INCOMPLETE'
+            : 'BLOCKED';
+    } else if (hasCompletionPass && blockers.length === 0 && !hasIntegrityFailure) {
         status = 'PASS';
     } else if (hasFailedGate || blockers.length > 0) {
         status = 'BLOCKED';
@@ -758,7 +809,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         status: status === 'PASS' ? 'READY' : 'NOT_READY',
         blocker: status === 'PASS'
             ? null
-            : 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
+            : pointInTimeSnapshot.status === 'FINALIZATION_IN_FLIGHT' && status === 'INCOMPLETE'
+                ? `${pointInTimeSnapshot.message} ${pointInTimeSnapshot.recommended_action}`
+                : 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
         required_order: [
             'implementation summary',
             commitCommand.suggestion,
@@ -824,6 +877,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         profile_review_decisions: profileReviewDecisions,
         evidence,
         blockers,
+        point_in_time_snapshot: pointInTimeSnapshot,
         final_report_contract: finalReportContract,
         final_closeout: finalCloseout
     };
@@ -883,6 +937,18 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         summary.final_closeout = closeout;
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);
+        return summary;
+    }
+
+    if (summary.point_in_time_snapshot.status === 'FINALIZATION_IN_FLIGHT') {
+        const jsonExists = fs.existsSync(jsonPath);
+        const markdownExists = fs.existsSync(markdownPath);
+        summary.final_closeout = {
+            ...summary.final_closeout,
+            artifact_state: jsonExists || markdownExists ? 'MATERIALIZED' : 'NOT_READY'
+        };
+        updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, jsonExists);
+        updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, markdownExists);
         return summary;
     }
 
@@ -989,6 +1055,20 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         lines.push('Blockers:');
         for (const b of summary.blockers) {
             lines.push(`  [!] ${b.gate}: ${b.reason}`);
+        }
+    }
+
+    if (summary.point_in_time_snapshot.status !== 'STABLE') {
+        lines.push('');
+        lines.push(`PointInTimeSnapshot: ${summary.point_in_time_snapshot.status}`);
+        if (summary.point_in_time_snapshot.message) {
+            lines.push(`  Reason: ${summary.point_in_time_snapshot.message}`);
+        }
+        if (summary.point_in_time_snapshot.recommended_action) {
+            lines.push(`  RecommendedAction: ${summary.point_in_time_snapshot.recommended_action}`);
+        }
+        if (summary.point_in_time_snapshot.lock_path) {
+            lines.push(`  LockPath: ${summary.point_in_time_snapshot.lock_path}`);
         }
     }
 

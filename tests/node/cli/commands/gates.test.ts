@@ -2660,6 +2660,81 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('task-audit-summary preserves existing final closeout artifacts while completion finalization is in flight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-task-audit-summary-inflight-finalization';
+        seedTaskQueue(repoRoot, taskId, '🟧 IN_REVIEW');
+        seedInitAnswers(repoRoot);
+        writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'COMPLETION_GATE_PASSED',
+            'PASS',
+            'Older completion gate passed before the current rerun.',
+            {}
+        );
+        const lockPath = path.join(getReviewsRoot(repoRoot), `${taskId}-completion-gate.lock`);
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({ pid: process.pid }), 'utf8');
+        const staleJsonPath = path.join(getReviewsRoot(repoRoot), `${taskId}-final-closeout.json`);
+        const staleMarkdownPath = path.join(getReviewsRoot(repoRoot), `${taskId}-final-closeout.md`);
+        fs.writeFileSync(staleJsonPath, '{}\n', 'utf8');
+        fs.writeFileSync(staleMarkdownPath, 'stale\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalStdoutWrite = process.stdout.write;
+        const capturedStdout: string[] = [];
+        process.exitCode = 0;
+        process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): boolean => {
+            capturedStdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString(typeof encoding === 'string' ? encoding : 'utf8'));
+            if (typeof encoding === 'function') {
+                encoding();
+            } else if (typeof callback === 'function') {
+                callback();
+            }
+            return true;
+        }) as typeof process.stdout.write;
+
+        try {
+            process.chdir(repoRoot);
+            await runCliMain([
+                'gate',
+                'task-audit-summary',
+                '--task-id', taskId,
+                '--repo-root', repoRoot,
+                '--as-json'
+            ]);
+        } finally {
+            process.stdout.write = originalStdoutWrite;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const rendered = JSON.parse(capturedStdout.join(''));
+        assert.equal(rendered.status, 'INCOMPLETE');
+        assert.equal(rendered.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
+        assert.match(rendered.final_report_contract.blocker, /point-in-time snapshot/i);
+        assert.match(rendered.final_report_contract.blocker, /Re-run task-audit-summary sequentially/i);
+        assert.equal(fs.existsSync(staleJsonPath), true);
+        assert.equal(fs.existsSync(staleMarkdownPath), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('defaults required review verdicts from preflight when CLI verdict flags are omitted', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-defaulted-verdicts';

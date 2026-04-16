@@ -11,6 +11,7 @@ import {
     synchronizeFinalCloseoutArtifacts,
     type TaskAuditSummaryResult
 } from '../../../src/gates/task-audit-summary';
+import { inspectCompletionGateFinalizationLock } from '../../../src/gates/finalization-lock';
 
 function makeTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'task-audit-test-'));
@@ -32,6 +33,13 @@ function writePreflight(reviewsDir: string, taskId: string, data: Record<string,
 function writeArtifact(reviewsDir: string, taskId: string, suffix: string, data: unknown): void {
     const content = typeof data === 'string' ? data : JSON.stringify(data);
     fs.writeFileSync(path.join(reviewsDir, `${taskId}${suffix}`), content, 'utf8');
+}
+
+function writeActiveCompletionLock(reviewsDir: string, taskId: string): string {
+    const lockPath = path.join(reviewsDir, `${taskId}-completion-gate.lock`);
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({ pid: process.pid }), 'utf8');
+    return lockPath;
 }
 
 describe('gates/task-audit-summary', () => {
@@ -725,6 +733,117 @@ describe('gates/task-audit-summary', () => {
             assert.ok(result.blockers.some(b => b.gate === 'completion-gate'));
         });
 
+        it('reports INCOMPLETE point-in-time snapshot when completion finalization is still in flight', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_FAILED',
+                outcome: 'FAIL',
+                actor: 'gate',
+                message: 'Older completion gate failed.'
+            });
+            const lockPath = writeActiveCompletionLock(reviewsDir, TASK_ID);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'INCOMPLETE');
+            assert.equal(result.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
+            assert.equal(result.point_in_time_snapshot.gate, 'completion-gate');
+            assert.equal(result.point_in_time_snapshot.lock_path, lockPath.replace(/\\/g, '/'));
+            assert.equal(result.blockers.find((entry) => entry.gate === 'completion-gate'), undefined);
+            assert.match(result.final_report_contract.blocker || '', /point-in-time snapshot/i);
+            assert.match(result.final_report_contract.blocker || '', /Re-run task-audit-summary sequentially/i);
+        });
+
+        it('keeps BLOCKED when non-completion blockers remain during in-flight finalization', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_FAILED',
+                outcome: 'FAIL',
+                actor: 'gate',
+                message: 'Completion gate failed.'
+            });
+            writeActiveCompletionLock(reviewsDir, TASK_ID);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/foo.ts'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: { code: true }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'BLOCKED');
+            assert.equal(result.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
+            assert.ok(result.blockers.some((entry) => entry.gate === 'code-review'));
+        });
+
+        it('degrades an older completion pass to INCOMPLETE while finalization remains in flight', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Older completion gate passed.'
+            });
+            const lockPath = writeActiveCompletionLock(reviewsDir, TASK_ID);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'INCOMPLETE');
+            assert.equal(result.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
+            assert.equal(result.point_in_time_snapshot.lock_path, lockPath.replace(/\\/g, '/'));
+            assert.equal(result.final_report_contract.status, 'NOT_READY');
+            assert.match(result.final_report_contract.blocker || '', /point-in-time snapshot/i);
+        });
+
+        it('treats stale finalization lock metadata as a point-in-time snapshot for an older completion pass', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Older completion gate passed.'
+            });
+            const lockPath = writeActiveCompletionLock(reviewsDir, TASK_ID);
+            fs.rmSync(path.join(lockPath, 'owner.json'), { force: true });
+            const staleTime = new Date(Date.now() - 60_000);
+            fs.utimesSync(lockPath, staleTime, staleTime);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'INCOMPLETE');
+            assert.equal(result.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
+            assert.match(result.point_in_time_snapshot.message || '', /stale or missing owner metadata/i);
+            assert.match(result.final_report_contract.blocker || '', /Verify that no completion-gate process is still running/i);
+        });
+
         it('handles missing events file gracefully', () => {
             // No events file created at all
             const result = buildTaskAuditSummary({
@@ -1006,6 +1125,39 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.artifact_state, 'REMOVED');
             assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, false);
         });
+
+        it('preserves existing final closeout artifacts when an in-flight snapshot becomes stale before sync', () => {
+            const jsonPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.json`);
+            const markdownPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.md`);
+            fs.writeFileSync(jsonPath, '{}\n', 'utf8');
+            fs.writeFileSync(markdownPath, 'ready\n', 'utf8');
+
+            const summary = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            summary.point_in_time_snapshot = {
+                status: 'FINALIZATION_IN_FLIGHT',
+                gate: 'completion-gate',
+                message: 'Completion gate is currently in flight.',
+                recommended_action: 'Re-run task-audit-summary sequentially after completion-gate finishes.',
+                lock_path: path.join(reviewsDir, `${TASK_ID}-completion-gate.lock`).replace(/\\/g, '/')
+            };
+            summary.final_closeout = {
+                ...summary.final_closeout,
+                status: 'NOT_READY',
+                artifact_state: 'NOT_READY'
+            };
+
+            synchronizeFinalCloseoutArtifacts(summary);
+
+            assert.equal(fs.existsSync(jsonPath), true);
+            assert.equal(fs.existsSync(markdownPath), true);
+            assert.equal(summary.final_closeout.artifact_state, 'MATERIALIZED');
+            assert.equal(summary.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, true);
+        });
     });
 
     describe('formatTaskAuditSummaryText', () => {
@@ -1035,6 +1187,13 @@ describe('gates/task-audit-summary', () => {
                 blockers: [
                     { gate: 'code-review', reason: 'Required code review artifact not found' }
                 ],
+                point_in_time_snapshot: {
+                    status: 'FINALIZATION_IN_FLIGHT',
+                    gate: 'completion-gate',
+                    message: 'Completion gate is currently in flight, so this audit summary is a point-in-time snapshot and may still reflect an older completion result.',
+                    recommended_action: 'Re-run task-audit-summary sequentially after completion-gate finishes.',
+                    lock_path: 'runtime/reviews/T-TEST-1-completion-gate.lock'
+                },
                 final_report_contract: {
                     status: 'NOT_READY',
                     blocker: 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
@@ -1098,6 +1257,8 @@ describe('gates/task-audit-summary', () => {
             assert.ok(text.includes('[ ] preflight'));
             assert.ok(text.includes('Blockers:'));
             assert.ok(text.includes('code-review'));
+            assert.ok(text.includes('PointInTimeSnapshot: FINALIZATION_IN_FLIGHT'));
+            assert.ok(text.includes('RecommendedAction: Re-run task-audit-summary sequentially after completion-gate finishes.'));
             assert.ok(text.includes('FinalReportContract: NOT_READY'));
             assert.ok(text.includes('FinalCloseout: NOT_READY (NOT_READY)'));
             assert.ok(text.includes('git commit -m "fix(orchestration): <summary>"'));
@@ -1121,6 +1282,13 @@ describe('gates/task-audit-summary', () => {
                 profile_review_decisions: null,
                 evidence: [],
                 blockers: [],
+                point_in_time_snapshot: {
+                    status: 'STABLE',
+                    gate: null,
+                    message: null,
+                    recommended_action: null,
+                    lock_path: null
+                },
                 final_report_contract: {
                     status: 'READY',
                     blocker: null,
@@ -1455,5 +1623,24 @@ describe('gates/task-audit-summary', () => {
             const codeBlocker = result.blockers.find(b => b.gate === 'code-review');
             assert.equal(codeBlocker, undefined, 'should not block when hash is null (not recorded)');
         });
+    });
+});
+
+describe('gates/finalization-lock', () => {
+    it('does not throw when owner metadata is missing during lock inspection', () => {
+        const tmpDir = makeTempDir();
+        const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        const lockPath = writeActiveCompletionLock(reviewsDir, 'T-LOCK-1');
+        const ownerPath = path.join(lockPath, 'owner.json');
+
+        try {
+            fs.rmSync(ownerPath, { force: true });
+            const inspection = inspectCompletionGateFinalizationLock(reviewsDir, 'T-LOCK-1');
+            assert.equal(inspection.lock_path, lockPath);
+            assert.equal(typeof inspection.active, 'boolean');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
     });
 });

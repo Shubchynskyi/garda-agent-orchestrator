@@ -12,6 +12,7 @@ import {
     formatTaskAuditSummaryText,
     synchronizeFinalCloseoutArtifacts
 } from '../../gates/task-audit-summary';
+import { withCompletionGateFinalizationLockAsync } from '../../gates/finalization-lock';
 import {
     runEnterTaskModeCommand,
     runHandshakeDiagnosticsCommand,
@@ -304,43 +305,50 @@ export async function handleCompletionGate(gateArgv: string[]): Promise<void> {
     const options = rawOptions as ParsedOptionsRecord;
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     ensureDirectoryExists(repoRoot, 'Repo root');
-    const result = runCompletionGate({
-        repoRoot,
-        preflightPath: parseRequiredText(options.preflightPath, 'PreflightPath'),
-        taskId: String(options.taskId || ''),
-        taskModePath: String(options.taskModePath || ''),
-        rulePackPath: String(options.rulePackPath || ''),
-        timelinePath: String(options.timelinePath || ''),
-        reviewsRoot: String(options.reviewsRoot || ''),
-        compileEvidencePath: String(options.compileEvidencePath || ''),
-        reviewEvidencePath: String(options.reviewEvidencePath || ''),
-        docImpactPath: String(options.docImpactPath || ''),
-        noOpArtifactPath: String(options.noOpArtifactPath || ''),
-        handshakePath: String(options.handshakePath || ''),
-        shellSmokePath: String(options.shellSmokePath || '')
-    });
+    const completionTaskId = parseRequiredText(options.taskId, 'TaskId');
+    const reviewsRoot = gateHelpers.resolvePathInsideRepo(String(options.reviewsRoot || ''), repoRoot, { allowMissing: true })
+        || gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+    const { result } = await withCompletionGateFinalizationLockAsync(reviewsRoot, completionTaskId, async () => {
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath: parseRequiredText(options.preflightPath, 'PreflightPath'),
+            taskId: completionTaskId,
+            taskModePath: String(options.taskModePath || ''),
+            rulePackPath: String(options.rulePackPath || ''),
+            timelinePath: String(options.timelinePath || ''),
+            reviewsRoot: String(options.reviewsRoot || ''),
+            compileEvidencePath: String(options.compileEvidencePath || ''),
+            reviewEvidencePath: String(options.reviewEvidencePath || ''),
+            docImpactPath: String(options.docImpactPath || ''),
+            noOpArtifactPath: String(options.noOpArtifactPath || ''),
+            handshakePath: String(options.handshakePath || ''),
+            shellSmokePath: String(options.shellSmokePath || '')
+        });
 
-    const completionTaskId = String(result.task_id || '').trim();
-    if (completionTaskId) {
-        const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-        try {
-            await emitMandatoryCompletionGateEventAsync(orchestratorRoot, completionTaskId, result.outcome === 'PASS', {
-                status: result.status,
-                outcome: result.outcome,
-                preflight_path: result.preflight_path,
-                timeline_path: result.timeline_path,
-                violations: result.violations
-            });
-        } catch (error: unknown) {
-            throw new Error(
-                `completion-gate failed because mandatory lifecycle event '${result.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED'}' could not be appended. ${error instanceof Error ? error.message : String(error)}`
-            );
+        const resolvedCompletionTaskId = String(completionResult.task_id || '').trim();
+        if (resolvedCompletionTaskId) {
+            const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+            try {
+                await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, completionResult.outcome === 'PASS', {
+                    status: completionResult.status,
+                    outcome: completionResult.outcome,
+                    preflight_path: completionResult.preflight_path,
+                    timeline_path: completionResult.timeline_path,
+                    violations: completionResult.violations
+                });
+            } catch (error: unknown) {
+                throw new Error(
+                    `completion-gate failed because mandatory lifecycle event '${completionResult.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED'}' could not be appended. ${error instanceof Error ? error.message : String(error)}`
+                );
+            }
+            if (completionResult.outcome === 'PASS') {
+                await emitStatusChangedEventAsync(orchestratorRoot, resolvedCompletionTaskId, 'IN_REVIEW', 'DONE');
+                syncTaskQueueStatus(repoRoot, resolvedCompletionTaskId, 'DONE');
+            }
         }
-        if (result.outcome === 'PASS') {
-            await emitStatusChangedEventAsync(orchestratorRoot, completionTaskId, 'IN_REVIEW', 'DONE');
-            syncTaskQueueStatus(repoRoot, completionTaskId, 'DONE');
-        }
-    }
+
+        return completionResult;
+    });
 
     process.stdout.write(`${formatCompletionGateResult(result)}\n`);
     if (result.outcome !== 'PASS') {
