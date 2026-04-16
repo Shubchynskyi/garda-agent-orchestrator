@@ -153,6 +153,7 @@ garda rollback --target-root "."
 
 Notes:
 - Source-tree execution is compile-first: rebuild after changing `src/**/*.ts`, `tests/node/**/*.ts`, or `scripts/node-foundation/**/*.ts`.
+- Direct `node --test .node-build/...` runs are producer-consumer flows: refresh `.node-build/` with `npm run build:node-foundation` or `npm test` before the consumer, and do not overlap the producer with the consumer.
 - `check-update` is compare-first.
 - `update` applies immediately.
 - `update git` uses a git clone source instead of npm; with no extra flags it uses the default GitHub repository.

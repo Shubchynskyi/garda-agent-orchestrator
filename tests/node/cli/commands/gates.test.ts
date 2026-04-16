@@ -90,6 +90,56 @@ function createWindowsBatchNodeFixture(
     };
 }
 
+function createDependentValidationFixture(): {
+    repoRoot: string;
+    consumerPath: string;
+    manifestPath: string;
+    sourcePath: string;
+    lockPath: string;
+    nestedCwd: string;
+    cleanup: () => void;
+} {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-validation-chain-'));
+    const sourcePath = path.join(repoRoot, 'src', 'feature.ts');
+    const consumerPath = path.join(repoRoot, '.node-build', 'tests', 'node', 'sample.test.js');
+    const manifestPath = path.join(repoRoot, '.node-build', 'node-foundation-manifest.json');
+    const lockPath = path.join(repoRoot, '.node-build.lock');
+    const nestedCwd = path.join(repoRoot, 'packages', 'feature');
+
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(consumerPath), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'tests', 'node'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'scripts', 'node-foundation'), { recursive: true });
+    fs.mkdirSync(nestedCwd, { recursive: true });
+    fs.writeFileSync(sourcePath, 'export const feature = true;\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'sample.test.ts'), 'void 0;\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'scripts', 'node-foundation', 'helper.ts'), 'void 0;\n', 'utf8');
+    fs.writeFileSync(consumerPath, 'import test from "node:test";\nimport assert from "node:assert/strict";\n\ntest("sample", () => { assert.equal(1, 1); });\n', 'utf8');
+
+    return {
+        repoRoot,
+        consumerPath,
+        manifestPath,
+        sourcePath,
+        lockPath,
+        nestedCwd,
+        cleanup: () => fs.rmSync(repoRoot, { recursive: true, force: true })
+    };
+}
+
+function writeNodeFoundationManifest(manifestPath: string): void {
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify({
+        sourceRoots: ['src', 'tests/node', 'scripts/node-foundation'],
+        files: ['tests/node/sample.test.js']
+    }, null, 2) + '\n', 'utf8');
+}
+
+function ageFixturePath(filePath: string, ageMs: number): void {
+    const agedDate = new Date(Date.now() - ageMs);
+    fs.utimesSync(filePath, agedDate, agedDate);
+}
+
 function seedRuleFiles(repoRoot: string): void {
     const rulesRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules');
     fs.mkdirSync(rulesRoot, { recursive: true });
@@ -5738,7 +5788,7 @@ describe('cli/commands/gates', () => {
         }
 
         assert.equal(codeReviewBuildExitCode, 0);
-        assert.equal(codeReviewRecordExitCode, 0);
+        assert.ok(codeReviewRecordExitCode !== 0, `Expected invalid upstream code review to be rejected, got ${codeReviewRecordExitCode}`);
         assert.ok(blockedExitCode !== 0, `Expected non-zero exit code, got ${blockedExitCode}`);
         assert.equal(blockedAttemptTestPhaseCount, 0);
         assert.ok(
@@ -5746,7 +5796,7 @@ describe('cli/commands/gates', () => {
             blockedErrorOutput
         );
         assert.ok(
-            blockedErrorOutput.includes('trivial or obviously synthetic'),
+            blockedErrorOutput.includes('no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
             blockedErrorOutput
         );
         assert.equal(fs.existsSync(blockedTestReviewContextPath), false);
@@ -6960,6 +7010,60 @@ describe('executeCommand timeout protection (T-061)', () => {
             () => executeCommand('__nonexistent_executable_12345__', { cwd: process.cwd() }),
             /not found in PATH/
         );
+    });
+
+    it('blocks direct .node-build sync consumers when the node-foundation producer output is stale', () => {
+        const fixture = createDependentValidationFixture();
+        try {
+            writeNodeFoundationManifest(fixture.manifestPath);
+            ageFixturePath(fixture.manifestPath, 10_000);
+            fs.writeFileSync(fixture.sourcePath, 'export const feature = false;\n', 'utf8');
+
+            assert.throws(
+                () => executeCommand(`node --test "${fixture.consumerPath}"`, { cwd: fixture.repoRoot }),
+                /Dependent validation chain 'node_foundation_build_to_compiled_tests'.*npm run build:node-foundation.*Do not run the producer and consumer in parallel/i
+            );
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('blocks direct .node-build async consumers while the node-foundation producer lock is active', async () => {
+        const fixture = createDependentValidationFixture();
+        try {
+            ageFixturePath(fixture.sourcePath, 10_000);
+            writeNodeFoundationManifest(fixture.manifestPath);
+            fs.mkdirSync(fixture.lockPath, { recursive: true });
+            fs.writeFileSync(path.join(fixture.lockPath, 'owner.json'), JSON.stringify({
+                pid: process.pid,
+                hostname: os.hostname(),
+                startedAtUtc: new Date().toISOString()
+            }, null, 2) + '\n', 'utf8');
+
+            const error = await captureExpectedAsyncError(() => executeCommandAsync(
+                `node --test "${fixture.consumerPath}"`,
+                { cwd: fixture.repoRoot, timeoutMs: 10_000 }
+            ).then(() => undefined));
+            assert.match(
+                error.message,
+                /Dependent validation chain 'node_foundation_build_to_compiled_tests'.*producer lock.*npm test/i
+            );
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('blocks direct .node-build consumers from nested cwd values that point back to the repo artifact root', () => {
+        const fixture = createDependentValidationFixture();
+        try {
+            const nestedConsumerPath = path.relative(fixture.nestedCwd, fixture.consumerPath);
+            assert.throws(
+                () => executeCommand(`node --test "${nestedConsumerPath}"`, { cwd: fixture.nestedCwd }),
+                /Dependent validation chain 'node_foundation_build_to_compiled_tests'/i
+            );
+        } finally {
+            fixture.cleanup();
+        }
     });
 
     it('prefers the resolved PATH batch executable over a cwd shadow for sync execution on Windows', () => {

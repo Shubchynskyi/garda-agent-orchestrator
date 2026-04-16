@@ -50,9 +50,13 @@ Validation stays in-repo and TypeScript-first:
 
 Compiles the lightweight helper graph (`src/bin/**/*.ts` plus `scripts/node-foundation/**/*.ts`) into `.scripts-build/`, then publishes compiled runtime artifacts into `dist/`.
 
+This command does not certify direct `node --test .node-build/...` consumers. Those tests depend on the staged `.node-build/` graph, not only on `dist/`.
+
 ### `npm test`
 
 Compiles the lightweight helper graph into `.scripts-build/`, rebuilds the wider staged `.node-build/` graph from `tsconfig.tests.json`, and executes the compiled `tests/node/**/*.test.js` suite.
+
+When an operator needs to run direct compiled tests from `.node-build/`, the producer-consumer chain must stay sequential: refresh `.node-build/` first with `npm run build:node-foundation` or `npm test`, then run the direct `node --test .node-build/...` consumer. The runtime now blocks stale or concurrently-written `.node-build/` consumers instead of letting them run against untrusted artifacts.
 
 ### `npm run validate:release`
 

@@ -9,6 +9,7 @@ import {
     spawnStreamed,
     spawnSyncWithTimeout
 } from '../../core/subprocess';
+import { assertDependentValidationChainReady } from '../../core/dependent-validation-chains';
 
 export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 600_000;
 
@@ -161,6 +162,7 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
     if (tokens.length === 0) {
         throw new Error('Command must not be empty.');
     }
+    assertDependentValidationChainReady(tokens, cwd);
 
     const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
     const args = tokens.slice(1);
@@ -221,6 +223,7 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
     if (tokens.length === 0) {
         throw new Error('Command must not be empty.');
     }
+    assertDependentValidationChainReady(tokens, cwd);
 
     const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
     const args = tokens.slice(1);
