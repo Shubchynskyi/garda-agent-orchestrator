@@ -306,6 +306,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Gate | Canonical invocation |
 |---|---|
 | Enter task mode | `garda gate enter-task-mode --task-id "T-001" --task-summary "..."` (`--orchestrator-work` for tasks that modify protected control-plane paths — see [orchestrator-work-and-isolation](orchestrator-work-and-isolation.md)) |
+| Restart coherent cycle | `garda gate restart-coherent-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
 | Classify change | `garda gate classify-change --use-staged --task-intent "..."` |
 | Compile gate | `garda gate compile-gate --task-id "T-001"` |
@@ -329,6 +330,7 @@ Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 Zero-diff task contract:
 - A clean-tree `classify-change` result is baseline-only evidence, not proof that the task is complete.
 - `required-reviews-check` and `completion-gate` now block zero-diff implementation tasks unless the task later produces a real diff or an audited no-op artifact is recorded.
+- When `completion-gate` fails on stage-sequence or coherent-cycle ordering, it now prints a ready-to-rerun `restart-coherent-cycle` command that replays `enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate` before reviews continue.
 - Use `garda gate record-no-op --task-id "<task-id>" --reason "<rationale>"` only when the task is genuinely `already done`, `no changes required`, or `audit only`.
 
 ---

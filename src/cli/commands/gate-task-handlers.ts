@@ -15,6 +15,7 @@ import {
     runLoadRulePackCommand,
     runLogTaskEventCommand,
     runRecordNoOpCommand,
+    runRestartCoherentCycleCommand,
     runShellSmokePreflightCommand,
     runCommandTimeoutDiagnosticsCommand
 } from './gates';
@@ -75,6 +76,31 @@ export async function handleLoadRulePack(gateArgv: string[]): Promise<void> {
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runLoadRulePackCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleRestartCoherentCycle(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--preflight-output-path': { key: 'preflightOutputPath', type: 'string' },
+        '--changed-file': { key: 'changedFiles', type: 'string[]' },
+        '--changed-files': { key: 'changedFiles', type: 'string[]' },
+        '--use-staged': { key: 'useStaged', type: 'boolean' },
+        '--include-untracked': { key: 'includeUntracked', type: 'boolean' },
+        '--task-intent': { key: 'taskIntent', type: 'string' },
+        '--commands-path': { key: 'commandsPath', type: 'string' },
+        '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
+        '--fail-tail-lines': { key: 'failTailLines', type: 'string' },
+        '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = await runRestartCoherentCycleCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;

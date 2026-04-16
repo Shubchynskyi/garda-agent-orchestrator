@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { getBundleCliCommand, getSourceCliCommand, resolveBundleName } from '../core/constants';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { normalizeReviewerExecutionMode, type ReviewReceipt } from '../gate-runtime/review-context';
 import { getReviewSkillCandidates } from './build-review-context';
@@ -11,6 +12,7 @@ import {
     resolvePathInsideRepo,
     toPlainRecord,
     getProtectedControlPlaneRoots,
+    isOrchestratorSourceCheckout,
     scanProtectedPathHashes,
     evaluateProtectedControlPlaneManifest
 } from './helpers';
@@ -413,6 +415,54 @@ export function validateZeroDiffCompletionEvidence(
             `Produce a real diff or record an audited no-op artifact at '${normalizePath(noOpEvidence.evidence_path || '')}' before DONE.`
         ]
     };
+}
+
+function quotePowerShellCliValue(value: string): string {
+    return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function buildCoherentCycleRestartCommand(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    taskModePath: string | null,
+    commandsPath: string | null,
+    outputFiltersPath: string | null
+): string {
+    const cliPrefix = isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleName());
+    const parts = [
+        `${cliPrefix} gate restart-coherent-cycle`,
+        `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
+        `--task-id ${quotePowerShellCliValue(taskId)}`,
+        `--preflight-path ${quotePowerShellCliValue(preflightPath)}`
+    ];
+    if (taskModePath) {
+        parts.push(`--task-mode-path ${quotePowerShellCliValue(taskModePath)}`);
+    }
+    if (commandsPath) {
+        parts.push(`--commands-path ${quotePowerShellCliValue(commandsPath)}`);
+    }
+    if (outputFiltersPath) {
+        parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
+    }
+    return parts.join(' ');
+}
+
+function readOptionalArtifactStringField(
+    artifact: Record<string, unknown> | null,
+    fieldName: string
+): string | null {
+    if (!artifact) {
+        return null;
+    }
+    const value = artifact[fieldName];
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    return trimmed || null;
 }
 
 function normalizeTimelineDetailString(value: unknown): string | null {
@@ -1335,6 +1385,8 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
     const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);
     const docImpactEvidence = readJsonArtifact(docImpactPath, 'Doc impact gate', errors);
+    const compileCommandsPath = readOptionalArtifactStringField(compileEvidence, 'commands_path');
+    const compileOutputFiltersPath = readOptionalArtifactStringField(compileEvidence, 'output_filters_path');
 
     ensurePassedArtifactStatus(compileEvidence, 'Compile gate', errors);
     ensurePassedArtifactStatus(reviewEvidence, 'Review gate', errors);
@@ -1556,6 +1608,16 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
 
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
     const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
+    const coherentCycleRestartCommand = stageSequence.violations.length > 0 && resolvedTaskId
+        ? buildCoherentCycleRestartCommand(
+            repoRoot,
+            resolvedTaskId,
+            normalizePath(preflightPath),
+            taskModeEvidence.evidence_path,
+            compileCommandsPath,
+            compileOutputFiltersPath
+        )
+        : null;
 
     return {
         status,
@@ -1578,6 +1640,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         dirty_workspace_protection_evidence: dirtyWorkspaceProtectionEvidence,
         plan: planEvidence,
         isolation_mode_warnings: isolationWarnings,
+        coherent_cycle_restart_command: coherentCycleRestartCommand,
         violations: errors
     };
 }
@@ -1616,6 +1679,10 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
         for (const violation of result.violations) {
             lines.push(`- ${violation}`);
         }
+    }
+
+    if (typeof result.coherent_cycle_restart_command === 'string' && result.coherent_cycle_restart_command.trim()) {
+        lines.push(`RecoveryCommand: ${result.coherent_cycle_restart_command}`);
     }
 
     if (Array.isArray(result.isolation_mode_warnings) && result.isolation_mode_warnings.length > 0) {

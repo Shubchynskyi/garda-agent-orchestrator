@@ -20,6 +20,7 @@ import {
     runLoadRulePackCommand,
     runLogTaskEventCommand,
     runRecordNoOpCommand,
+    runRestartCoherentCycleCommand,
     runRequiredReviewsCheckCommand,
     splitCommandLine,
     executeCommand,
@@ -35,6 +36,7 @@ import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../../../src/gates/review-reuse';
+import { serializeTaskPlan, validateTaskPlan } from '../../../../src/schemas/task-plan';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt
@@ -3014,6 +3016,336 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(completionResult.outcome, 'FAIL');
         assert.ok(completionResult.stage_sequence_evidence.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
+        assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), /restart-coherent-cycle/);
+        assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), new RegExp(escapeRegExp(taskId)));
+        assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), new RegExp(escapeRegExp(commandsPath.replace(/\\/g, '/'))));
+        assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), new RegExp(escapeRegExp(outputFiltersPath.replace(/\\/g, '/'))));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restarts the latest coherent cycle on a dirty tree while reusing the previous explicit preflight scope', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart the latest coherent cycle after misordered recovery noise'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Initial review phase started.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const firstReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(firstReviewResult.exitCode, 0);
+
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'PREFLIGHT_CLASSIFIED',
+            'INFO',
+            'New preflight started for a later cycle.',
+            { mode: 'FULL_PATH', changed_files_count: 1, changed_lines_total: 3, required_reviews: { code: true } }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation started for later cycle.',
+            {}
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started too early for later cycle.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'COMPILE_GATE_PASSED',
+            'PASS',
+            'Compile gate passed too late in later cycle.',
+            {}
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_GATE_PASSED',
+            'PASS',
+            'Later review gate appeared to pass.',
+            {}
+        );
+
+        const failedCompletion = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(failedCompletion.outcome, 'FAIL');
+
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'noise.md'), 'unrelated dirty file\n', 'utf8');
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0);
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const lastTaskModeIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'TASK_MODE_ENTERED');
+        const lastHandshakeIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+        const lastShellSmokeIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+        const lastPreflightIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'PREFLIGHT_CLASSIFIED');
+        const lastCompileIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        assert.ok(lastTaskModeIndex >= 0);
+        assert.ok(lastHandshakeIndex > lastTaskModeIndex);
+        assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
+        assert.ok(lastPreflightIndex > lastShellSmokeIndex);
+        assert.ok(lastCompileIndex > lastPreflightIndex);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('replays a prior git_auto scope as explicit changed files during coherent-cycle restart', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle-git-auto';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'noise.md'), 'unrelated dirty file\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_auto',
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-git-auto.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Replay prior git_auto scope as explicit changed files during cycle restart'
+        });
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0);
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('preserves approved task-plan metadata when coherent-cycle restart re-enters task mode', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle-plan';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_auto',
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-plan.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const plan = validateTaskPlan({
+            schema_version: 1,
+            task_id: taskId,
+            status: 'approved',
+            goal: 'Restart the latest coherent task cycle safely',
+            scope_files: ['src/app.ts'],
+            risk_level: 'low',
+            steps: [{ id: 'step-1', title: 'Replay the coherent cycle', files: ['src/app.ts'] }]
+        });
+        const planPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-plan.json`);
+        fs.writeFileSync(planPath, serializeTaskPlan(plan), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart the latest coherent cycle with approved plan metadata preserved',
+            planPath,
+            emitMetrics: false
+        });
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0);
+
+        const taskModeArtifact = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const planMetadata = taskModeArtifact.plan as Record<string, unknown> | null;
+        assert.ok(planMetadata);
+        assert.equal(planMetadata?.plan_path, planPath.replace(/\\/g, '/'));
+        assert.equal(typeof planMetadata?.plan_sha256, 'string');
+        assert.equal(planMetadata?.plan_summary, 'Restart the latest coherent task cycle safely');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
