@@ -70,6 +70,7 @@ export interface BuildHandshakeDiagnosticsOptions {
     effectiveCwd?: string | null;
     canonicalEntrypoint?: string | null;
     providerBridge?: string | null;
+    precheckViolations?: string[];
 }
 
 function resolveProviderFamily(provider: string | null): string | null {
@@ -124,7 +125,34 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
     const provider = String(options.provider || '').trim() || null;
     const providerFamily = resolveProviderFamily(provider);
     const diagnostics: HandshakeDiagnostic[] = [];
-    const violations: string[] = [];
+    const precheckViolations = Array.isArray(options.precheckViolations)
+        ? options.precheckViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    const violations: string[] = [...precheckViolations];
+
+    if (precheckViolations.length > 0) {
+        return {
+            schema_version: 1,
+            timestamp_utc: new Date().toISOString(),
+            event_source: 'handshake-diagnostics',
+            task_id: taskId,
+            status: 'FAILED',
+            outcome: 'FAIL',
+            provider: providerFamily,
+            canonical_entrypoint: null,
+            canonical_entrypoint_exists: false,
+            provider_bridge: null,
+            provider_bridge_exists: false,
+            start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
+            start_task_router_exists: false,
+            execution_context: isSourceCheckout ? 'source-checkout' : 'materialized-bundle',
+            cli_path: options.cliPath ? String(options.cliPath).trim() : resolveCliPath(repoRoot, isSourceCheckout),
+            effective_cwd: redactPath(options.effectiveCwd ? String(options.effectiveCwd).trim() : toPosix(repoRoot), repoRoot),
+            workspace_root: redactPath(toPosix(repoRoot)),
+            diagnostics,
+            violations
+        };
+    }
 
     // 1. Canonical entrypoint
     const canonicalEntrypoint = options.canonicalEntrypoint
@@ -305,6 +333,57 @@ export interface GetHandshakeEvidenceOptions {
     timelinePath?: string;
 }
 
+interface TimelineEventEntry {
+    event_type: string;
+    sequence: number;
+    details: Record<string, unknown> | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readTimelineEvents(timelinePath: string): TimelineEventEntry[] {
+    const lines = fs.readFileSync(timelinePath, 'utf8').split('\n').filter(line => line.trim().length > 0);
+    const events: TimelineEventEntry[] = [];
+    let sequence = 0;
+
+    for (const line of lines) {
+        try {
+            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const eventType = String(parsed.event_type || '').trim().toUpperCase();
+            if (!eventType) {
+                sequence += 1;
+                continue;
+            }
+            events.push({
+                event_type: eventType,
+                sequence,
+                details: isRecord(parsed.details) ? parsed.details : null
+            });
+        } catch {
+            // Ignore malformed timeline lines here; upstream timeline collectors surface JSON errors separately.
+        }
+        sequence += 1;
+    }
+
+    return events;
+}
+
+function findLatestTimelineEvent(
+    events: readonly TimelineEventEntry[],
+    eventType: string
+): TimelineEventEntry | null {
+    const normalizedEventType = String(eventType || '').trim().toUpperCase();
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (event.event_type === normalizedEventType) {
+            return event;
+        }
+    }
+    return null;
+}
+
 export function getHandshakeEvidence(repoRoot: string, taskId: string | null, artifactPathOrOptions: string | GetHandshakeEvidenceOptions = ''): HandshakeEvidenceResult {
     const opts: GetHandshakeEvidenceOptions = typeof artifactPathOrOptions === 'string'
         ? { artifactPath: artifactPathOrOptions }
@@ -408,34 +487,38 @@ function verifyHandshakeTimelineBinding(
         return [];
     }
 
-    const lines = fs.readFileSync(resolvedTimeline, 'utf8').split('\n').filter(line => line.trim().length > 0);
-    let foundEvent = false;
-    let recordedHash: string | null = null;
+    const events = readTimelineEvents(resolvedTimeline);
+    const latestTaskMode = findLatestTimelineEvent(events, 'TASK_MODE_ENTERED');
+    const latestHandshake = findLatestTimelineEvent(events, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
 
-    for (const line of lines) {
-        try {
-            const parsed = JSON.parse(line) as Record<string, unknown>;
-            const eventType = String(parsed.event_type || '').trim().toUpperCase();
-            if (eventType === 'HANDSHAKE_DIAGNOSTICS_RECORDED') {
-                foundEvent = true;
-                const details = parsed.details as Record<string, unknown> | undefined;
-                if (details && typeof details.artifact_hash === 'string') {
-                    recordedHash = details.artifact_hash;
-                }
-            }
-        } catch {
-            // Skip malformed lines
-        }
+    if (!latestTaskMode) {
+        return [
+            `Handshake diagnostics evidence is not bound to an active task cycle for '${taskId}'. ` +
+            `Task timeline '${normalizePath(resolvedTimeline)}' is missing TASK_MODE_ENTERED. ` +
+            'Run enter-task-mode before handshake-diagnostics and downstream preflight gates.'
+        ];
     }
 
-    if (!foundEvent) {
+    if (!latestHandshake) {
         return [
             `Handshake diagnostics evidence is not bound to task timeline for '${taskId}'. ` +
-            'HANDSHAKE_DIAGNOSTICS_RECORDED event is missing from the timeline. ' +
+            `HANDSHAKE_DIAGNOSTICS_RECORDED event is missing from '${normalizePath(resolvedTimeline)}'. ` +
             'Run handshake-diagnostics gate to emit proper lifecycle evidence.'
         ];
     }
 
+    if (latestHandshake.sequence < latestTaskMode.sequence) {
+        return [
+            `Latest HANDSHAKE_DIAGNOSTICS_RECORDED evidence in '${normalizePath(resolvedTimeline)}' predates the latest TASK_MODE_ENTERED ` +
+            `(handshake seq ${latestHandshake.sequence}, task-mode seq ${latestTaskMode.sequence}). ` +
+            'Re-run handshake-diagnostics for the current task cycle before shell-smoke-preflight, classify-change, or compile-gate. ' +
+            'Do not parallelize enter-task-mode, handshake-diagnostics, and shell-smoke-preflight for the same task cycle.'
+        ];
+    }
+
+    const recordedHash = latestHandshake.details && typeof latestHandshake.details.artifact_hash === 'string'
+        ? latestHandshake.details.artifact_hash
+        : null;
     if (artifactHash && recordedHash && artifactHash !== recordedHash) {
         return [
             `Handshake diagnostics artifact hash mismatch: file hash '${artifactHash}' ` +

@@ -53,9 +53,61 @@ export interface BuildShellSmokePreflightOptions {
     provider?: string | null;
     effectiveCwd?: string | null;
     probeTimeoutMs?: number;
+    precheckViolations?: string[];
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
+
+interface TimelineEventEntry {
+    event_type: string;
+    sequence: number;
+    details: Record<string, unknown> | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readTimelineEvents(timelinePath: string): TimelineEventEntry[] {
+    const lines = fs.readFileSync(timelinePath, 'utf8').split('\n').filter(line => line.trim().length > 0);
+    const events: TimelineEventEntry[] = [];
+    let sequence = 0;
+
+    for (const line of lines) {
+        try {
+            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const eventType = String(parsed.event_type || '').trim().toUpperCase();
+            if (!eventType) {
+                sequence += 1;
+                continue;
+            }
+            events.push({
+                event_type: eventType,
+                sequence,
+                details: isRecord(parsed.details) ? parsed.details : null
+            });
+        } catch {
+            // Ignore malformed timeline lines here; upstream timeline collectors surface JSON errors separately.
+        }
+        sequence += 1;
+    }
+
+    return events;
+}
+
+function findLatestTimelineEvent(
+    events: readonly TimelineEventEntry[],
+    eventType: string
+): TimelineEventEntry | null {
+    const normalizedEventType = String(eventType || '').trim().toUpperCase();
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (event.event_type === normalizedEventType) {
+            return event;
+        }
+    }
+    return null;
+}
 
 function runProbe(label: string, fn: () => string): ShellSmokeProbe {
     const start = Date.now();
@@ -205,20 +257,25 @@ export function buildShellSmokePreflight(options: BuildShellSmokePreflightOption
         ? String(options.effectiveCwd).trim()
         : toPosix(repoRoot);
     const timeoutMs = options.probeTimeoutMs || DEFAULT_PROBE_TIMEOUT_MS;
+    const precheckViolations = Array.isArray(options.precheckViolations)
+        ? options.precheckViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
 
     const probes: ShellSmokeProbe[] = [];
-    const violations: string[] = [];
+    const violations: string[] = [...precheckViolations];
 
-    probes.push(probeCwd(repoRoot));
-    probes.push(probeNodeVersion(repoRoot, timeoutMs));
-    probes.push(probeGitState(repoRoot, timeoutMs));
-    probes.push(probeFileRead(repoRoot, isSourceCheckout));
-    probes.push(probeTempFileWriteDelete(repoRoot));
-    probes.push(probeCliLaunchability(repoRoot, isSourceCheckout, timeoutMs));
+    if (precheckViolations.length === 0) {
+        probes.push(probeCwd(repoRoot));
+        probes.push(probeNodeVersion(repoRoot, timeoutMs));
+        probes.push(probeGitState(repoRoot, timeoutMs));
+        probes.push(probeFileRead(repoRoot, isSourceCheckout));
+        probes.push(probeTempFileWriteDelete(repoRoot));
+        probes.push(probeCliLaunchability(repoRoot, isSourceCheckout, timeoutMs));
 
-    for (const probe of probes) {
-        if (probe.status === 'error') {
-            violations.push(`Probe '${probe.check}' failed: ${probe.detail}`);
+        for (const probe of probes) {
+            if (probe.status === 'error') {
+                violations.push(`Probe '${probe.check}' failed: ${probe.detail}`);
+            }
         }
     }
 
@@ -341,34 +398,65 @@ function verifyShellSmokeTimelineBinding(
         return [];
     }
 
-    const lines = fs.readFileSync(resolvedTimeline, 'utf8').split('\n').filter(line => line.trim().length > 0);
-    let foundEvent = false;
-    let recordedHash: string | null = null;
+    const events = readTimelineEvents(resolvedTimeline);
+    const latestTaskMode = findLatestTimelineEvent(events, 'TASK_MODE_ENTERED');
+    const latestHandshake = findLatestTimelineEvent(events, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+    const latestShellSmoke = findLatestTimelineEvent(events, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 
-    for (const line of lines) {
-        try {
-            const parsed = JSON.parse(line) as Record<string, unknown>;
-            const eventType = String(parsed.event_type || '').trim().toUpperCase();
-            if (eventType === 'SHELL_SMOKE_PREFLIGHT_RECORDED') {
-                foundEvent = true;
-                const details = parsed.details as Record<string, unknown> | undefined;
-                if (details && typeof details.artifact_hash === 'string') {
-                    recordedHash = details.artifact_hash;
-                }
-            }
-        } catch {
-            // Skip malformed lines
-        }
+    if (!latestTaskMode) {
+        return [
+            `Shell smoke preflight evidence is not bound to an active task cycle for '${taskId}'. ` +
+            `Task timeline '${normalizePath(resolvedTimeline)}' is missing TASK_MODE_ENTERED. ` +
+            'Run enter-task-mode, then rerun handshake-diagnostics and shell-smoke-preflight sequentially.'
+        ];
     }
 
-    if (!foundEvent) {
+    if (!latestHandshake) {
+        return [
+            `Shell smoke preflight evidence is not bound to a handshake for '${taskId}'. ` +
+            `Task timeline '${normalizePath(resolvedTimeline)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. ` +
+            'Run handshake-diagnostics before shell-smoke-preflight.'
+        ];
+    }
+
+    if (!latestShellSmoke) {
         return [
             `Shell smoke preflight evidence is not bound to task timeline for '${taskId}'. ` +
-            'SHELL_SMOKE_PREFLIGHT_RECORDED event is missing from the timeline. ' +
+            `SHELL_SMOKE_PREFLIGHT_RECORDED event is missing from '${normalizePath(resolvedTimeline)}'. ` +
             'Run shell-smoke-preflight gate to emit proper lifecycle evidence.'
         ];
     }
 
+    if (latestHandshake.sequence < latestTaskMode.sequence) {
+        return [
+            `Latest HANDSHAKE_DIAGNOSTICS_RECORDED evidence in '${normalizePath(resolvedTimeline)}' predates the latest TASK_MODE_ENTERED ` +
+            `(handshake seq ${latestHandshake.sequence}, task-mode seq ${latestTaskMode.sequence}). ` +
+            'Re-run handshake-diagnostics for the current task cycle before shell-smoke-preflight. ' +
+            'Do not parallelize enter-task-mode, handshake-diagnostics, and shell-smoke-preflight for the same task cycle.'
+        ];
+    }
+
+    if (latestShellSmoke.sequence < latestTaskMode.sequence) {
+        return [
+            `Latest SHELL_SMOKE_PREFLIGHT_RECORDED evidence in '${normalizePath(resolvedTimeline)}' predates the latest TASK_MODE_ENTERED ` +
+            `(shell-smoke seq ${latestShellSmoke.sequence}, task-mode seq ${latestTaskMode.sequence}). ` +
+            'Re-run handshake-diagnostics and shell-smoke-preflight for the current task cycle before classify-change or compile-gate.'
+        ];
+    }
+
+    if (latestShellSmoke.sequence < latestHandshake.sequence) {
+        return [
+            `Unsafe same-task overlap detected in '${normalizePath(resolvedTimeline)}': latest HANDSHAKE_DIAGNOSTICS_RECORDED ` +
+            `(seq ${latestHandshake.sequence}) is newer than latest SHELL_SMOKE_PREFLIGHT_RECORDED (seq ${latestShellSmoke.sequence}). ` +
+            'Re-run shell-smoke-preflight after the latest handshake-diagnostics, then continue sequentially ' +
+            '(shell-smoke-preflight -> classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate). ' +
+            'Do not parallelize handshake-diagnostics, shell-smoke-preflight, and classify-change for the same task cycle.'
+        ];
+    }
+
+    const recordedHash = latestShellSmoke.details && typeof latestShellSmoke.details.artifact_hash === 'string'
+        ? latestShellSmoke.details.artifact_hash
+        : null;
     if (artifactHash && recordedHash && artifactHash !== recordedHash) {
         return [
             `Shell smoke preflight artifact hash mismatch: file hash '${artifactHash}' ` +

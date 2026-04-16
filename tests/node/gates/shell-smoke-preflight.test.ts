@@ -259,10 +259,17 @@ describe('gates/shell-smoke-preflight', () => {
             }), 'utf8');
 
             const timelinePath = path.join(tempDir, 'T-500-timeline.jsonl');
-            fs.writeFileSync(timelinePath, JSON.stringify({
-                event_type: 'TASK_MODE_ENTERED',
-                task_id: 'T-500'
-            }) + '\n', 'utf8');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    task_id: 'T-500'
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    task_id: 'T-500',
+                    details: { artifact_hash: 'handshake-v1' }
+                })
+            ].join('\n') + '\n', 'utf8');
 
             const result = getShellSmokeEvidence(tempDir, 'T-500', { timelinePath });
             assert.equal(result.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
@@ -285,11 +292,22 @@ describe('gates/shell-smoke-preflight', () => {
             }), 'utf8');
 
             const timelinePath = path.join(tempDir, 'T-600-timeline.jsonl');
-            fs.writeFileSync(timelinePath, JSON.stringify({
-                event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                task_id: 'T-600',
-                details: { artifact_hash: 'wrong-hash-value-that-does-not-match' }
-            }) + '\n', 'utf8');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    task_id: 'T-600'
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    task_id: 'T-600',
+                    details: { artifact_hash: 'handshake-v1' }
+                }),
+                JSON.stringify({
+                    event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                    task_id: 'T-600',
+                    details: { artifact_hash: 'wrong-hash-value-that-does-not-match' }
+                })
+            ].join('\n') + '\n', 'utf8');
 
             const result = getShellSmokeEvidence(tempDir, 'T-600', { timelinePath });
             assert.equal(result.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
@@ -320,6 +338,17 @@ describe('gates/shell-smoke-preflight', () => {
                 timelinePath,
                 [
                     JSON.stringify({
+                        event_type: 'TASK_MODE_ENTERED',
+                        task_id: 'T-650',
+                        timestamp_utc: '2026-04-03T09:59:00.000Z'
+                    }),
+                    JSON.stringify({
+                        event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                        task_id: 'T-650',
+                        timestamp_utc: '2026-04-03T09:59:30.000Z',
+                        details: { artifact_hash: 'handshake-v1' }
+                    }),
+                    JSON.stringify({
                         event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
                         task_id: 'T-650',
                         timestamp_utc: '2026-04-03T10:00:00.000Z',
@@ -338,6 +367,54 @@ describe('gates/shell-smoke-preflight', () => {
             const result = getShellSmokeEvidence(tempDir, 'T-650', { timelinePath });
             assert.equal(result.evidence_status, 'PASS');
             assert.equal(result.violations.length, 0);
+        });
+
+        it('rejects shell smoke evidence when a newer handshake already superseded it', () => {
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-660-shell-smoke.json');
+            fs.writeFileSync(artifactPath, JSON.stringify({
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'shell-smoke-preflight',
+                task_id: 'T-660',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                probes: [],
+                violations: []
+            }), 'utf8');
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelinePath = path.join(tempDir, 'T-660-timeline.jsonl');
+            fs.writeFileSync(
+                timelinePath,
+                [
+                    JSON.stringify({ event_type: 'TASK_MODE_ENTERED', timestamp_utc: '2026-04-16T09:00:00.000Z' }),
+                    JSON.stringify({
+                        event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                        timestamp_utc: '2026-04-16T09:01:00.000Z',
+                        details: { artifact_hash: 'handshake-v1' }
+                    }),
+                    JSON.stringify({
+                        event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                        timestamp_utc: '2026-04-16T09:02:00.000Z',
+                        details: { artifact_hash: hash }
+                    }),
+                    JSON.stringify({
+                        event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                        timestamp_utc: '2026-04-16T09:03:00.000Z',
+                        details: { artifact_hash: 'handshake-v2' }
+                    })
+                ].join('\n') + '\n',
+                'utf8'
+            );
+
+            const result = getShellSmokeEvidence(tempDir, 'T-660', { timelinePath });
+            assert.equal(result.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
+            assert.ok(result.violations.some((violation) => violation.includes('Unsafe same-task overlap detected')));
         });
     });
 

@@ -19,6 +19,7 @@ import {
     appendTaskEvent,
     assertValidTaskId
 } from '../../../gate-runtime/task-events';
+import { withFilesystemLock } from '../../../gate-runtime/task-events-locking';
 import {
     buildRulePackArtifact,
     getRulePackEvidence,
@@ -28,11 +29,14 @@ import {
 import {
     buildHandshakeDiagnostics,
     formatHandshakeDiagnosticsResult,
+    getHandshakeEvidence,
+    getHandshakeEvidenceViolations,
     resolveHandshakeArtifactPath
 } from '../../../gates/handshake-diagnostics';
 import {
     buildShellSmokePreflight,
     formatShellSmokePreflightResult,
+    getShellSmokeEvidence,
     resolveShellSmokeArtifactPath
 } from '../../../gates/shell-smoke-preflight';
 import {
@@ -240,6 +244,27 @@ function buildOrchestratorWorkHandoffCommand(
         parts.push(`--planned-changed-file ${quotePowerShellCliValue(plannedChangedFile)}`);
     }
     return parts.join(' ');
+}
+
+function buildGateCommandPrefix(repoRoot: string): string {
+    return gateHelpers.isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleName());
+}
+
+function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: string): string {
+    return [
+        `${buildGateCommandPrefix(repoRoot)} gate ${gateName}`,
+        `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
+        `--task-id ${quotePowerShellCliValue(taskId)}`
+    ].join(' ');
+}
+
+function resolvePrePreflightSequenceLockPath(repoRoot: string, taskId: string): string {
+    return gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`)
+    );
 }
 
 export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -610,57 +635,72 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
     const routingDecision = readRoutingDecision(repoRoot, options.provider);
     const provider = routingDecision.provider;
+    const sequenceLockPath = resolvePrePreflightSequenceLockPath(repoRoot, taskId);
 
-    const artifactPath = options.artifactPath
-        ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
-        : resolveHandshakeArtifactPath(repoRoot, taskId, '');
+    return withFilesystemLock(sequenceLockPath, {}, () => {
+        const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+        const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, taskId, { timelinePath });
+        const handshakePrecheckViolations = shellSmokeEvidence.evidence_status === 'PASS'
+            ? [
+                `Current task cycle in '${gateHelpers.normalizePath(timelinePath)}' already has valid SHELL_SMOKE_PREFLIGHT_RECORDED evidence. ` +
+                'Re-running handshake-diagnostics now would invalidate the existing shell-smoke artifact for this cycle. ' +
+                `Suggested rerun commands for the next cycle: ${buildGateRerunCommand(repoRoot, taskId, 'handshake-diagnostics')} ; ` +
+                `${buildGateRerunCommand(repoRoot, taskId, 'shell-smoke-preflight')}.`
+            ]
+            : [];
 
-    const artifact = buildHandshakeDiagnostics({
-        taskId,
-        repoRoot,
-        provider,
-        cliPath: options.cliPath ? String(options.cliPath) : undefined,
-        effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
-        canonicalEntrypoint: options.canonicalEntrypoint ? String(options.canonicalEntrypoint) : undefined,
-        providerBridge: options.providerBridge ? String(options.providerBridge) : undefined
-    });
+        const artifactPath = options.artifactPath
+            ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
+            : resolveHandshakeArtifactPath(repoRoot, taskId, '');
 
-    writeJsonArtifact(artifactPath, artifact);
+        const artifact = buildHandshakeDiagnostics({
+            taskId,
+            repoRoot,
+            provider,
+            cliPath: options.cliPath ? String(options.cliPath) : undefined,
+            effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
+            canonicalEntrypoint: options.canonicalEntrypoint ? String(options.canonicalEntrypoint) : undefined,
+            providerBridge: options.providerBridge ? String(options.providerBridge) : undefined,
+            precheckViolations: handshakePrecheckViolations
+        });
 
-    const artifactHash = gateHelpers.fileSha256(artifactPath);
+        writeJsonArtifact(artifactPath, artifact);
 
-    const metricsPath = options.metricsPath
-        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
-        : resolveDefaultMetricsPath(repoRoot);
-    appendMetricsIfEnabled(repoRoot, metricsPath, {
-        timestamp_utc: artifact.timestamp_utc,
-        event_type: 'handshake_diagnostics_recorded',
-        task_id: taskId,
-        artifact_path: gateHelpers.normalizePath(artifactPath),
-        artifact_hash: artifactHash,
-        provider: artifact.provider,
-        execution_context: artifact.execution_context,
-        cli_path: artifact.cli_path,
-        outcome: artifact.outcome
-    }, parseBooleanOption(options.emitMetrics, true));
+        const artifactHash = gateHelpers.fileSha256(artifactPath);
 
-    emitHandshakeDiagnosticsEvent(
-        orchestratorRoot,
-        taskId,
-        artifact.provider,
-        artifact.execution_context,
-        artifact.cli_path,
-        artifact.outcome === 'PASS',
-        artifactHash
-    );
+        const metricsPath = options.metricsPath
+            ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+            : resolveDefaultMetricsPath(repoRoot);
+        appendMetricsIfEnabled(repoRoot, metricsPath, {
+            timestamp_utc: artifact.timestamp_utc,
+            event_type: 'handshake_diagnostics_recorded',
+            task_id: taskId,
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            artifact_hash: artifactHash,
+            provider: artifact.provider,
+            execution_context: artifact.execution_context,
+            cli_path: artifact.cli_path,
+            outcome: artifact.outcome
+        }, parseBooleanOption(options.emitMetrics, true));
 
-    const outputLines = formatHandshakeDiagnosticsResult(artifact);
-    outputLines.push(`HandshakeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
+        emitHandshakeDiagnosticsEvent(
+            orchestratorRoot,
+            taskId,
+            artifact.provider,
+            artifact.execution_context,
+            artifact.cli_path,
+            artifact.outcome === 'PASS',
+            artifactHash
+        );
 
-    return {
-        outputLines,
-        exitCode: artifact.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
-    };
+        const outputLines = formatHandshakeDiagnosticsResult(artifact);
+        outputLines.push(`HandshakeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
+
+        return {
+            outputLines,
+            exitCode: artifact.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
+        };
+    }).result;
 }
 
 export function runShellSmokePreflightCommand(options: ShellSmokePreflightCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -670,54 +710,66 @@ export function runShellSmokePreflightCommand(options: ShellSmokePreflightComman
     const routingDecision = readRoutingDecision(repoRoot, options.provider);
     const provider = routingDecision.provider;
 
-    const artifactPath = options.artifactPath
-        ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
-        : resolveShellSmokeArtifactPath(repoRoot, taskId, '');
+    const sequenceLockPath = resolvePrePreflightSequenceLockPath(repoRoot, taskId);
 
-    const probeTimeoutMs = options.probeTimeoutMs ? parseInt(String(options.probeTimeoutMs), 10) : undefined;
+    return withFilesystemLock(sequenceLockPath, {}, () => {
+        const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
 
-    const artifact = buildShellSmokePreflight({
-        taskId,
-        repoRoot,
-        provider,
-        effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
-        probeTimeoutMs: (probeTimeoutMs && probeTimeoutMs > 0) ? probeTimeoutMs : undefined
-    });
+        const artifactPath = options.artifactPath
+            ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
+            : resolveShellSmokeArtifactPath(repoRoot, taskId, '');
 
-    writeJsonArtifact(artifactPath, artifact);
+        const probeTimeoutMs = options.probeTimeoutMs ? parseInt(String(options.probeTimeoutMs), 10) : undefined;
+        const handshakeEvidence = getHandshakeEvidence(repoRoot, taskId, { timelinePath });
+        const handshakeViolations = getHandshakeEvidenceViolations(handshakeEvidence).map((violation) => (
+            `${violation} Suggested rerun commands: ${buildGateRerunCommand(repoRoot, taskId, 'handshake-diagnostics')} ; ` +
+            `${buildGateRerunCommand(repoRoot, taskId, 'shell-smoke-preflight')}.`
+        ));
 
-    const artifactHash = gateHelpers.fileSha256(artifactPath);
+        const artifact = buildShellSmokePreflight({
+            taskId,
+            repoRoot,
+            provider,
+            effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
+            probeTimeoutMs: (probeTimeoutMs && probeTimeoutMs > 0) ? probeTimeoutMs : undefined,
+            precheckViolations: handshakeViolations
+        });
 
-    const metricsPath = options.metricsPath
-        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
-        : resolveDefaultMetricsPath(repoRoot);
-    appendMetricsIfEnabled(repoRoot, metricsPath, {
-        timestamp_utc: artifact.timestamp_utc,
-        event_type: 'shell_smoke_preflight_recorded',
-        task_id: taskId,
-        artifact_path: gateHelpers.normalizePath(artifactPath),
-        artifact_hash: artifactHash,
-        provider: artifact.provider,
-        execution_context: artifact.execution_context,
-        outcome: artifact.outcome
-    }, parseBooleanOption(options.emitMetrics, true));
+        writeJsonArtifact(artifactPath, artifact);
 
-    emitShellSmokePreflightEvent(
-        orchestratorRoot,
-        taskId,
-        artifact.provider,
-        artifact.execution_context,
-        artifact.outcome === 'PASS',
-        artifactHash
-    );
+        const artifactHash = gateHelpers.fileSha256(artifactPath);
 
-    const outputLines = formatShellSmokePreflightResult(artifact);
-    outputLines.push(`ShellSmokeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
+        const metricsPath = options.metricsPath
+            ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+            : resolveDefaultMetricsPath(repoRoot);
+        appendMetricsIfEnabled(repoRoot, metricsPath, {
+            timestamp_utc: artifact.timestamp_utc,
+            event_type: 'shell_smoke_preflight_recorded',
+            task_id: taskId,
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            artifact_hash: artifactHash,
+            provider: artifact.provider,
+            execution_context: artifact.execution_context,
+            outcome: artifact.outcome
+        }, parseBooleanOption(options.emitMetrics, true));
 
-    return {
-        outputLines,
-        exitCode: artifact.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
-    };
+        emitShellSmokePreflightEvent(
+            orchestratorRoot,
+            taskId,
+            artifact.provider,
+            artifact.execution_context,
+            artifact.outcome === 'PASS',
+            artifactHash
+        );
+
+        const outputLines = formatShellSmokePreflightResult(artifact);
+        outputLines.push(`ShellSmokeArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`);
+
+        return {
+            outputLines,
+            exitCode: artifact.outcome === 'PASS' ? 0 : EXIT_GATE_FAILURE
+        };
+    }).result;
 }
 
 export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagnosticsCommandOptions): { outputLines: string[]; exitCode: number } {

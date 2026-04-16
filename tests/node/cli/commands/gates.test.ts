@@ -8,6 +8,10 @@ import {
     EXIT_GATE_FAILURE,
     EXIT_GENERAL_FAILURE
 } from '../../../../src/cli/exit-codes';
+import {
+    acquireFilesystemLock,
+    releaseFilesystemLock
+} from '../../../../src/gate-runtime/task-events-locking';
 import * as gateReviewHandlers from '../../../../src/cli/commands/gate-review-handlers';
 import { syncTaskQueueStatus } from '../../../../src/cli/commands/gate-flows/gate-flow-helpers';
 import { handleEnterTaskMode } from '../../../../src/cli/commands/gate-task-handlers';
@@ -16,12 +20,14 @@ import {
     runCompileGateCommand,
     runDocImpactGateCommand,
     runEnterTaskModeCommand,
+    runHandshakeDiagnosticsCommand,
     runHumanCommitCommand,
     runLoadRulePackCommand,
     runLogTaskEventCommand,
     runRecordNoOpCommand,
     runRestartCoherentCycleCommand,
     runRequiredReviewsCheckCommand,
+    runShellSmokePreflightCommand,
     splitCommandLine,
     executeCommand,
     executeCommandAsync
@@ -1567,6 +1573,194 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('fails shell-smoke-preflight when the latest handshake was superseded by a newer task-mode cycle', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-stale-handshake';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale handshake evidence before shell smoke preflight'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Start a newer task cycle before shell smoke preflight'
+        });
+
+        const shellSmokeResult = runShellSmokePreflightCommand({
+            repoRoot,
+            taskId
+        });
+        assert.equal(shellSmokeResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(shellSmokeResult.outputLines[0], 'SHELL_SMOKE_PREFLIGHT_FAILED');
+        assert.ok(shellSmokeResult.outputLines.some((line) => line.includes('predates the latest TASK_MODE_ENTERED')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('serializes pre-preflight gates behind a shared task lock', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-pre-preflight-sequence-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const lockPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        const { handle } = acquireFilesystemLock(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 25,
+            staleMs: 30_000
+        });
+
+        try {
+            assert.throws(
+                () => runShellSmokePreflightCommand({
+                    repoRoot,
+                    taskId
+                }),
+                /Timed out acquiring file lock/
+            );
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('serializes handshake-diagnostics behind the shared pre-preflight task lock', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-pre-preflight-handshake-sequence-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const lockPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        const { handle } = acquireFilesystemLock(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 25,
+            staleMs: 30_000
+        });
+
+        try {
+            assert.throws(
+                () => runHandshakeDiagnosticsCommand({
+                    repoRoot,
+                    taskId
+                }),
+                /Timed out acquiring file lock/
+            );
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('serializes classify-change behind the shared pre-preflight task lock', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-pre-preflight-classify-sequence-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject classify-change overlap while the shared pre-preflight lock is held'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const lockPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        const { handle } = acquireFilesystemLock(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 25,
+            staleMs: 30_000
+        });
+
+        try {
+            assert.throws(
+                () => runClassifyChangeCommand({
+                    repoRoot,
+                    taskId,
+                    taskIntent: 'Reject classify-change overlap while the shared pre-preflight lock is held',
+                    changedFiles: ['src/app.ts'],
+                    emitMetrics: false
+                }),
+                /Timed out acquiring file lock/
+            );
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails handshake-diagnostics when the current task cycle already has valid shell-smoke evidence', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-handshake-after-shell-smoke';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject handshake rerun after shell smoke already passed'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const handshakeResult = runHandshakeDiagnosticsCommand({
+            repoRoot,
+            taskId
+        });
+        assert.equal(handshakeResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(handshakeResult.outputLines[0], 'HANDSHAKE_DIAGNOSTICS_FAILED');
+        assert.ok(handshakeResult.outputLines.some((line) => line.includes('already has valid SHELL_SMOKE_PREFLIGHT_RECORDED evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails classify-change when the latest handshake supersedes shell smoke evidence for the current task cycle', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-classify-handshake-shell-smoke-overlap';
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale shell smoke evidence before preflight classification'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Reject stale shell smoke evidence before preflight classification',
+                changedFiles: ['src/app.ts'],
+                outputPath: preflightPath,
+                emitMetrics: false
+            }),
+            /Unsafe same-task overlap detected/
+        );
+        assert.equal(fs.existsSync(preflightPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails compile gate with explicit sequencing remediation when POST_PREFLIGHT rule-pack already failed for the current preflight', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-post-preflight-failed-artifact';
@@ -2122,6 +2316,55 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
         assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when the latest handshake supersedes shell smoke evidence for the current task cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-handshake-shell-smoke-overlap';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-handshake-shell-smoke-overlap.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale shell smoke evidence before compile'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale shell smoke evidence before compile',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
+        assert.ok(result.outputLines.some((line) => line.includes('shell-smoke-preflight -> classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

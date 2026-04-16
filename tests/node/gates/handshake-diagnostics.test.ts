@@ -445,11 +445,17 @@ describe('gates/handshake-diagnostics', () => {
             const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
             fs.mkdirSync(timelineDir, { recursive: true });
             const timelinePath = path.join(timelineDir, 'T-HASH-01.jsonl');
-            fs.writeFileSync(timelinePath, JSON.stringify({
-                event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                timestamp_utc: new Date().toISOString(),
-                details: { artifact_hash: 'wrong-hash-value' }
-            }) + '\n', 'utf8');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-16T09:00:00.000Z'
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    timestamp_utc: new Date().toISOString(),
+                    details: { artifact_hash: 'wrong-hash-value' }
+                })
+            ].join('\n') + '\n', 'utf8');
 
             const evidence = getHandshakeEvidence(tempDir, 'T-HASH-01', { timelinePath });
             assert.equal(evidence.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
@@ -490,11 +496,17 @@ describe('gates/handshake-diagnostics', () => {
             const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
             fs.mkdirSync(timelineDir, { recursive: true });
             const timelinePath = path.join(timelineDir, 'T-HASHOK-01.jsonl');
-            fs.writeFileSync(timelinePath, JSON.stringify({
-                event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                timestamp_utc: new Date().toISOString(),
-                details: { artifact_hash: hash }
-            }) + '\n', 'utf8');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-16T09:00:00.000Z'
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    timestamp_utc: new Date().toISOString(),
+                    details: { artifact_hash: hash }
+                })
+            ].join('\n') + '\n', 'utf8');
 
             const evidence = getHandshakeEvidence(tempDir, 'T-HASHOK-01', { timelinePath });
             assert.equal(evidence.evidence_status, 'PASS');
@@ -539,6 +551,10 @@ describe('gates/handshake-diagnostics', () => {
                 timelinePath,
                 [
                     JSON.stringify({
+                        event_type: 'TASK_MODE_ENTERED',
+                        timestamp_utc: '2026-04-16T09:00:00.000Z'
+                    }),
+                    JSON.stringify({
                         event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
                         timestamp_utc: '2026-04-03T10:00:00.000Z',
                         details: { artifact_hash: 'old-stale-hash' }
@@ -555,6 +571,59 @@ describe('gates/handshake-diagnostics', () => {
             const evidence = getHandshakeEvidence(tempDir, 'T-HASHLATEST-01', { timelinePath });
             assert.equal(evidence.evidence_status, 'PASS');
             assert.equal(evidence.violations.length, 0);
+        });
+
+        it('rejects handshake evidence when a newer task-mode cycle already superseded it', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-HANDSHAKE-STALE-01',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-HANDSHAKE-STALE-01-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(timelineDir, { recursive: true });
+            const timelinePath = path.join(timelineDir, 'T-HANDSHAKE-STALE-01.jsonl');
+            fs.writeFileSync(
+                timelinePath,
+                [
+                    JSON.stringify({ event_type: 'TASK_MODE_ENTERED', timestamp_utc: '2026-04-16T09:00:00.000Z' }),
+                    JSON.stringify({
+                        event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                        timestamp_utc: '2026-04-16T09:01:00.000Z',
+                        details: { artifact_hash: hash }
+                    }),
+                    JSON.stringify({ event_type: 'TASK_MODE_ENTERED', timestamp_utc: '2026-04-16T09:02:00.000Z' })
+                ].join('\n') + '\n',
+                'utf8'
+            );
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-HANDSHAKE-STALE-01', { timelinePath });
+            assert.equal(evidence.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
+            assert.ok(evidence.violations.some((violation) => violation.includes('predates the latest TASK_MODE_ENTERED')));
         });
     });
 

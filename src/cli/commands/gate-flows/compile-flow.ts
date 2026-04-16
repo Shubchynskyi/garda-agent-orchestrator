@@ -20,6 +20,10 @@ import {
     appendMandatoryTaskEventAsync,
     assertValidTaskId
 } from '../../../gate-runtime/task-events';
+import {
+    acquireFilesystemLock,
+    releaseFilesystemLock
+} from '../../../gate-runtime/task-events-locking';
 import { auditGateCommand } from '../../../gates/task-events-summary';
 import type { CommandCompactnessAudit } from '../../../gates/task-events-summary';
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../gate-runtime/budget-preflight';
@@ -63,6 +67,14 @@ import {
     getPostPreflightSequenceEvidence,
     getRulePackEvidenceViolations
 } from '../../../gates/rule-pack';
+import {
+    getHandshakeEvidence,
+    getHandshakeEvidenceViolations
+} from '../../../gates/handshake-diagnostics';
+import {
+    getShellSmokeEvidence,
+    getShellSmokeEvidenceViolations
+} from '../../../gates/shell-smoke-preflight';
 import * as gateHelpers from '../../../gates/helpers';
 import {
     normalizeOptionalPath,
@@ -215,6 +227,13 @@ function listChangedFilesPredatingTaskMode(
     return [...preTaskFiles].sort();
 }
 
+function resolvePrePreflightSequenceLockPath(repoRoot: string, taskId: string): string {
+    return gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`)
+    );
+}
+
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -229,6 +248,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         });
     }
 
+    let prePreflightSequenceLockHandle: ReturnType<typeof acquireFilesystemLock>['handle'] | null = null;
     try {
     const explicitChangedFilesProvided = options.changedFiles !== undefined;
     const explicitChangedFiles = expandValueList(options.changedFiles, { splitDelimiters: true });
@@ -310,6 +330,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }
 
     if (resolvedTaskId) {
+        prePreflightSequenceLockHandle = acquireFilesystemLock(
+            resolvePrePreflightSequenceLockPath(repoRoot, resolvedTaskId),
+            {}
+        ).handle;
         result.task_id = resolvedTaskId;
 
         const preflightErrors: string[] = [];
@@ -374,6 +398,12 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             preflightErrors.push(
                 `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before preflight.`
             );
+        }
+        if (preflightErrors.length === 0) {
+            const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, { timelinePath });
+            const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, resolvedTaskId, { timelinePath });
+            preflightErrors.push(...getHandshakeEvidenceViolations(handshakeEvidence));
+            preflightErrors.push(...getShellSmokeEvidenceViolations(shellSmokeEvidence));
         }
         const hasExplicitScopeIsolation = explicitChangedFilesProvided || options.useStaged === true;
         if (preflightErrors.length === 0 && !hasExplicitScopeIsolation) {
@@ -555,6 +585,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             }
         }
         throw error;
+    } finally {
+        releaseFilesystemLock(prePreflightSequenceLockHandle);
     }
 }
 
@@ -663,6 +695,16 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         } else if (!exceptionMessage && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
+        }
+        if (!exceptionMessage) {
+            const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, { timelinePath });
+            const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, resolvedTaskId, { timelinePath });
+            const handshakeViolations = getHandshakeEvidenceViolations(handshakeEvidence);
+            const shellSmokeViolations = getShellSmokeEvidenceViolations(shellSmokeEvidence);
+            if (handshakeViolations.length > 0 || shellSmokeViolations.length > 0) {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = [...handshakeViolations, ...shellSmokeViolations].join(' ');
+            }
         }
 
         const shouldExplainPostPreflightSequence = !!resolvedPreflightPath && (
