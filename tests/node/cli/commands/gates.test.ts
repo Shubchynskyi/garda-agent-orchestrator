@@ -9,6 +9,7 @@ import {
     EXIT_GENERAL_FAILURE
 } from '../../../../src/cli/exit-codes';
 import * as gateReviewHandlers from '../../../../src/cli/commands/gate-review-handlers';
+import { syncTaskQueueStatus } from '../../../../src/cli/commands/gate-flows/gate-flow-helpers';
 import { handleEnterTaskMode } from '../../../../src/cli/commands/gate-task-handlers';
 import {
     runClassifyChangeCommand,
@@ -515,6 +516,25 @@ function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void 
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
         `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | default | fixture |`
     ].join('\n'), 'utf8');
+}
+
+function readTaskQueueStatusFromTaskFile(repoRoot: string, taskId: string): string | null {
+    const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i;
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    const lines = fs.readFileSync(taskPath, 'utf8').split(/\r?\n/);
+    for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (!trimmed.startsWith('|')) {
+            continue;
+        }
+        const cells = trimmed.split('|').map((cell) => cell.trim()).filter(Boolean);
+        if (cells.length < 2 || cells[0] !== taskId) {
+            continue;
+        }
+        const statusMatch = statusPattern.exec(cells[1]);
+        return statusMatch ? statusMatch[1].toUpperCase() : null;
+    }
+    return null;
 }
 
 function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
@@ -1277,7 +1297,7 @@ describe('cli/commands/gates', () => {
     it('auto-emits plan, status, and routing events when entering task mode', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900c';
-        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedTaskQueue(repoRoot, taskId, '🟦 TODO');
         seedInitAnswers(repoRoot, 'Qwen');
 
         const result = runEnterTaskModeCommand({
@@ -1301,6 +1321,34 @@ describe('cli/commands/gates', () => {
         assert.equal(statusDetails.new_status, 'IN_PROGRESS');
         assert.equal(routingDetails.provider, 'Qwen');
         assert.equal(routingDetails.routed_to, 'QWEN.md');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_PROGRESS');
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), /\|\s*T-900c\s*\|\s*🟨 IN_PROGRESS\s*\|/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('syncTaskQueueStatus keeps plain TASK.md rows plain across lifecycle states', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-plain';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+
+        assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'IN_PROGRESS'), true);
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_PROGRESS');
+        let taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*IN_PROGRESS\s*\|/);
+        assert.equal(taskFile.includes('🟨 IN_PROGRESS'), false);
+
+        assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'IN_REVIEW'), true);
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
+        taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*IN_REVIEW\s*\|/);
+        assert.equal(taskFile.includes('🟧 IN_REVIEW'), false);
+
+        assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'DONE'), true);
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        assert.match(taskFile, /\|\s*T-900c-plain\s*\|\s*DONE\s*\|/);
+        assert.equal(taskFile.includes('🟩 DONE'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1996,7 +2044,7 @@ describe('cli/commands/gates', () => {
     it('passes required reviews gate with compile evidence and review artifact', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903';
-        seedTaskQueue(repoRoot, taskId);
+        seedTaskQueue(repoRoot, taskId, '🟦 TODO');
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
@@ -2053,6 +2101,93 @@ describe('cli/commands/gates', () => {
             && typeof event.details === 'object'
             && (event.details as Record<string, unknown>).new_status === 'IN_REVIEW'
         )));
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), /\|\s*T-903\s*\|\s*🟧 IN_REVIEW\s*\|/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('completion-gate updates the TASK.md row to DONE through the CLI handler', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-completion-status-sync';
+        seedTaskQueue(repoRoot, taskId, '🟦 TODO');
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-completion-status-sync.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Sync TASK.md status to DONE from completion-gate'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), /\|\s*T-903-completion-status-sync\s*\|\s*🟧 IN_REVIEW\s*\|/);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Completion status sync regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'completion-gate',
+                '--preflight-path', preflightPath,
+                '--task-id', taskId,
+                '--repo-root', repoRoot
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), /\|\s*T-903-completion-status-sync\s*\|\s*🟩 DONE\s*\|/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

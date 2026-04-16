@@ -37,6 +37,64 @@ export function readTaskQueueStatus(repoRoot: string, taskId: string): string | 
     return null;
 }
 
+const TASK_QUEUE_STATUS_MARKERS: Record<string, string> = Object.freeze({
+    TODO: '🟦',
+    IN_PROGRESS: '🟨',
+    IN_REVIEW: '🟧',
+    DONE: '🟩',
+    BLOCKED: '🟥'
+});
+
+function formatTaskQueueStatusCell(existingCell: string, nextStatus: string): string {
+    const normalizedStatus = String(nextStatus || '').trim().toUpperCase();
+    const leadingWhitespace = existingCell.match(/^\s*/)?.[0] ?? ' ';
+    const trailingWhitespace = existingCell.match(/\s*$/)?.[0] ?? ' ';
+    const hasMarker = Object.values(TASK_QUEUE_STATUS_MARKERS).some((marker) => existingCell.includes(marker));
+    const formattedStatus = hasMarker && TASK_QUEUE_STATUS_MARKERS[normalizedStatus]
+        ? `${TASK_QUEUE_STATUS_MARKERS[normalizedStatus]} ${normalizedStatus}`
+        : normalizedStatus;
+    return `${leadingWhitespace}${formattedStatus}${trailingWhitespace}`;
+}
+
+export function syncTaskQueueStatus(repoRoot: string, taskId: string, nextStatus: string): boolean {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
+        return false;
+    }
+
+    const originalContent = fs.readFileSync(taskPath, 'utf8');
+    const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
+    const lines = originalContent.split(/\r?\n/);
+    let changed = false;
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const rawLine = lines[index];
+        if (!rawLine.trim().startsWith('|')) {
+            continue;
+        }
+
+        const cells = rawLine.split('|');
+        if (cells.length < 4 || cells[1].trim() !== taskId) {
+            continue;
+        }
+
+        const updatedStatusCell = formatTaskQueueStatusCell(cells[2], nextStatus);
+        if (updatedStatusCell !== cells[2]) {
+            cells[2] = updatedStatusCell;
+            lines[index] = cells.join('|');
+            changed = true;
+        }
+        break;
+    }
+
+    if (!changed) {
+        return false;
+    }
+
+    fs.writeFileSync(taskPath, lines.join(newline), 'utf8');
+    return true;
+}
+
 export function readRoutingDecision(repoRoot: string, providerOverride?: unknown, routedToOverride?: unknown): { provider: string | null; routedTo: string | null } {
     const explicitProvider = String(providerOverride || '').trim();
     const explicitRoutedTo = String(routedToOverride || '').trim();

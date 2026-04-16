@@ -58,7 +58,8 @@ import {
     isPlainObject,
     appendMetricsIfEnabled,
     resolveBudgetTokensFromForecast,
-    resolveOutputFiltersPath
+    resolveOutputFiltersPath,
+    syncTaskQueueStatus
 } from './gate-flow-helpers';
 import {
     getCompileGateEvidence,
@@ -700,6 +701,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         const previousStatus = readTaskQueueStatus(repoRoot, resolvedTaskId);
         if (previousStatus && previousStatus !== 'IN_REVIEW') {
             emitStatusChangedEvent(orchestratorRoot, resolvedTaskId, previousStatus, 'IN_REVIEW');
+            syncTaskQueueStatus(repoRoot, resolvedTaskId, 'IN_REVIEW');
         }
     }
 

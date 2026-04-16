@@ -29,6 +29,7 @@ import {
     type ParsedOptionsRecord,
     requireResolvedPath
 } from './shared-command-utils';
+import { syncTaskQueueStatus } from './gate-flows/gate-flow-helpers';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 
 export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
@@ -306,6 +307,7 @@ export async function handleCompletionGate(gateArgv: string[]): Promise<void> {
         }
         if (result.outcome === 'PASS') {
             await emitStatusChangedEventAsync(orchestratorRoot, completionTaskId, 'IN_REVIEW', 'DONE');
+            syncTaskQueueStatus(repoRoot, completionTaskId, 'DONE');
         }
     }
 

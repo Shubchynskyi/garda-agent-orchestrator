@@ -79,7 +79,8 @@ import {
     resolveOrchestratorRoot,
     readRoutingDecision,
     readTaskQueueStatus,
-    appendMetricsIfEnabled
+    appendMetricsIfEnabled,
+    syncTaskQueueStatus
 } from './gate-flow-helpers';
 
 export interface EnterTaskModeCommandOptions {
@@ -401,6 +402,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const previousStatus = readTaskQueueStatus(repoRoot, taskModeArtifact.task_id);
     if (previousStatus && previousStatus !== 'IN_PROGRESS') {
         emitStatusChangedEvent(orchestratorRoot, taskModeArtifact.task_id, previousStatus, 'IN_PROGRESS');
+        syncTaskQueueStatus(repoRoot, taskModeArtifact.task_id, 'IN_PROGRESS');
     }
 
     if (routingDecision.provider && routingDecision.routedTo) {
