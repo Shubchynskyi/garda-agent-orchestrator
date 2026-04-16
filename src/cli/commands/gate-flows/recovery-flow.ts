@@ -12,6 +12,10 @@ import {
     type CompileGateCommandOptions
 } from './compile-flow';
 import {
+    runBuildReviewContextCommand,
+    type BuildReviewContextCommandResult
+} from '../gate-build-handlers';
+import {
     runEnterTaskModeCommand,
     runHandshakeDiagnosticsCommand,
     runLoadRulePackCommand,
@@ -25,7 +29,35 @@ const TASK_ENTRY_RULE_FILES = Object.freeze([
     '90-skill-catalog.md'
 ]);
 
+const REVIEW_PREPARATION_ORDER = Object.freeze([
+    'code',
+    'db',
+    'security',
+    'refactor',
+    'api',
+    'performance',
+    'infra',
+    'dependency',
+    'test'
+]);
+
 export interface RestartCoherentCycleCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    taskModePath?: string;
+    preflightPath?: string;
+    preflightOutputPath?: string;
+    changedFiles?: unknown;
+    includeUntracked?: unknown;
+    useStaged?: boolean;
+    taskIntent?: unknown;
+    commandsPath?: string;
+    outputFiltersPath?: string;
+    failTailLines?: unknown;
+    emitMetrics?: unknown;
+}
+
+export interface RestartReviewCycleCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
     taskModePath?: string;
@@ -122,6 +154,58 @@ function resolveReplayScope(
     }
 }
 
+function resolveReviewCycleReplayScope(
+    options: RestartReviewCycleCommandOptions,
+    previousPreflight: ReturnType<typeof getPreflightContext>,
+    previousTaskMode: ReturnType<typeof getTaskModeEvidence>
+): ResolvedReplayScope {
+    const explicitChangedFilesProvided = options.changedFiles !== undefined;
+    const explicitChangedFiles = normalizeChangedFiles(expandValueList(options.changedFiles || [], { splitDelimiters: true }));
+    const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
+    const taskStartedDirty = !!previousTaskMode.dirty_workspace_baseline?.changed_files.length;
+
+    if (explicitChangedFilesProvided) {
+        return {
+            plannedChangedFiles: explicitChangedFiles,
+            changedFiles: explicitChangedFiles,
+            detectionSource: 'explicit_changed_files'
+        };
+    }
+
+    if (options.useStaged === true) {
+        const includeUntracked = parseBooleanOption(options.includeUntracked, previousPreflight.include_untracked);
+        return {
+            plannedChangedFiles: previousChangedFiles,
+            useStaged: true,
+            includeUntracked,
+            detectionSource: includeUntracked ? 'git_staged_plus_untracked' : 'git_staged_only'
+        };
+    }
+
+    switch (previousPreflight.detection_source) {
+        case 'git_staged_only':
+            return {
+                plannedChangedFiles: previousChangedFiles,
+                useStaged: true,
+                includeUntracked: false,
+                detectionSource: 'git_staged_only'
+            };
+        case 'git_staged_plus_untracked':
+            return {
+                plannedChangedFiles: previousChangedFiles,
+                useStaged: true,
+                includeUntracked: true,
+                detectionSource: 'git_staged_plus_untracked'
+            };
+        default:
+            return {
+                plannedChangedFiles: previousChangedFiles,
+                changedFiles: taskStartedDirty ? previousChangedFiles : undefined,
+                detectionSource: taskStartedDirty ? 'explicit_changed_files' : 'git_auto_current_workspace'
+            };
+    }
+}
+
 function getEffectiveDepthFromPreflight(
     previousTaskMode: ReturnType<typeof getTaskModeEvidence>,
     refreshedPreflight: ReturnType<typeof getPreflightContext>
@@ -136,6 +220,33 @@ function getEffectiveDepthFromPreflight(
         return (riskAwareDepth as Record<string, number>).effective_depth;
     }
     return previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2;
+}
+
+function getRequiredReviewTypesInPreparationOrder(requiredReviews: Record<string, boolean>): string[] {
+    const rankByReviewType = new Map(REVIEW_PREPARATION_ORDER.map((reviewType, index) => [reviewType, index]));
+    return Object.entries(requiredReviews)
+        .filter(([, required]) => required)
+        .map(([reviewType]) => reviewType)
+        .sort((left, right) => {
+            const leftRank = rankByReviewType.get(left) ?? Number.MAX_SAFE_INTEGER;
+            const rightRank = rankByReviewType.get(right) ?? Number.MAX_SAFE_INTEGER;
+            if (leftRank !== rightRank) {
+                return leftRank - rightRank;
+            }
+            return left.localeCompare(right);
+        });
+}
+
+function formatReviewTypeList(reviewTypes: readonly string[]): string {
+    return reviewTypes.length > 0 ? reviewTypes.join(', ') : 'none';
+}
+
+function getDependencyBlockReason(error: unknown, reviewType: string): string | null {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes(`ReviewType '${reviewType}' is blocked until upstream reviews pass for the current cycle:`)) {
+        return null;
+    }
+    return message.trim();
 }
 
 function ensureStepPassed(stepName: string, result: { outputLines: string[]; exitCode: number }): void {
@@ -262,6 +373,142 @@ export async function runRestartCoherentCycleCommand(
         return {
             outputLines: [
                 'COHERENT_CYCLE_RESTART_FAILED',
+                `TaskId: ${resolvedTaskId}`,
+                error instanceof Error ? error.message : String(error)
+            ],
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
+}
+
+export async function runRestartReviewCycleCommand(
+    options: RestartReviewCycleCommandOptions
+): Promise<{ outputLines: string[]; exitCode: number }> {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const resolvedTaskId = assertValidTaskId(String(options.taskId || '').trim());
+    const previousTaskMode = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
+    const taskModeViolations = getTaskModeEvidenceViolations(previousTaskMode);
+    if (taskModeViolations.length > 0) {
+        throw new Error(taskModeViolations.join(' '));
+    }
+
+    const resolvedPreflightPath = path.resolve(String(
+        options.preflightPath
+        || gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${resolvedTaskId}-preflight.json`))
+    ));
+    const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
+    const replayScope = resolveReviewCycleReplayScope(options, previousPreflight, previousTaskMode);
+    const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
+    if (!taskSummary) {
+        throw new Error('Task intent could not be resolved for review-cycle restart.');
+    }
+
+    try {
+        const refreshedPreflightPath = String(options.preflightOutputPath || resolvedPreflightPath).trim() || resolvedPreflightPath;
+        const classifyResult = runClassifyChangeCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            outputPath: refreshedPreflightPath,
+            taskIntent: taskSummary,
+            changedFiles: replayScope.changedFiles,
+            useStaged: replayScope.useStaged,
+            includeUntracked: replayScope.includeUntracked,
+            emitMetrics: options.emitMetrics
+        });
+        const refreshedPreflight = getPreflightContext(refreshedPreflightPath, resolvedTaskId);
+        const refreshedRequiredReviews = refreshedPreflight.preflight.required_reviews as Record<string, boolean>;
+        const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, refreshedPreflight);
+
+        ensureStepPassed('load-rule-pack (POST_PREFLIGHT)', runLoadRulePackCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+            stage: 'POST_PREFLIGHT',
+            preflightPath: refreshedPreflightPath,
+            loadedRuleFiles: normalizeRuleFileList(refreshedRequiredReviews, effectiveDepth),
+            emitMetrics: options.emitMetrics
+        }));
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId: resolvedTaskId,
+            taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+            preflightPath: refreshedPreflightPath,
+            commandsPath: options.commandsPath,
+            outputFiltersPath: options.outputFiltersPath,
+            failTailLines: options.failTailLines,
+            emitMetrics: options.emitMetrics
+        } as CompileGateCommandOptions);
+        ensureStepPassed('compile-gate', compileResult);
+
+        const requiredReviewTypes = getRequiredReviewTypesInPreparationOrder(refreshedRequiredReviews);
+        const preparedResults: BuildReviewContextCommandResult[] = [];
+        const reusedReviewTypes: string[] = [];
+        const launchRequiredReviewTypes: string[] = [];
+        let pendingReviewTypes: string[] = [];
+        let pendingReason: string | null = null;
+
+        for (let index = 0; index < requiredReviewTypes.length; index += 1) {
+            const reviewType = requiredReviewTypes[index];
+            try {
+                const prepared = await runBuildReviewContextCommand({
+                    repoRoot,
+                    reviewType,
+                    depth: String(effectiveDepth),
+                    preflightPath: refreshedPreflightPath
+                });
+                preparedResults.push(prepared);
+                if (prepared.reusedReviewEvidence) {
+                    reusedReviewTypes.push(reviewType);
+                } else {
+                    launchRequiredReviewTypes.push(reviewType);
+                }
+            } catch (error: unknown) {
+                const dependencyBlockReason = getDependencyBlockReason(error, reviewType);
+                if (!dependencyBlockReason) {
+                    throw error;
+                }
+                pendingReviewTypes = requiredReviewTypes.slice(index);
+                pendingReason = dependencyBlockReason;
+                break;
+            }
+        }
+
+        const nextStep = pendingReviewTypes.length > 0
+            ? 'Launch and record the prepared upstream reviews first, then rerun restart-review-cycle to materialize the remaining downstream review contexts.'
+            : launchRequiredReviewTypes.length > 0
+                ? 'Launch and record the prepared review types in dependency-safe order, then rerun required-reviews-check, doc-impact-gate, and completion-gate.'
+                : 'All required review evidence is already current-cycle. Rerun required-reviews-check, doc-impact-gate, and completion-gate.';
+
+        return {
+            outputLines: [
+                'REVIEW_CYCLE_RESTARTED',
+                `TaskId: ${resolvedTaskId}`,
+                `PreflightPath: ${gateHelpers.normalizePath(refreshedPreflightPath)}`,
+                `DetectionSource: ${replayScope.detectionSource}`,
+                `EffectiveDepth: ${effectiveDepth}`,
+                `PreparedReviewTypes: ${formatReviewTypeList(preparedResults.map((result) => result.reviewType))}`,
+                `LaunchRequiredReviewTypes: ${formatReviewTypeList(launchRequiredReviewTypes)}`,
+                `ReusedReviewTypes: ${formatReviewTypeList(reusedReviewTypes)}`,
+                ...preparedResults.flatMap((result) => ([
+                    `PreparedReviewContext[${result.reviewType}]: ${gateHelpers.normalizePath(result.outputPath)}`,
+                    `RuleContextArtifact[${result.reviewType}]: ${gateHelpers.normalizePath(result.ruleContextArtifactPath)}`
+                ])),
+                ...(pendingReviewTypes.length > 0
+                    ? [
+                        `PendingReviewTypes: ${formatReviewTypeList(pendingReviewTypes)}`,
+                        `PendingReason: ${pendingReason}`
+                    ]
+                    : []),
+                `NextStep: ${nextStep}`,
+                `PreflightSummary: ${classifyResult.outputText.trim().replace(/\s+/g, ' ')}`
+            ],
+            exitCode: 0
+        };
+    } catch (error: unknown) {
+        return {
+            outputLines: [
+                'REVIEW_CYCLE_RESTART_FAILED',
                 `TaskId: ${resolvedTaskId}`,
                 error instanceof Error ? error.message : String(error)
             ],

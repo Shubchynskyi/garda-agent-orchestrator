@@ -38,7 +38,7 @@ import {
 import {
     runClassifyChangeCommand,
     runCompileGateCommand
-} from './gates';
+} from './gate-flows/compile-flow';
 import {
     parseOptions,
     normalizePathValue,
@@ -46,6 +46,7 @@ import {
     parseRequiredText
 } from './cli-helpers';
 import {
+    buildKeyValueOutputLines,
     formatKeyValueOutput,
     type ParsedOptionsRecord,
     requireResolvedPath
@@ -444,18 +445,31 @@ export async function handleBuildScopedDiff(gateArgv: string[]): Promise<void> {
     formatKeyValueOutput(outputKV, orderedKeys);
 }
 
-export async function handleBuildReviewContext(gateArgv: string[]): Promise<void> {
-    const defs = {
-        '--review-type': { key: 'reviewType', type: 'string' },
-        '--depth': { key: 'depth', type: 'string' },
-        '--preflight-path': { key: 'preflightPath', type: 'string' },
-        '--token-economy-config-path': { key: 'tokenEconomyConfigPath', type: 'string' },
-        '--scoped-diff-metadata-path': { key: 'scopedDiffMetadataPath', type: 'string' },
-        '--output-path': { key: 'outputPath', type: 'string' },
-        '--repo-root': { key: 'repoRoot', type: 'string' }
-    };
-    const { options: rawOptions } = parseOptions(gateArgv, defs);
-    const options = rawOptions as ParsedOptionsRecord;
+export interface BuildReviewContextCommandResult {
+    reviewType: string;
+    outputPath: string;
+    ruleContextArtifactPath: string;
+    tokenEconomyActive: boolean;
+    reusedReviewEvidence: boolean;
+    reusedReceiptPath: string | null;
+    reusedReviewerExecutionMode: string | null;
+    reusedReviewerIdentity: string | null;
+    outputLines: string[];
+}
+
+export interface BuildReviewContextCommandOptions {
+    reviewType?: unknown;
+    depth?: unknown;
+    preflightPath?: unknown;
+    tokenEconomyConfigPath?: unknown;
+    scopedDiffMetadataPath?: unknown;
+    outputPath?: unknown;
+    repoRoot?: unknown;
+}
+
+export async function runBuildReviewContextCommand(
+    options: BuildReviewContextCommandOptions
+): Promise<BuildReviewContextCommandResult> {
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     ensureDirectoryExists(repoRoot, 'Repo root');
     const reviewType = parseRequiredText(options.reviewType, 'ReviewType');
@@ -581,5 +595,31 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
         outputKV.reusedReviewerIdentity = reviewReuseResult.reviewerIdentity;
         orderedKeys.push('reusedReviewEvidence', 'reusedReceiptPath', 'reusedReviewerExecutionMode', 'reusedReviewerIdentity');
     }
-    formatKeyValueOutput(outputKV, orderedKeys);
+    const outputLines = buildKeyValueOutputLines(outputKV, orderedKeys);
+    return {
+        reviewType,
+        outputPath: result.output_path,
+        ruleContextArtifactPath: result.rule_context.artifact_path,
+        tokenEconomyActive: result.token_economy_active,
+        reusedReviewEvidence: reviewReuseResult.reused,
+        reusedReceiptPath: reviewReuseResult.receiptPath,
+        reusedReviewerExecutionMode: reviewReuseResult.reviewerExecutionMode,
+        reusedReviewerIdentity: reviewReuseResult.reviewerIdentity,
+        outputLines
+    };
+}
+
+export async function handleBuildReviewContext(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--depth': { key: 'depth', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--token-economy-config-path': { key: 'tokenEconomyConfigPath', type: 'string' },
+        '--scoped-diff-metadata-path': { key: 'scopedDiffMetadataPath', type: 'string' },
+        '--output-path': { key: 'outputPath', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(gateArgv, defs);
+    const result = await runBuildReviewContextCommand(rawOptions as BuildReviewContextCommandOptions);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
 }

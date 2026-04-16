@@ -18,6 +18,7 @@ import {
     handleEnterTaskMode,
     handleLoadRulePack,
     handleRestartCoherentCycle,
+    handleRestartReviewCycle,
     handleRecordNoOp,
     handleHandshakeDiagnostics,
     handleShellSmokePreflight,
@@ -53,6 +54,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleEnterTaskMode(gateArgv);
         case 'restart-coherent-cycle':
             return handleRestartCoherentCycle(gateArgv);
+        case 'restart-review-cycle':
+            return handleRestartReviewCycle(gateArgv);
         case 'load-rule-pack':
             return handleLoadRulePack(gateArgv);
         case 'record-no-op':

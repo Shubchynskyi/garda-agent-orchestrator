@@ -452,6 +452,35 @@ function buildCoherentCycleRestartCommand(
     return parts.join(' ');
 }
 
+function buildReviewCycleRestartCommand(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    taskModePath: string | null,
+    commandsPath: string | null,
+    outputFiltersPath: string | null
+): string {
+    const cliPrefix = isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleName());
+    const parts = [
+        `${cliPrefix} gate restart-review-cycle`,
+        `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
+        `--task-id ${quotePowerShellCliValue(taskId)}`,
+        `--preflight-path ${quotePowerShellCliValue(preflightPath)}`
+    ];
+    if (taskModePath) {
+        parts.push(`--task-mode-path ${quotePowerShellCliValue(taskModePath)}`);
+    }
+    if (commandsPath) {
+        parts.push(`--commands-path ${quotePowerShellCliValue(commandsPath)}`);
+    }
+    if (outputFiltersPath) {
+        parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
+    }
+    return parts.join(' ');
+}
+
 function readOptionalArtifactStringField(
     artifact: Record<string, unknown> | null,
     fieldName: string
@@ -1623,6 +1652,36 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
             compileOutputFiltersPath
         )
         : null;
+    const reviewCycleRecoveryRelevant = resolvedTaskId
+        && stageSequence.violations.length === 0
+        && errors.length > 0
+        && (
+            reviewSkillEvidence.violations.length > 0
+            || (!timelineEventTypes.has('REVIEW_GATE_PASSED') && !timelineEventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE'))
+            || REVIEW_CONTRACTS.some(([reviewKey]) => {
+                if (!requiredReviews[reviewKey]) {
+                    return false;
+                }
+                const artifact = reviewArtifacts[reviewKey];
+                if (!artifact) {
+                    return true;
+                }
+                return !artifact.content
+                    || !artifact.reviewContext
+                    || !artifact.receipt
+                    || artifact.findings_evidence.violations.length > 0;
+            })
+        );
+    const reviewCycleRestartCommand = reviewCycleRecoveryRelevant
+        ? buildReviewCycleRestartCommand(
+            repoRoot,
+            resolvedTaskId,
+            normalizePath(preflightPath),
+            taskModeEvidence.evidence_path,
+            compileCommandsPath,
+            compileOutputFiltersPath
+        )
+        : null;
 
     return {
         status,
@@ -1646,6 +1705,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         plan: planEvidence,
         isolation_mode_warnings: isolationWarnings,
         coherent_cycle_restart_command: coherentCycleRestartCommand,
+        review_cycle_restart_command: reviewCycleRestartCommand,
         violations: errors
     };
 }
@@ -1688,6 +1748,13 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
 
     if (typeof result.coherent_cycle_restart_command === 'string' && result.coherent_cycle_restart_command.trim()) {
         lines.push(`RecoveryCommand: ${result.coherent_cycle_restart_command}`);
+    }
+    if (typeof result.review_cycle_restart_command === 'string' && result.review_cycle_restart_command.trim()) {
+        lines.push(
+            typeof result.coherent_cycle_restart_command === 'string' && result.coherent_cycle_restart_command.trim()
+                ? `ReviewRecoveryCommand: ${result.review_cycle_restart_command}`
+                : `RecoveryCommand: ${result.review_cycle_restart_command}`
+        );
     }
 
     if (Array.isArray(result.isolation_mode_warnings) && result.isolation_mode_warnings.length > 0) {

@@ -65,9 +65,10 @@ export function toKeyValueRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
-export function formatKeyValueOutput(obj: Record<string, unknown> | null | undefined, keys: string[]): void {
+export function buildKeyValueOutputLines(obj: Record<string, unknown> | null | undefined, keys: string[]): string[] {
+    const lines: string[] = [];
     if (!obj) {
-        return;
+        return lines;
     }
     for (const key of keys) {
         if (obj[key] === undefined) {
@@ -77,7 +78,14 @@ export function formatKeyValueOutput(obj: Record<string, unknown> | null | undef
         const value = typeof obj[key] === 'boolean'
             ? (obj[key] ? 'True' : 'False')
             : String(obj[key]);
-        console.log(`${label}: ${value}`);
+        lines.push(`${label}: ${value}`);
+    }
+    return lines;
+}
+
+export function formatKeyValueOutput(obj: Record<string, unknown> | null | undefined, keys: string[]): void {
+    for (const line of buildKeyValueOutputLines(obj, keys)) {
+        console.log(line);
     }
 }
 

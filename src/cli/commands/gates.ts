@@ -4,7 +4,7 @@
  * Implementation lives in the `gate-flows/` directory:
  *   - task-mode-flow.ts   (enter-task-mode, load-rule-pack, record-no-op, diagnostics)
  *   - compile-flow.ts     (classify-change, compile-gate)
- *   - recovery-flow.ts    (restart-coherent-cycle)
+ *   - recovery-flow.ts    (restart-coherent-cycle, restart-review-cycle)
  *   - review-flow.ts      (required-reviews-check, doc-impact-gate)
  *   - completion-flow.ts  (log-task-event, human-commit)
  *
@@ -29,7 +29,8 @@ export {
 } from './gate-flows/compile-flow';
 
 export {
-    runRestartCoherentCycleCommand
+    runRestartCoherentCycleCommand,
+    runRestartReviewCycleCommand
 } from './gate-flows/recovery-flow';
 
 export {
