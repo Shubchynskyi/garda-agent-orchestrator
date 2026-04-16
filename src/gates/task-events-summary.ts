@@ -551,7 +551,7 @@ function collectReviewContextContributions(container: Record<string, unknown>, r
     }
 }
 
-function buildTokenEconomySummary(events: Record<string, unknown>[], repoRoot: string | null) {
+export function buildTokenEconomySummary(events: Record<string, unknown>[], repoRoot: string | null) {
     const breakdown: TokenContributionEntry[] = [];
     const seenKeys = new Set<string>();
 

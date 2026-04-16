@@ -2547,6 +2547,119 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('task-audit-summary materializes canonical final closeout artifacts through the CLI handler', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-final-closeout-artifact';
+        seedTaskQueue(repoRoot, taskId, '🟦 TODO');
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-final-closeout-artifact.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Materialize final closeout artifacts from task-audit-summary'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'test', 'TEST REVIEW PASSED');
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'DOCS_UPDATED',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            docsUpdated: ['docs/cli-reference.md'],
+            rationale: 'Final closeout artifact fixture updates workflow documentation.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        try {
+            process.chdir(repoRoot);
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'completion-gate',
+                '--preflight-path', preflightPath,
+                '--task-id', taskId,
+                '--repo-root', repoRoot
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'task-audit-summary',
+                '--task-id', taskId,
+                '--repo-root', repoRoot,
+                '--as-json'
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const finalCloseoutJsonPath = path.join(reviewsRoot, `${taskId}-final-closeout.json`);
+        const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${taskId}-final-closeout.md`);
+        assert.equal(fs.existsSync(finalCloseoutJsonPath), true);
+        assert.equal(fs.existsSync(finalCloseoutMarkdownPath), true);
+        const finalCloseoutJson = JSON.parse(fs.readFileSync(finalCloseoutJsonPath, 'utf8'));
+        assert.equal(finalCloseoutJson.status, 'READY');
+        assert.equal(finalCloseoutJson.artifact_state, 'MATERIALIZED');
+        assert.deepEqual(finalCloseoutJson.implementation_summary.review_verdicts, {
+            code: 'REVIEW PASSED',
+            test: 'TEST REVIEW PASSED'
+        });
+        assert.ok(fs.readFileSync(finalCloseoutMarkdownPath, 'utf8').includes('Do you want me to commit now? (yes/no)'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('defaults required review verdicts from preflight when CLI verdict flags are omitted', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-defaulted-verdicts';

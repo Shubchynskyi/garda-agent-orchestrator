@@ -7,6 +7,8 @@ import * as os from 'node:os';
 import {
     buildTaskAuditSummary,
     formatTaskAuditSummaryText,
+    formatFinalCloseoutMarkdown,
+    synchronizeFinalCloseoutArtifacts,
     type TaskAuditSummaryResult
 } from '../../../src/gates/task-audit-summary';
 
@@ -258,6 +260,94 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.status, 'PASS');
             assert.equal(result.final_report_contract.status, 'READY');
             assert.equal(result.final_report_contract.blocker, null);
+        });
+
+        it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed.',
+                details: {
+                    output_telemetry: {
+                        estimated_saved_tokens: 62,
+                        raw_token_count_estimate: 180,
+                        filtered_token_count_estimate: 118
+                    }
+                }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 1000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
+                requested_depth: 2,
+                effective_depth: 2,
+                active_profile: 'balanced'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                mode: 'FULL_PATH',
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 42 },
+                required_reviews: { code: true, test: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', {
+                verdicts: {
+                    code: 'REVIEW PASSED',
+                    test: 'TEST REVIEW PASSED'
+                }
+            });
+            const crypto = require('node:crypto');
+            const codeReviewContent = '# Code Review\nREVIEW PASSED';
+            const testReviewContent = '# Test Review\nTEST REVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', codeReviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-test.md', testReviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                review_artifact_sha256: crypto.createHash('sha256').update(codeReviewContent, 'utf8').digest('hex')
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-test-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'test',
+                review_artifact_sha256: crypto.createHash('sha256').update(testReviewContent, 'utf8').digest('hex')
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                decision: 'DOCS_UPDATED',
+                behavior_changed: false,
+                changelog_updated: false,
+                docs_updated: ['docs/cli-reference.md']
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.status, 'READY');
+            assert.equal(result.final_closeout.artifact_state, 'PENDING');
+            assert.equal(result.final_closeout.implementation_summary.requested_depth, 2);
+            assert.equal(result.final_closeout.implementation_summary.effective_depth, 2);
+            assert.equal(result.final_closeout.implementation_summary.path_mode, 'FULL_PATH');
+            assert.deepEqual(result.final_closeout.implementation_summary.review_verdicts, {
+                code: 'REVIEW PASSED',
+                test: 'TEST REVIEW PASSED'
+            });
+            assert.equal(result.final_closeout.implementation_summary.docs_updated, true);
+            assert.deepEqual(result.final_closeout.docs.docs_updated, ['docs/cli-reference.md']);
+            assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('Saved tokens: ~62'));
+            assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, false);
         });
 
         it('infers a conventional-style commit suggestion from task metadata and changed scope', () => {
@@ -846,6 +936,78 @@ describe('gates/task-audit-summary', () => {
         });
     });
 
+    describe('final closeout materialization', () => {
+        it('writes canonical final closeout json and markdown artifacts for PASS summaries', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
+                requested_depth: 2,
+                effective_depth: 2
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                mode: 'FULL_PATH',
+                changed_files: ['src/example.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            synchronizeFinalCloseoutArtifacts(result);
+
+            const jsonPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.json`);
+            const markdownPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.md`);
+            const renderedMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+            assert.equal(fs.existsSync(jsonPath), true);
+            assert.equal(fs.existsSync(markdownPath), true);
+            assert.equal(result.final_closeout.artifact_state, 'MATERIALIZED');
+            assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, true);
+            assert.ok(JSON.parse(fs.readFileSync(jsonPath, 'utf8')).artifact_state === 'MATERIALIZED');
+            assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Suggested commit command:'));
+            assert.ok(renderedMarkdown.includes('Do you want me to commit now? (yes/no)'));
+        });
+
+        it('removes stale final closeout artifacts when the audit summary is not ready', () => {
+            const jsonPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.json`);
+            const markdownPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.md`);
+            fs.writeFileSync(jsonPath, '{}\n', 'utf8');
+            fs.writeFileSync(markdownPath, 'stale\n', 'utf8');
+            fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
+            writePreflight(reviewsDir, TASK_ID, {
+                mode: 'FULL_PATH',
+                changed_files: ['src/example.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            synchronizeFinalCloseoutArtifacts(result);
+
+            assert.equal(fs.existsSync(jsonPath), false);
+            assert.equal(fs.existsSync(markdownPath), false);
+            assert.equal(result.final_closeout.artifact_state, 'REMOVED');
+            assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, false);
+        });
+    });
+
     describe('formatTaskAuditSummaryText', () => {
         it('renders compact text output', () => {
             const summary: TaskAuditSummaryResult = {
@@ -885,6 +1047,41 @@ describe('gates/task-audit-summary', () => {
                     commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
                     commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
                     commit_question: 'Do you want me to commit now? (yes/no)'
+                },
+                final_closeout: {
+                    schema_version: 1,
+                    event_source: 'task-audit-summary',
+                    task_id: 'T-TEST-1',
+                    generated_utc: '2026-01-01T00:00:00.000Z',
+                    audit_status: 'INCOMPLETE',
+                    status: 'NOT_READY',
+                    blocker: 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
+                    artifact_state: 'NOT_READY',
+                    artifact_paths: {
+                        json: 'runtime/reviews/T-TEST-1-final-closeout.json',
+                        markdown: 'runtime/reviews/T-TEST-1-final-closeout.md'
+                    },
+                    implementation_summary: {
+                        requested_depth: 2,
+                        effective_depth: 2,
+                        path_mode: 'FULL_PATH',
+                        review_verdicts: { code: 'MISSING' },
+                        docs_updated: false,
+                        changed_files_count: 1,
+                        changed_lines_total: 50,
+                        scope_category: null,
+                        active_profile: null
+                    },
+                    docs: {
+                        decision: 'NO_DOC_UPDATES',
+                        behavior_changed: false,
+                        changelog_updated: false,
+                        docs_updated: []
+                    },
+                    token_economy: null,
+                    commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                    commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
+                    commit_question: 'Do you want me to commit now? (yes/no)'
                 }
             };
 
@@ -902,6 +1099,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(text.includes('Blockers:'));
             assert.ok(text.includes('code-review'));
             assert.ok(text.includes('FinalReportContract: NOT_READY'));
+            assert.ok(text.includes('FinalCloseout: NOT_READY (NOT_READY)'));
             assert.ok(text.includes('git commit -m "fix(orchestration): <summary>"'));
         });
 
@@ -935,6 +1133,41 @@ describe('gates/task-audit-summary', () => {
                     commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
                     commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
                     commit_question: 'Do you want me to commit now? (yes/no)'
+                },
+                final_closeout: {
+                    schema_version: 1,
+                    event_source: 'task-audit-summary',
+                    task_id: 'T-CLEAN',
+                    generated_utc: '2026-01-01T00:00:00.000Z',
+                    audit_status: 'PASS',
+                    status: 'READY',
+                    blocker: null,
+                    artifact_state: 'MATERIALIZED',
+                    artifact_paths: {
+                        json: 'runtime/reviews/T-CLEAN-final-closeout.json',
+                        markdown: 'runtime/reviews/T-CLEAN-final-closeout.md'
+                    },
+                    implementation_summary: {
+                        requested_depth: 2,
+                        effective_depth: 2,
+                        path_mode: 'FULL_PATH',
+                        review_verdicts: {},
+                        docs_updated: false,
+                        changed_files_count: 0,
+                        changed_lines_total: 0,
+                        scope_category: null,
+                        active_profile: null
+                    },
+                    docs: {
+                        decision: 'NO_DOC_UPDATES',
+                        behavior_changed: false,
+                        changelog_updated: false,
+                        docs_updated: []
+                    },
+                    token_economy: null,
+                    commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                    commit_command_suggestion: 'git commit -m "fix(orchestration): <summary>"',
+                    commit_question: 'Do you want me to commit now? (yes/no)'
                 }
             };
 
@@ -942,6 +1175,7 @@ describe('gates/task-audit-summary', () => {
 
             assert.ok(!text.includes('Blockers:'));
             assert.ok(text.includes('FinalReportContract: READY'));
+            assert.ok(text.includes('FinalCloseout: READY (MATERIALIZED)'));
             assert.ok(text.includes('Do you want me to commit now? (yes/no)'));
         });
     });

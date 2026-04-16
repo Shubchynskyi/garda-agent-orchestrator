@@ -7,7 +7,11 @@ import {
 import * as gateHelpers from '../../gates/helpers';
 import { formatCompletionGateResult, runCompletionGate } from '../../gates/completion';
 import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../../gates/task-events-summary';
-import { buildTaskAuditSummary, formatTaskAuditSummaryText } from '../../gates/task-audit-summary';
+import {
+    buildTaskAuditSummary,
+    formatTaskAuditSummaryText,
+    synchronizeFinalCloseoutArtifacts
+} from '../../gates/task-audit-summary';
 import {
     runEnterTaskModeCommand,
     runHandshakeDiagnosticsCommand,
@@ -262,6 +266,7 @@ export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> 
         eventsRoot: options.eventsRoot ? String(options.eventsRoot) : null,
         reviewsRoot: options.reviewsRoot ? String(options.reviewsRoot) : null
     });
+    synchronizeFinalCloseoutArtifacts(auditSummary);
     const rendered = options.asJson === true
         ? `${JSON.stringify(auditSummary, null, 2)}\n`
         : `${formatTaskAuditSummaryText(auditSummary)}\n`;

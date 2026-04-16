@@ -171,7 +171,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 21. Update required docs and changelog when behavior changed.
    - Internal orchestration artifacts (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
 22. Record artifacts and evidence in `TASK.md`.
-23. After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json` and use `final_report_contract` as the mandatory final closeout scaffold.
+23. After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json`; this materializes `runtime/reviews/<task-id>-final-closeout.json` and `runtime/reviews/<task-id>-final-closeout.md`. Use the canonical final-closeout artifact instead of reconstructing the report structure manually.
 24. Set final status:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
     - `BLOCKED` when any mandatory gate failed or cannot run.
@@ -183,7 +183,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
        - keep spaces between numeric values and labels and around `+`; do not emit compressed fragments like `824code review context` or `+25DB review context`;
        - localized summaries may translate the wording, but must preserve the numeric structure; example: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
     2. commit suggestion as exact command form, defaulting to conventional style: `git commit -m "<type>(<scope>): <summary>"`
-       - if `final_report_contract.commit_command_suggestion` is populated, use it verbatim by default; otherwise fall back to the conventional template above.
+       - if `final_closeout.commit_command_suggestion` is populated, use it verbatim by default; otherwise fall back to the conventional template above.
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`
 26. Close spawned reviewer/specialist agents when platform supports agent lifecycle controls.
 27. Never commit unless user explicitly requests commit.

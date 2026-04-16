@@ -258,4 +258,4 @@ Notes:
 - New task-event writes include a per-task hash chain (`integrity.task_sequence`, `prev_event_sha256`, `event_sha256`) to detect local tampering, replay, and out-of-order inserts after the fact.
 - Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.
 - Human-readable timeline can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-events-summary`; summary output includes `IntegrityStatus`.
-- Compact task audit summary can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>"`; shows status, gates, changed files, evidence paths, and blockers. Use `--as-json` for structured output. Non-zero exit when status is not `PASS`.
+- Compact task audit summary can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>"`; it shows status, gates, changed files, evidence paths, blockers, and final closeout contract data. Use `--as-json` for structured output; on `PASS` it also materializes canonical `runtime/reviews/<task-id>-final-closeout.{json,md}` artifacts. Non-zero exit when status is not `PASS`.

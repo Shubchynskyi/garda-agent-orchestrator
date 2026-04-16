@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
 import { fileSha256, joinOrchestratorPath, resolvePathInsideRepo, toPosix } from './helpers';
-import { formatTimestamp, parseTimestamp } from './task-events-summary';
+import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './task-events-summary';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -45,6 +45,48 @@ interface FinalReportContract {
     commit_question: string;
 }
 
+interface FinalCloseoutArtifactPaths {
+    json: string;
+    markdown: string;
+}
+
+interface FinalCloseoutDocsSummary {
+    decision: string | null;
+    behavior_changed: boolean;
+    changelog_updated: boolean;
+    docs_updated: string[];
+}
+
+interface FinalCloseoutImplementationSummary {
+    requested_depth: number | null;
+    effective_depth: number | null;
+    path_mode: string | null;
+    review_verdicts: Record<string, string>;
+    docs_updated: boolean;
+    changed_files_count: number;
+    changed_lines_total: number;
+    scope_category: string | null;
+    active_profile: string | null;
+}
+
+export interface FinalCloseoutArtifact {
+    schema_version: 1;
+    event_source: 'task-audit-summary';
+    task_id: string;
+    generated_utc: string;
+    audit_status: 'PASS' | 'BLOCKED' | 'INCOMPLETE';
+    status: 'READY' | 'NOT_READY';
+    blocker: string | null;
+    artifact_state: 'PENDING' | 'MATERIALIZED' | 'REMOVED' | 'NOT_READY';
+    artifact_paths: FinalCloseoutArtifactPaths;
+    implementation_summary: FinalCloseoutImplementationSummary;
+    docs: FinalCloseoutDocsSummary;
+    token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
+    commit_command_template: string;
+    commit_command_suggestion: string;
+    commit_question: string;
+}
+
 interface TaskQueueMetadata {
     area: string | null;
     title: string | null;
@@ -68,6 +110,7 @@ export interface TaskAuditSummaryResult {
     evidence: EvidenceArtifact[];
     blockers: BlockerEntry[];
     final_report_contract: FinalReportContract;
+    final_closeout: FinalCloseoutArtifact;
 }
 
 interface ProfileReviewDecisionSummary {
@@ -111,6 +154,8 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'compile-output', suffix: '-compile-output.log' },
     { kind: 'review-gate', suffix: '-review-gate.json' },
     { kind: 'doc-impact', suffix: '-doc-impact.json' },
+    { kind: 'final-closeout-json', suffix: '-final-closeout.json' },
+    { kind: 'final-closeout-markdown', suffix: '-final-closeout.md' },
     { kind: 'no-op', suffix: '-no-op.json' },
     { kind: 'code-review', suffix: '-code.md' },
     { kind: 'code-review-context', suffix: '-code-review-context.json' },
@@ -291,6 +336,63 @@ function inferCommitSubject(taskMetadata: TaskQueueMetadata | null): string {
     return normalizeCommitSubject(String(taskMetadata?.title || ''));
 }
 
+function parseOptionalNumber(value: unknown): number | null {
+    if (value == null || value === '') {
+        return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readReviewVerdicts(requiredReviews: Record<string, boolean>, reviewGate: Record<string, unknown> | null): Record<string, string> {
+    const verdictsSource = reviewGate && reviewGate.verdicts && typeof reviewGate.verdicts === 'object'
+        ? reviewGate.verdicts as Record<string, unknown>
+        : {};
+    const reviewVerdicts: Record<string, string> = {};
+    for (const reviewType of Object.keys(requiredReviews).filter((key) => requiredReviews[key]).sort()) {
+        const verdict = verdictsSource[reviewType];
+        reviewVerdicts[reviewType] = typeof verdict === 'string' && verdict.trim()
+            ? verdict.trim()
+            : 'MISSING';
+    }
+    return reviewVerdicts;
+}
+
+function readDocImpactSummary(docImpact: Record<string, unknown> | null): FinalCloseoutDocsSummary {
+    const docsUpdated = docImpact && Array.isArray(docImpact.docs_updated)
+        ? docImpact.docs_updated.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    return {
+        decision: docImpact && typeof docImpact.decision === 'string' ? docImpact.decision : null,
+        behavior_changed: docImpact?.behavior_changed === true,
+        changelog_updated: docImpact?.changelog_updated === true,
+        docs_updated: docsUpdated
+    };
+}
+
+function updateEvidenceArtifactState(
+    evidence: EvidenceArtifact[],
+    kind: string,
+    artifactPath: string,
+    exists: boolean
+): void {
+    const normalizedPath = toPosix(path.resolve(artifactPath));
+    const entry = evidence.find((candidate) => candidate.kind === kind);
+    const sha256 = exists ? fileSha256(artifactPath) : null;
+    if (entry) {
+        entry.path = normalizedPath;
+        entry.exists = exists;
+        entry.sha256 = sha256;
+        return;
+    }
+    evidence.push({
+        kind,
+        path: normalizedPath,
+        exists,
+        sha256
+    });
+}
+
 function buildCommitCommandSuggestion(changedFiles: string[], taskMetadata: TaskQueueMetadata | null): { template: string; suggestion: string } {
     const template = 'git commit -m "<type>(<scope>): <summary>"';
     const subject = inferCommitSubject(taskMetadata);
@@ -459,10 +561,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     let changedLinesTotal = 0;
     let requiredReviews: Record<string, boolean> = {};
     let scopeCategory: string | null = null;
+    let pathMode: string | null = null;
 
     const preflightPath = path.join(reviewsRoot, `${safeTaskId}-preflight.json`);
     const preflight = safeReadJson(preflightPath);
     if (preflight) {
+        if (typeof preflight.mode === 'string' && preflight.mode.trim()) {
+            pathMode = preflight.mode.trim();
+        }
         if (Array.isArray(preflight.changed_files)) {
             changedFiles = preflight.changed_files.map((f: unknown) => String(f));
             changedFilesCount = changedFiles.length;
@@ -593,6 +699,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     // -----------------------------------------------------------------------
     // 5. Evidence artifacts
     // -----------------------------------------------------------------------
+    const tokenEconomy = buildTokenEconomySummary(events, repoRoot);
     const evidence: EvidenceArtifact[] = [];
     for (const { kind, suffix } of ARTIFACT_PATTERNS) {
         const artifactPath = path.join(reviewsRoot, `${safeTaskId}${suffix}`);
@@ -639,6 +746,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     }
 
     const commitCommand = buildCommitCommandSuggestion(changedFiles, taskMetadata);
+    const reviewGatePath = path.join(reviewsRoot, `${safeTaskId}-review-gate.json`);
+    const reviewGate = safeReadJson(reviewGatePath);
+    const reviewVerdicts = readReviewVerdicts(requiredReviews, reviewGate);
+    const docImpactPath = path.join(reviewsRoot, `${safeTaskId}-doc-impact.json`);
+    const docImpact = safeReadJson(docImpactPath);
+    const docsSummary = readDocImpactSummary(docImpact);
+    const finalCloseoutJsonPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.json`);
+    const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.md`);
     const finalReportContract: FinalReportContract = {
         status: status === 'PASS' ? 'READY' : 'NOT_READY',
         blocker: status === 'PASS'
@@ -659,10 +774,42 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         commit_command_suggestion: commitCommand.suggestion,
         commit_question: 'Do you want me to commit now? (yes/no)'
     };
+    const finalCloseout: FinalCloseoutArtifact = {
+        schema_version: 1,
+        event_source: 'task-audit-summary',
+        task_id: safeTaskId,
+        generated_utc: new Date().toISOString(),
+        audit_status: status,
+        status: finalReportContract.status,
+        blocker: finalReportContract.blocker,
+        artifact_state: status === 'PASS' ? 'PENDING' : 'NOT_READY',
+        artifact_paths: {
+            json: toPosix(finalCloseoutJsonPath),
+            markdown: toPosix(finalCloseoutMarkdownPath)
+        },
+        implementation_summary: {
+            requested_depth: parseOptionalNumber(taskMode?.requested_depth),
+            effective_depth: parseOptionalNumber(taskMode?.effective_depth),
+            path_mode: pathMode,
+            review_verdicts: reviewVerdicts,
+            docs_updated: docsSummary.decision === 'DOCS_UPDATED',
+            changed_files_count: changedFilesCount,
+            changed_lines_total: changedLinesTotal,
+            scope_category: scopeCategory,
+            active_profile: typeof taskMode?.active_profile === 'string' && taskMode.active_profile.trim()
+                ? taskMode.active_profile.trim()
+                : null
+        },
+        docs: docsSummary,
+        token_economy: tokenEconomy,
+        commit_command_template: commitCommand.template,
+        commit_command_suggestion: commitCommand.suggestion,
+        commit_question: finalReportContract.commit_question
+    };
 
     return {
         task_id: safeTaskId,
-        generated_utc: new Date().toISOString(),
+        generated_utc: finalCloseout.generated_utc,
         status,
         events_count: eventsCount,
         first_event_utc: firstEventUtc,
@@ -677,8 +824,82 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         profile_review_decisions: profileReviewDecisions,
         evidence,
         blockers,
-        final_report_contract: finalReportContract
+        final_report_contract: finalReportContract,
+        final_closeout: finalCloseout
     };
+}
+
+// ---------------------------------------------------------------------------
+// Final closeout artifact
+// ---------------------------------------------------------------------------
+
+export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
+    const depthParts: string[] = [];
+    if (closeout.implementation_summary.requested_depth != null) {
+        depthParts.push(`requested depth=${closeout.implementation_summary.requested_depth}`);
+    }
+    if (closeout.implementation_summary.effective_depth != null) {
+        depthParts.push(`effective depth=${closeout.implementation_summary.effective_depth}`);
+    }
+    const depthText = depthParts.length > 0 ? depthParts.join(', ') : 'depth=unknown';
+    const pathModeText = closeout.implementation_summary.path_mode || 'unknown';
+    const reviewVerdicts = Object.entries(closeout.implementation_summary.review_verdicts)
+        .map(([reviewType, verdict]) => `\`${reviewType}: ${verdict}\``);
+    const reviewVerdictText = reviewVerdicts.length > 0 ? reviewVerdicts.join(', ') : '`none required`';
+    const docsUpdatedText = closeout.implementation_summary.docs_updated ? '`yes`' : '`no`';
+
+    const lines: string[] = [
+        `Task \`${closeout.task_id}\` completed in \`${depthText}\`, \`path mode=${pathModeText}\`. ` +
+        `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
+    ];
+
+    if (closeout.token_economy?.visible_summary_line) {
+        lines.push(closeout.token_economy.visible_summary_line);
+    }
+
+    lines.push('');
+    lines.push('Suggested commit command:');
+    lines.push('```bash');
+    lines.push(closeout.commit_command_suggestion);
+    lines.push('```');
+    lines.push('');
+    lines.push(closeout.commit_question);
+
+    return lines.join('\n');
+}
+
+export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResult): TaskAuditSummaryResult {
+    const jsonPath = summary.final_closeout.artifact_paths.json;
+    const markdownPath = summary.final_closeout.artifact_paths.markdown;
+
+    if (summary.final_closeout.status === 'READY') {
+        const closeout = {
+            ...summary.final_closeout,
+            artifact_state: 'MATERIALIZED' as const
+        };
+        fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+        fs.writeFileSync(jsonPath, JSON.stringify(closeout, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', 'utf8');
+        summary.final_closeout = closeout;
+        updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
+        updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);
+        return summary;
+    }
+
+    let removed = false;
+    for (const artifactPath of [jsonPath, markdownPath]) {
+        if (fs.existsSync(artifactPath)) {
+            fs.rmSync(artifactPath, { force: true });
+            removed = true;
+        }
+    }
+    summary.final_closeout = {
+        ...summary.final_closeout,
+        artifact_state: removed ? 'REMOVED' : 'NOT_READY'
+    };
+    updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, false);
+    updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, false);
+    return summary;
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +996,12 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     lines.push(`FinalReportContract: ${summary.final_report_contract.status}`);
     if (summary.final_report_contract.blocker) {
         lines.push(`  Reason: ${summary.final_report_contract.blocker}`);
+    }
+    lines.push(`FinalCloseout: ${summary.final_closeout.status} (${summary.final_closeout.artifact_state})`);
+    lines.push(`  JsonArtifact: ${summary.final_closeout.artifact_paths.json}`);
+    lines.push(`  MarkdownArtifact: ${summary.final_closeout.artifact_paths.markdown}`);
+    if (summary.final_closeout.token_economy?.visible_summary_line) {
+        lines.push(`  ${summary.final_closeout.token_economy.visible_summary_line}`);
     }
     lines.push('FinalReportOrder:');
     lines.push(
