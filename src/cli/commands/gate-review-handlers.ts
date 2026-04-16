@@ -29,6 +29,7 @@ import { resolveCanonicalReviewContextPath } from '../../gates/review-context-pa
 import { getReviewContextContractViolations } from '../../gates/review-context-contract';
 import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
 import {
+    extractMarkdownSectionLines,
     getReviewArtifactFindingsEvidence,
     isTrivialReview
 } from '../../gates/completion';
@@ -311,10 +312,12 @@ function getReviewHeading(reviewType: string): string {
 
 function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerdict: string): string {
     return [
-        'Minimal compliant PASS review template (structure only; substantive analysis is still required):',
+        'Minimal compliant PASS review template for a no-findings review (structure only; substantive analysis is still required):',
         `# ${getReviewHeading(reviewType)}`,
         'Validated the relevant files with concrete scope notes, file references, and enough detail to exceed the trivial-review filter.',
         '## Findings by Severity',
+        'none',
+        '## Deferred Findings',
         'none',
         '## Residual Risks',
         'none',
@@ -324,12 +327,14 @@ function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerd
     ].join('\n');
 }
 
-function getEarlyReviewMaterializationViolations(options: {
+type ReviewFindingsEvidence = ReturnType<typeof getReviewArtifactFindingsEvidence>;
+
+function analyzeEarlyReviewMaterialization(options: {
     artifactPath: string;
     reviewContent: string;
     verdictToken: string;
     expectedPassVerdict: string;
-}): string[] {
+}): { violations: string[]; findingsEvidence: ReviewFindingsEvidence } {
     const { artifactPath, reviewContent, verdictToken, expectedPassVerdict } = options;
     const violations: string[] = [];
     const normalizedArtifactPath = normalizePath(artifactPath);
@@ -368,18 +373,91 @@ function getEarlyReviewMaterializationViolations(options: {
         }
     }
 
-    return violations;
+    return {
+        violations,
+        findingsEvidence
+    };
+}
+
+function hasMarkdownHeading(reviewContent: string, heading: string): boolean {
+    return String(reviewContent || '')
+        .split('\n')
+        .some((rawLine) => {
+            const headingMatch = /^(#{2,6})\s+(.+?)\s*$/.exec(rawLine.trim());
+            return !!headingMatch && headingMatch[2].trim().toLowerCase() === heading.trim().toLowerCase();
+        });
+}
+
+function buildNoFindingsPassReviewRecoveryHint(options: {
+    reviewContent: string;
+    findingsEvidence: ReviewFindingsEvidence;
+}): string | null {
+    const { reviewContent, findingsEvidence } = options;
+    const activeFindingsCount = Object.values(findingsEvidence.findings_by_severity)
+        .reduce((total, entries) => total + entries.length, 0);
+    if (activeFindingsCount > 0) {
+        return null;
+    }
+
+    const hintLines: string[] = [];
+    const findingsSectionPresent = hasMarkdownHeading(reviewContent, 'Findings by Severity');
+    const residualSectionPresent = hasMarkdownHeading(reviewContent, 'Residual Risks');
+    const deferredSectionPresent = hasMarkdownHeading(reviewContent, 'Deferred Findings');
+    const deferredSectionLines = extractMarkdownSectionLines(String(reviewContent || '').split('\n'), 'Deferred Findings');
+    const deferredSectionLooksEmpty = deferredSectionPresent
+        && deferredSectionLines.length > 0
+        && findingsEvidence.deferred_findings.length === 0
+        && findingsEvidence.invalid_deferred_findings.length === 0;
+
+    if (findingsEvidence.missing_sections.includes('Findings by Severity')) {
+        hintLines.push(findingsSectionPresent
+            ? "Set '## Findings by Severity' explicitly to 'none' when no findings remain open."
+            : "Add mandatory section '## Findings by Severity' and set it to 'none' when no findings remain open.");
+    }
+    if (findingsEvidence.residual_risks.length > 0) {
+        hintLines.push(
+            "'## Residual Risks' is only for active open risks. For a PASS review with no open risks, set it to 'none' and move accepted follow-up to '## Deferred Findings' with 'Justification:'."
+        );
+    } else if (findingsEvidence.missing_sections.includes('Residual Risks')) {
+        hintLines.push(residualSectionPresent
+            ? "Set '## Residual Risks' explicitly to 'none' when no active risks remain."
+            : "Add mandatory section '## Residual Risks' and set it to 'none' when no active risks remain.");
+    }
+    if (findingsEvidence.invalid_deferred_findings.length > 0) {
+        hintLines.push(
+            "Every '## Deferred Findings' entry must include 'Justification:'. If nothing is deferred, remove that section or set it to 'none'."
+        );
+    } else if (deferredSectionLooksEmpty) {
+        hintLines.push(
+            "'## Deferred Findings' may be omitted, but if you keep it for a no-findings PASS review, set it explicitly to 'none'."
+        );
+    }
+
+    if (hintLines.length === 0) {
+        return null;
+    }
+    return [
+        'No-findings PASS review recovery:',
+        ...hintLines.map((line) => `- ${line}`)
+    ].join('\n');
 }
 
 function buildPassReviewTemplateHintMessage(options: {
     reviewType: string;
     verdictToken: string;
     expectedPassVerdict: string;
+    reviewContent: string;
+    findingsEvidence: ReviewFindingsEvidence;
 }): string | null {
     if (options.verdictToken !== options.expectedPassVerdict) {
         return null;
     }
-    return buildMinimalPassReviewTemplateHint(options.reviewType, options.expectedPassVerdict);
+    const targetedHint = buildNoFindingsPassReviewRecoveryHint({
+        reviewContent: options.reviewContent,
+        findingsEvidence: options.findingsEvidence
+    });
+    const templateHint = buildMinimalPassReviewTemplateHint(options.reviewType, options.expectedPassVerdict);
+    return targetedHint ? `${targetedHint}\n\n${templateHint}` : templateHint;
 }
 
 function assertRoutingCompatibility(
@@ -814,21 +892,23 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             `Expected '${expectedPassVerdict}' or '${expectedFailVerdict}'.`
         );
     }
-    const materializationViolations = getEarlyReviewMaterializationViolations({
+    const materializationAnalysis = analyzeEarlyReviewMaterialization({
         artifactPath,
         reviewContent,
         verdictToken,
         expectedPassVerdict
     });
-    if (materializationViolations.length > 0) {
+    if (materializationAnalysis.violations.length > 0) {
         const passTemplateHint = buildPassReviewTemplateHintMessage({
             reviewType,
             verdictToken,
-            expectedPassVerdict
+            expectedPassVerdict,
+            reviewContent,
+            findingsEvidence: materializationAnalysis.findingsEvidence
         });
         throw new Error(
             `Review output is not eligible for '${reviewType}' materialization:\n` +
-            materializationViolations.map((violation) => `- ${violation}`).join('\n') +
+            materializationAnalysis.violations.map((violation) => `- ${violation}`).join('\n') +
             (passTemplateHint ? `\n\n${passTemplateHint}` : '')
         );
     }

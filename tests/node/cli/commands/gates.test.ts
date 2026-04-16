@@ -5017,6 +5017,95 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result explains no-findings pass review recovery when residual risks are missing and deferred findings lack justification', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-pass-no-findings-recovery';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: {
+                source_of_truth: 'Codex',
+                capability_level: 'delegation_capable',
+                expected_execution_mode: 'delegated_subagent',
+                fallback_allowed: false,
+                fallback_reason_required: false,
+                actual_execution_mode: null,
+                reviewer_session_id: null,
+                fallback_reason: null
+            }
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated the no-findings pass-review materialization path with concrete scope notes and enough detail to stay above the trivial-review threshold while still keeping the artifact intentionally malformed for recovery guidance.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Deferred Findings',
+            '- [low] follow up on reviewer wording in `src/cli/commands/gate-review-handlers.ts:1`',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Residual Risks'")));
+        assert.ok(capturedErrors.some((line) => line.includes("has deferred finding without usable 'Justification:'")));
+        assert.ok(capturedErrors.some((line) => line.includes('No-findings PASS review recovery:')));
+        assert.ok(capturedErrors.some((line) => line.includes("Add mandatory section '## Residual Risks' and set it to 'none' when no active risks remain.")));
+        assert.ok(capturedErrors.some((line) => line.includes("Every '## Deferred Findings' entry must include 'Justification:'.")));
+        assert.ok(capturedErrors.some((line) => line.includes('Minimal compliant PASS review template for a no-findings review')));
+        assert.ok(capturedErrors.some((line) => line.includes('## Deferred Findings')));
+        assert.ok(capturedErrors.some((line) => line.includes('REVIEW PASSED')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result rejects failed reviewer output that omits required lifecycle sections', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-failed-missing-section';
