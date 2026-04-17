@@ -162,6 +162,12 @@ const CYCLE_BOUNDARY_EVENTS = new Set([
     'COMPLETION_GATE_PASSED'
 ]);
 
+const UPSTREAM_CYCLE_RESTART_EVENTS = new Set([
+    'HANDSHAKE_DIAGNOSTICS_RECORDED',
+    'SHELL_SMOKE_PREFLIGHT_RECORDED',
+    'PREFLIGHT_CLASSIFIED'
+]);
+
 /**
  * Read ordered timeline events from a JSONL file.
  * Returns events in file order (integrity-sequence order) with their event types.
@@ -247,9 +253,13 @@ export function validateStageSequence(
 
     let cycleFloorExclusive = Number.NEGATIVE_INFINITY;
     if (anchorEntry) {
+        const latestUpstreamRestart = findLatestTimelineEvent(
+            events,
+            (entry) => entry.sequence < anchorEntry.sequence && UPSTREAM_CYCLE_RESTART_EVENTS.has(entry.event_type)
+        );
         for (let index = events.length - 1; index >= 0; index -= 1) {
             const entry = events[index];
-            if (entry.sequence >= anchorEntry.sequence) {
+            if (!latestUpstreamRestart || entry.sequence >= latestUpstreamRestart.sequence) {
                 continue;
             }
             if (CYCLE_BOUNDARY_EVENTS.has(entry.event_type)) {
