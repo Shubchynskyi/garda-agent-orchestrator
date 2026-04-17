@@ -38,6 +38,9 @@ import {
     runRequiredReviewsCheckCommand
 } from './gates';
 import {
+    cleanupReviewTempSourceArtifact
+} from './gates-artifacts';
+import {
     parseOptions,
     normalizePathValue
 } from './cli-helpers';
@@ -1009,6 +1012,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         reviewerFallbackReason,
         requireStrictBindingMetadata: !!options.reviewContextPath
     });
+    cleanupReviewTempSourceArtifact(repoRoot, taskId, reviewOutput.reviewOutputSourcePath);
 
     console.log(`REVIEW_RESULT_RECORDED: ${reviewType}`);
     console.log(`ArtifactPath: ${normalizePath(artifactPath)}`);

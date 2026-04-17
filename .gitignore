@@ -26,6 +26,7 @@ node_modules/
 testResults.xml
 tsc-errors-full.txt
 tsc-target-errors.txt
+.review-temp/
 
 # Local repo-only scripts and workspace state
 scripts/test/
@@ -50,4 +51,3 @@ QWEN.md
 TASK.md
 garda-agent-orchestrator/
 /TASK.md
-

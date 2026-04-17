@@ -16,6 +16,7 @@ import type { CommandCompactnessAudit } from '../../../gates/task-events-summary
 import * as gateHelpers from '../../../gates/helpers';
 import {
     cleanupTerminalCompileLogs,
+    cleanupTerminalReviewTempOutputs,
     resolvePathForWrite,
     type TerminalLogCleanupResult
 } from '../gates-artifacts';
@@ -66,6 +67,7 @@ interface LogTaskEventCommandResult {
     warnings?: string[];
     command_policy_audit?: CommandPolicyAudit;
     terminal_log_cleanup?: TerminalLogCleanupResult;
+    terminal_review_temp_cleanup?: TerminalLogCleanupResult;
 }
 
 function toDetailsMap(detailsObject: unknown): Record<string, unknown> {
@@ -138,11 +140,21 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
         missing_paths: [],
         errors: []
     };
+    let terminalReviewTempCleanup: TerminalLogCleanupResult = {
+        triggered: false,
+        attempted_paths: 0,
+        discovered_paths: [],
+        deleted_paths: [],
+        missing_paths: [],
+        errors: []
+    };
     const isTerminalEvent = eventType === 'TASK_DONE' || eventType === 'TASK_BLOCKED';
     if (isTerminalEvent) {
         terminalLogCleanup = cleanupTerminalCompileLogs(repoRoot, taskId);
+        terminalReviewTempCleanup = cleanupTerminalReviewTempOutputs(repoRoot, taskId);
         const detailsMap = toDetailsMap(eventDetails);
         detailsMap.terminal_log_cleanup = terminalLogCleanup;
+        detailsMap.terminal_review_temp_cleanup = terminalReviewTempCleanup;
         eventDetails = detailsMap;
     }
 
@@ -196,9 +208,11 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
     }
     if (isTerminalEvent) {
         result.terminal_log_cleanup = terminalLogCleanup;
+        result.terminal_review_temp_cleanup = terminalReviewTempCleanup;
     }
 
-    const cleanupFailed = isTerminalEvent && terminalLogCleanup.errors.length > 0;
+    const cleanupFailed = isTerminalEvent
+        && (terminalLogCleanup.errors.length > 0 || terminalReviewTempCleanup.errors.length > 0);
     if (cleanupFailed) {
         result.status = 'TASK_EVENT_LOGGED_CLEANUP_FAILED';
     }

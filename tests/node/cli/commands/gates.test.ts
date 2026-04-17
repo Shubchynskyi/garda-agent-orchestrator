@@ -5279,37 +5279,48 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('logs task events with terminal cleanup and command audit', () => {
-        const repoRoot = createTempRepo();
-        const taskId = 'T-904';
-        const reviewsRoot = getReviewsRoot(repoRoot);
-        fs.mkdirSync(reviewsRoot, { recursive: true });
-        const compileOutputPath = path.join(reviewsRoot, `${taskId}-compile-output.log`);
-        fs.writeFileSync(compileOutputPath, 'temporary compile output\n', 'utf8');
-        fs.writeFileSync(path.join(reviewsRoot, `${taskId}-compile-gate.json`), JSON.stringify({
-            task_id: taskId,
-            compile_output_path: `garda-agent-orchestrator/runtime/reviews/${taskId}-compile-output.log`
-        }, null, 2), 'utf8');
+    it('logs terminal task events with review-temp cleanup and command audit', () => {
+        for (const eventType of ['TASK_DONE', 'TASK_BLOCKED'] as const) {
+            const repoRoot = createTempRepo();
+            const taskId = `T-904-${eventType.toLowerCase()}`;
+            const reviewsRoot = getReviewsRoot(repoRoot);
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            const reviewTempRoot = path.join(repoRoot, '.review-temp');
+            const stagedReviewOutputPath = path.join(reviewTempRoot, `${taskId}-code-output.md`);
+            const foreignReviewOutputPath = path.join(reviewTempRoot, 'T-foreign-code-output.md');
+            fs.mkdirSync(reviewTempRoot, { recursive: true });
+            fs.writeFileSync(stagedReviewOutputPath, 'temporary reviewer output\n', 'utf8');
+            fs.writeFileSync(foreignReviewOutputPath, 'leave unrelated reviewer output alone\n', 'utf8');
+            const compileOutputPath = path.join(reviewsRoot, `${taskId}-compile-output.log`);
+            fs.writeFileSync(compileOutputPath, 'temporary compile output\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, `${taskId}-compile-gate.json`), JSON.stringify({
+                task_id: taskId,
+                compile_output_path: `garda-agent-orchestrator/runtime/reviews/${taskId}-compile-output.log`
+            }, null, 2), 'utf8');
 
-        const result = runLogTaskEventCommand({
-            repoRoot,
-            taskId,
-            eventType: 'TASK_DONE',
-            outcome: 'PASS',
-            detailsJson: JSON.stringify({
-                command: 'docker logs api',
-                command_mode: 'scan'
-            })
-        });
+            const result = runLogTaskEventCommand({
+                repoRoot,
+                taskId,
+                eventType,
+                outcome: eventType === 'TASK_DONE' ? 'PASS' : 'BLOCKED',
+                detailsJson: JSON.stringify({
+                    command: 'docker logs api',
+                    command_mode: 'scan'
+                })
+            });
 
-        const payload = JSON.parse(result.outputText);
-        assert.equal(result.exitCode, 0);
-        assert.equal(payload.status, 'TASK_EVENT_LOGGED');
-        assert.equal(payload.command_policy_audit.warning_count > 0, true);
-        assert.equal(payload.terminal_log_cleanup.deleted_paths.length, 1);
-        assert.equal(fs.existsSync(compileOutputPath), false);
+            const payload = JSON.parse(result.outputText);
+            assert.equal(result.exitCode, 0);
+            assert.equal(payload.status, 'TASK_EVENT_LOGGED');
+            assert.equal(payload.command_policy_audit.warning_count > 0, true);
+            assert.equal(payload.terminal_log_cleanup.deleted_paths.length, 1);
+            assert.equal(payload.terminal_review_temp_cleanup.deleted_paths.length, 1);
+            assert.equal(fs.existsSync(compileOutputPath), false);
+            assert.equal(fs.existsSync(stagedReviewOutputPath), false);
+            assert.equal(fs.existsSync(foreignReviewOutputPath), true);
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('runs human commit through git with commit guard override', async () => {
@@ -5462,6 +5473,7 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(artifactPath), true);
         assert.equal(fs.existsSync(receiptPath), true);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.equal(fs.existsSync(reviewOutputPath), false);
         assert.ok(fs.readFileSync(artifactPath, 'utf8').includes('## Verdict\nREVIEW PASSED'));
         assert.ok(fs.readFileSync(rawReviewOutputPath, 'utf8').includes('## Verdict\nREVIEW PASSED'));
 
@@ -6569,6 +6581,7 @@ describe('cli/commands/gates', () => {
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:code-reviewer');
         assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(fs.existsSync(reviewOutputPath), true);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
