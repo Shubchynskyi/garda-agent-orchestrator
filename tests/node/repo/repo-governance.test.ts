@@ -21,6 +21,56 @@ function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function assertRepoFileTrackedAndNotIgnored(relativePath: string): void {
+    const repoRoot = getRepoRoot();
+    const trackedResult = childProcess.spawnSync('git', ['ls-files', '--error-unmatch', relativePath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        windowsHide: true
+    });
+    assert.equal(
+        trackedResult.status,
+        0,
+        `${relativePath} must be tracked in git.\n${trackedResult.stderr || trackedResult.stdout}`
+    );
+
+    const ignoredResult = childProcess.spawnSync('git', ['check-ignore', relativePath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        windowsHide: true
+    });
+    assert.notEqual(
+        ignoredResult.status,
+        0,
+        `${relativePath} must not be ignored by .gitignore.\n${ignoredResult.stdout || ignoredResult.stderr}`
+    );
+}
+
+function assertRepoFileIgnoredAndNotTracked(relativePath: string): void {
+    const repoRoot = getRepoRoot();
+    const trackedResult = childProcess.spawnSync('git', ['ls-files', '--error-unmatch', relativePath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        windowsHide: true
+    });
+    assert.notEqual(
+        trackedResult.status,
+        0,
+        `${relativePath} must remain generated-only in the source checkout.\n${trackedResult.stderr || trackedResult.stdout}`
+    );
+
+    const ignoredResult = childProcess.spawnSync('git', ['check-ignore', relativePath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        windowsHide: true
+    });
+    assert.equal(
+        ignoredResult.status,
+        0,
+        `${relativePath} must remain ignored by root .gitignore.\n${ignoredResult.stdout || ignoredResult.stderr}`
+    );
+}
+
 test('repo governance files use the current owner handle and root-relative paths', () => {
     const codeowners = readRepoFile('.github/CODEOWNERS');
     const branchProtection = readRepoFile('docs/branch-protection.md');
@@ -70,48 +120,29 @@ test('template TASK scaffold is tracked and not ignored by root gitignore', () =
     const templateTaskPath = path.join(repoRoot, 'template', 'TASK.md');
 
     assert.ok(fs.existsSync(templateTaskPath), 'template/TASK.md must exist on disk');
-
-    const trackedResult = childProcess.spawnSync('git', ['ls-files', '--error-unmatch', 'template/TASK.md'], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        windowsHide: true
-    });
-    assert.equal(
-        trackedResult.status,
-        0,
-        `template/TASK.md must be tracked in git.\n${trackedResult.stderr || trackedResult.stdout}`
-    );
-
-    const ignoredResult = childProcess.spawnSync('git', ['check-ignore', 'template/TASK.md'], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        windowsHide: true
-    });
-    assert.notEqual(
-        ignoredResult.status,
-        0,
-        `template/TASK.md must not be ignored by .gitignore.\n${ignoredResult.stdout || ignoredResult.stderr}`
-    );
+    assertRepoFileTrackedAndNotIgnored('template/TASK.md');
 });
 
-test('source-checkout router files stay synced with generated task-start/runtime-identity guidance', () => {
+test('source-checkout generated router files stay synced with builder output when materialized locally', () => {
+    const repoRoot = getRepoRoot();
     const normalize = (content: string) => content.replace(/\r\n/g, '\n').trim();
-    assert.equal(
-        normalize(readRepoFile('.agents/workflows/start-task.md')),
-        normalize(buildSharedStartTaskWorkflowContent('AGENTS.md'))
-    );
-
-    const providerFiles = [
-        ['.github/agents/orchestrator.md', 'GitHub Copilot', '.github/agents/orchestrator.md'],
-        ['.windsurf/agents/orchestrator.md', 'Windsurf', '.windsurf/agents/orchestrator.md'],
-        ['.junie/agents/orchestrator.md', 'Junie', '.junie/agents/orchestrator.md'],
-        ['.antigravity/agents/orchestrator.md', 'Antigravity', '.antigravity/agents/orchestrator.md']
+    const generatedFiles = [
+        ['.agents/workflows/start-task.md', buildSharedStartTaskWorkflowContent('AGENTS.md')],
+        ['.github/agents/orchestrator.md', buildProviderOrchestratorAgentContent('GitHub Copilot', 'AGENTS.md', '.github/agents/orchestrator.md')],
+        ['.windsurf/agents/orchestrator.md', buildProviderOrchestratorAgentContent('Windsurf', 'AGENTS.md', '.windsurf/agents/orchestrator.md')],
+        ['.junie/agents/orchestrator.md', buildProviderOrchestratorAgentContent('Junie', 'AGENTS.md', '.junie/agents/orchestrator.md')],
+        ['.antigravity/agents/orchestrator.md', buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md')]
     ] as const;
-    for (const [relativePath, providerLabel, bridgePath] of providerFiles) {
+    for (const [relativePath, expectedContent] of generatedFiles) {
+        assertRepoFileIgnoredAndNotTracked(relativePath);
+        const filePath = path.join(repoRoot, relativePath);
+        if (!fs.existsSync(filePath)) {
+            continue;
+        }
         assert.equal(
-            normalize(readRepoFile(relativePath)),
-            normalize(buildProviderOrchestratorAgentContent(providerLabel, 'AGENTS.md', bridgePath)),
-            `${relativePath} must stay synced with generated provider bridge content`
+            normalize(fs.readFileSync(filePath, 'utf8')),
+            normalize(expectedContent),
+            `${relativePath} must stay synced with generated content when materialized locally`
         );
     }
 });
