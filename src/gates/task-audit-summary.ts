@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
-import { inspectCompletionGateFinalizationLock } from './finalization-lock';
+import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
 import { fileSha256, joinOrchestratorPath, resolvePathInsideRepo, toPosix } from './helpers';
 import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './task-events-summary';
 
@@ -121,6 +121,14 @@ export interface PointInTimeSnapshot {
     message: string | null;
     recommended_action: string | null;
     lock_path: string | null;
+    owner_pid?: number | null;
+    owner_hostname?: string | null;
+    owner_created_at_utc?: string | null;
+    owner_alive?: boolean | null;
+    owner_metadata_status?: string | null;
+    stale_reason?: string | null;
+    subsystem_scope_note?: string | null;
+    acquisition_policy?: CompletionGateFinalizationLockPolicy | null;
 }
 
 interface ProfileReviewDecisionSummary {
@@ -495,7 +503,15 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         gate: null,
         message: null,
         recommended_action: null,
-        lock_path: null
+        lock_path: null,
+        owner_pid: null,
+        owner_hostname: null,
+        owner_created_at_utc: null,
+        owner_alive: null,
+        owner_metadata_status: null,
+        stale_reason: null,
+        subsystem_scope_note: null,
+        acquisition_policy: null
     };
 
     for (const { gate, pass_event, fail_events } of LIFECYCLE_GATES) {
@@ -749,16 +765,26 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const hasIntegrityFailure = integrityStatus === 'FAILED';
     const completionGateLock = inspectCompletionGateFinalizationLock(reviewsRoot, safeTaskId);
     if (completionGateLock.active || completionGateLock.stale) {
+        const ownerPidText = completionGateLock.owner_pid === null ? 'unknown' : String(completionGateLock.owner_pid);
+        const ownerHostText = completionGateLock.owner_hostname || 'unknown';
         pointInTimeSnapshot = {
             status: 'FINALIZATION_IN_FLIGHT',
             gate: 'completion-gate',
             message: completionGateLock.active
-                ? 'Completion gate is currently in flight, so this audit summary is a point-in-time snapshot and may still reflect an older completion result.'
-                : 'Completion finalization lock is stale or missing owner metadata, so this audit summary is treated as a point-in-time snapshot and may still reflect an older completion result.',
+                ? `Completion gate finalization is currently in flight under PID ${ownerPidText} on ${ownerHostText}, so this audit summary is a point-in-time snapshot and may still reflect an older completion result.`
+                : `Completion finalization lock is stale (${completionGateLock.stale_reason || 'unknown reason'}, metadata=${completionGateLock.owner_metadata_status}) for PID ${ownerPidText} on ${ownerHostText}, so this audit summary is treated as a point-in-time snapshot and may still reflect an older completion result.`,
             recommended_action: completionGateLock.active
-                ? 'Re-run task-audit-summary sequentially after completion-gate finishes.'
-                : 'Verify that no completion-gate process is still running, then re-run task-audit-summary sequentially.',
-            lock_path: toPosix(completionGateLock.lock_path)
+                ? `Re-run task-audit-summary sequentially after completion-gate finishes. ${completionGateLock.remediation}`
+                : completionGateLock.remediation,
+            lock_path: toPosix(completionGateLock.lock_path),
+            owner_pid: completionGateLock.owner_pid,
+            owner_hostname: completionGateLock.owner_hostname,
+            owner_created_at_utc: completionGateLock.owner_created_at_utc,
+            owner_alive: completionGateLock.owner_alive,
+            owner_metadata_status: completionGateLock.owner_metadata_status,
+            stale_reason: completionGateLock.stale_reason,
+            subsystem_scope_note: completionGateLock.subsystem_scope_note,
+            acquisition_policy: completionGateLock.acquisition_policy
         };
     }
 
@@ -1069,6 +1095,34 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         }
         if (summary.point_in_time_snapshot.lock_path) {
             lines.push(`  LockPath: ${summary.point_in_time_snapshot.lock_path}`);
+        }
+        if (summary.point_in_time_snapshot.owner_pid !== undefined) {
+            lines.push(`  OwnerPid: ${summary.point_in_time_snapshot.owner_pid === null ? 'unknown' : summary.point_in_time_snapshot.owner_pid}`);
+        }
+        if (summary.point_in_time_snapshot.owner_hostname !== undefined) {
+            lines.push(`  OwnerHost: ${summary.point_in_time_snapshot.owner_hostname || 'unknown'}`);
+        }
+        if (summary.point_in_time_snapshot.owner_created_at_utc !== undefined) {
+            lines.push(`  OwnerCreatedAtUtc: ${summary.point_in_time_snapshot.owner_created_at_utc || 'unknown'}`);
+        }
+        if (summary.point_in_time_snapshot.owner_alive !== undefined) {
+            lines.push(`  OwnerAlive: ${summary.point_in_time_snapshot.owner_alive === null ? 'unknown' : summary.point_in_time_snapshot.owner_alive}`);
+        }
+        if (summary.point_in_time_snapshot.owner_metadata_status !== undefined) {
+            lines.push(`  OwnerMetadataStatus: ${summary.point_in_time_snapshot.owner_metadata_status || 'unknown'}`);
+        }
+        if (summary.point_in_time_snapshot.stale_reason !== undefined) {
+            lines.push(`  StaleReason: ${summary.point_in_time_snapshot.stale_reason || 'none'}`);
+        }
+        if (summary.point_in_time_snapshot.subsystem_scope_note) {
+            lines.push(`  Scope: ${summary.point_in_time_snapshot.subsystem_scope_note}`);
+        }
+        if (summary.point_in_time_snapshot.acquisition_policy) {
+            lines.push(
+                `  AcquisitionPolicy: timeout=${summary.point_in_time_snapshot.acquisition_policy.timeout_ms}ms ` +
+                `retry=${summary.point_in_time_snapshot.acquisition_policy.retry_ms}ms ` +
+                `stale_after=${summary.point_in_time_snapshot.acquisition_policy.stale_after_ms}ms`
+            );
         }
     }
 

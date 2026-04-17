@@ -409,6 +409,46 @@ test('runDoctor reports and cleans stale review-artifact locks', () => {
     }
 });
 
+test('runDoctor reports stale completion finalization locks without auto-cleanup', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-finalization-locks-test-'));
+    const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+    const reviewsRoot = path.join(bundlePath, 'runtime', 'reviews');
+    const staleLockPath = path.join(reviewsRoot, 'T-006-completion-gate.lock');
+    fs.mkdirSync(staleLockPath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/garda.js\n- package.json\n',
+        'utf8'
+    );
+    fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+        pid: 999999,
+        hostname: os.hostname(),
+        created_at_utc: '2026-03-30T10:00:00.000Z'
+    }, null, 2) + '\n', 'utf8');
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(staleLockPath, oldTime, oldTime);
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            cleanupStaleLocks: true,
+            dryRun: true
+        });
+        assert.equal(result.passed, false);
+        assert.ok(result.completionFinalizationLockHealth);
+        assert.equal(result.completionFinalizationLockHealth!.stale_count, 1);
+        assert.equal(fs.existsSync(staleLockPath), true, 'doctor cleanup must not remove completion finalization locks');
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Completion Finalization Locks'));
+        assert.ok(output.includes('doctor --cleanup-stale-locks does not remove completion finalization locks automatically.'));
+        assert.ok(output.includes('T-006-completion-gate.lock: STALE'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('runDoctor reports the shared stale reviews-index lock in review-artifact diagnostics', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-review-index-lock-test-'));
     const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');

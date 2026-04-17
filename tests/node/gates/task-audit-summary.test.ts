@@ -1,4 +1,5 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { spawn } from 'node:child_process';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -11,7 +12,11 @@ import {
     synchronizeFinalCloseoutArtifacts,
     type TaskAuditSummaryResult
 } from '../../../src/gates/task-audit-summary';
-import { inspectCompletionGateFinalizationLock } from '../../../src/gates/finalization-lock';
+import {
+    inspectCompletionGateFinalizationLock,
+    scanCompletionGateFinalizationLocks,
+    withCompletionGateFinalizationLockAsync
+} from '../../../src/gates/finalization-lock';
 
 function makeTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'task-audit-test-'));
@@ -812,6 +817,9 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.status, 'INCOMPLETE');
             assert.equal(result.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
             assert.equal(result.point_in_time_snapshot.lock_path, lockPath.replace(/\\/g, '/'));
+            assert.equal(result.point_in_time_snapshot.owner_pid, process.pid);
+            assert.equal(result.point_in_time_snapshot.owner_metadata_status, 'ok');
+            assert.equal(result.point_in_time_snapshot.acquisition_policy?.timeout_ms, 5000);
             assert.equal(result.final_report_contract.status, 'NOT_READY');
             assert.match(result.final_report_contract.blocker || '', /point-in-time snapshot/i);
         });
@@ -840,8 +848,10 @@ describe('gates/task-audit-summary', () => {
 
             assert.equal(result.status, 'INCOMPLETE');
             assert.equal(result.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
-            assert.match(result.point_in_time_snapshot.message || '', /stale or missing owner metadata/i);
-            assert.match(result.final_report_contract.blocker || '', /Verify that no completion-gate process is still running/i);
+            assert.match(result.point_in_time_snapshot.message || '', /Completion finalization lock is stale/i);
+            assert.equal(result.point_in_time_snapshot.owner_metadata_status, 'missing');
+            assert.equal(result.point_in_time_snapshot.stale_reason, 'owner_dead');
+            assert.match(result.final_report_contract.blocker || '', /doctor --cleanup-stale-locks does not reclaim completion finalization locks/i);
         });
 
         it('handles missing events file gracefully', () => {
@@ -1640,6 +1650,72 @@ describe('gates/finalization-lock', () => {
             assert.equal(inspection.lock_path, lockPath);
             assert.equal(typeof inspection.active, 'boolean');
         } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('reports contention with timeout diagnostics when a live completion finalization lock is held elsewhere', async () => {
+        const tmpDir = makeTempDir();
+        const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        const taskId = 'T-LOCK-TIMEOUT';
+        const lockPath = path.join(reviewsDir, `${taskId}-completion-gate.lock`);
+        const ownerPath = path.join(lockPath, 'owner.json');
+        const child = spawn(
+            process.execPath,
+            [
+                '-e',
+                [
+                    'const fs = require("node:fs");',
+                    'const os = require("node:os");',
+                    'const path = require("node:path");',
+                    'const lockPath = process.argv[1];',
+                    'fs.mkdirSync(lockPath, { recursive: true });',
+                    'fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({',
+                    '  pid: process.pid,',
+                    '  hostname: os.hostname(),',
+                    '  created_at_utc: new Date().toISOString()',
+                    '}), "utf8");',
+                    'setTimeout(() => {}, 10000);'
+                ].join(' '),
+                lockPath
+            ],
+            { stdio: 'ignore' }
+        );
+
+        try {
+            for (let attempt = 0; attempt < 20 && !fs.existsSync(ownerPath); attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            assert.equal(fs.existsSync(ownerPath), true, 'expected helper process to materialize owner metadata');
+
+            await assert.rejects(
+                () => withCompletionGateFinalizationLockAsync(reviewsDir, taskId, async () => undefined),
+                /Timed out acquiring file lock: .*timeout_ms=5000/
+            );
+        } finally {
+            child.kill();
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('propagates unexpected scan errors instead of treating completion locks as absent', () => {
+        const tmpDir = makeTempDir();
+        const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        const readdirMock = mock.method(fs, 'readdirSync', () => {
+            const error = new Error('permission denied') as NodeJS.ErrnoException;
+            error.code = 'EACCES';
+            throw error;
+        });
+
+        try {
+            assert.throws(
+                () => scanCompletionGateFinalizationLocks(reviewsDir),
+                /permission denied/
+            );
+        } finally {
+            readdirMock.mock.restore();
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     });

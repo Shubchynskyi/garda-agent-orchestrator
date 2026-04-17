@@ -3606,6 +3606,9 @@ describe('cli/commands/gates', () => {
         const rendered = JSON.parse(capturedStdout.join(''));
         assert.equal(rendered.status, 'INCOMPLETE');
         assert.equal(rendered.point_in_time_snapshot.status, 'FINALIZATION_IN_FLIGHT');
+        assert.equal(rendered.point_in_time_snapshot.owner_pid, process.pid);
+        assert.equal(rendered.point_in_time_snapshot.owner_metadata_status, 'ok');
+        assert.equal(rendered.point_in_time_snapshot.acquisition_policy.timeout_ms, 5000);
         assert.match(rendered.final_report_contract.blocker, /point-in-time snapshot/i);
         assert.match(rendered.final_report_contract.blocker, /Re-run task-audit-summary sequentially/i);
         assert.equal(fs.existsSync(staleJsonPath), true);

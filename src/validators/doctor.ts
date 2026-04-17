@@ -16,6 +16,10 @@ import {
     type ReviewArtifactLockScanResult
 } from '../gate-runtime/review-artifacts';
 import {
+    scanCompletionGateFinalizationLocks,
+    type CompletionGateFinalizationLockScanResult
+} from '../gates/finalization-lock';
+import {
     collectTimelineSummaryForDoctor,
     type DoctorTimelineEvidence
 } from '../gate-runtime/timeline-summary';
@@ -423,6 +427,7 @@ interface DoctorResult {
     lockCleanup: TaskEventLockCleanupResult | null;
     reviewLockHealth?: ReviewArtifactLockScanResult;
     reviewLockCleanup?: ReviewArtifactLockCleanupResult | null;
+    completionFinalizationLockHealth?: CompletionGateFinalizationLockScanResult;
     parityResult: ReturnType<typeof getSourceBundleParity>;
     providerComplianceResult: ProviderComplianceResult | null;
     nestedBundleDuplication: NestedBundleDuplicationResult;
@@ -476,6 +481,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         ? cleanupStaleReviewArtifactLocks(bundlePath, { dryRun: options.dryRun === true })
         : null;
     var reviewLockHealth = scanReviewArtifactLocks(bundlePath);
+    var completionFinalizationLockHealth = scanCompletionGateFinalizationLocks(path.join(bundlePath, 'runtime', 'reviews'));
 
     // T-1006: provider-control compliance scan
     var providerComplianceResult: ProviderComplianceResult | null = null;
@@ -525,7 +531,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         || protectedManifestEvidence.status === 'MATCH'
         || protectedManifestEvidence.status === 'MISSING';
     var profileHealthOk = profileHealthEvidence === null || !profileHealthEvidence.config_exists || profileHealthEvidence.passed;
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && reviewLockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed && profileHealthOk;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && reviewLockHealth.stale_count === 0 && completionFinalizationLockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed && profileHealthOk;
 
     return {
         passed: passed,
@@ -539,6 +545,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         lockCleanup: lockCleanup,
         reviewLockHealth: reviewLockHealth,
         reviewLockCleanup: reviewLockCleanup,
+        completionFinalizationLockHealth: completionFinalizationLockHealth,
         parityResult: parityResult,
         providerComplianceResult: providerComplianceResult,
         nestedBundleDuplication: nestedBundleDuplication,
@@ -703,6 +710,39 @@ export function formatDoctorResult(result: DoctorResult): string {
                 '  ' + lock.lock_name + ': ' + lock.status +
                 (lock.task_id ? ' task=' + lock.task_id : '') +
                 (lock.artifact_type ? ' artifact=' + lock.artifact_type : '') +
+                ' age=' + ageText +
+                ' owner_pid=' + ownerPidText +
+                ' owner_alive=' + ownerAliveText +
+                ' owner_host=' + ownerHostText +
+                ' metadata=' + lock.owner_metadata_status +
+                ' stale_reason=' + (lock.stale_reason || 'none')
+            );
+            lines.push('    Fix: ' + lock.remediation);
+        }
+        lines.push('');
+    }
+
+    if (result.completionFinalizationLockHealth && result.completionFinalizationLockHealth.locks.length > 0) {
+        lines.push('Completion Finalization Locks');
+        lines.push('  Scope: ' + result.completionFinalizationLockHealth.subsystem_scope_note);
+        lines.push(
+            '  AcquisitionPolicy: timeout=' + result.completionFinalizationLockHealth.acquisition_policy.timeout_ms +
+            'ms, retry=' + result.completionFinalizationLockHealth.acquisition_policy.retry_ms +
+            'ms, stale_after=' + result.completionFinalizationLockHealth.acquisition_policy.stale_after_ms + 'ms'
+        );
+        lines.push(
+            '  Summary: active=' + result.completionFinalizationLockHealth.active_count +
+            ', stale=' + result.completionFinalizationLockHealth.stale_count
+        );
+        lines.push('  Cleanup: doctor --cleanup-stale-locks does not remove completion finalization locks automatically.');
+        for (const lock of result.completionFinalizationLockHealth.locks) {
+            const ageText = lock.age_ms === null ? 'unknown' : `${lock.age_ms}ms`;
+            const ownerPidText = lock.owner_pid === null ? 'unknown' : String(lock.owner_pid);
+            const ownerAliveText = lock.owner_alive === null ? 'unknown' : (lock.owner_alive ? 'yes' : 'no');
+            const ownerHostText = lock.owner_hostname || 'unknown';
+            lines.push(
+                '  ' + lock.lock_name + ': ' + (lock.stale ? 'STALE' : 'ACTIVE') +
+                ' task=' + lock.task_id +
                 ' age=' + ageText +
                 ' owner_pid=' + ownerPidText +
                 ' owner_alive=' + ownerAliveText +

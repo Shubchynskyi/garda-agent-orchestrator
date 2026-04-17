@@ -125,6 +125,75 @@ test('getWhyBlocked detects IN_PROGRESS task with missing timeline events', () =
     }
 });
 
+test('getWhyBlocked reports completion finalization locks for affected tasks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-finalization-lock-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+
+    try {
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-012 | 🟧 IN_REVIEW | P1 | area | Completion task | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+
+        const lockPath = path.join(reviewsDir, 'T-012-completion-gate.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2), 'utf8');
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.has_blocked_tasks, true);
+        assert.ok((result.completion_finalization_lock_observations || []).length > 0);
+        assert.equal(result.completion_finalization_lock_observations![0].task_id, 'T-012');
+        assert.ok(result.in_progress_tasks[0].blocking_reasons.some(function (reason) {
+            return reason.reason_code === 'ACTIVE_COMPLETION_FINALIZATION_LOCK';
+        }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getWhyBlocked reports stale completion finalization locks for affected tasks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-finalization-lock-stale-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+
+    try {
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-013 | 🟧 IN_REVIEW | P1 | area | Completion task stale lock | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+
+        const lockPath = path.join(reviewsDir, 'T-013-completion-gate.lock');
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2), 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.has_blocked_tasks, true);
+        assert.ok((result.completion_finalization_lock_observations || []).length > 0);
+        assert.equal(result.completion_finalization_lock_observations![0].task_id, 'T-013');
+        assert.equal(result.completion_finalization_lock_observations![0].stale, true);
+        assert.ok(result.in_progress_tasks[0].blocking_reasons.some(function (reason) {
+            return reason.reason_code === 'STALE_COMPLETION_FINALIZATION_LOCK';
+        }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getWhyBlocked returns empty in_progress_tasks when timeline is complete', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
     const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
@@ -488,6 +557,27 @@ test('formatWhyBlockedResult renders STALLED task with missing events', () => {
                 owner_metadata_status: 'ok',
                 stale_reason: null,
                 remediation: 'Wait for owner.'
+            }],
+            related_completion_finalization_locks: [{
+                active: false,
+                lock_name: 'T-020-completion-gate.lock',
+                lock_path: '/tmp/test/runtime/reviews/T-020-completion-gate.lock',
+                task_id: 'T-020',
+                age_ms: 90000,
+                owner_pid: 1111,
+                owner_hostname: 'stale-finalizer',
+                owner_created_at_utc: '2026-03-30T10:00:00.000Z',
+                owner_alive: false,
+                owner_metadata_status: 'ok',
+                stale: true,
+                stale_reason: 'owner_dead',
+                remediation: 'Verify stale finalization lock and rerun completion-gate.',
+                subsystem_scope_note: 'completion finalization scope note',
+                acquisition_policy: {
+                    timeout_ms: 5000,
+                    retry_ms: 50,
+                    stale_after_ms: 900000
+                }
             }]
         }],
         lock_observations: [{
@@ -521,15 +611,38 @@ test('formatWhyBlockedResult renders STALLED task with missing events', () => {
             stale_reason: null,
             remediation: 'Wait for owner.'
         }],
+        completion_finalization_lock_observations: [{
+            active: false,
+            lock_name: 'T-020-completion-gate.lock',
+            lock_path: '/tmp/test/runtime/reviews/T-020-completion-gate.lock',
+            task_id: 'T-020',
+            age_ms: 90000,
+            owner_pid: 1111,
+            owner_hostname: 'stale-finalizer',
+            owner_created_at_utc: '2026-03-30T10:00:00.000Z',
+            owner_alive: false,
+            owner_metadata_status: 'ok',
+            stale: true,
+            stale_reason: 'owner_dead',
+            remediation: 'Verify stale finalization lock and rerun completion-gate.',
+            subsystem_scope_note: 'completion finalization scope note',
+            acquisition_policy: {
+                timeout_ms: 5000,
+                retry_ms: 50,
+                stale_after_ms: 900000
+            }
+        }],
         summary_lines: ['In-progress tasks with gate issues: 1']
     };
 
     const output = formatWhyBlockedResult(result);
     assert.ok(output.includes('Task-Event Locks'));
     assert.ok(output.includes('Review Artifact Locks'));
+    assert.ok(output.includes('Completion Finalization Locks'));
     assert.ok(output.includes('STALLED: T-020'));
     assert.ok(output.includes('Related locks: .T-020.lock:STALE'));
     assert.ok(output.includes('Related review locks: T-020-code.md.lock:ACTIVE'));
+    assert.ok(output.includes('Related completion finalization locks: T-020-completion-gate.lock:STALE'));
     assert.ok(output.includes('COMPILE_GATE_PASSED'));
     assert.ok(output.includes('REVIEW_PHASE_STARTED'));
     assert.ok(output.includes('[TIMELINE_INCOMPLETE]'));

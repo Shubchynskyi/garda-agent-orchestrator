@@ -5,6 +5,7 @@ import { getBundleCliCommand, PRIMARY_CLI_NAME, resolveBundleName } from '../cor
 import { getMandatoryEvents } from '../gate-runtime/lifecycle-event-types';
 import { scanTaskEventLocks, type TaskEventLockHealth } from '../gate-runtime/task-events';
 import { scanReviewArtifactLocks, type ReviewArtifactLockHealth } from '../gate-runtime/review-artifacts';
+import { scanCompletionGateFinalizationLocks, type FinalizationLockInspection } from '../gates/finalization-lock';
 import { detectCodeChanged } from '../gates/preflight-code-change';
 
 export interface TaskStatus {
@@ -33,6 +34,7 @@ export interface WhyBlockedTask {
     timeline_status: string;
     related_locks: TaskEventLockHealth[];
     related_review_locks?: ReviewArtifactLockHealth[];
+    related_completion_finalization_locks?: FinalizationLockInspection[];
 }
 
 export interface WhyBlockedResult {
@@ -41,6 +43,7 @@ export interface WhyBlockedResult {
     in_progress_tasks: WhyBlockedTask[];
     lock_observations: TaskEventLockHealth[];
     review_lock_observations?: ReviewArtifactLockHealth[];
+    completion_finalization_lock_observations?: FinalizationLockInspection[];
     summary_lines: string[];
 }
 
@@ -200,7 +203,8 @@ function detectBlockingReasons(
     missingEvents: string[],
     failedGates: string[],
     relatedLocks: TaskEventLockHealth[],
-    relatedReviewLocks: ReviewArtifactLockHealth[]
+    relatedReviewLocks: ReviewArtifactLockHealth[],
+    relatedCompletionFinalizationLocks: FinalizationLockInspection[]
 ): BlockingReason[] {
     const reasons: BlockingReason[] = [];
 
@@ -306,6 +310,24 @@ function detectBlockingReasons(
         });
     }
 
+    for (const lock of relatedCompletionFinalizationLocks) {
+        const ownerPidText = lock.owner_pid === null ? 'unknown' : String(lock.owner_pid);
+        const ownerHostText = lock.owner_hostname || 'unknown';
+        if (lock.stale) {
+            reasons.push({
+                reason_code: 'STALE_COMPLETION_FINALIZATION_LOCK',
+                description: `Completion finalization lock '${lock.lock_name}' is stale (${lock.stale_reason || 'unknown reason'}) and can block completion-gate finalization for this task.`,
+                remediation: lock.remediation
+            });
+            continue;
+        }
+        reasons.push({
+            reason_code: 'ACTIVE_COMPLETION_FINALIZATION_LOCK',
+            description: `Completion finalization lock '${lock.lock_name}' is currently held by PID ${ownerPidText} on ${ownerHostText}; completion-gate finalization may block until it is released.`,
+            remediation: lock.remediation
+        });
+    }
+
     return reasons;
 }
 
@@ -313,7 +335,8 @@ function analyseTask(
     task: TaskStatus,
     bundlePath: string,
     lockObservations: TaskEventLockHealth[],
-    reviewLockObservations: ReviewArtifactLockHealth[]
+    reviewLockObservations: ReviewArtifactLockHealth[],
+    completionFinalizationLockObservations: FinalizationLockInspection[]
 ): WhyBlockedTask {
     const timelinePath = path.join(bundlePath, 'runtime', 'task-events', task.id + '.jsonl');
     const events = readTimelineEvents(timelinePath);
@@ -346,8 +369,19 @@ function analyseTask(
     const relatedReviewLocks = reviewLockObservations.filter(function (lock) {
         return lock.task_id === null || lock.task_id === task.id;
     });
+    const relatedCompletionFinalizationLocks = completionFinalizationLockObservations.filter(function (lock) {
+        return lock.task_id === task.id;
+    });
 
-    const blockingReasons = detectBlockingReasons(task, events, missingEvents, failedGates, relatedLocks, relatedReviewLocks);
+    const blockingReasons = detectBlockingReasons(
+        task,
+        events,
+        missingEvents,
+        failedGates,
+        relatedLocks,
+        relatedReviewLocks,
+        relatedCompletionFinalizationLocks
+    );
 
     return {
         task,
@@ -356,7 +390,8 @@ function analyseTask(
         failed_gates: failedGates,
         timeline_status: timelineStatus,
         related_locks: relatedLocks,
-        related_review_locks: relatedReviewLocks
+        related_review_locks: relatedReviewLocks,
+        related_completion_finalization_locks: relatedCompletionFinalizationLocks
     };
 }
 
@@ -372,14 +407,17 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
     const reviewLockObservations = pathExists(bundlePath)
         ? scanReviewArtifactLocks(bundlePath).locks
         : [];
+    const completionFinalizationLockObservations = pathExists(bundlePath)
+        ? scanCompletionGateFinalizationLocks(path.join(bundlePath, 'runtime', 'reviews')).locks
+        : [];
     const blocked: WhyBlockedTask[] = [];
     const inProgress: WhyBlockedTask[] = [];
 
     for (const task of allTasks) {
         if (task.status === 'BLOCKED') {
-            blocked.push(analyseTask(task, bundlePath, lockObservations, reviewLockObservations));
+            blocked.push(analyseTask(task, bundlePath, lockObservations, reviewLockObservations, completionFinalizationLockObservations));
         } else if (task.status === 'IN_PROGRESS' || task.status === 'IN_REVIEW') {
-            const analysed = analyseTask(task, bundlePath, lockObservations, reviewLockObservations);
+            const analysed = analyseTask(task, bundlePath, lockObservations, reviewLockObservations, completionFinalizationLockObservations);
             if (analysed.blocking_reasons.length > 0 || analysed.missing_events.length > 0 || analysed.failed_gates.length > 0) {
                 inProgress.push(analysed);
             }
@@ -394,6 +432,9 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
         }
         if (reviewLockObservations.length > 0) {
             summaryLines.push(`Review-artifact locks observed: ${reviewLockObservations.length}.`);
+        }
+        if (completionFinalizationLockObservations.length > 0) {
+            summaryLines.push(`Completion finalization locks observed: ${completionFinalizationLockObservations.length}.`);
         }
         if (allTasks.filter(function (t) { return t.status === 'TODO' || t.status === 'IN_PROGRESS'; }).length === 0) {
             summaryLines.push('All tasks are DONE or queue is empty.');
@@ -411,6 +452,9 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
         if (reviewLockObservations.length > 0) {
             summaryLines.push(`Review-artifact locks observed: ${reviewLockObservations.length}.`);
         }
+        if (completionFinalizationLockObservations.length > 0) {
+            summaryLines.push(`Completion finalization locks observed: ${completionFinalizationLockObservations.length}.`);
+        }
         summaryLines.push(`Run: ${PRIMARY_CLI_NAME} doctor explain <FAILURE_ID> for remediation steps.`);
     }
 
@@ -420,6 +464,7 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
         in_progress_tasks: inProgress,
         lock_observations: lockObservations,
         review_lock_observations: reviewLockObservations,
+        completion_finalization_lock_observations: completionFinalizationLockObservations,
         summary_lines: summaryLines
     };
 }
@@ -458,6 +503,24 @@ export function formatWhyBlockedResult(result: WhyBlockedResult): string {
         lines.push('');
     }
 
+    if ((result.completion_finalization_lock_observations || []).length > 0) {
+        lines.push('Completion Finalization Locks');
+        for (const lock of result.completion_finalization_lock_observations || []) {
+            const ageText = lock.age_ms === null ? 'unknown' : `${lock.age_ms}ms`;
+            lines.push(
+                `  ${lock.lock_name}: ${lock.stale ? 'STALE' : 'ACTIVE'}` +
+                ` task=${lock.task_id}` +
+                ` age=${ageText}` +
+                ` owner_pid=${lock.owner_pid === null ? 'unknown' : lock.owner_pid}` +
+                ` owner_host=${lock.owner_hostname || 'unknown'}` +
+                ` metadata=${lock.owner_metadata_status}` +
+                ` stale_reason=${lock.stale_reason || 'none'}`
+            );
+            lines.push(`    Fix: ${lock.remediation}`);
+        }
+        lines.push('');
+    }
+
     if (!result.has_blocked_tasks) {
         for (const line of result.summary_lines) {
             lines.push(line);
@@ -481,6 +544,10 @@ export function formatWhyBlockedResult(result: WhyBlockedResult): string {
 
         if ((analysed.related_review_locks || []).length > 0) {
             lines.push(`  Related review locks: ${(analysed.related_review_locks || []).map((lock) => `${lock.lock_name}:${lock.status}`).join(', ')}`);
+        }
+
+        if ((analysed.related_completion_finalization_locks || []).length > 0) {
+            lines.push(`  Related completion finalization locks: ${(analysed.related_completion_finalization_locks || []).map((lock) => `${lock.lock_name}:${lock.stale ? 'STALE' : 'ACTIVE'}`).join(', ')}`);
         }
 
         if (analysed.missing_events.length > 0) {
