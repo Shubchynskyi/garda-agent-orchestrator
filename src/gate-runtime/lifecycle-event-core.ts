@@ -1,8 +1,4 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import {
-    appendMandatoryTaskEvent,
-    appendMandatoryTaskEventAsync,
     appendTaskEvent,
     appendTaskEventAsync
 } from './task-events';
@@ -11,43 +7,6 @@ export interface AutoEmitOptions {
     actor?: string;
     passThru?: boolean;
     eventsRoot?: string;
-}
-
-function getTimelinePath(repoRoot: string, taskId: string, eventsRoot?: string): string {
-    const root = eventsRoot
-        ? path.resolve(String(eventsRoot))
-        : path.join(repoRoot, 'runtime', 'task-events');
-    return path.join(root, `${taskId}.jsonl`);
-}
-
-function hasTaskEvent(repoRoot: string, taskId: string, eventType: string, eventsRoot?: string): boolean {
-    if (!repoRoot || !taskId || !eventType) {
-        return false;
-    }
-    const timelinePath = getTimelinePath(repoRoot, taskId, eventsRoot);
-    const resolvedPath = path.resolve(timelinePath);
-    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-        return false;
-    }
-
-    try {
-        const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n');
-        for (const rawLine of lines) {
-            if (!rawLine.trim()) continue;
-            try {
-                const parsed = JSON.parse(rawLine) as Record<string, unknown>;
-                if (String(parsed.event_type || '').trim().toUpperCase() === String(eventType).trim().toUpperCase()) {
-                    return true;
-                }
-            } catch {
-                // integrity inspection handles malformed lines elsewhere
-            }
-        }
-    } catch {
-        return false;
-    }
-
-    return false;
 }
 
 export function emitLifecycleEvent(
@@ -64,10 +23,7 @@ export function emitLifecycleEvent(
         return null;
     }
     try {
-        if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
-            return null;
-        }
-        return appendTaskEvent(
+        const result = appendTaskEvent(
             repoRoot,
             taskId,
             eventType,
@@ -77,9 +33,14 @@ export function emitLifecycleEvent(
             {
                 actor: options.actor || 'gate',
                 passThru: options.passThru ?? true,
-                eventsRoot: options.eventsRoot
+                eventsRoot: options.eventsRoot,
+                emitOnce
             }
         );
+        if (result && result.skipped_reason === 'emit_once_duplicate') {
+            return null;
+        }
+        return result;
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
         process.stderr.write(`WARNING: ${String(eventType).toLowerCase()} event emit failed: ${msg}\n`);
@@ -101,10 +62,7 @@ export async function emitLifecycleEventAsync(
         return null;
     }
     try {
-        if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
-            return null;
-        }
-        return await appendTaskEventAsync(
+        const result = await appendTaskEventAsync(
             repoRoot,
             taskId,
             eventType,
@@ -114,9 +72,14 @@ export async function emitLifecycleEventAsync(
             {
                 actor: options.actor || 'gate',
                 passThru: options.passThru ?? true,
-                eventsRoot: options.eventsRoot
+                eventsRoot: options.eventsRoot,
+                emitOnce
             }
         );
+        if (result && result.skipped_reason === 'emit_once_duplicate') {
+            return null;
+        }
+        return result;
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
         process.stderr.write(`WARNING: ${String(eventType).toLowerCase()} event emit failed: ${msg}\n`);
@@ -137,11 +100,8 @@ export function emitMandatoryLifecycleEvent(
     if (!repoRoot || !taskId) {
         throw new Error(`Mandatory lifecycle event '${eventType}' requires repoRoot and taskId.`);
     }
-    if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
-        return null;
-    }
 
-    return appendMandatoryTaskEvent(
+    const result = appendTaskEvent(
         repoRoot,
         taskId,
         eventType,
@@ -150,9 +110,22 @@ export function emitMandatoryLifecycleEvent(
         details,
         {
             actor: options.actor || 'gate',
-            eventsRoot: options.eventsRoot
+            passThru: true,
+            eventsRoot: options.eventsRoot,
+            emitOnce
         }
     );
+
+    if (!result) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
+    }
+    if (result.warnings.length > 0) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`);
+    }
+    if (result.skipped_reason === 'emit_once_duplicate') {
+        return null;
+    }
+    return result;
 }
 
 export async function emitMandatoryLifecycleEventAsync(
@@ -168,11 +141,8 @@ export async function emitMandatoryLifecycleEventAsync(
     if (!repoRoot || !taskId) {
         throw new Error(`Mandatory lifecycle event '${eventType}' requires repoRoot and taskId.`);
     }
-    if (emitOnce && hasTaskEvent(repoRoot, taskId, eventType, options.eventsRoot)) {
-        return null;
-    }
 
-    return appendMandatoryTaskEventAsync(
+    const result = await appendTaskEventAsync(
         repoRoot,
         taskId,
         eventType,
@@ -181,7 +151,20 @@ export async function emitMandatoryLifecycleEventAsync(
         details,
         {
             actor: options.actor || 'gate',
-            eventsRoot: options.eventsRoot
+            passThru: true,
+            eventsRoot: options.eventsRoot,
+            emitOnce
         }
     );
+
+    if (!result) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
+    }
+    if (result.warnings.length > 0) {
+        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`);
+    }
+    if (result.skipped_reason === 'emit_once_duplicate') {
+        return null;
+    }
+    return result;
 }

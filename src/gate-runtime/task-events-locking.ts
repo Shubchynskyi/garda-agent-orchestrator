@@ -14,6 +14,7 @@ const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 const LOCK_METADATA_GRACE_MS = 2000;
 export const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
+const TRANSIENT_LOCK_ACQUIRE_ERROR_CODES = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
 const TRANSIENT_LOCK_RELEASE_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
 
 export interface LockOptions {
@@ -260,6 +261,10 @@ function requiresExplicitAgeRecovery(inspection: LockInspectionResult): boolean 
 
 function isRetryableLockReleaseError(error: unknown): boolean {
     return TRANSIENT_LOCK_RELEASE_ERROR_CODES.has(getErrorCode(error));
+}
+
+function isRetryableLockAcquireError(error: unknown): boolean {
+    return TRANSIENT_LOCK_ACQUIRE_ERROR_CODES.has(getErrorCode(error));
 }
 
 function getLockReleaseDelayMs(retryIndex: number): number {
@@ -517,16 +522,20 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
             const errCode = error != null && typeof error === 'object' && 'code' in error
                 ? (error as { code?: string }).code
                 : undefined;
-            if (errCode !== 'EEXIST') {
+            if (!isRetryableLockAcquireError(error)) {
                 throw error;
             }
 
-            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
-            lastInspection = staleAttempt.inspection;
-            if (staleAttempt.removed) {
-                staleLockRecovered = true;
-                staleLockReason = staleAttempt.inspection.staleReason;
-                continue;
+            if (errCode === 'EEXIST') {
+                const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
+                lastInspection = staleAttempt.inspection;
+                if (staleAttempt.removed) {
+                    staleLockRecovered = true;
+                    staleLockReason = staleAttempt.inspection.staleReason;
+                    continue;
+                }
+            } else {
+                lastInspection = inspectLock(lockPath, staleMs);
             }
 
             const ownerHostMatchesCurrent = isCurrentHostOwner(lastInspection.metadata.hostname);
@@ -534,9 +543,12 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
                 && ownerHostMatchesCurrent !== false
                 && lastInspection.ownerAlive !== false;
             if (
+                lastInspection.exists
+                && (
                 currentProcessOwnsLock
                 || ownerHostMatchesCurrent === false
                 || (requiresExplicitAgeRecovery(lastInspection) && !allowForeignHostStaleRecovery(options))
+                )
             ) {
                 const waitedMs = Date.now() - startedAt;
                 throw new Error(
@@ -619,16 +631,20 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
             const errCode = error != null && typeof error === 'object' && 'code' in error
                 ? (error as { code?: string }).code
                 : undefined;
-            if (errCode !== 'EEXIST') {
+            if (!isRetryableLockAcquireError(error)) {
                 throw error;
             }
 
-            const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
-            lastInspection = staleAttempt.inspection;
-            if (staleAttempt.removed) {
-                staleLockRecovered = true;
-                staleLockReason = staleAttempt.inspection.staleReason;
-                continue;
+            if (errCode === 'EEXIST') {
+                const staleAttempt = tryRemoveStaleLock(lockPath, staleMs, options);
+                lastInspection = staleAttempt.inspection;
+                if (staleAttempt.removed) {
+                    staleLockRecovered = true;
+                    staleLockReason = staleAttempt.inspection.staleReason;
+                    continue;
+                }
+            } else {
+                lastInspection = inspectLock(lockPath, staleMs);
             }
 
             const ownerHostMatchesCurrent = isCurrentHostOwner(lastInspection.metadata.hostname);
@@ -636,9 +652,12 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                 && ownerHostMatchesCurrent !== false
                 && lastInspection.ownerAlive !== false;
             if (
+                lastInspection.exists
+                && (
                 currentProcessOwnsLock
                 || ownerHostMatchesCurrent === false
                 || (requiresExplicitAgeRecovery(lastInspection) && !allowForeignHostStaleRecovery(options))
+                )
             ) {
                 const waitedMs = Date.now() - startedAt;
                 throw new Error(

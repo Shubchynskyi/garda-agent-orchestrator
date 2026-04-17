@@ -58,6 +58,7 @@ export interface AppendTaskEventOptions {
     actor?: string;
     passThru?: boolean;
     eventsRoot?: string;
+    emitOnce?: unknown;
     lockTimeoutMs?: unknown;
     lockRetryMs?: unknown;
     lockStaleMs?: unknown;
@@ -89,6 +90,7 @@ export interface AppendTaskEventResult {
     all_tasks_log_path: string;
     integrity: TaskEventIntegrity | null;
     warnings: string[];
+    skipped_reason?: 'emit_once_duplicate' | null;
     aggregate_retention?: AggregateRetentionResult;
     lock_telemetry?: {
         task_lock_retries: number;
@@ -290,6 +292,7 @@ function createAppendResult(paths: TaskEventPaths): AppendTaskEventResult {
         all_tasks_log_path: paths.allTasksPath.replace(/\\/g, '/'),
         integrity: null,
         warnings: [],
+        skipped_reason: null,
         lock_telemetry: {
             task_lock_retries: 0,
             task_lock_elapsed_ms: 0,
@@ -372,11 +375,56 @@ function updateTimelineSummaryBestEffortForEvent(eventsRoot: string, taskId: str
     }
 }
 
+function taskEventTypeExists(taskFilePath: string, taskId: string, eventType: string): boolean {
+    const targetEventType = toTrimmedLowerCaseString(eventType);
+    if (!targetEventType) {
+        return false;
+    }
+
+    try {
+        if (!fs.existsSync(taskFilePath) || !fs.statSync(taskFilePath).isFile()) {
+            return false;
+        }
+    } catch {
+        return false;
+    }
+
+    try {
+        const lines = fs.readFileSync(taskFilePath, 'utf8').split('\n');
+        for (const rawLine of lines) {
+            if (!rawLine.trim()) {
+                continue;
+            }
+            try {
+                const event = JSON.parse(rawLine) as Record<string, unknown>;
+                const eventTaskId = toTrimmedString(event.task_id);
+                if (eventTaskId && eventTaskId !== taskId) {
+                    continue;
+                }
+                if (toTrimmedLowerCaseString(event.event_type) === targetEventType) {
+                    return true;
+                }
+            } catch {
+                // integrity inspection handles malformed lines elsewhere
+            }
+        }
+    } catch {
+        return false;
+    }
+
+    return false;
+}
+
 function appendTaskEventLineSync(
     taskFilePath: string,
     taskId: string,
-    event: TaskEvent
-): string {
+    event: TaskEvent,
+    emitOnce: boolean
+): string | null {
+    if (emitOnce && taskEventTypeExists(taskFilePath, taskId, event.event_type)) {
+        return null;
+    }
+
     const appendState = readTaskEventAppendState(taskFilePath, taskId);
     const previousSequence = appendState.last_integrity_sequence;
     const previousHash = appendState.last_event_sha256;
@@ -405,8 +453,13 @@ async function appendTaskEventLineAsync(
     taskFilePath: string,
     taskId: string,
     event: TaskEvent,
-    preWriteDelayMs: number
-): Promise<string> {
+    preWriteDelayMs: number,
+    emitOnce: boolean
+): Promise<string | null> {
+    if (emitOnce && taskEventTypeExists(taskFilePath, taskId, event.event_type)) {
+        return null;
+    }
+
     const appendState = readTaskEventAppendState(taskFilePath, taskId);
     const previousSequence = appendState.last_integrity_sequence;
     const previousHash = appendState.last_event_sha256;
@@ -449,6 +502,7 @@ export function appendTaskEvent(
 ): AppendTaskEventResult | null {
     const actor = options.actor || 'gate';
     const passThru = options.passThru || false;
+    const emitOnce = options.emitOnce === true || String(options.emitOnce || '').trim().toLowerCase() === 'true';
 
     if (!taskId) {
         return null;
@@ -478,7 +532,11 @@ export function appendTaskEvent(
         fs.mkdirSync(paths.eventsRoot, { recursive: true });
 
         const taskLockResult = withFilesystemLock(paths.taskLockPath, lockOptions, function (): void {
-            line = appendTaskEventLineSync(paths.taskFilePath, safeTaskId, event);
+            line = appendTaskEventLineSync(paths.taskFilePath, safeTaskId, event, emitOnce);
+            if (line == null) {
+                result.skipped_reason = 'emit_once_duplicate';
+                return;
+            }
             result.integrity = Object.assign({}, event.integrity);
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
@@ -486,6 +544,10 @@ export function appendTaskEvent(
         const warning = buildAppendWarning('task-event append failed', error);
         result.warnings.push(warning);
         process.stderr.write(`WARNING: ${warning}\n`);
+        return passThru ? result : null;
+    }
+
+    if (result.skipped_reason === 'emit_once_duplicate') {
         return passThru ? result : null;
     }
 
@@ -524,6 +586,7 @@ export async function appendTaskEventAsync(
 ): Promise<AppendTaskEventResult | null> {
     const actor = options.actor || 'gate';
     const passThru = options.passThru || false;
+    const emitOnce = options.emitOnce === true || String(options.emitOnce || '').trim().toLowerCase() === 'true';
 
     if (!taskId) {
         return null;
@@ -554,7 +617,11 @@ export async function appendTaskEventAsync(
 
         const taskLockResult = await withFilesystemLockAsync(paths.taskLockPath, lockOptions, async function (): Promise<void> {
             const preWriteDelayMs = toPositiveInteger(options.preWriteDelayMs, 0);
-            line = await appendTaskEventLineAsync(paths.taskFilePath, safeTaskId, event, preWriteDelayMs);
+            line = await appendTaskEventLineAsync(paths.taskFilePath, safeTaskId, event, preWriteDelayMs, emitOnce);
+            if (line == null) {
+                result.skipped_reason = 'emit_once_duplicate';
+                return;
+            }
             result.integrity = Object.assign({}, event.integrity);
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
@@ -562,6 +629,10 @@ export async function appendTaskEventAsync(
         const warning = buildAppendWarning('task-event append failed', error);
         result.warnings.push(warning);
         process.stderr.write(`WARNING: ${warning}\n`);
+        return passThru ? result : null;
+    }
+
+    if (result.skipped_reason === 'emit_once_duplicate') {
         return passThru ? result : null;
     }
 

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -1647,7 +1647,7 @@ describe('gates/finalization-lock', () => {
         try {
             fs.rmSync(ownerPath, { force: true });
             const inspection = inspectCompletionGateFinalizationLock(reviewsDir, 'T-LOCK-1');
-            assert.equal(inspection.lock_path, lockPath);
+            assert.equal(inspection.lock_path, lockPath.replace(/\\/g, '/'));
             assert.equal(typeof inspection.active, 'boolean');
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1703,19 +1703,21 @@ describe('gates/finalization-lock', () => {
         const tmpDir = makeTempDir();
         const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(reviewsDir, { recursive: true });
-        const readdirMock = mock.method(fs, 'readdirSync', () => {
-            const error = new Error('permission denied') as NodeJS.ErrnoException;
-            error.code = 'EACCES';
-            throw error;
-        });
+        const realFs = require('node:fs') as typeof fs & { readdirSync: typeof fs.readdirSync };
+        const originalReaddirSync = realFs.readdirSync;
 
         try {
+            realFs.readdirSync = function (..._args: unknown[]): never {
+                const error = new Error('permission denied') as NodeJS.ErrnoException;
+                error.code = 'EACCES';
+                throw error;
+            };
             assert.throws(
                 () => scanCompletionGateFinalizationLocks(reviewsDir),
                 /permission denied/
             );
         } finally {
-            readdirMock.mock.restore();
+            realFs.readdirSync = originalReaddirSync;
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     });

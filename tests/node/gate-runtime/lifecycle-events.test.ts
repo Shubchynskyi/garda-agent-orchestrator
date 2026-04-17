@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import {
     LIFECYCLE_EVENT_TYPES,
@@ -16,6 +17,7 @@ import {
     emitMandatoryPreflightStartedEvent,
     emitMandatoryReviewPhaseStartedEvent,
     emitPlanCreatedEvent,
+    emitPlanCreatedEventAsync,
     emitPreflightStartedEvent,
     emitPreflightFailedEvent,
     emitImplementationStartedEvent,
@@ -33,6 +35,72 @@ function createTempDir(): string {
 
 function removeTempDir(dirPath: string): void {
     fs.rmSync(dirPath, { recursive: true, force: true });
+}
+
+function resolveLifecycleEventsModulePath(): string {
+    return path.resolve(__dirname, '../../../src/gate-runtime/lifecycle-events.js');
+}
+
+function runConcurrentEmitOnceWorker(
+    modulePath: string,
+    orchestratorRoot: string,
+    eventsRoot: string,
+    startSignalPath: string,
+    taskId: string,
+    functionName: 'emitPlanCreatedEvent' | 'emitPlanCreatedEventAsync'
+) {
+    return new Promise<void>((resolve, reject) => {
+        const workerScript = [
+            "const fs = require('node:fs');",
+            "const lifecycle = require(process.argv[1]);",
+            "const orchestratorRoot = process.argv[2];",
+            "const eventsRoot = process.argv[3];",
+            "const startSignalPath = process.argv[4];",
+            "const taskId = process.argv[5];",
+            "const functionName = process.argv[6];",
+            "const sleepArray = new Int32Array(new SharedArrayBuffer(4));",
+            "while (!fs.existsSync(startSignalPath)) { Atomics.wait(sleepArray, 0, 0, 10); }",
+            "(async () => {",
+            "  const emitFn = lifecycle[functionName];",
+            "  if (typeof emitFn !== 'function') { throw new Error(`Missing lifecycle emitter: ${functionName}`); }",
+            "  const result = await Promise.resolve(emitFn(orchestratorRoot, taskId, { worker_pid: process.pid }, { eventsRoot }));",
+            "  if (result && Array.isArray(result.warnings) && result.warnings.length > 0) {",
+            "    throw new Error(result.warnings.join('; '));",
+            "  }",
+            "})().catch((error) => {",
+            "  process.stderr.write(String(error && error.stack ? error.stack : error));",
+            "  process.exitCode = 1;",
+            "});"
+        ].join('\n');
+
+        const child = spawn(process.execPath, [
+            '--input-type=commonjs',
+            '--eval',
+            workerScript,
+            modulePath,
+            orchestratorRoot,
+            eventsRoot,
+            startSignalPath,
+            taskId,
+            functionName
+        ], {
+            stdio: ['ignore', 'ignore', 'pipe']
+        });
+
+        let stderr = '';
+        child.stderr.on('data', (chunk) => {
+            stderr += String(chunk);
+        });
+
+        child.on('error', reject);
+        child.on('exit', (code) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            reject(new Error(stderr || `emitOnce worker exited with code ${code}`));
+        });
+    });
 }
 
 describe('gate-runtime/lifecycle-events', () => {
@@ -279,6 +347,62 @@ describe('gate-runtime/lifecycle-events', () => {
             const reviewDetails = events[3].details as Record<string, unknown>;
             assert.equal(planDetails.task_summary, 'Implement change');
             assert.equal(reviewDetails.review_type, 'code');
+        });
+
+        it('emitPlanCreatedEvent remains atomic under concurrent process writers', async () => {
+            const modulePath = resolveLifecycleEventsModulePath();
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            const startSignalPath = path.join(tempDir, 'start-sync.signal');
+            const taskId = 'T-PLAN-SYNC';
+            const workers = Array.from({ length: 4 }, () => runConcurrentEmitOnceWorker(
+                modulePath,
+                tempDir,
+                eventsRoot,
+                startSignalPath,
+                taskId,
+                'emitPlanCreatedEvent'
+            ));
+
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            fs.writeFileSync(startSignalPath, 'go\n', 'utf8');
+            await Promise.all(workers);
+
+            const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+            const events = fs.readFileSync(timelinePath, 'utf8')
+                .trim()
+                .split('\n')
+                .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+            assert.equal(events.length, 1);
+            assert.deepEqual(events.map((event) => event.event_type), ['PLAN_CREATED']);
+        });
+
+        it('emitPlanCreatedEventAsync remains atomic under concurrent process writers', async () => {
+            const modulePath = resolveLifecycleEventsModulePath();
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            const startSignalPath = path.join(tempDir, 'start-async.signal');
+            const taskId = 'T-PLAN-ASYNC';
+            const workers = Array.from({ length: 4 }, () => runConcurrentEmitOnceWorker(
+                modulePath,
+                tempDir,
+                eventsRoot,
+                startSignalPath,
+                taskId,
+                'emitPlanCreatedEventAsync'
+            ));
+
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            fs.writeFileSync(startSignalPath, 'go\n', 'utf8');
+            await Promise.all(workers);
+
+            const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+            const events = fs.readFileSync(timelinePath, 'utf8')
+                .trim()
+                .split('\n')
+                .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+            assert.equal(events.length, 1);
+            assert.deepEqual(events.map((event) => event.event_type), ['PLAN_CREATED']);
         });
 
         it('emits PREFLIGHT_FAILED with FAIL outcome', () => {
