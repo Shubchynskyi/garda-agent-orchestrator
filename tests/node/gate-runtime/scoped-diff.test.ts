@@ -209,6 +209,26 @@ test('parseUnifiedDiff parses multiple files', () => {
     assert.equal(blocks[1].filePath, 'src/db.ts');
 });
 
+test('parseUnifiedDiff normalizes CRLF input without retaining stray carriage returns', () => {
+    const diff = [
+        'diff --git a/src/auth.ts b/src/auth.ts',
+        '--- a/src/auth.ts',
+        '+++ b/src/auth.ts',
+        '@@ -10,6 +10,7 @@ export class Auth {',
+        '     existing line',
+        '+    new auth line',
+        '     another line'
+    ].join('\r\n');
+
+    const blocks = parseUnifiedDiff(diff);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].filePath, 'src/auth.ts');
+    assert.equal(blocks[0].headerLines.length, 3);
+    assert.equal(blocks[0].headerLines.some((line) => line.includes('\r')), false);
+    assert.equal(blocks[0].hunks[0].header, '@@ -10,6 +10,7 @@ export class Auth {');
+    assert.equal(blocks[0].hunks[0].lines.some((line) => line.includes('\r')), false);
+});
+
 // --- extractFilePathFromDiffLine ---
 
 test('extractFilePathFromDiffLine extracts b-side path', () => {
@@ -436,6 +456,23 @@ test('filterDiffByHunks matches on hunk header function context', () => {
     const result = filterDiffByHunks(diff, ['authenticate'], { reviewType: 'security' });
     assert.equal(result.includedHunks, 1);
     assert.ok(result.filteredDiffText.includes('authenticateUser'));
+});
+
+test('filterDiffByHunks matches CRLF diff content with anchored trigger regexes', () => {
+    const diff = [
+        'diff --git a/src/auth.ts b/src/auth.ts',
+        '--- a/src/auth.ts',
+        '+++ b/src/auth.ts',
+        '@@ -1,3 +1,4 @@',
+        '+verifyToken(jwt);'
+    ].join('\r\n');
+
+    const result = filterDiffByHunks(diff, ['verifyToken\\(jwt\\);$'], { reviewType: 'security' });
+    assert.equal(result.totalFileBlocks, 1);
+    assert.equal(result.includedFileBlocks, 1);
+    assert.equal(result.includedHunks, 1);
+    assert.ok(result.filteredDiffText.includes('+verifyToken(jwt);'));
+    assert.equal(result.filteredDiffText.includes('\r'), false);
 });
 
 test('filterHunksInBlock includes binary/mode-only block when file path matches', () => {

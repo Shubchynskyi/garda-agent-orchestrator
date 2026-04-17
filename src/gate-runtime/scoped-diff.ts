@@ -112,7 +112,10 @@ export interface DiffFileBlock {
 export function parseUnifiedDiff(diffText: string): DiffFileBlock[] {
     if (!diffText || !diffText.trim()) return [];
 
-    const lines = diffText.split('\n');
+    const lines = String(diffText)
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .split('\n');
     const blocks: DiffFileBlock[] = [];
     let currentBlock: DiffFileBlock | null = null;
     let currentHunk: DiffHunk | null = null;
@@ -397,4 +400,3 @@ export function convertToGitPathspecs(pathspecs: string[], repoRoot: string, git
         return normalized;
     });
 }
-
