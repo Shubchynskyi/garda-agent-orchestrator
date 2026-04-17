@@ -158,7 +158,7 @@ export function isIndexStale(
 // Rebuild
 // ---------------------------------------------------------------------------
 
-function parseArtifactType(fileName: string): { taskId: string; artifactType: string } | null {
+export function parseReviewArtifactFileName(fileName: string): { taskId: string; artifactType: string } | null {
     if (!fileName.startsWith('T-')) return null;
 
     // Try known suffixes first for deterministic parsing
@@ -213,7 +213,7 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
     }
 
     for (const fileName of fileNames) {
-        const parsed = parseArtifactType(fileName);
+        const parsed = parseReviewArtifactFileName(fileName);
         if (!parsed) continue;
 
         const fullPath = path.join(reviewsDir, fileName);
@@ -346,7 +346,7 @@ export function loadIndex(
  * If the index doesn't exist or is corrupt, a full rebuild is triggered.
  */
 export function upsertEntry(reviewsDir: string, fileName: string): void {
-    const parsed = parseArtifactType(fileName);
+    const parsed = parseReviewArtifactFileName(fileName);
     if (!parsed) return;
 
     const indexPath = resolveIndexPath(reviewsDir);

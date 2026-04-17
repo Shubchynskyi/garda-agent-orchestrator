@@ -253,6 +253,69 @@ test('getWhyBlocked surfaces stale task-event lock as blocking reason for matchi
     }
 });
 
+test('getWhyBlocked surfaces stale review-artifact lock as blocking reason for matching task', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-review-lock-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+    const lockPath = path.join(reviewsDir, 'T-014-code.md.lock');
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-014 | 🟨 IN_PROGRESS | P1 | area | Active task | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.in_progress_tasks.length, 1);
+        assert.equal(result.review_lock_observations?.length, 1);
+        assert.ok(result.in_progress_tasks[0].blocking_reasons.some(function (reason) {
+            return reason.reason_code === 'STALE_REVIEW_ARTIFACT_LOCK';
+        }));
+        assert.ok(result.in_progress_tasks[0].related_review_locks?.some((lock) => lock.lock_name === 'T-014-code.md.lock'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getWhyBlocked surfaces the shared stale reviews-index lock for in-progress tasks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-review-index-lock-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const runtimeDir = path.join(bundleDir, 'runtime');
+    const lockPath = path.join(runtimeDir, '.reviews-index.lock');
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-015 | 🟨 IN_PROGRESS | P1 | area | Active task | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.in_progress_tasks.length, 1);
+        assert.ok(result.review_lock_observations?.some((lock) => lock.lock_name === '.reviews-index.lock'));
+        assert.ok(result.in_progress_tasks[0].related_review_locks?.some((lock) => lock.lock_name === '.reviews-index.lock'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getWhyBlocked marks code-changing tasks stalled when handshake lifecycle evidence is missing', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-code-test-'));
     const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
@@ -409,6 +472,22 @@ test('formatWhyBlockedResult renders STALLED task with missing events', () => {
                 owner_metadata_status: 'ok',
                 stale_reason: 'owner_dead',
                 remediation: 'Run doctor cleanup.'
+            }],
+            related_review_locks: [{
+                lock_name: 'T-020-code.md.lock',
+                lock_path: '/tmp/test/runtime/reviews/T-020-code.md.lock',
+                artifact_path: '/tmp/test/runtime/reviews/T-020-code.md',
+                task_id: 'T-020',
+                artifact_type: 'code.md',
+                status: 'ACTIVE' as const,
+                age_ms: 500,
+                owner_pid: 4242,
+                owner_hostname: 'active-host',
+                owner_created_at_utc: '2026-03-30T10:00:00.000Z',
+                owner_alive: true,
+                owner_metadata_status: 'ok',
+                stale_reason: null,
+                remediation: 'Wait for owner.'
             }]
         }],
         lock_observations: [{
@@ -426,13 +505,31 @@ test('formatWhyBlockedResult renders STALLED task with missing events', () => {
             stale_reason: 'owner_dead',
             remediation: 'Run doctor cleanup.'
         }],
+        review_lock_observations: [{
+            lock_name: 'T-020-code.md.lock',
+            lock_path: '/tmp/test/runtime/reviews/T-020-code.md.lock',
+            artifact_path: '/tmp/test/runtime/reviews/T-020-code.md',
+            task_id: 'T-020',
+            artifact_type: 'code.md',
+            status: 'ACTIVE' as const,
+            age_ms: 500,
+            owner_pid: 4242,
+            owner_hostname: 'active-host',
+            owner_created_at_utc: '2026-03-30T10:00:00.000Z',
+            owner_alive: true,
+            owner_metadata_status: 'ok',
+            stale_reason: null,
+            remediation: 'Wait for owner.'
+        }],
         summary_lines: ['In-progress tasks with gate issues: 1']
     };
 
     const output = formatWhyBlockedResult(result);
     assert.ok(output.includes('Task-Event Locks'));
+    assert.ok(output.includes('Review Artifact Locks'));
     assert.ok(output.includes('STALLED: T-020'));
     assert.ok(output.includes('Related locks: .T-020.lock:STALE'));
+    assert.ok(output.includes('Related review locks: T-020-code.md.lock:ACTIVE'));
     assert.ok(output.includes('COMPILE_GATE_PASSED'));
     assert.ok(output.includes('REVIEW_PHASE_STARTED'));
     assert.ok(output.includes('[TIMELINE_INCOMPLETE]'));

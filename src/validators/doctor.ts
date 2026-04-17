@@ -10,6 +10,12 @@ import {
     type TaskEventLockScanResult
 } from '../gate-runtime/task-events';
 import {
+    cleanupStaleReviewArtifactLocks,
+    scanReviewArtifactLocks,
+    type ReviewArtifactLockCleanupResult,
+    type ReviewArtifactLockScanResult
+} from '../gate-runtime/review-artifacts';
+import {
     collectTimelineSummaryForDoctor,
     type DoctorTimelineEvidence
 } from '../gate-runtime/timeline-summary';
@@ -415,6 +421,8 @@ interface DoctorResult {
     timelineWarnings: string[];
     lockHealth: TaskEventLockScanResult;
     lockCleanup: TaskEventLockCleanupResult | null;
+    reviewLockHealth?: ReviewArtifactLockScanResult;
+    reviewLockCleanup?: ReviewArtifactLockCleanupResult | null;
     parityResult: ReturnType<typeof getSourceBundleParity>;
     providerComplianceResult: ProviderComplianceResult | null;
     nestedBundleDuplication: NestedBundleDuplicationResult;
@@ -464,6 +472,10 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         ? cleanupStaleTaskEventLocks(bundlePath, { dryRun: options.dryRun === true })
         : null;
     var lockHealth = scanTaskEventLocks(bundlePath);
+    var reviewLockCleanup = options.cleanupStaleLocks
+        ? cleanupStaleReviewArtifactLocks(bundlePath, { dryRun: options.dryRun === true })
+        : null;
+    var reviewLockHealth = scanReviewArtifactLocks(bundlePath);
 
     // T-1006: provider-control compliance scan
     var providerComplianceResult: ProviderComplianceResult | null = null;
@@ -513,7 +525,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         || protectedManifestEvidence.status === 'MATCH'
         || protectedManifestEvidence.status === 'MISSING';
     var profileHealthOk = profileHealthEvidence === null || !profileHealthEvidence.config_exists || profileHealthEvidence.passed;
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed && profileHealthOk;
+    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && reviewLockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed && profileHealthOk;
 
     return {
         passed: passed,
@@ -525,6 +537,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         timelineWarnings: timelineScan.warnings,
         lockHealth: lockHealth,
         lockCleanup: lockCleanup,
+        reviewLockHealth: reviewLockHealth,
+        reviewLockCleanup: reviewLockCleanup,
         parityResult: parityResult,
         providerComplianceResult: providerComplianceResult,
         nestedBundleDuplication: nestedBundleDuplication,
@@ -636,6 +650,59 @@ export function formatDoctorResult(result: DoctorResult): string {
                 '  ' + lock.lock_name + ': ' + lock.status +
                 ' scope=' + lock.scope +
                 (lock.task_id ? ' task=' + lock.task_id : '') +
+                ' age=' + ageText +
+                ' owner_pid=' + ownerPidText +
+                ' owner_alive=' + ownerAliveText +
+                ' owner_host=' + ownerHostText +
+                ' metadata=' + lock.owner_metadata_status +
+                ' stale_reason=' + (lock.stale_reason || 'none')
+            );
+            lines.push('    Fix: ' + lock.remediation);
+        }
+        lines.push('');
+    }
+
+    if (result.reviewLockCleanup) {
+        lines.push('Review Artifact Lock Cleanup');
+        lines.push('  Mode: ' + (result.reviewLockCleanup.dry_run ? 'DRY_RUN' : 'APPLY'));
+        lines.push('  LockRoot: ' + result.reviewLockCleanup.lock_root);
+        lines.push('  StaleCandidates: ' + result.reviewLockCleanup.removable_stale_locks.length);
+        lines.push('  Removed: ' + result.reviewLockCleanup.removed_locks.length);
+        if (result.reviewLockCleanup.retained_live_locks.length > 0) {
+            lines.push('  LiveLocksRetained: ' + result.reviewLockCleanup.retained_live_locks.join(', '));
+        }
+        if (result.reviewLockCleanup.failed_locks.length > 0) {
+            lines.push('  CleanupFailures: ' + result.reviewLockCleanup.failed_locks.join(', '));
+        }
+        for (const warning of result.reviewLockCleanup.warnings) {
+            lines.push('  Warning: ' + warning);
+        }
+        lines.push('');
+    }
+
+    if ((result.reviewLockHealth && result.reviewLockHealth.locks.length > 0) || result.reviewLockCleanup) {
+        const reviewLockHealth = result.reviewLockHealth || {
+            lock_root: '',
+            subsystem_scope_note: '',
+            locks: [],
+            active_count: 0,
+            stale_count: 0
+        };
+        lines.push('Review Artifact Locks');
+        lines.push('  Scope: ' + reviewLockHealth.subsystem_scope_note);
+        lines.push(
+            '  Summary: active=' + reviewLockHealth.active_count +
+            ', stale=' + reviewLockHealth.stale_count
+        );
+        for (const lock of reviewLockHealth.locks) {
+            const ageText = lock.age_ms === null ? 'unknown' : `${lock.age_ms}ms`;
+            const ownerPidText = lock.owner_pid === null ? 'unknown' : String(lock.owner_pid);
+            const ownerAliveText = lock.owner_alive === null ? 'unknown' : (lock.owner_alive ? 'yes' : 'no');
+            const ownerHostText = lock.owner_hostname || 'unknown';
+            lines.push(
+                '  ' + lock.lock_name + ': ' + lock.status +
+                (lock.task_id ? ' task=' + lock.task_id : '') +
+                (lock.artifact_type ? ' artifact=' + lock.artifact_type : '') +
                 ' age=' + ageText +
                 ' owner_pid=' + ownerPidText +
                 ' owner_alive=' + ownerAliveText +

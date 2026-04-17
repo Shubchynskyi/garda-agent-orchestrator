@@ -64,7 +64,7 @@ Notes:
 - `status` prints the normal workspace readiness snapshot.
 - `status --compact` preserves the not-ready output but reduces the green path to a single summary line: `GARDA_STATUS: ready | source=<provider>`.
 - `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
-- `status why-blocked` also surfaces task-event locks that can block timeline writes and reminds the operator that `runtime/reviews/` is not part of the lock subsystem.
+- `status why-blocked` also surfaces task-event locks that can block timeline writes and review-artifact locks that can block `runtime/reviews` artifact persistence.
 
 ### `garda doctor`
 
@@ -83,8 +83,8 @@ Notes:
 - `doctor` remains the aggregate verify + manifest + timeline health command.
 - `doctor --compact` preserves failure diagnostics but reduces the green path to a single line: `Doctor: PASS | verify=PASS | manifest=PASS`.
 - `doctor` reports task-event lock health under `garda-agent-orchestrator/runtime/task-events/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
-- `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
-- `runtime/reviews/` is not part of the task-event lock subsystem and is never cleaned by `doctor --cleanup-stale-locks`.
+- `doctor` also reports review-artifact lock health under `garda-agent-orchestrator/runtime/reviews/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
+- `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks and stale review-artifact locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
 - `doctor explain <FAILURE_ID>` prints remediation steps for known failure IDs such as `TASK_MODE_NOT_ENTERED`, `COMPILE_GATE_FAILED`, and `TIMELINE_INCOMPLETE`.
 - `doctor explain --list` prints the current remediation database keys.
 

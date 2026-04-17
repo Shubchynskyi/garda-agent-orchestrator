@@ -1117,7 +1117,7 @@ test('scanTaskEventLocks reports active and stale task-event locks only', () => 
         assert.equal(result.locks.length, 2);
         assert.equal(result.stale_count, 1);
         assert.equal(result.active_count, 1);
-        assert.ok(result.subsystem_scope_note.includes('runtime/reviews/'));
+        assert.ok(result.subsystem_scope_note.includes('runtime/task-events/*.lock'));
         assert.ok(result.locks.some((lock) => lock.lock_name === '.T-005.lock' && lock.status === 'STALE'));
         assert.ok(result.locks.some((lock) => lock.lock_name === '.all-tasks.lock' && lock.status === 'ACTIVE'));
     } finally {

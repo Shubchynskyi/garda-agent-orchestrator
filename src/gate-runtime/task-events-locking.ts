@@ -13,7 +13,7 @@ const MAX_LOCK_RELEASE_RETRY_MS = 250;
 const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 const LOCK_METADATA_GRACE_MS = 2000;
-const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
+export const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
 const TRANSIENT_LOCK_RELEASE_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
 
 export interface LockOptions {
@@ -396,6 +396,24 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
     };
 }
 
+export function inspectFilesystemLock(lockPath: string, options: LockOptions = {}): LockInspectionResult {
+    const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    return inspectLock(lockPath, staleMs);
+}
+
+export function filesystemLockRequiresExplicitForeignHostRecovery(inspection: LockInspectionResult): boolean {
+    return requiresExplicitAgeRecovery(inspection);
+}
+
+export function isForeignHostFilesystemLockRecoveryAllowed(options: LockOptions = {}): boolean {
+    return allowForeignHostStaleRecovery(options);
+}
+
+export function reclaimStaleFilesystemLock(lockPath: string, options: LockOptions = {}): { removed: boolean; inspection: LockInspectionResult } {
+    const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    return tryRemoveStaleLock(lockPath, staleMs, options);
+}
+
 function formatLockDiagnostic(lockPath: string, inspection: LockInspectionResult, timeoutMs: number, waitedMs: number): string {
     const ageText = typeof inspection.ageMs === 'number' ? `${inspection.ageMs}ms` : 'unknown';
     const ownerPidText = inspection.metadata.pid !== null ? String(inspection.metadata.pid) : 'unknown';
@@ -687,20 +705,20 @@ function buildLockRemediation(entryName: string, inspection: LockInspectionResul
     if (requiresExplicitAgeRecovery(inspection)) {
         return [
             `Verify the remote owner is gone, then rerun with ${FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV}=1 to reclaim aged foreign-host lock '${entryName}'.`,
-            'Do not delete live locks manually. runtime/reviews/ is not part of the task-event lock subsystem.'
+            'Do not delete live task-event locks manually.'
         ].join(' ');
     }
     if (inspection.staleReason) {
         return [
             `Run 'garda doctor --target-root "." --cleanup-stale-locks --dry-run' first, then rerun without '--dry-run' if the candidate list looks correct.`,
-            'Only runtime/task-events/*.lock is cleaned automatically; runtime/reviews/ is not part of the lock subsystem.'
+            'Only proven-stale task-event locks under runtime/task-events/*.lock are cleaned automatically.'
         ].join(' ');
     }
 
     const ownerPidText = inspection.metadata.pid !== null ? String(inspection.metadata.pid) : 'unknown';
     return [
         `Wait for the owning process to release '${entryName}' or terminate PID ${ownerPidText} safely if it is hung.`,
-        'Do not delete live locks manually. runtime/reviews/ is not part of the lock subsystem.'
+        'Do not delete live task-event locks manually.'
     ].join(' ');
 }
 
@@ -767,7 +785,7 @@ export function scanTaskEventLocks(orchestratorRoot: string, options: LockOption
 
     return {
         lock_root: lockRoot.replace(/\\/g, '/'),
-        subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem. runtime/reviews/ is never cleaned by these diagnostics.',
+        subsystem_scope_note: 'Only runtime/task-events/*.lock participates in the task-event lock subsystem.',
         locks,
         active_count: locks.filter((lock) => lock.status === 'ACTIVE').length,
         stale_count: locks.filter((lock) => lock.status === 'STALE').length

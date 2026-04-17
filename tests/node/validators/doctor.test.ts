@@ -352,7 +352,94 @@ test('runDoctor reports stale task-event locks and supports dry-run cleanup outp
         assert.ok(output.includes('Task-Event Lock Cleanup'));
         assert.ok(output.includes('Mode: DRY_RUN'));
         assert.ok(output.includes('.T-005.lock: STALE'));
-        assert.ok(output.includes('runtime/reviews/ is never cleaned'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor reports and cleans stale review-artifact locks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-review-locks-test-'));
+    const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+    const reviewsRoot = path.join(bundlePath, 'runtime', 'reviews');
+    const staleLockPath = path.join(reviewsRoot, 'T-006-code.md.lock');
+    fs.mkdirSync(staleLockPath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/garda.js\n- package.json\n',
+        'utf8'
+    );
+    fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+        pid: 999999,
+        hostname: os.hostname(),
+        created_at_utc: '2026-03-30T10:00:00.000Z'
+    }, null, 2) + '\n', 'utf8');
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(staleLockPath, oldTime, oldTime);
+
+    try {
+        const dryRun = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            cleanupStaleLocks: true,
+            dryRun: true
+        });
+        assert.equal(dryRun.passed, false);
+        assert.ok(dryRun.reviewLockHealth);
+        assert.equal(dryRun.reviewLockHealth!.stale_count, 1);
+        assert.ok(dryRun.reviewLockCleanup !== null);
+        assert.deepEqual(dryRun.reviewLockCleanup!.removable_stale_locks, ['T-006-code.md.lock']);
+        assert.ok(fs.existsSync(staleLockPath), 'dry-run must not remove stale review-artifact locks');
+
+        const applied = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            cleanupStaleLocks: true,
+            dryRun: false
+        });
+        assert.ok(applied.reviewLockCleanup !== null);
+        assert.deepEqual(applied.reviewLockCleanup!.removed_locks, ['T-006-code.md.lock']);
+        assert.equal(fs.existsSync(staleLockPath), false, 'doctor cleanup should remove stale review-artifact lock');
+
+        const output = formatDoctorResult(dryRun);
+        assert.ok(output.includes('Review Artifact Lock Cleanup'));
+        assert.ok(output.includes('Review Artifact Locks'));
+        assert.ok(output.includes('T-006-code.md.lock: STALE'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runDoctor reports the shared stale reviews-index lock in review-artifact diagnostics', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-review-index-lock-test-'));
+    const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+    const runtimeDir = path.join(bundlePath, 'runtime');
+    const staleLockPath = path.join(runtimeDir, '.reviews-index.lock');
+    fs.mkdirSync(staleLockPath, { recursive: true });
+    fs.writeFileSync(
+        path.join(bundlePath, 'MANIFEST.md'),
+        '- bin/garda.js\n- package.json\n',
+        'utf8'
+    );
+    fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+        pid: 999999,
+        hostname: os.hostname(),
+        created_at_utc: '2026-03-30T10:00:00.000Z'
+    }, null, 2) + '\n', 'utf8');
+    const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+    fs.utimesSync(staleLockPath, oldTime, oldTime);
+
+    try {
+        const result = runDoctor({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.equal(result.passed, false);
+        assert.ok(result.reviewLockHealth);
+        assert.ok(result.reviewLockHealth!.locks.some((lock) => lock.lock_name === '.reviews-index.lock' && lock.status === 'STALE'));
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Review Artifact Locks'));
+        assert.ok(output.includes('.reviews-index.lock: STALE'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

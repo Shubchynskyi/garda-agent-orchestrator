@@ -4,6 +4,7 @@ import { pathExists } from '../core/fs';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, resolveBundleName } from '../core/constants';
 import { getMandatoryEvents } from '../gate-runtime/lifecycle-event-types';
 import { scanTaskEventLocks, type TaskEventLockHealth } from '../gate-runtime/task-events';
+import { scanReviewArtifactLocks, type ReviewArtifactLockHealth } from '../gate-runtime/review-artifacts';
 import { detectCodeChanged } from '../gates/preflight-code-change';
 
 export interface TaskStatus {
@@ -31,6 +32,7 @@ export interface WhyBlockedTask {
     failed_gates: string[];
     timeline_status: string;
     related_locks: TaskEventLockHealth[];
+    related_review_locks?: ReviewArtifactLockHealth[];
 }
 
 export interface WhyBlockedResult {
@@ -38,6 +40,7 @@ export interface WhyBlockedResult {
     blocked_tasks: WhyBlockedTask[];
     in_progress_tasks: WhyBlockedTask[];
     lock_observations: TaskEventLockHealth[];
+    review_lock_observations?: ReviewArtifactLockHealth[];
     summary_lines: string[];
 }
 
@@ -196,7 +199,8 @@ function detectBlockingReasons(
     events: string[],
     missingEvents: string[],
     failedGates: string[],
-    relatedLocks: TaskEventLockHealth[]
+    relatedLocks: TaskEventLockHealth[],
+    relatedReviewLocks: ReviewArtifactLockHealth[]
 ): BlockingReason[] {
     const reasons: BlockingReason[] = [];
 
@@ -272,21 +276,45 @@ function detectBlockingReasons(
             reasons.push({
                 reason_code: 'STALE_TASK_EVENT_LOCK',
                 description: `Task-event lock '${lock.lock_name}' is stale (${lock.stale_reason || 'unknown reason'}) and can block timeline writes for this task.`,
-                remediation: `Run '${PRIMARY_CLI_NAME} doctor --target-root "." --cleanup-stale-locks --dry-run' first, then rerun without '--dry-run' if the candidate list is correct. runtime/reviews/ is not part of the lock subsystem.`
+                remediation: `Run '${PRIMARY_CLI_NAME} doctor --target-root "." --cleanup-stale-locks --dry-run' first, then rerun without '--dry-run' if the candidate list is correct.`
             });
             continue;
         }
         reasons.push({
             reason_code: 'ACTIVE_TASK_EVENT_LOCK',
             description: `Task-event lock '${lock.lock_name}' is currently held by PID ${ownerPidText} on ${ownerHostText}; gate writes may block until it is released.`,
-            remediation: `Wait for the owning process to finish or terminate PID ${ownerPidText} safely if it is hung. Do not delete live locks manually. runtime/reviews/ is not part of the lock subsystem.`
+            remediation: `Wait for the owning process to finish or terminate PID ${ownerPidText} safely if it is hung. Do not delete live task-event locks manually.`
+        });
+    }
+
+    for (const lock of relatedReviewLocks) {
+        const ownerPidText = lock.owner_pid === null ? 'unknown' : String(lock.owner_pid);
+        const ownerHostText = lock.owner_hostname || 'unknown';
+        const artifactLabel = lock.artifact_type || path.basename(lock.artifact_path);
+        if (lock.status === 'STALE') {
+            reasons.push({
+                reason_code: 'STALE_REVIEW_ARTIFACT_LOCK',
+                description: `Review-artifact lock '${lock.lock_name}' for '${artifactLabel}' is stale (${lock.stale_reason || 'unknown reason'}) and can block runtime/reviews writes for this task.`,
+                remediation: `Run '${PRIMARY_CLI_NAME} doctor --target-root "." --cleanup-stale-locks --dry-run' first, then rerun without '--dry-run' if the review-artifact lock candidate list is correct.`
+            });
+            continue;
+        }
+        reasons.push({
+            reason_code: 'ACTIVE_REVIEW_ARTIFACT_LOCK',
+            description: `Review-artifact lock '${lock.lock_name}' for '${artifactLabel}' is currently held by PID ${ownerPidText} on ${ownerHostText}; runtime/reviews writes may block until it is released.`,
+            remediation: `Wait for the owning process to finish or terminate PID ${ownerPidText} safely if it is hung. Do not delete live review-artifact locks manually.`
         });
     }
 
     return reasons;
 }
 
-function analyseTask(task: TaskStatus, bundlePath: string, lockObservations: TaskEventLockHealth[]): WhyBlockedTask {
+function analyseTask(
+    task: TaskStatus,
+    bundlePath: string,
+    lockObservations: TaskEventLockHealth[],
+    reviewLockObservations: ReviewArtifactLockHealth[]
+): WhyBlockedTask {
     const timelinePath = path.join(bundlePath, 'runtime', 'task-events', task.id + '.jsonl');
     const events = readTimelineEvents(timelinePath);
 
@@ -315,8 +343,11 @@ function analyseTask(task: TaskStatus, bundlePath: string, lockObservations: Tas
     const relatedLocks = lockObservations.filter(function (lock) {
         return lock.scope === 'aggregate' || lock.task_id === task.id;
     });
+    const relatedReviewLocks = reviewLockObservations.filter(function (lock) {
+        return lock.task_id === null || lock.task_id === task.id;
+    });
 
-    const blockingReasons = detectBlockingReasons(task, events, missingEvents, failedGates, relatedLocks);
+    const blockingReasons = detectBlockingReasons(task, events, missingEvents, failedGates, relatedLocks, relatedReviewLocks);
 
     return {
         task,
@@ -324,7 +355,8 @@ function analyseTask(task: TaskStatus, bundlePath: string, lockObservations: Tas
         missing_events: missingEvents,
         failed_gates: failedGates,
         timeline_status: timelineStatus,
-        related_locks: relatedLocks
+        related_locks: relatedLocks,
+        related_review_locks: relatedReviewLocks
     };
 }
 
@@ -337,14 +369,17 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
     const lockObservations = pathExists(bundlePath)
         ? scanTaskEventLocks(bundlePath).locks
         : [];
+    const reviewLockObservations = pathExists(bundlePath)
+        ? scanReviewArtifactLocks(bundlePath).locks
+        : [];
     const blocked: WhyBlockedTask[] = [];
     const inProgress: WhyBlockedTask[] = [];
 
     for (const task of allTasks) {
         if (task.status === 'BLOCKED') {
-            blocked.push(analyseTask(task, bundlePath, lockObservations));
+            blocked.push(analyseTask(task, bundlePath, lockObservations, reviewLockObservations));
         } else if (task.status === 'IN_PROGRESS' || task.status === 'IN_REVIEW') {
-            const analysed = analyseTask(task, bundlePath, lockObservations);
+            const analysed = analyseTask(task, bundlePath, lockObservations, reviewLockObservations);
             if (analysed.blocking_reasons.length > 0 || analysed.missing_events.length > 0 || analysed.failed_gates.length > 0) {
                 inProgress.push(analysed);
             }
@@ -355,7 +390,10 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
     if (blocked.length === 0 && inProgress.length === 0) {
         summaryLines.push('No blocked or stalled tasks found.');
         if (lockObservations.length > 0) {
-            summaryLines.push(`Task-event locks observed: ${lockObservations.length} (runtime/reviews/ is not part of the lock subsystem).`);
+            summaryLines.push(`Task-event locks observed: ${lockObservations.length}.`);
+        }
+        if (reviewLockObservations.length > 0) {
+            summaryLines.push(`Review-artifact locks observed: ${reviewLockObservations.length}.`);
         }
         if (allTasks.filter(function (t) { return t.status === 'TODO' || t.status === 'IN_PROGRESS'; }).length === 0) {
             summaryLines.push('All tasks are DONE or queue is empty.');
@@ -368,7 +406,10 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
             summaryLines.push(`In-progress tasks with gate issues: ${inProgress.length}`);
         }
         if (lockObservations.length > 0) {
-            summaryLines.push(`Task-event locks observed: ${lockObservations.length} (runtime/reviews/ is not part of the lock subsystem).`);
+            summaryLines.push(`Task-event locks observed: ${lockObservations.length}.`);
+        }
+        if (reviewLockObservations.length > 0) {
+            summaryLines.push(`Review-artifact locks observed: ${reviewLockObservations.length}.`);
         }
         summaryLines.push(`Run: ${PRIMARY_CLI_NAME} doctor explain <FAILURE_ID> for remediation steps.`);
     }
@@ -378,6 +419,7 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
         blocked_tasks: blocked,
         in_progress_tasks: inProgress,
         lock_observations: lockObservations,
+        review_lock_observations: reviewLockObservations,
         summary_lines: summaryLines
     };
 }
@@ -394,6 +436,21 @@ export function formatWhyBlockedResult(result: WhyBlockedResult): string {
             lines.push(
                 `  ${lock.lock_name}: ${lock.status} scope=${lock.scope}` +
                 (lock.task_id ? ` task=${lock.task_id}` : '') +
+                ` age=${ageText} owner_pid=${lock.owner_pid === null ? 'unknown' : lock.owner_pid}`
+            );
+            lines.push(`    Fix: ${lock.remediation}`);
+        }
+        lines.push('');
+    }
+
+    if ((result.review_lock_observations || []).length > 0) {
+        lines.push('Review Artifact Locks');
+        for (const lock of result.review_lock_observations || []) {
+            const ageText = lock.age_ms === null ? 'unknown' : `${lock.age_ms}ms`;
+            lines.push(
+                `  ${lock.lock_name}: ${lock.status}` +
+                (lock.task_id ? ` task=${lock.task_id}` : '') +
+                (lock.artifact_type ? ` artifact=${lock.artifact_type}` : '') +
                 ` age=${ageText} owner_pid=${lock.owner_pid === null ? 'unknown' : lock.owner_pid}`
             );
             lines.push(`    Fix: ${lock.remediation}`);
@@ -420,6 +477,10 @@ export function formatWhyBlockedResult(result: WhyBlockedResult): string {
 
         if (analysed.related_locks.length > 0) {
             lines.push(`  Related locks: ${analysed.related_locks.map((lock) => `${lock.lock_name}:${lock.status}`).join(', ')}`);
+        }
+
+        if ((analysed.related_review_locks || []).length > 0) {
+            lines.push(`  Related review locks: ${(analysed.related_review_locks || []).map((lock) => `${lock.lock_name}:${lock.status}`).join(', ')}`);
         }
 
         if (analysed.missing_events.length > 0) {

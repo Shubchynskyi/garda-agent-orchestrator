@@ -6,7 +6,9 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 
 import {
+    cleanupStaleReviewArtifactLocks,
     getReviewArtifactLockPath,
+    scanReviewArtifactLocks,
     writeReviewArtifactJson,
     writeReviewArtifactText
 } from '../../../src/gate-runtime/review-artifacts';
@@ -267,6 +269,148 @@ test('writeReviewArtifactJson does not reclaim fresh foreign-host review-artifac
         );
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(lockPath), true);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('scanReviewArtifactLocks reports active and stale review-artifact locks with task binding', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-scan-'));
+    const reviewsDir = path.join(tempDir, 'runtime', 'reviews');
+    const activeLockPath = path.join(reviewsDir, 'T-007-code.md.lock');
+    const staleLockPath = path.join(reviewsDir, 'T-008-preflight.json.lock');
+
+    try {
+        fs.mkdirSync(activeLockPath, { recursive: true });
+        fs.writeFileSync(path.join(activeLockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        fs.mkdirSync(staleLockPath, { recursive: true });
+        fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(staleLockPath, oldTime, oldTime);
+
+        const result = scanReviewArtifactLocks(tempDir);
+        assert.equal(result.lock_root, reviewsDir.replace(/\\/g, '/'));
+        assert.equal(result.active_count, 1);
+        assert.equal(result.stale_count, 1);
+        assert.equal(result.locks.length, 2);
+
+        const activeLock = result.locks.find((lock) => lock.lock_name === 'T-007-code.md.lock');
+        assert.ok(activeLock, 'expected active review-artifact lock to be reported');
+        assert.equal(activeLock!.task_id, 'T-007');
+        assert.equal(activeLock!.artifact_type, 'code.md');
+        assert.equal(activeLock!.status, 'ACTIVE');
+
+        const staleLock = result.locks.find((lock) => lock.lock_name === 'T-008-preflight.json.lock');
+        assert.ok(staleLock, 'expected stale review-artifact lock to be reported');
+        assert.equal(staleLock!.task_id, 'T-008');
+        assert.equal(staleLock!.artifact_type, 'preflight.json');
+        assert.equal(staleLock!.status, 'STALE');
+        assert.ok(staleLock!.remediation.includes('doctor --target-root "." --cleanup-stale-locks --dry-run'));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleReviewArtifactLocks removes only proven-stale review-artifact locks', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-cleanup-'));
+    const reviewsDir = path.join(tempDir, 'runtime', 'reviews');
+    const activeLockPath = path.join(reviewsDir, 'T-009-test.md.lock');
+    const staleLockPath = path.join(reviewsDir, 'T-009-preflight.json.lock');
+
+    try {
+        fs.mkdirSync(activeLockPath, { recursive: true });
+        fs.writeFileSync(path.join(activeLockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        fs.mkdirSync(staleLockPath, { recursive: true });
+        fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(staleLockPath, oldTime, oldTime);
+
+        const dryRun = cleanupStaleReviewArtifactLocks(tempDir, { dryRun: true });
+        assert.deepEqual(dryRun.removable_stale_locks, ['T-009-preflight.json.lock']);
+        assert.deepEqual(dryRun.removed_locks, []);
+        assert.ok(fs.existsSync(staleLockPath), 'dry-run must not remove stale review-artifact locks');
+
+        const applied = cleanupStaleReviewArtifactLocks(tempDir, { dryRun: false });
+        assert.deepEqual(applied.removed_locks, ['T-009-preflight.json.lock']);
+        assert.ok(fs.existsSync(activeLockPath), 'active review-artifact lock must be preserved');
+        assert.equal(fs.existsSync(staleLockPath), false, 'stale review-artifact lock should be removed');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('cleanupStaleReviewArtifactLocks retains aged foreign-host review-artifact locks without explicit override', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-foreign-cleanup-'));
+    const reviewsDir = path.join(tempDir, 'runtime', 'reviews');
+    const lockPath = path.join(reviewsDir, 'T-010-code.md.lock');
+    const previousEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+
+        const result = cleanupStaleReviewArtifactLocks(tempDir, { dryRun: false });
+        assert.deepEqual(result.removed_locks, []);
+        assert.ok(result.retained_live_locks.includes('T-010-code.md.lock'));
+        assert.ok(result.warnings.some((warning) => warning.includes('GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS=1')));
+        assert.equal(fs.existsSync(lockPath), true, 'cleanup must preserve aged foreign-host review-artifact lock without explicit override');
+    } finally {
+        if (previousEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('scanReviewArtifactLocks includes the shared reviews-index lock', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-index-lock-scan-'));
+    const runtimeDir = path.join(tempDir, 'runtime');
+    const indexLockPath = path.join(runtimeDir, '.reviews-index.lock');
+
+    try {
+        fs.mkdirSync(indexLockPath, { recursive: true });
+        fs.writeFileSync(path.join(indexLockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(indexLockPath, oldTime, oldTime);
+
+        const result = scanReviewArtifactLocks(tempDir);
+        const sharedLock = result.locks.find((lock) => lock.lock_name === '.reviews-index.lock');
+        assert.ok(sharedLock, 'expected shared reviews-index lock to be reported');
+        assert.equal(sharedLock!.task_id, null);
+        assert.equal(sharedLock!.artifact_type, 'reviews-index');
+        assert.equal(sharedLock!.status, 'STALE');
+        assert.ok(sharedLock!.artifact_path.endsWith('/runtime/reviews/reviews-index.json'));
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
