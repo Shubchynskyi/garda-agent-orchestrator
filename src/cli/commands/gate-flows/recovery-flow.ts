@@ -322,6 +322,7 @@ export async function runRestartCoherentCycleCommand(
         const classifyResult = runClassifyChangeCommand({
             repoRoot,
             taskId: resolvedTaskId,
+            taskModePath: resolvedTaskModePath,
             outputPath: refreshedPreflightPath,
             taskIntent: taskSummary,
             changedFiles: replayScope.changedFiles,
@@ -408,6 +409,7 @@ export async function runRestartReviewCycleCommand(
         const classifyResult = runClassifyChangeCommand({
             repoRoot,
             taskId: resolvedTaskId,
+            taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
             outputPath: refreshedPreflightPath,
             taskIntent: taskSummary,
             changedFiles: replayScope.changedFiles,

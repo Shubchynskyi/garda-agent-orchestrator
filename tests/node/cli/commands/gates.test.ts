@@ -345,7 +345,8 @@ function runExplicitPreflight(
     taskId: string,
     taskIntent: string,
     changedFiles: string[],
-    outputFileName = `${taskId}-preflight.json`
+    outputFileName = `${taskId}-preflight.json`,
+    taskModePath = ''
 ): string {
     const preflightPath = path.join(getReviewsRoot(repoRoot), outputFileName);
     const result = runClassifyChangeCommand({
@@ -353,6 +354,7 @@ function runExplicitPreflight(
         taskId,
         taskIntent,
         changedFiles,
+        taskModePath,
         outputPath: preflightPath,
         emitMetrics: false
     });
@@ -668,11 +670,12 @@ function findLastTimelineEventIndex(
     return -1;
 }
 
-function loadTaskEntryRulePack(repoRoot: string, taskId: string) {
+function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = '') {
     return runLoadRulePackCommand({
         repoRoot,
         taskId,
         stage: 'TASK_ENTRY',
+        taskModePath,
         loadedRuleFiles: [
             '00-core.md',
             '40-commands.md',
@@ -687,7 +690,9 @@ function loadPostPreflightRulePack(
     repoRoot: string,
     taskId: string,
     preflightPath: string,
-    ensurePreflightClassified = true
+    ensurePreflightClassified = true,
+    artifactPath = '',
+    taskModePath = ''
 ) {
     if (ensurePreflightClassified) {
         appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
@@ -697,6 +702,8 @@ function loadPostPreflightRulePack(
         taskId,
         stage: 'POST_PREFLIGHT',
         preflightPath,
+        artifactPath,
+        taskModePath,
         loadedRuleFiles: [
             '00-core.md',
             '35-strict-coding-rules.md',
@@ -819,6 +826,47 @@ describe('cli/commands/gates', () => {
         // Budget forecast should use the promoted depth
         assert.equal(payload.budget_forecast.effective_depth, 3);
         assert.equal(payload.budget_forecast.depth_escalated, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change uses the explicit custom task-mode artifact path for requested depth and budget forecasting', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-custom-task-mode-depth.json');
+        const taskId = 'T-930-custom-task-mode-depth';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            requestedDepth: 3,
+            effectiveDepth: 3,
+            taskSummary: 'Preserve requested depth from a custom task-mode artifact path',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId,
+            taskIntent: 'Preserve requested depth from a custom task-mode artifact path',
+            taskModePath: customTaskModePath,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, taskId);
+        assert.equal(payload.risk_aware_depth.requested_depth, 3);
+        assert.equal(payload.risk_aware_depth.effective_depth, 3);
+        assert.equal(payload.risk_aware_depth.escalated, false);
+        assert.equal(payload.budget_forecast.requested_depth, 3);
+        assert.equal(payload.budget_forecast.effective_depth, 3);
+        assert.equal(payload.budget_forecast.depth_escalated, false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2280,6 +2328,405 @@ describe('cli/commands/gates', () => {
             compileArtifact.post_preflight_sequence.latest_post_preflight_rule_pack_sequence
             > compileArtifact.post_preflight_sequence.latest_preflight_sequence
         );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('reuses binding-equivalent POST_PREFLIGHT rule-pack evidence after an identical preflight refresh', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-binding-equivalent';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-binding-equivalent.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence',
+            ['src/app.ts']
+        );
+        assert.equal(refreshedPreflightPath, preflightPath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+        assert.equal(compileResult.outputLines[0], 'COMPILE_GATE_PASSED');
+
+        const compileArtifact = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const postPreflightSequence = compileArtifact.post_preflight_sequence as Record<string, unknown>;
+        const rulePackEvidence = compileArtifact.rule_pack as Record<string, unknown>;
+        assert.equal(postPreflightSequence.binding_equivalent_to_current_preflight, true);
+        assert.equal(rulePackEvidence.binding_equivalent_to_current_preflight, true);
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Equivalent preflight refresh keeps the same downstream rule-pack.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath: refreshedPreflightPath,
+            taskId
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('reuses binding-equivalent POST_PREFLIGHT rule-pack evidence from a custom artifact path after an identical preflight refresh', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-binding-equivalent-custom-path';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-binding-equivalent-custom-path.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const customRulePackPath = path.join(repoRoot, 'custom-artifacts', `${taskId}-rule-pack.json`);
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow equivalent preflight refresh to reuse custom POST_PREFLIGHT rule-pack evidence'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow equivalent preflight refresh to reuse custom POST_PREFLIGHT rule-pack evidence',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, customRulePackPath).exitCode, 0);
+
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow equivalent preflight refresh to reuse custom POST_PREFLIGHT rule-pack evidence',
+            ['src/app.ts']
+        );
+        assert.equal(refreshedPreflightPath, preflightPath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            rulePackPath: customRulePackPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+        assert.equal(compileResult.outputLines[0], 'COMPILE_GATE_PASSED');
+
+        const compileArtifact = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const postPreflightSequence = compileArtifact.post_preflight_sequence as Record<string, unknown>;
+        const rulePackEvidence = compileArtifact.rule_pack as Record<string, unknown>;
+        assert.equal(postPreflightSequence.binding_equivalent_to_current_preflight, true);
+        assert.equal(rulePackEvidence.binding_equivalent_to_current_preflight, true);
+        assert.equal(rulePackEvidence.evidence_path, customRulePackPath.replace(/\\/g, '/'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('reuses binding-equivalent POST_PREFLIGHT rule-pack evidence with a custom task-mode path after an identical preflight refresh', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-binding-equivalent-custom-task-mode';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-binding-equivalent-custom-task-mode.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence with a custom task-mode path',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence with a custom task-mode path',
+            ['src/app.ts'],
+            `${taskId}-preflight.json`,
+            customTaskModePath
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath).exitCode, 0);
+
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence with a custom task-mode path',
+            ['src/app.ts'],
+            `${taskId}-preflight.json`,
+            customTaskModePath
+        );
+        assert.equal(refreshedPreflightPath, preflightPath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath,
+            preflightPath: refreshedPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+        assert.equal(compileResult.outputLines[0], 'COMPILE_GATE_PASSED');
+
+        const compileArtifact = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const postPreflightSequence = compileArtifact.post_preflight_sequence as Record<string, unknown>;
+        const rulePackEvidence = compileArtifact.rule_pack as Record<string, unknown>;
+        assert.equal(postPreflightSequence.binding_equivalent_to_current_preflight, true);
+        assert.equal(rulePackEvidence.binding_equivalent_to_current_preflight, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate with explicit unsafe parallelism guidance for a custom task-mode path when a newer preflight supersedes POST_PREFLIGHT rule-pack evidence', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-overlap-custom-task-mode';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle with a custom task-mode path',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle with a custom task-mode path',
+            ['src/app.ts'],
+            `${taskId}-preflight.json`,
+            customTaskModePath
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath).exitCode, 0);
+
+        fs.writeFileSync(appPath, 'const a = 10;\nconst b = 2;\nconsole.log(a - b);\n', 'utf8');
+
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle with a custom task-mode path',
+            ['src/app.ts'],
+            `${taskId}-preflight.json`,
+            customTaskModePath
+        );
+        assert.equal(refreshedPreflightPath, preflightPath);
+
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-overlap-custom-task-mode.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath,
+            preflightPath: refreshedPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
+        assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when explicit task-mode path differs from the timeline-recorded TASK_MODE_ENTERED artifact path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-task-mode-artifact-path-mismatch';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const alternateTaskModePath = path.join(repoRoot, 'copied-artifacts', `${taskId}-task-mode.json`);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject copied task-mode artifacts that differ from the timeline-recorded path'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject copied task-mode artifacts that differ from the timeline-recorded path',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const canonicalTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        fs.mkdirSync(path.dirname(alternateTaskModePath), { recursive: true });
+        fs.copyFileSync(canonicalTaskModePath, alternateTaskModePath);
+
+        const commandsPath = path.join(repoRoot, 'commands-task-mode-artifact-path-mismatch.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath: alternateTaskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Task-mode entry evidence artifact path mismatch')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when explicit POST_PREFLIGHT rule-pack path differs from the timeline-recorded artifact path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-rule-pack-artifact-path-mismatch';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const alternateRulePackPath = path.join(repoRoot, 'copied-artifacts', `${taskId}-rule-pack.json`);
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject copied POST_PREFLIGHT rule-pack artifacts that differ from the timeline-recorded path'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject copied POST_PREFLIGHT rule-pack artifacts that differ from the timeline-recorded path',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const canonicalRulePackPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+        fs.mkdirSync(path.dirname(alternateRulePackPath), { recursive: true });
+        fs.copyFileSync(canonicalRulePackPath, alternateRulePackPath);
+
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-rule-pack-artifact-path-mismatch.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            rulePackPath: alternateRulePackPath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Rule-pack evidence artifact path mismatch')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -3901,6 +4348,165 @@ describe('cli/commands/gates', () => {
         assert.ok(lastCompileIndex >= 0);
         assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
         assert.equal(lastTestReviewPhaseIndex, -1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restarts the latest coherent cycle with a custom task-mode artifact path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle-custom-task-mode';
+        const customTaskModePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'custom-artifacts',
+            `${taskId}-task-mode.json`
+        );
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-custom-task-mode.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            artifactPath: customTaskModePath,
+            taskSummary: 'Restart the latest coherent cycle with a custom task-mode artifact path'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart the latest coherent cycle with a custom task-mode artifact path',
+            ['src/app.ts'],
+            `${taskId}-preflight.json`,
+            customTaskModePath
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+        assert.match(
+            restartResult.outputLines.join('\n'),
+            new RegExp(escapeRegExp(customTaskModePath.replace(/\\/g, '/')))
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle refreshes the current diff with a custom task-mode artifact path', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-custom-task-mode';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        writeReviewCapabilitiesConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-custom-task-mode.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            artifactPath: customTaskModePath,
+            taskSummary: 'Restart the review cycle with a custom task-mode artifact path',
+            plannedChangedFiles: [
+                'commands-restart-review-cycle-custom-task-mode.md',
+                'garda-agent-orchestrator/live/config/review-capabilities.json',
+                'src/app.ts',
+                'tests/app.test.ts'
+            ]
+        });
+        loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart the review cycle with a custom task-mode artifact path',
+            ['src/app.ts', 'tests/app.test.ts'],
+            `${taskId}-preflight.json`,
+            customTaskModePath
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /REVIEW_CYCLE_RESTARTED/);
+        assert.match(restartResult.outputLines.join('\n'), /PreparedReviewTypes: code/);
+        assert.match(restartResult.outputLines.join('\n'), /LaunchRequiredReviewTypes: code/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

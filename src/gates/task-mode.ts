@@ -73,6 +73,7 @@ export interface BuildTaskModeArtifactOptions {
 export interface TaskModeEvidenceResult {
     task_id: string | null;
     evidence_path: string | null;
+    timeline_artifact_path: string | null;
     evidence_hash: string | null;
     evidence_status: string;
     evidence_outcome: string | null;
@@ -138,6 +139,40 @@ export function resolveTaskModeArtifactPath(repoRoot: string, taskId: string, ar
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-task-mode.json`));
 }
 
+function getTaskTimelinePath(repoRoot: string, taskId: string): string {
+    return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+}
+
+function getLatestTaskModeTimelineArtifactPath(repoRoot: string, taskId: string): string | null {
+    const timelinePath = getTaskTimelinePath(repoRoot, taskId);
+    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
+        return null;
+    }
+
+    const lines = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .filter(function (line) {
+            return line.trim().length > 0;
+        });
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const parsed = JSON.parse(lines[index]) as Record<string, unknown>;
+            if (String(parsed.event_type || '').trim().toUpperCase() !== 'TASK_MODE_ENTERED') {
+                continue;
+            }
+            const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
+                ? parsed.details as Record<string, unknown>
+                : null;
+            const artifactPath = String(details?.artifact_path || details?.artifactPath || '').trim();
+            return artifactPath ? normalizePath(artifactPath) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    return null;
+}
+
 export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): TaskModeArtifact {
     const taskId = assertValidTaskId(options.taskId);
     const entryMode = normalizeTaskModeEntryMode(options.entryMode);
@@ -182,6 +217,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     const result: TaskModeEvidenceResult = {
         task_id: taskId,
         evidence_path: null,
+        timeline_artifact_path: null,
         evidence_hash: null,
         evidence_status: 'UNKNOWN',
         evidence_outcome: null,
@@ -283,6 +319,15 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         result.evidence_status = 'EVIDENCE_SUMMARY_INVALID';
         return result;
     }
+    result.timeline_artifact_path = getLatestTaskModeTimelineArtifactPath(repoRoot, resolvedTaskId);
+    if (
+        result.timeline_artifact_path
+        && result.evidence_path
+        && result.timeline_artifact_path.toLowerCase() !== result.evidence_path.toLowerCase()
+    ) {
+        result.evidence_status = 'EVIDENCE_ARTIFACT_PATH_MISMATCH';
+        return result;
+    }
     if (result.evidence_status === 'PASSED' && result.evidence_outcome === 'PASS') {
         result.evidence_status = 'PASS';
         return result;
@@ -325,6 +370,11 @@ export function getTaskModeEvidenceViolations(result: TaskModeEvidenceResult): s
             return ['Task-mode entry evidence is missing a valid effective_depth (1..3).'];
         case 'EVIDENCE_SUMMARY_INVALID':
             return ['Task-mode entry evidence is missing a usable task_summary (>= 8 chars).'];
+        case 'EVIDENCE_ARTIFACT_PATH_MISMATCH':
+            return [
+                `Task-mode entry evidence artifact path mismatch. Timeline recorded '${result.timeline_artifact_path}', ` +
+                `but current evidence path is '${evidencePath}'. Re-run downstream gates with the task-mode artifact path recorded by TASK_MODE_ENTERED.`
+            ];
         case 'EVIDENCE_NOT_PASS':
             return [
                 `Task-mode entry evidence must be PASSED/PASS, got status='${result.evidence_status}', outcome='${result.evidence_outcome}'.`

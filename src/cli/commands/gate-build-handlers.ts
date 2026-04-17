@@ -348,6 +348,7 @@ export async function handleClassifyChange(gateArgv: string[]): Promise<void> {
         '--use-staged': { key: 'useStaged', type: 'boolean' },
         '--include-untracked': { key: 'includeUntracked', type: 'boolean' },
         '--task-id': { key: 'taskId', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--rule-pack-path': { key: 'rulePackPath', type: 'string' },
         '--task-intent': { key: 'taskIntent', type: 'string' },
         '--fast-path-max-files': { key: 'fastPathMaxFiles', type: 'string' },

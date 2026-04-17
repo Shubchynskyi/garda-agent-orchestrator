@@ -126,6 +126,7 @@ export interface ClassifyChangeCommandOptions {
     fastPathMaxChangedLines?: unknown;
     performanceHeuristicMinLines?: unknown;
     taskId?: unknown;
+    taskModePath?: string;
     rulePackPath?: string;
     outputPath?: string;
     metricsPath?: string;
@@ -239,6 +240,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const resolvedTaskId = gateHelpers.resolveTaskId(options.taskId || '', options.outputPath || '');
+    const resolvedTaskModePath = String(options.taskModePath || '');
     if (resolvedTaskId) {
         assertValidTaskId(resolvedTaskId);
         const includeUntrackedForStart = parseBooleanOption(options.includeUntracked, options.useStaged ? false : true);
@@ -338,7 +340,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         result.task_id = resolvedTaskId;
 
         const preflightErrors: string[] = [];
-        const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
+        const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath);
         const dirtyWorkspaceBaseline = taskModeEvidence.dirty_workspace_baseline;
         const dirtyWorkspaceProtectedScope = deriveProtectedDirtyWorkspaceScope(
             dirtyWorkspaceBaseline,
@@ -449,7 +451,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }
 
     if (resolvedTaskId) {
-        const taskModeForBudget = getTaskModeEvidence(repoRoot, resolvedTaskId, '');
+        const taskModeForBudget = getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath);
         const requestedDepth = taskModeForBudget.requested_depth || 2;
 
         let tokenEconomyEnabled = true;
@@ -719,7 +721,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             || rulePackEvidence.evidence_status === 'EVIDENCE_NOT_PASS'
         );
         if (shouldExplainPostPreflightSequence && resolvedPreflightPath && timelineErrors.length === 0) {
-            postPreflightSequenceEvidence = getPostPreflightSequenceEvidence(repoRoot, resolvedTaskId, resolvedPreflightPath);
+            postPreflightSequenceEvidence = getPostPreflightSequenceEvidence(repoRoot, resolvedTaskId, resolvedPreflightPath, {
+                artifactPath: String(options.rulePackPath || ''),
+                taskModePath: String(options.taskModePath || '')
+            });
             if (postPreflightSequenceEvidence.violations.length > 0) {
                 exitCode = EXIT_GATE_FAILURE;
                 exceptionMessage = postPreflightSequenceEvidence.violations.join(' ');

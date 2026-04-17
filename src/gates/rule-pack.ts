@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { selectRulePackFiles } from './build-review-context';
-import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo } from './helpers';
+import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo, stringSha256 } from './helpers';
 import { resolveGateExecutionPath } from './isolation-sandbox';
 import { validatePreflightForReview } from './required-reviews-check';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
@@ -43,6 +43,7 @@ interface RulePackStageArtifact {
     effective_depth: number | null;
     preflight_path: string | null;
     preflight_hash_sha256: string | null;
+    preflight_rule_pack_binding_sha256: string | null;
     preflight_event_sequence: number | null;
     required_reviews: Record<string, boolean> | null;
     violations: string[];
@@ -76,6 +77,7 @@ export interface RulePackEvidenceResult {
     task_id: string | null;
     stage: RulePackStageLabel;
     evidence_path: string | null;
+    timeline_artifact_path: string | null;
     evidence_hash: string | null;
     evidence_status: string;
     evidence_outcome: string | null;
@@ -84,6 +86,8 @@ export interface RulePackEvidenceResult {
     evidence_stage: string | null;
     evidence_preflight_path: string | null;
     evidence_preflight_hash: string | null;
+    evidence_preflight_rule_pack_binding_sha256: string | null;
+    binding_equivalent_to_current_preflight: boolean;
     effective_depth: number | null;
     required_rule_files: string[];
     loaded_rule_files: string[];
@@ -102,6 +106,9 @@ export interface PostPreflightSequenceEvidence {
     latest_preflight_path: string | null;
     latest_post_preflight_rule_pack_sequence: number | null;
     latest_post_preflight_rule_pack_path: string | null;
+    current_preflight_rule_pack_binding_sha256: string | null;
+    latest_post_preflight_rule_pack_binding_sha256: string | null;
+    binding_equivalent_to_current_preflight: boolean;
     violations: string[];
 }
 
@@ -203,6 +210,130 @@ function buildRuleFileHashes(ruleFiles: string[]): Record<string, string | null>
     }));
 }
 
+function normalizeRequiredReviewRecord(requiredReviews: unknown): Record<string, boolean> | null {
+    if (!isRecord(requiredReviews)) {
+        return null;
+    }
+
+    const normalizedEntries = Object.entries(requiredReviews)
+        .filter(([, required]) => typeof required === 'boolean')
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(function ([reviewType, required]) {
+            return [reviewType, required] as const;
+        });
+
+    if (normalizedEntries.length === 0) {
+        return null;
+    }
+
+    return Object.fromEntries(normalizedEntries) as Record<string, boolean>;
+}
+
+function stripVolatilePreflightFields(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(stripVolatilePreflightFields);
+    }
+    if (!isRecord(value)) {
+        return value;
+    }
+
+    const sanitizedEntries = Object.entries(value)
+        .filter(([key]) => key !== 'timestamp_utc')
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(function ([key, nestedValue]) {
+            return [key, stripVolatilePreflightFields(nestedValue)] as const;
+        });
+
+    return Object.fromEntries(sanitizedEntries);
+}
+
+function buildChangedFileContentBindingSha256(repoRoot: string, changedFiles: unknown): string | null {
+    const normalizedChangedFiles = Array.isArray(changedFiles)
+        ? [...new Set(changedFiles.map(function (entry) {
+            return normalizePath(String(entry || '').trim());
+        }).filter(Boolean))].sort()
+        : [];
+
+    return stringSha256(JSON.stringify(normalizedChangedFiles.map(function (changedFile) {
+        const resolvedPath = resolvePathInsideRepo(changedFile, repoRoot, { allowMissing: true });
+        return {
+            path: changedFile,
+            sha256: resolvedPath ? fileSha256(resolvedPath) : null
+        };
+    })));
+}
+
+function buildRulePackBindingSha256(options: {
+    repoRoot: string;
+    preflightPath: string | null;
+    preflightPayload?: unknown;
+    effectiveDepth: number | null;
+    requiredRuleFiles: string[];
+    requiredReviews: Record<string, boolean> | null;
+}): string | null {
+    if (!options.preflightPath) {
+        return null;
+    }
+
+    return stringSha256(JSON.stringify({
+        preflight_path: normalizePath(options.preflightPath),
+        preflight_payload: stripVolatilePreflightFields(options.preflightPayload),
+        changed_file_contents_sha256: buildChangedFileContentBindingSha256(
+            options.repoRoot,
+            isRecord(options.preflightPayload) ? options.preflightPayload.changed_files : []
+        ),
+        effective_depth: typeof options.effectiveDepth === 'number' ? options.effectiveDepth : null,
+        required_rule_files: [...options.requiredRuleFiles].map(normalizePath).sort(),
+        required_reviews: normalizeRequiredReviewRecord(options.requiredReviews)
+    }));
+}
+
+function getStageRulePackBindingSha256(stageArtifact: Record<string, unknown>): string | null {
+    const explicitBindingHash = String(stageArtifact.preflight_rule_pack_binding_sha256 || '').trim().toLowerCase();
+    return explicitBindingHash || null;
+}
+
+function resolveCurrentPostPreflightRulePackBinding(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    taskModePath = ''
+): {
+    bindingSha256: string | null;
+    violations: string[];
+} {
+    const validatedPreflight = validatePreflightForReview(preflightPath, taskId);
+    const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, String(taskModePath || ''));
+    const violations = [
+        ...validatedPreflight.errors,
+        ...getTaskModeEvidenceViolations(taskModeEvidence)
+    ];
+
+    let effectiveDepth = taskModeEvidence.effective_depth || null;
+    const riskAwareDepth = validatedPreflight.preflight?.risk_aware_depth;
+    if (riskAwareDepth && typeof riskAwareDepth.effective_depth === 'number') {
+        effectiveDepth = riskAwareDepth.effective_depth;
+    }
+
+    const requiredRuleFiles = getRulePackRequiredFilesFromPreflight(
+        repoRoot,
+        validatedPreflight.required_reviews,
+        effectiveDepth || 2
+    );
+
+    return {
+        bindingSha256: buildRulePackBindingSha256({
+            repoRoot,
+            preflightPath: normalizePath(validatedPreflight.preflight_path),
+            preflightPayload: validatedPreflight.preflight,
+            effectiveDepth,
+            requiredRuleFiles,
+            requiredReviews: validatedPreflight.required_reviews
+        }),
+        violations
+    };
+}
+
 function collectOrderedTimelineEvents(timelinePath: string, violations: string[]): TimelineEventEntry[] {
     const resolvedPath = path.resolve(String(timelinePath || ''));
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
@@ -257,6 +388,35 @@ function normalizeTimelinePathDetail(value: unknown): string | null {
         return null;
     }
     return normalizePath(rawValue);
+}
+
+function getLatestRulePackTimelineArtifactPath(
+    events: readonly TimelineEventEntry[],
+    stage: RulePackStageLabel,
+    expectedPreflightPath: string | null
+): string | null {
+    const latestRulePackEvent = findLatestTimelineEvent(events, function (entry) {
+        if (entry.event_type !== 'RULE_PACK_LOADED') {
+            return false;
+        }
+        const eventStage = String(entry.details?.stage || '').trim().toUpperCase();
+        if (eventStage !== stage) {
+            return false;
+        }
+        if (stage !== 'POST_PREFLIGHT') {
+            return true;
+        }
+        const eventPreflightPath = normalizeTimelinePathDetail(
+            entry.details?.preflight_path ?? entry.details?.preflightPath
+        );
+        if (!expectedPreflightPath) {
+            return true;
+        }
+        return (eventPreflightPath || '').toLowerCase() === expectedPreflightPath.toLowerCase();
+    });
+    return normalizeTimelinePathDetail(
+        latestRulePackEvent?.details?.artifact_path ?? latestRulePackEvent?.details?.artifactPath
+    );
 }
 
 function getPreflightClassificationBinding(
@@ -325,8 +485,18 @@ function getPreflightClassificationBinding(
 export function getPostPreflightSequenceEvidence(
     repoRoot: string,
     taskId: string,
-    preflightPath: string
+    preflightPath: string,
+    options: {
+        artifactPath?: string;
+        taskModePath?: string;
+    } = {}
 ): PostPreflightSequenceEvidence {
+    const currentBinding = resolveCurrentPostPreflightRulePackBinding(
+        repoRoot,
+        taskId,
+        preflightPath,
+        String(options.taskModePath || '')
+    );
     const binding = getPreflightClassificationBinding(repoRoot, taskId, preflightPath);
     const result: PostPreflightSequenceEvidence = {
         timeline_path: binding.timeline_path,
@@ -334,9 +504,12 @@ export function getPostPreflightSequenceEvidence(
         latest_preflight_path: binding.latest_preflight_path,
         latest_post_preflight_rule_pack_sequence: null,
         latest_post_preflight_rule_pack_path: null,
-        violations: [...binding.violations]
+        current_preflight_rule_pack_binding_sha256: currentBinding.bindingSha256,
+        latest_post_preflight_rule_pack_binding_sha256: null,
+        binding_equivalent_to_current_preflight: false,
+        violations: [...currentBinding.violations, ...binding.violations]
     };
-    if (binding.violations.length > 0) {
+    if (result.violations.length > 0) {
         return result;
     }
 
@@ -372,10 +545,25 @@ export function getPostPreflightSequenceEvidence(
     result.latest_post_preflight_rule_pack_path = normalizeTimelinePathDetail(
         latestPostPreflightRulePack.details?.preflight_path ?? latestPostPreflightRulePack.details?.preflightPath
     );
+    const existingArtifact = readExistingRulePackArtifact(
+        resolveRulePackArtifactPath(repoRoot, taskId, String(options.artifactPath || ''))
+    );
+    const storedStage = isRecord(existingArtifact?.stages?.post_preflight)
+        ? existingArtifact?.stages?.post_preflight as unknown as Record<string, unknown>
+        : null;
+    result.latest_post_preflight_rule_pack_binding_sha256 = storedStage
+        ? getStageRulePackBindingSha256(storedStage)
+        : null;
+    result.binding_equivalent_to_current_preflight = !!(
+        result.current_preflight_rule_pack_binding_sha256
+        && result.latest_post_preflight_rule_pack_binding_sha256
+        && result.current_preflight_rule_pack_binding_sha256 === result.latest_post_preflight_rule_pack_binding_sha256
+    );
 
     if (
         binding.latest_preflight_sequence != null
         && latestPostPreflightRulePack.sequence <= binding.latest_preflight_sequence
+        && !result.binding_equivalent_to_current_preflight
     ) {
         result.violations.push(
             `Unsafe same-task overlap detected in '${result.timeline_path}': POST_PREFLIGHT RULE_PACK_LOADED (seq ${latestPostPreflightRulePack.sequence}) ` +
@@ -433,6 +621,7 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
     let effectiveDepth: number | null = null;
     let requiredRuleFiles: string[] = [];
     let preflightEventSequence: number | null = null;
+    let preflightPayload: unknown = null;
 
     if (stage === 'TASK_ENTRY') {
         const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, String(options.taskModePath || ''));
@@ -453,6 +642,7 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
         preflightPath = normalizePath(validatedPreflight.preflight_path);
         preflightHash = validatedPreflight.preflight_hash;
         requiredReviews = validatedPreflight.required_reviews;
+        preflightPayload = validatedPreflight.preflight;
         violations.push(...validatedPreflight.errors);
 
         const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, String(options.taskModePath || ''));
@@ -516,6 +706,14 @@ export function buildRulePackArtifact(options: BuildRulePackArtifactOptions): Ru
         effective_depth: effectiveDepth,
         preflight_path: preflightPath,
         preflight_hash_sha256: preflightHash,
+        preflight_rule_pack_binding_sha256: buildRulePackBindingSha256({
+            repoRoot,
+            preflightPath,
+            preflightPayload,
+            effectiveDepth,
+            requiredRuleFiles,
+            requiredReviews
+        }),
         preflight_event_sequence: preflightEventSequence,
         required_reviews: requiredReviews,
         violations
@@ -552,6 +750,7 @@ export function getRulePackEvidence(
         task_id: taskId,
         stage,
         evidence_path: null,
+        timeline_artifact_path: null,
         evidence_hash: null,
         evidence_status: 'UNKNOWN',
         evidence_outcome: null,
@@ -560,6 +759,8 @@ export function getRulePackEvidence(
         evidence_stage: null,
         evidence_preflight_path: null,
         evidence_preflight_hash: null,
+        evidence_preflight_rule_pack_binding_sha256: null,
+        binding_equivalent_to_current_preflight: false,
         effective_depth: null,
         required_rule_files: [],
         loaded_rule_files: [],
@@ -615,6 +816,7 @@ export function getRulePackEvidence(
     result.evidence_outcome = String(stageArtifact.outcome || '').trim().toUpperCase() || null;
     result.evidence_preflight_path = String(stageArtifact.preflight_path || '').trim() || null;
     result.evidence_preflight_hash = String(stageArtifact.preflight_hash_sha256 || '').trim() || null;
+    result.evidence_preflight_rule_pack_binding_sha256 = getStageRulePackBindingSha256(stageArtifact);
     result.effective_depth = typeof stageArtifact.effective_depth === 'number' ? stageArtifact.effective_depth : null;
     result.required_rule_files = Array.isArray(stageArtifact.required_rule_files)
         ? stageArtifact.required_rule_files.map(function (item) { return normalizePath(item); })
@@ -629,6 +831,24 @@ export function getRulePackEvidence(
     if (result.evidence_stage !== stage) {
         result.evidence_status = 'EVIDENCE_STAGE_INVALID';
         return result;
+    }
+
+    const timelineViolations: string[] = [];
+    const timelineEvents = collectOrderedTimelineEvents(getTaskTimelinePath(repoRoot, resolvedTaskId), timelineViolations);
+    if (timelineViolations.length === 0) {
+        result.timeline_artifact_path = getLatestRulePackTimelineArtifactPath(
+            timelineEvents,
+            stage,
+            result.evidence_preflight_path
+        );
+        if (
+            result.timeline_artifact_path
+            && result.evidence_path
+            && result.timeline_artifact_path.toLowerCase() !== result.evidence_path.toLowerCase()
+        ) {
+            result.evidence_status = 'EVIDENCE_ARTIFACT_PATH_MISMATCH';
+            return result;
+        }
     }
 
     let expectedRuleFiles: string[] = [];
@@ -657,13 +877,29 @@ export function getRulePackEvidence(
             validatedPreflight.required_reviews,
             evidenceEffectiveDepth
         );
+        const expectedBindingSha256 = buildRulePackBindingSha256({
+            repoRoot,
+            preflightPath: validatedPreflight.preflight_path,
+            preflightPayload: validatedPreflight.preflight,
+            effectiveDepth: evidenceEffectiveDepth,
+            requiredRuleFiles: expectedRuleFiles,
+            requiredReviews: validatedPreflight.required_reviews
+        });
+        result.binding_equivalent_to_current_preflight = !!(
+            expectedBindingSha256
+            && result.evidence_preflight_rule_pack_binding_sha256
+            && expectedBindingSha256 === result.evidence_preflight_rule_pack_binding_sha256
+        );
 
         const normalizedPreflightPath = normalizePath(validatedPreflight.preflight_path);
         if ((result.evidence_preflight_path || '').toLowerCase() !== normalizedPreflightPath.toLowerCase()) {
             result.evidence_status = 'EVIDENCE_PREFLIGHT_PATH_MISMATCH';
             return result;
         }
-        if ((result.evidence_preflight_hash || '').toLowerCase() !== String(validatedPreflight.preflight_hash || '').toLowerCase()) {
+        if (
+            (result.evidence_preflight_hash || '').toLowerCase() !== String(validatedPreflight.preflight_hash || '').toLowerCase()
+            && !result.binding_equivalent_to_current_preflight
+        ) {
             result.evidence_status = 'EVIDENCE_PREFLIGHT_HASH_MISMATCH';
             return result;
         }
@@ -729,6 +965,11 @@ export function getRulePackEvidenceViolations(result: RulePackEvidenceResult): s
             return [`Rule-pack evidence is missing required stage '${result.stage}' in '${evidencePath}'.`];
         case 'EVIDENCE_STAGE_INVALID':
             return [`Rule-pack evidence stage is invalid. Expected '${result.stage}', got '${result.evidence_stage}'.`];
+        case 'EVIDENCE_ARTIFACT_PATH_MISMATCH':
+            return [
+                `Rule-pack evidence artifact path mismatch. Timeline recorded '${result.timeline_artifact_path}', ` +
+                `but current evidence path is '${evidencePath}'. Re-run downstream gates with the rule-pack artifact path recorded by RULE_PACK_LOADED.`
+            ];
         case 'EVIDENCE_PREFLIGHT_REQUIRED':
             return ['Rule-pack evidence for POST_PREFLIGHT requires the current preflight artifact path.'];
         case 'EVIDENCE_PREFLIGHT_PATH_MISMATCH':
