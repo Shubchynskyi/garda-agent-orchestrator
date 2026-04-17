@@ -208,6 +208,70 @@ describe('gate-runtime/timeline-summary', () => {
         });
     });
 
+    describe('pruneTimelineSummaryEntries', () => {
+        let tempDir: string;
+        beforeEach(() => { tempDir = createTempDir(); });
+        afterEach(() => { removeTempDir(tempDir); });
+
+        it('prunes stale legacy entries even when sibling legacy rows are malformed', () => {
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsRoot, { recursive: true });
+
+            writeTimeline(tempDir, 'T-002', ALL_MANDATORY_NON_CODE);
+
+            fs.writeFileSync(
+                getTimelineSummaryPath(eventsRoot),
+                JSON.stringify({
+                    version: 1,
+                    updated_at_utc: new Date().toISOString(),
+                    entries: {
+                        'T-001': {
+                            task_id: 'T-001',
+                            file_size_bytes: 100,
+                            file_mtime_ms: 0,
+                            code_changed: false,
+                            completeness_status: 'COMPLETE',
+                            events_found: [],
+                            events_missing: [],
+                            completeness_violations: [],
+                            integrity_status: 'PASSED',
+                            events_scanned: 1,
+                            integrity_event_count: 1,
+                            integrity_violations: []
+                        },
+                        'BROKEN': {
+                            task_id: 'BROKEN',
+                            file_size_bytes: 'bad-size'
+                        },
+                        'T-002': {
+                            task_id: 'T-002',
+                            file_size_bytes: 100,
+                            file_mtime_ms: 0,
+                            code_changed: false,
+                            completeness_status: 'COMPLETE',
+                            events_found: [],
+                            events_missing: [],
+                            completeness_violations: [],
+                            integrity_status: 'PASSED',
+                            events_scanned: 1,
+                            integrity_event_count: 1,
+                            integrity_violations: []
+                        }
+                    }
+                }, null, 2) + '\n',
+                'utf8'
+            );
+
+            pruneTimelineSummaryEntries(eventsRoot);
+
+            const updated = readTimelineSummaryIndex(eventsRoot);
+            assert.notEqual(updated, null);
+            assert.ok(!updated!.entries['T-001']);
+            assert.ok(!updated!.entries.BROKEN);
+            assert.ok(updated!.entries['T-002']);
+        });
+    });
+
     describe('isTimelineSummaryEntryCurrent', () => {
         let tempDir: string;
         beforeEach(() => { tempDir = createTempDir(); });

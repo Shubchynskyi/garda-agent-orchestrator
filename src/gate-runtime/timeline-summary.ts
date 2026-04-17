@@ -122,6 +122,82 @@ export function readTimelineSummaryIndex(eventsRoot: string): TimelineSummaryInd
     }
 }
 
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isTimelineSummaryEntryLike(value: unknown): value is TimelineSummaryEntry {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+    const entry = value as Record<string, unknown>;
+    return typeof entry.task_id === 'string'
+        && isFiniteNumber(entry.file_size_bytes)
+        && isFiniteNumber(entry.file_mtime_ms)
+        && typeof entry.code_changed === 'boolean'
+        && typeof entry.completeness_status === 'string'
+        && isStringArray(entry.events_found)
+        && isStringArray(entry.events_missing)
+        && isStringArray(entry.completeness_violations)
+        && typeof entry.integrity_status === 'string'
+        && isFiniteNumber(entry.events_scanned)
+        && isFiniteNumber(entry.integrity_event_count)
+        && isStringArray(entry.integrity_violations)
+        && (entry.written_at_ms === undefined || isFiniteNumber(entry.written_at_ms));
+}
+
+interface CleanupPruneSummaryIndex {
+    index: TimelineSummaryIndex;
+    dropped_invalid_entry_keys: string[];
+}
+
+function readTimelineSummaryIndexForCleanupPrune(eventsRoot: string): CleanupPruneSummaryIndex | null {
+    const currentIndex = readTimelineSummaryIndex(eventsRoot);
+    if (currentIndex) {
+        return {
+            index: currentIndex,
+            dropped_invalid_entry_keys: []
+        };
+    }
+
+    try {
+        const summaryPath = getTimelineSummaryPath(eventsRoot);
+        if (!fs.existsSync(summaryPath)) return null;
+        const raw = fs.readFileSync(summaryPath, 'utf8');
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (!parsed.entries || typeof parsed.entries !== 'object' || Array.isArray(parsed.entries)) {
+            return null;
+        }
+
+        const normalizedEntries: Record<string, TimelineSummaryEntry> = {};
+        const droppedInvalidEntryKeys: string[] = [];
+        for (const [taskId, entry] of Object.entries(parsed.entries as Record<string, unknown>)) {
+            if (!isTimelineSummaryEntryLike(entry)) {
+                droppedInvalidEntryKeys.push(taskId);
+                continue;
+            }
+            normalizedEntries[taskId] = entry;
+        }
+
+        return {
+            index: {
+                version: SUMMARY_VERSION,
+                updated_at_utc: typeof parsed.updated_at_utc === 'string'
+                    ? parsed.updated_at_utc
+                    : new Date().toISOString(),
+                entries: normalizedEntries
+            },
+            dropped_invalid_entry_keys: droppedInvalidEntryKeys
+        };
+    } catch {
+        return null;
+    }
+}
+
 export function writeTimelineSummaryIndex(eventsRoot: string, index: TimelineSummaryIndex): void {
     const summaryPath = getTimelineSummaryPath(eventsRoot);
     const randomSuffix = Math.random().toString(16).slice(2, 10);
@@ -302,13 +378,14 @@ export function pruneTimelineSummaryEntries(eventsRoot: string): void {
 
     try {
         withTimelineSummaryLock(eventsRoot, () => {
-            const index = readTimelineSummaryIndex(eventsRoot);
-            if (!index) return;
+            const cleanupIndex = readTimelineSummaryIndexForCleanupPrune(eventsRoot);
+            if (!cleanupIndex) return;
 
+            const { index, dropped_invalid_entry_keys: droppedInvalidEntryKeys } = cleanupIndex;
             const taskIds = Object.keys(index.entries);
-            if (taskIds.length === 0) return;
+            if (taskIds.length === 0 && droppedInvalidEntryKeys.length === 0) return;
 
-            let pruned = false;
+            let pruned = droppedInvalidEntryKeys.length > 0;
             for (const taskId of taskIds) {
                 const jsonlPath = path.join(eventsRoot, `${taskId}.jsonl`);
                 if (!fs.existsSync(jsonlPath)) {
