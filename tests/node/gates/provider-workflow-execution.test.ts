@@ -418,6 +418,7 @@ describe('provider-workflow-execution: evidence lifecycle per provider', () => {
 
             writeHandshakeArtifact(tempDir, taskId, artifact);
             const timelinePath = writeTimelineEvent(tempDir, taskId, [
+                { event_type: 'TASK_MODE_ENTERED', timestamp_utc: new Date().toISOString() },
                 { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED', timestamp_utc: new Date().toISOString(), details: { artifact_hash: 'tampered-hash' } }
             ]);
 
