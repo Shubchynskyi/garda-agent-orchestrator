@@ -5,7 +5,7 @@ import { extractReviewVerdictToken, type ReviewReceipt } from '../gate-runtime/r
 import * as gateHelpers from './helpers';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from './required-reviews-check';
 import { resolveCanonicalReviewContextPath } from './review-context-paths';
-import { readRuntimeReviewerProvider } from './reviewer-routing';
+import { resolveRuntimeReviewerIdentity } from './reviewer-routing';
 
 const REVIEW_DEPENDENCY_ORDER: Readonly<Record<string, readonly string[]>> = Object.freeze({
     test: Object.freeze(['code', 'db', 'security', 'refactor', 'api', 'performance', 'infra', 'dependency'])
@@ -126,6 +126,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
     preflightHashSha256: string | null;
     latestRecordedReviewByType: ReadonlyMap<string, ReviewDependencyTimelineEvent>;
     upstreamReviewType: string;
+    taskModePath?: string | null;
 }): ReviewDependencyStatus {
     const recordedEvent = options.latestRecordedReviewByType.get(options.upstreamReviewType) ?? null;
     if (!recordedEvent) {
@@ -221,6 +222,13 @@ export function assessUpstreamReviewDependencyStatus(options: {
         };
     }
 
+    const repoRoot = resolveRepoRootFromPreflightPath(options.preflightPath);
+    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        taskId: options.taskId,
+        taskModePath: String(options.taskModePath || '').trim(),
+        allowLegacyFallback: true
+    });
     const validation = validateReviewArtifactGateEligibility({
         resolvedTaskId: options.taskId,
         reviewKey: options.upstreamReviewType,
@@ -228,10 +236,9 @@ export function assessUpstreamReviewDependencyStatus(options: {
         skippedByOverride: false,
         preflightPath: options.preflightPath,
         preflightSha256: options.preflightHashSha256,
-        sourceOfTruth: readRuntimeReviewerProvider(
-            resolveRepoRootFromPreflightPath(options.preflightPath),
-            options.taskId
-        ),
+        canonicalSourceOfTruth: runtimeIdentity.canonical_source_of_truth,
+        executionProvider: runtimeIdentity.execution_provider,
+        executionProviderSource: runtimeIdentity.execution_provider_source,
         reviewArtifact: {
             path: artifactPath,
             content: artifactContent,
@@ -240,7 +247,8 @@ export function assessUpstreamReviewDependencyStatus(options: {
             reviewContextSha256: String(gateHelpers.fileSha256(reviewContextPath) || '').trim().toLowerCase() || null,
             artifactSha256: artifactHash,
             receipt
-        }
+        },
+        allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled
     });
     if (validation.violations.length > 0) {
         return {
@@ -263,6 +271,7 @@ export function assertRequiredUpstreamReviewDependencies(options: {
     preflightPayload: Record<string, unknown>;
     reviewType: string;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
+    taskModePath?: string | null;
 }): void {
     const upstreamReviewTypes = getRequiredUpstreamReviews(options.reviewType, options.preflightPayload.required_reviews);
     if (upstreamReviewTypes.length === 0) {
@@ -280,7 +289,8 @@ export function assertRequiredUpstreamReviewDependencies(options: {
         preflightPayload: options.preflightPayload,
         preflightHashSha256: currentPreflightHashSha256,
         latestRecordedReviewByType,
-        upstreamReviewType
+        upstreamReviewType,
+        taskModePath: String(options.taskModePath || '').trim()
     }));
     const blockedDependencies = dependencyStatuses.filter((status) => !status.ready);
     if (blockedDependencies.length === 0) {

@@ -462,6 +462,7 @@ export interface BuildReviewContextCommandOptions {
     reviewType?: unknown;
     depth?: unknown;
     preflightPath?: unknown;
+    taskModePath?: unknown;
     tokenEconomyConfigPath?: unknown;
     scopedDiffMetadataPath?: unknown;
     outputPath?: unknown;
@@ -502,7 +503,8 @@ export async function runBuildReviewContextCommand(
             preflightPath,
             preflightPayload,
             reviewType,
-            timelineEvents: timelineSummary.events
+            timelineEvents: timelineSummary.events,
+            taskModePath: String(options.taskModePath || '').trim()
         });
     }
     const tokenEconomyConfigPath = options.tokenEconomyConfigPath
@@ -533,6 +535,7 @@ export async function runBuildReviewContextCommand(
         depth,
         preflightPath,
         preflightPayload,
+        taskModePath: String(options.taskModePath || '').trim() || null,
         tokenEconomyConfigPath,
         scopedDiffMetadataPath,
         outputPath,
@@ -615,6 +618,7 @@ export async function handleBuildReviewContext(gateArgv: string[]): Promise<void
         '--review-type': { key: 'reviewType', type: 'string' },
         '--depth': { key: 'depth', type: 'string' },
         '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--token-economy-config-path': { key: 'tokenEconomyConfigPath', type: 'string' },
         '--scoped-diff-metadata-path': { key: 'scopedDiffMetadataPath', type: 'string' },
         '--output-path': { key: 'outputPath', type: 'string' },

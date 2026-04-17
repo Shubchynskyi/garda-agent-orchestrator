@@ -19,6 +19,7 @@ import { handleEnterTaskMode } from '../../../../src/cli/commands/gate-task-hand
 import {
     runClassifyChangeCommand,
     runCompileGateCommand,
+    runCommandTimeoutDiagnosticsCommand,
     runDocImpactGateCommand,
     runEnterTaskModeCommand,
     runHandshakeDiagnosticsCommand,
@@ -56,6 +57,29 @@ function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function createReviewerRoutingFixture(
+    sourceOfTruth: string,
+    overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+    const normalizedSourceOfTruth = String(sourceOfTruth).trim() || 'Codex';
+    const conditionalFallbackProvider = normalizedSourceOfTruth === 'Antigravity';
+    return {
+        source_of_truth: normalizedSourceOfTruth,
+        canonical_source_of_truth: normalizedSourceOfTruth,
+        execution_provider: normalizedSourceOfTruth,
+        execution_provider_source: 'provider_entrypoint',
+        identity_status: 'resolved',
+        capability_level: conditionalFallbackProvider ? 'delegation_conditional' : 'delegation_capable',
+        expected_execution_mode: conditionalFallbackProvider ? 'delegated_subagent' : 'delegated_subagent',
+        fallback_allowed: conditionalFallbackProvider,
+        fallback_reason_required: conditionalFallbackProvider,
+        actual_execution_mode: null,
+        reviewer_session_id: null,
+        fallback_reason: null,
+        ...overrides
+    };
+}
+
 function captureExpectedError(callback: () => void): Error {
     try {
         callback();
@@ -84,6 +108,55 @@ function createTempRepo(): string {
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
     return root;
+}
+
+const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
+    Claude: 'CLAUDE.md',
+    Codex: 'AGENTS.md',
+    Gemini: 'GEMINI.md',
+    Qwen: 'QWEN.md',
+    GitHubCopilot: '.github/copilot-instructions.md',
+    Windsurf: '.windsurf/rules/rules.md',
+    Junie: '.junie/guidelines.md',
+    Antigravity: '.antigravity/rules.md'
+};
+
+const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
+    GitHubCopilot: '.github/agents/orchestrator.md',
+    Windsurf: '.windsurf/agents/orchestrator.md',
+    Junie: '.junie/agents/orchestrator.md',
+    Antigravity: '.antigravity/agents/orchestrator.md'
+};
+
+function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
+    if (String(options.provider || '').trim() || String(options.routedTo || '').trim()) {
+        return options;
+    }
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
+        return options;
+    }
+
+    try {
+        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+        const sourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+        const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
+        if (!sourceOfTruth || !routedTo) {
+            return options;
+        }
+        return {
+            ...options,
+            provider: sourceOfTruth,
+            routedTo
+        };
+    } catch {
+        return options;
+    }
+}
+
+function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
+    return runEnterTaskModeCommand(withDefaultTaskModeRouting(options));
 }
 
 function createWindowsBatchNodeFixture(
@@ -434,11 +507,10 @@ function writeReceiptBackedReviewArtifact(
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     const reviewContext = {
         review_type: reviewKey,
-        reviewer_routing: {
-            source_of_truth: 'Codex',
+        reviewer_routing: createReviewerRoutingFixture('Codex', {
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: 'agent:test-reviewer'
-        }
+        })
     };
     const reviewContextText = JSON.stringify(reviewContext, null, 2);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
@@ -488,7 +560,12 @@ function seedReusableReviewEvidence(
     verdict: string,
     preflightPath: string,
     reviewContextPath: string,
-    reviewerIdentity = 'agent:test-reviewer'
+    reviewerIdentity = 'agent:test-reviewer',
+    options: {
+        legacyReviewContextIdentity?: boolean;
+        legacyReviewContextSourceOfTruth?: string;
+        taskModePath?: string | null;
+    } = {}
 ): string {
     const crypto = require('node:crypto');
     const reviewsRoot = getReviewsRoot(repoRoot);
@@ -513,20 +590,38 @@ function seedReusableReviewEvidence(
         reviewType: reviewKey,
         depth: 2,
         preflightPath,
+        taskModePath: options.taskModePath || '',
         tokenEconomyConfigPath: path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json'),
         scopedDiffMetadataPath,
         outputPath: reviewContextPath,
         repoRoot
     });
-    const routingUpdate = applyReviewerRoutingMetadata(reviewContextPath, {
+    applyReviewerRoutingMetadata(reviewContextPath, {
         actualExecutionMode: 'delegated_subagent',
         reviewerSessionId: reviewerIdentity,
         fallbackReason: null
     });
+    if (options.legacyReviewContextIdentity) {
+        const legacyReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerRouting = legacyReviewContext.reviewer_routing
+            && typeof legacyReviewContext.reviewer_routing === 'object'
+            && !Array.isArray(legacyReviewContext.reviewer_routing)
+            ? legacyReviewContext.reviewer_routing as Record<string, unknown>
+            : {};
+        if (options.legacyReviewContextSourceOfTruth) {
+            reviewerRouting.source_of_truth = options.legacyReviewContextSourceOfTruth;
+        }
+        delete reviewerRouting.canonical_source_of_truth;
+        delete reviewerRouting.execution_provider;
+        delete reviewerRouting.execution_provider_source;
+        delete reviewerRouting.identity_status;
+        legacyReviewContext.reviewer_routing = reviewerRouting;
+        fs.writeFileSync(reviewContextPath, JSON.stringify(legacyReviewContext, null, 2) + '\n', 'utf8');
+    }
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const artifactHash = crypto.createHash('sha256').update(artifactText).digest('hex');
-    const reviewContextHash = String(routingUpdate.contextSha256 || crypto.createHash('sha256').update(reviewContextText).digest('hex'));
+    const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const preflightHash = crypto.createHash('sha256').update(preflightText).digest('hex');
@@ -595,6 +690,25 @@ function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
 
 function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    let canonicalSourceOfTruth = provider;
+    if (fs.existsSync(initAnswersPath) && fs.statSync(initAnswersPath).isFile()) {
+        try {
+            const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+            const seededSourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+            if (seededSourceOfTruth) {
+                canonicalSourceOfTruth = seededSourceOfTruth;
+            }
+        } catch {
+            // Keep the lightweight test fixture tolerant of malformed init answers.
+        }
+    }
+    const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || 'AGENTS.md';
+    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
+    const providerBridgeCandidate = PROVIDER_BRIDGE_BY_SOURCE[provider] || null;
+    const providerBridgePath = providerBridgeCandidate && fs.existsSync(path.join(repoRoot, providerBridgeCandidate))
+        ? providerBridgeCandidate
+        : null;
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
         schema_version: 1,
@@ -604,10 +718,15 @@ function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Co
         status: 'PASSED',
         outcome: 'PASS',
         provider,
-        canonical_entrypoint: 'AGENTS.md',
+        execution_provider: provider,
+        canonical_source_of_truth: canonicalSourceOfTruth,
+        canonical_entrypoint: canonicalEntrypoint,
         canonical_entrypoint_exists: true,
-        provider_bridge: null,
-        provider_bridge_exists: false,
+        provider_bridge: providerBridgePath,
+        provider_bridge_exists: providerBridgePath !== null,
+        routed_to: routedTo,
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
         start_task_router_path: '.agents/workflows/start-task.md',
         start_task_router_exists: true,
         execution_context: 'materialized-bundle',
@@ -722,6 +841,7 @@ function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex
     const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
     const artifactPath = path.join(orchestratorRoot, 'runtime', 'reviews', `${taskId}-handshake.json`);
     const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+    const artifact = JSON.parse(artifactContent) as Record<string, unknown>;
     const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(artifactContent).digest('hex');
     appendTaskEvent(
@@ -730,7 +850,16 @@ function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex
         'HANDSHAKE_DIAGNOSTICS_RECORDED',
         'PASS',
         `Handshake diagnostics passed: provider=${provider}, context=materialized-bundle.`,
-        { provider, execution_context: 'materialized-bundle', cli_path: 'node garda-agent-orchestrator/bin/garda.js', passed: true, artifact_hash: artifactHash },
+        {
+            provider,
+            execution_provider: artifact.execution_provider ?? provider,
+            canonical_source_of_truth: artifact.canonical_source_of_truth ?? provider,
+            execution_provider_source: artifact.execution_provider_source ?? 'explicit_provider',
+            execution_context: 'materialized-bundle',
+            cli_path: 'node garda-agent-orchestrator/bin/garda.js',
+            passed: true,
+            artifact_hash: artifactHash
+        },
         { actor: 'gate', passThru: true }
     );
 }
@@ -772,6 +901,31 @@ function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Code
     );
 }
 
+function prepareCurrentReviewPhase(repoRoot: string, taskId: string, preflightPath: string, provider = 'Codex'): void {
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    let seededSourceOfTruth = '';
+    if (fs.existsSync(initAnswersPath) && fs.statSync(initAnswersPath).isFile()) {
+        try {
+            const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+            seededSourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+        } catch {
+            seededSourceOfTruth = '';
+        }
+    }
+    const shouldPinExplicitProvider = !!provider && provider !== seededSourceOfTruth;
+    runEnterTaskMode({
+        repoRoot,
+        taskId,
+        taskSummary: `Prepare review lifecycle for ${taskId}`,
+        ...(shouldPinExplicitProvider ? { provider, routedTo: PROVIDER_ENTRYPOINT_BY_SOURCE[provider] } : {})
+    });
+    assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+    runHandshakeForTask(repoRoot, taskId, provider);
+    runShellSmokeForTask(repoRoot, taskId, provider);
+    assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+    writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+}
+
 describe('cli/commands/gates', () => {
     it('splits quoted command lines', () => {
         assert.deepEqual(
@@ -795,7 +949,7 @@ describe('cli/commands/gates', () => {
         const outputPath = path.join(repoRoot, 'preflight-sec.json');
         seedTaskQueue(repoRoot, 'T-930');
         seedInitAnswers(repoRoot);
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId: 'T-930',
             requestedDepth: 1,
@@ -837,7 +991,7 @@ describe('cli/commands/gates', () => {
         const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             requestedDepth: 3,
@@ -876,7 +1030,7 @@ describe('cli/commands/gates', () => {
         const outputPath = path.join(repoRoot, 'preflight.json');
         seedTaskQueue(repoRoot, 'T-900');
         seedInitAnswers(repoRoot);
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId: 'T-900',
             taskSummary: 'Update app flow'
@@ -910,7 +1064,7 @@ describe('cli/commands/gates', () => {
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, 'T-900z');
         seedInitAnswers(repoRoot);
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId: 'T-900z',
             taskSummary: 'Implement lifecycle hardening'
@@ -949,7 +1103,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(appPath, 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
         backdateFileMtime(appPath);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Clarify dirty workspace preflight guard'
@@ -988,7 +1142,7 @@ describe('cli/commands/gates', () => {
         backdateFileMtime(appPath);
         runGit(repoRoot, ['add', 'src/app.ts']);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow staged isolation for dirty workspace'
@@ -1029,7 +1183,7 @@ describe('cli/commands/gates', () => {
         backdateFileMtime(unrelatedUntrackedPath);
         runGit(repoRoot, ['add', 'src/app.ts']);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Keep unrelated untracked file protected during staged scope isolation'
@@ -1067,7 +1221,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         writeDriftedProtectedManifest(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject ordinary task start on trusted manifest drift'
@@ -1105,7 +1259,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(protectedRulePath, '# baseline protected drift\n', 'utf8');
         writeDriftedProtectedManifest(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow inherited protected manifest drift on an ordinary scoped task'
@@ -1147,7 +1301,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
 
         const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
-        const error = captureExpectedError(() => runEnterTaskModeCommand({
+        const error = captureExpectedError(() => runEnterTaskMode({
                 repoRoot,
                 taskId,
                 taskSummary: 'Require explicit orchestrator-work handoff for protected planned scope',
@@ -1176,7 +1330,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2), 'utf8');
 
-        const error = captureExpectedError(() => runEnterTaskModeCommand({
+        const error = captureExpectedError(() => runEnterTaskMode({
                 repoRoot,
                 taskId,
                 taskSummary: 'Require explicit orchestrator-work handoff for source-checkout protected scope',
@@ -1228,6 +1382,8 @@ describe('cli/commands/gates', () => {
                 '--repo-root', repoRoot,
                 '--task-id', taskId,
                 '--task-summary', 'Exercise the full CLI main path for mixed planned scope hints',
+                '--provider', 'Codex',
+                '--routed-to', 'AGENTS.md',
                 '--planned-changed-file', 'src/app.ts',
                 '--planned-changed-files', 'src/feature.ts,src/app.ts'
             ]);
@@ -1257,6 +1413,8 @@ describe('cli/commands/gates', () => {
             '--repo-root', repoRoot,
             '--task-id', taskId,
             '--task-summary', 'Require explicit orchestrator-work handoff through the CLI alias path',
+            '--provider', 'Codex',
+            '--routed-to', 'AGENTS.md',
             '--planned-changed-files', '.github/agents/orchestrator.md'
         ]));
         assert.match(
@@ -1285,6 +1443,8 @@ describe('cli/commands/gates', () => {
             '--repo-root', repoRoot,
             '--task-id', taskId,
             '--task-summary', 'Deduplicate mixed planned scope aliases before suggesting orchestrator-work handoff',
+            '--provider', 'Codex',
+            '--routed-to', 'AGENTS.md',
             '--planned-changed-file', '.github/agents/orchestrator.md',
             '--planned-changed-files', 'src/app.ts,.github/agents/orchestrator.md',
             '--planned-changed-file', 'src/app.ts'
@@ -1314,6 +1474,8 @@ describe('cli/commands/gates', () => {
             '--repo-root', repoRoot,
             '--task-id', taskId,
             '--task-summary', 'Reject planned changed files that escape repo root',
+            '--provider', 'Codex',
+            '--routed-to', 'AGENTS.md',
             '--planned-changed-files', 'src/app.ts,../outside.ts'
         ]));
         assert.match(error.message, /PlannedChangedFile must stay inside repo root/);
@@ -1328,7 +1490,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        const result = runEnterTaskModeCommand({
+        const result = runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow explicit orchestrator-work handoff for protected planned scope',
@@ -1357,7 +1519,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 13;\nconst b = 21;\nconsole.log(a + b);\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'src', 'unrelated.ts'), 'export const unrelated = true;\n', 'utf8');
 
-        const result = runEnterTaskModeCommand({
+        const result = runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Capture dirty workspace baseline'
@@ -1381,7 +1543,7 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-900a';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Update app flow'
@@ -1404,7 +1566,7 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-900b';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Update app flow'
@@ -1434,7 +1596,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
         seedInitAnswers(repoRoot, 'Qwen');
 
-        const result = runEnterTaskModeCommand({
+        const result = runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Update app flow'
@@ -1493,7 +1655,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId, 'TODO');
         seedInitAnswers(repoRoot, 'Qwen');
 
-        const result = runEnterTaskModeCommand({
+        const result = runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Update app flow',
@@ -1508,6 +1670,158 @@ describe('cli/commands/gates', () => {
         assert.equal(taskModeArtifact.routed_to, 'AGENTS.md');
         assert.equal(routingDetails.provider, 'Codex');
         assert.equal(routingDetails.routed_to, 'AGENTS.md');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects legacy fallback and does not reuse stale task-mode routing evidence on a new task-mode entry', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-stale-routing';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+        fs.writeFileSync(artifactPath, JSON.stringify({
+            schema_version: 1,
+            timestamp_utc: '2026-04-17T08:00:00.000Z',
+            event_source: 'enter-task-mode',
+            status: 'PASS',
+            outcome: 'PASS',
+            task_id: taskId,
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'stale runtime identity',
+            provider: 'Qwen',
+            execution_provider_source: 'task_mode',
+            runtime_identity_status: 'resolved',
+            routed_to: 'QWEN.md'
+        }, null, 2), 'utf8');
+
+        const error = captureExpectedError(() => runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Refresh runtime identity without trusting stale task-mode evidence'
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' at task-mode entry/i);
+        assert.doesNotMatch(error.message, /--provider\s+['"]?Codex['"]?/i);
+        assert.match(error.message, /--provider <runtime-provider>|--routed-to/i);
+        const staleArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(staleArtifact.provider, 'Qwen');
+        assert.equal(staleArtifact.routed_to, 'QWEN.md');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects enter-task-mode when explicit runtime identity is contradictory', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-contradictory-routing';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = captureExpectedError(() => runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject contradictory runtime identity at task-mode entry',
+            provider: 'Codex',
+            routedTo: 'QWEN.md'
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'contradictory' at task-mode entry/i);
+        assert.match(error.message, /contradicts routed path 'QWEN\.md'/i);
+        assert.match(error.message, /--task-summary "<task-summary>"/i);
+        assert.doesNotMatch(error.message, /--routed-to ['"]?QWEN\.md['"]?/i);
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects enter-task-mode when an explicit provider override is unrecognized even if routed identity resolves', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-invalid-provider-override';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = captureExpectedError(() => runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject malformed explicit provider override at task-mode entry',
+            provider: 'NotAProvider',
+            routedTo: 'AGENTS.md'
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'contradictory' at task-mode entry/i);
+        assert.match(error.message, /provider override 'NotAProvider' is not recognized/i);
+        assert.match(error.message, /--task-summary "<task-summary>"/i);
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects enter-task-mode when an explicit routed-to override is unrecognized even if provider resolves', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-invalid-route-override';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = captureExpectedError(() => runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject malformed explicit routed-to override at task-mode entry',
+            provider: 'Codex',
+            routedTo: 'NOT-A-REAL-ROUTE.md'
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'contradictory' at task-mode entry/i);
+        assert.match(error.message, /route override 'NOT-A-REAL-ROUTE\.md' is not a recognized provider bridge or canonical entrypoint/i);
+        assert.match(error.message, /--provider ['"]?Codex['"]?/i);
+        assert.doesNotMatch(error.message, /--routed-to ['"]?NOT-A-REAL-ROUTE\.md['"]?/i);
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects enter-task-mode when runtime identity is missing', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-missing-routing';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = captureExpectedError(() => runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject missing runtime identity at task-mode entry'
+        }));
+
+        assert.match(error.message, /Canonical SourceOfTruth is missing at task-mode entry/i);
+        assert.match(error.message, /setup\/reinit/i);
+        assert.match(error.message, /--task-summary "<task-summary>"/i);
+        assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects enter-task-mode when canonical SourceOfTruth is missing even with explicit runtime identity', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-missing-canonical-owner';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const error = captureExpectedError(() => runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject task start when canonical owner files are missing',
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
+        }));
+
+        assert.match(error.message, /Canonical SourceOfTruth is missing at task-mode entry/i);
+        assert.equal(fs.existsSync(artifactPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1529,7 +1843,7 @@ describe('cli/commands/gates', () => {
 
         const artifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-mode.json`);
         assert.throws(
-            () => runEnterTaskModeCommand({
+            () => runEnterTaskMode({
                 repoRoot,
                 taskId,
                 taskSummary: 'Update app flow'
@@ -1557,7 +1871,7 @@ describe('cli/commands/gates', () => {
         }, null, 2) + '\n', 'utf8');
 
         assert.throws(
-            () => runEnterTaskModeCommand({
+            () => runEnterTaskMode({
                 repoRoot,
                 taskId,
                 taskSummary: 'Update app flow'
@@ -1584,7 +1898,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        const taskModeResult = runEnterTaskModeCommand({
+        const taskModeResult = runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Update app flow'
@@ -1623,7 +1937,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject POST_PREFLIGHT load-rule-pack before classify-change completes'
@@ -1651,14 +1965,14 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject stale handshake evidence before shell smoke preflight'
         });
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Start a newer task cycle before shell smoke preflight'
@@ -1671,6 +1985,42 @@ describe('cli/commands/gates', () => {
         assert.equal(shellSmokeResult.exitCode, EXIT_GATE_FAILURE);
         assert.equal(shellSmokeResult.outputLines[0], 'SHELL_SMOKE_PREFLIGHT_FAILED');
         assert.ok(shellSmokeResult.outputLines.some((line) => line.includes('predates the latest TASK_MODE_ENTERED')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects shell-smoke-preflight when runtime identity would fall back to canonical SourceOfTruth', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-legacy-fallback';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const error = captureExpectedError(() => runShellSmokePreflightCommand({
+            repoRoot,
+            taskId
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before shell-smoke-preflight/i);
+        assert.match(error.message, /Re-enter task mode with explicit --provider <runtime-provider> or --routed-to/i);
+        assert.match(error.message, /enter-task-mode/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects command-timeout-diagnostics when runtime identity would fall back to canonical SourceOfTruth', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-command-timeout-legacy-fallback';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const error = captureExpectedError(() => runCommandTimeoutDiagnosticsCommand({
+            repoRoot,
+            taskId
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before command-timeout-diagnostics/i);
+        assert.match(error.message, /Re-enter task mode with explicit --provider <runtime-provider> or --routed-to/i);
+        assert.match(error.message, /command-timeout-diagnostics/i);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1693,7 +2043,8 @@ describe('cli/commands/gates', () => {
             assert.throws(
                 () => runShellSmokePreflightCommand({
                     repoRoot,
-                    taskId
+                    taskId,
+                    provider: 'Codex'
                 }),
                 /Timed out acquiring file lock/
             );
@@ -1739,7 +2090,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject classify-change overlap while the shared pre-preflight lock is held'
@@ -1780,7 +2131,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject handshake rerun after shell smoke already passed'
@@ -1807,7 +2158,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject stale shell smoke evidence before preflight classification'
@@ -1848,7 +2199,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Surface compile remediation after failed POST_PREFLIGHT sequencing'
@@ -1880,7 +2231,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject stale preflight artifacts during POST_PREFLIGHT rule-pack load'
@@ -1932,7 +2283,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        const taskModeResult = runEnterTaskModeCommand({
+        const taskModeResult = runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject ordinary compile on trusted manifest drift'
@@ -1970,7 +2321,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(baselineProtectedPath, '# baseline protected drift\n', 'utf8');
         writeDriftedProtectedManifest(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Block manifest drift that expands beyond the inherited protected baseline'
@@ -2048,7 +2399,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        const taskModeResult = runEnterTaskModeCommand({
+        const taskModeResult = runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Budget telemetry check'
@@ -2122,7 +2473,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(appPath, 'const a = 34;\nconst b = 55;\nconsole.log(a + b);\n', 'utf8');
         fs.writeFileSync(unrelatedPath, 'export const unrelated = "before";\n', 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Protect unrelated dirty workspace edits'
@@ -2170,7 +2521,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         initializeGitRepo(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Clarify planned explicit preflight drift recovery'
@@ -2218,7 +2569,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         initializeGitRepo(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Recover planned explicit preflight drift after real diff exists'
@@ -2287,7 +2638,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Emit sequence evidence for successful sequential compile flow'
@@ -2346,7 +2697,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence'
@@ -2399,7 +2750,7 @@ describe('cli/commands/gates', () => {
             codeReviewVerdict: 'REVIEW PASSED',
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));
         assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
 
         const docImpactResult = runDocImpactGateCommand({
@@ -2439,7 +2790,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow equivalent preflight refresh to reuse custom POST_PREFLIGHT rule-pack evidence'
@@ -2503,7 +2854,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow equivalent preflight refresh to reuse POST_PREFLIGHT rule-pack evidence with a custom task-mode path',
@@ -2564,7 +2915,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle with a custom task-mode path',
@@ -2630,7 +2981,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const alternateTaskModePath = path.join(repoRoot, 'copied-artifacts', `${taskId}-task-mode.json`);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject copied task-mode artifacts that differ from the timeline-recorded path'
@@ -2677,6 +3028,63 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('fails compile gate when task-mode entry evidence omits pinned runtime identity metadata', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-task-mode-identity-missing-at-compile';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject compile gate when task-mode identity metadata is missing',
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject compile gate when task-mode identity metadata is missing',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const tamperedTaskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        delete tamperedTaskMode.canonical_source_of_truth;
+        delete tamperedTaskMode.execution_provider_source;
+        delete tamperedTaskMode.runtime_identity_status;
+        fs.writeFileSync(taskModePath, JSON.stringify(tamperedTaskMode, null, 2) + '\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-task-mode-identity-missing-at-compile.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('missing canonical_source_of_truth')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails compile gate when explicit POST_PREFLIGHT rule-pack path differs from the timeline-recorded artifact path', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-post-preflight-rule-pack-artifact-path-mismatch';
@@ -2684,7 +3092,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot);
         const alternateRulePackPath = path.join(repoRoot, 'copied-artifacts', `${taskId}-rule-pack.json`);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject copied POST_PREFLIGHT rule-pack artifacts that differ from the timeline-recorded path'
@@ -2738,7 +3146,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject stale POST_PREFLIGHT rule-pack after a newer preflight cycle'
@@ -2805,7 +3213,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject stale shell smoke evidence before compile'
@@ -2882,7 +3290,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Update app flow'
@@ -2948,7 +3356,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Sync TASK.md status to DONE from completion-gate'
@@ -2976,7 +3384,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
         assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), /\|\s*T-903-completion-status-sync\s*\|\s*🟧 IN_REVIEW\s*\|/);
 
@@ -3045,7 +3453,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Materialize final closeout artifacts from task-audit-summary'
@@ -3233,7 +3641,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Default required review verdicts from preflight'
@@ -3300,7 +3708,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Keep defaulted required reviews strict when artifacts are missing'
@@ -3354,7 +3762,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject schema-invalid review artifacts earlier'
@@ -3428,7 +3836,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject trivial synthetic review artifacts earlier'
@@ -3518,7 +3926,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Budget telemetry check'
@@ -3570,7 +3978,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Update app flow'
@@ -3628,7 +4036,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -3695,7 +4103,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Recover a later coherent completion cycle'
@@ -3753,7 +4161,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -3810,7 +4218,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject cross-cycle compile backfill in completion gate'
@@ -3963,7 +4371,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Restart the latest coherent cycle after misordered recovery noise'
@@ -4118,7 +4526,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'docs', 'noise.md'), 'unrelated dirty file\n', 'utf8');
 
@@ -4147,7 +4555,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Replay prior git_auto scope as explicit changed files during cycle restart'
@@ -4184,7 +4592,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         const preflightPath = writePreflight(repoRoot, taskId, {
             detection_source: 'git_auto',
             metrics: { changed_lines_total: 3, changed_files_count: 1 },
@@ -4222,7 +4630,7 @@ describe('cli/commands/gates', () => {
         const planPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-plan.json`);
         fs.writeFileSync(planPath, serializeTaskPlan(plan), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Restart the latest coherent cycle with approved plan metadata preserved',
@@ -4266,7 +4674,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
-        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
         const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-code-only.md');
@@ -4278,7 +4686,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Restart only the review cycle after a failed code review',
@@ -4372,7 +4780,7 @@ describe('cli/commands/gates', () => {
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
-        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-custom-task-mode.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
@@ -4382,7 +4790,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             artifactPath: customTaskModePath,
@@ -4458,11 +4866,12 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             artifactPath: customTaskModePath,
             taskSummary: 'Restart the review cycle with a custom task-mode artifact path',
+            provider: 'Codex',
             plannedChangedFiles: [
                 'commands-restart-review-cycle-custom-task-mode.md',
                 'garda-agent-orchestrator/live/config/review-capabilities.json',
@@ -4537,7 +4946,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Restart the review cycle and reuse code review evidence before rebuilding downstream test context',
@@ -4640,7 +5049,7 @@ describe('cli/commands/gates', () => {
         seedInitAnswers(repoRoot, 'Codex');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Restart review cycle from the latest workspace diff after a failed review',
@@ -4721,7 +5130,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Preserve build-review-context output formatting contract'
@@ -4782,7 +5191,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Surface a narrow review-cycle recovery command from completion diagnostics'
@@ -4866,7 +5275,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject missing same-cycle compile backfill in completion gate'
@@ -5009,7 +5418,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Implement lifecycle hardening'
@@ -5123,7 +5532,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(appPath, 'const a = 89;\nconst b = 144;\nconsole.log(a + b);\n', 'utf8');
         fs.writeFileSync(unrelatedPath, 'export const unrelated = "baseline";\n', 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Protect unrelated dirty workspace edits through completion'
@@ -5168,7 +5577,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -5207,7 +5616,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(protectedRulePath, '# baseline protected drift\n', 'utf8');
         writeDriftedProtectedManifest(repoRoot);
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow inherited protected manifest drift through completion'
@@ -5252,7 +5661,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -5350,18 +5759,14 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-904a';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        writePreflight(repoRoot, taskId);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -5402,22 +5807,16 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -5494,28 +5893,157 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result accepts legacy review-context identity when task-mode runtime identity is backfilled safely', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-legacy-backfill';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(taskModePath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Record a review against a legacy provider-bridge review-context after upgrade',
+            provider: 'Codex',
+            routed_to: '.antigravity/agents/orchestrator.md'
+        }, null, 2) + '\n', 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'TASK_MODE_ENTERED', 'PASS', 'Legacy provider-bridge task-mode entry before runtime identity split.', {
+            artifact_path: taskModePath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Record a review against a legacy provider-bridge review-context after upgrade',
+            provider: 'Codex',
+            routed_to: '.antigravity/agents/orchestrator.md'
+        });
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
+
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, taskModePath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', taskModePath).exitCode, 0);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation resumed after upgrade on a legacy provider-bridge task-mode artifact.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const crypto = require('node:crypto');
+        const preflightText = fs.readFileSync(preflightPath, 'utf8');
+        const preflightSha256 = crypto.createHash('sha256').update(preflightText).digest('hex');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            schema_version: 2,
+            task_id: taskId,
+            review_type: 'code',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: preflightSha256,
+            reviewer_routing: {
+                source_of_truth: 'Codex',
+                actual_execution_mode: null,
+                reviewer_session_id: null,
+                fallback_reason: null
+            }
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated `src/cli/commands/gate-review-handlers.ts`, `src/gates/review-context-routing.ts`, and the legacy provider-bridge resume path, confirming that legacy review-context routing metadata can still be materialized after runtime identity is safely backfilled from a provider bridge while receipt, routing telemetry, and canonical artifact writes remain bound to the active preflight and task-mode evidence.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--review-context-path', reviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(reviewContext.reviewer_routing.source_of_truth, 'Codex');
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:code-reviewer');
+        assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
+        assert.equal(receipt.reviewer_identity, 'agent:code-reviewer');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result accepts stdin reviewer output only through the same audited raw-artifact path', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-stdin';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const stdinReviewOutput = [
@@ -5595,16 +6123,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -5650,21 +6171,15 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -5744,21 +6259,15 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -5830,16 +6339,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -5913,16 +6415,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6008,16 +6503,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6097,16 +6585,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6186,16 +6667,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6265,21 +6739,16 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Antigravity',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'single_agent_only',
-                expected_execution_mode: 'same_agent_fallback',
-                fallback_allowed: true,
-                fallback_reason_required: true,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+                expected_execution_mode: 'same_agent_fallback'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6355,16 +6824,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6451,16 +6913,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6506,6 +6961,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -6513,16 +6969,9 @@ describe('cli/commands/gates', () => {
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
 
         const reviewOutputDir = path.join(repoRoot, '.review-temp');
@@ -6540,7 +6989,7 @@ describe('cli/commands/gates', () => {
             'none',
             '',
             '## Verdict',
-            '- REVIEW PASSED'
+            'REVIEW PASSED'
         ].join('\n'), 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -6671,7 +7120,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reuse code review evidence when only test scope changes'
@@ -6857,6 +7306,11 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable code review evidence before a pure test-only rerun'
+        });
 
         const priorPreflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['src/app.ts'],
@@ -6930,6 +7384,114 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('does not reuse prior code-review evidence when the runtime reviewer identity changes for the same code scope', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-no-reuse-runtime-identity';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Record a baseline code review before switching runtime provider'
+        });
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        writeCompilePassEvidence(repoRoot, taskId, priorPreflightPath);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+        const orchestratorRoot = getOrchestratorRoot(repoRoot);
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'historical code review started', {
+            review_type: 'code'
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'historical code review delegated', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:code-reviewer',
+            delegation_used: true
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'historical code review recorded', {
+            review_type: 'code',
+            reused_existing_review: false
+        });
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Switch runtime provider while keeping the code scope unchanged',
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
+        });
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', reviewContextPath,
+                '--repo-root', repoRoot
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        assert.equal(reviewContext.reviewer_routing.execution_provider, 'Antigravity');
+        assert.equal(reviewContext.reviewer_routing.execution_provider_source, 'provider_bridge');
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestTaskModeIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'TASK_MODE_ENTERED');
+        const postRestartReviewEvents = events.filter((event, index) => (
+            index > latestTaskModeIndex
+            && (event.event_type === 'REVIEWER_DELEGATION_ROUTED' || event.event_type === 'REVIEW_RECORDED')
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        ));
+        assert.equal(postRestartReviewEvents.length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('does not reuse prior code-review evidence when the code scope fingerprint changed', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-no-reuse-code-review';
@@ -6938,6 +7500,11 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable code review evidence before the code scope changes'
+        });
 
         const priorPreflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['src/app.ts'],
@@ -7018,6 +7585,11 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable code review evidence before stale compile validation'
+        });
 
         const priorPreflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['src/app.ts'],
@@ -7044,7 +7616,7 @@ describe('cli/commands/gates', () => {
         });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Do not reuse code review evidence when compile evidence is stale'
@@ -7105,6 +7677,11 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const reviewsRoot = getReviewsRoot(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable code review evidence before reuse telemetry lock validation'
+        });
         const priorPreflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['src/app.ts'],
             metrics: { changed_lines_total: 3 },
@@ -7199,6 +7776,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
@@ -7215,12 +7793,7 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -7273,12 +7846,7 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -7309,6 +7877,699 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-receipt rejects stale routing telemetry replayed from a prior cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-stale-routing-replay';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        prepareCurrentReviewPhase(repoRoot, taskId, priorPreflightPath);
+
+        const orchestratorRoot = getOrchestratorRoot(repoRoot);
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'Historical review phase started.', {
+            review_type: 'code'
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Historical code review routed.', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:test-reviewer',
+            delegation_used: true
+        });
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'Current review phase started.', {
+            review_type: 'code'
+        });
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904y-stale-routing-replay',
+            '## Summary',
+            'Verified stale routing replay handling with realistic detail.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex')
+        }, null, 2) + '\n', 'utf8');
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: 'delegated_subagent',
+            reviewerSessionId: 'agent:test-reviewer',
+            fallbackReason: null
+        });
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestCodeReviewPhaseIndex = findLastTimelineEventIndex(events, (event) => (
+            event.event_type === 'REVIEW_PHASE_STARTED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        ));
+        const matchingRoutingIndices = events
+            .map((event, index) => ({ event, index }))
+            .filter(({ event }) => (
+                event.event_type === 'REVIEWER_DELEGATION_ROUTED'
+                && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+                && String((event.details as Record<string, unknown> | undefined)?.reviewer_session_id || '') === 'agent:test-reviewer'
+            ))
+            .map(({ index }) => index);
+        assert.ok(latestCodeReviewPhaseIndex >= 0);
+        assert.ok(matchingRoutingIndices.some((index) => index < latestCodeReviewPhaseIndex));
+        assert.equal(matchingRoutingIndices.some((index) => index > latestCodeReviewPhaseIndex), false);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects superseded same-cycle routing telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-superseded-routing';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+
+        const orchestratorRoot = getOrchestratorRoot(repoRoot);
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Earlier same-cycle code review routed.', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:test-reviewer',
+            delegation_used: true
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Later same-cycle code review rerouted to a different reviewer.', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:new-reviewer',
+            delegation_used: true
+        });
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904y-superseded-routing',
+            '## Summary',
+            'Verified that superseded same-cycle routing telemetry cannot be replayed by tampering the review-context back to an older reviewer identity.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex')
+        }, null, 2) + '\n', 'utf8');
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: 'delegated_subagent',
+            reviewerSessionId: 'agent:test-reviewer',
+            fallbackReason: null
+        });
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects same-agent fallback without a required fallback reason', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-receipt-fallback-reason';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904y-receipt-fallback-reason',
+            '## Summary',
+            'Verified fallback receipt policy enforcement with realistic detail.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
+        }, null, 2) + '\n', 'utf8');
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: 'same_agent_fallback',
+            reviewerSessionId: `self:${taskId}`,
+            fallbackReason: null
+        });
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'fallback routed without reason', {
+            review_type: 'code',
+            reviewer_execution_mode: 'same_agent_fallback',
+            reviewer_session_id: `self:${taskId}`,
+            delegation_used: false
+        });
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects fallback reasons that diverge from pre-recorded routing metadata', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-receipt-fallback-mismatch';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904y-receipt-fallback-mismatch',
+            '## Summary',
+            'Verified receipt fallback binding enforcement with realistic detail.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
+        }, null, 2) + '\n', 'utf8');
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: 'same_agent_fallback',
+            reviewerSessionId: `self:${taskId}`,
+            fallbackReason: 'provider limitation'
+        });
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'fallback routed with canonical reason', {
+            review_type: 'code',
+            reviewer_execution_mode: 'same_agent_fallback',
+            reviewer_session_id: `self:${taskId}`,
+            reviewer_fallback_reason: 'provider limitation',
+            delegation_used: false
+        });
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'tampered fallback'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects delegated_subagent for single-agent providers', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-receipt-single-agent';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Qwen');
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904y-receipt-single-agent',
+            '## Summary',
+            'Verified delegated receipt rejection for a single-agent provider with realistic detail.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Qwen', {
+                capability_level: 'single_agent_only',
+                expected_execution_mode: 'same_agent_fallback',
+                fallback_allowed: true,
+                fallback_reason_required: true
+            })
+        }, null, 2) + '\n', 'utf8');
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: 'delegated_subagent',
+            reviewerSessionId: 'agent:test-reviewer',
+            fallbackReason: null
+        });
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated routing recorded for single-agent fixture', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:test-reviewer',
+            delegation_used: true
+        });
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects tampered fallback policy fields when active runtime provider forbids fallback', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-receipt-policy-tamper';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(artifactPath, [
+            '# Code Review T-904y-receipt-policy-tamper',
+            '',
+            'Validated `src/cli/commands/gate-review-handlers.ts` and the receipt-side routing enforcement path with enough implementation detail to prove that forged review-context policy fields cannot force same-agent fallback on Codex.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Deferred Findings',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                fallback_allowed: true,
+                fallback_reason_required: true
+            })
+        }, null, 2) + '\n', 'utf8');
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: 'same_agent_fallback',
+            reviewerSessionId: `self:${taskId}`,
+            fallbackReason: 'tampered review-context policy'
+        });
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'tampered fallback routed for receipt fixture', {
+            review_type: 'code',
+            reviewer_execution_mode: 'same_agent_fallback',
+            reviewer_session_id: `self:${taskId}`,
+            reviewer_fallback_reason: 'tampered review-context policy',
+            delegation_used: false
+        });
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'tampered review-context policy'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-routing rejects tampered fallback policy fields when active runtime provider forbids fallback', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-routing-policy-tamper';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                fallback_allowed: true,
+                fallback_reason_required: true
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'tampered review-context policy'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-routing rejects delegated_subagent with a self-scoped reviewer identity', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-routing-self-identity';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex')
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', `self:${taskId}`
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects tampered fallback policy fields when active runtime provider forbids fallback', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-result-policy-tamper';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                fallback_allowed: true,
+                fallback_reason_required: true
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated `src/cli/commands/gate-review-handlers.ts`, `src/gates/reviewer-routing.ts`, and the current routing/receipt enforcement path to confirm that tampered review-context policy fields cannot force same-agent fallback on a delegation-required provider. The fixture is intentionally implementation-aware, references concrete files, and documents the guardrail behavior in enough detail to stay well above the trivial-review filter.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'tampered review-context policy'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects same_agent_fallback with an agent-scoped reviewer identity', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904y-result-agent-identity';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated fallback identity authenticity in the public result-ingest path with concrete implementation detail and realistic wording.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', 'agent:test-reviewer',
+                '--reviewer-fallback-reason', 'provider limitation'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code.md`)), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-routing rejects late routing after the review gate already passed', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-late-routing';
@@ -7319,12 +8580,7 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Required reviews gate passed.', {});
 
@@ -7365,6 +8621,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
@@ -7381,14 +8638,7 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Antigravity',
-                fallback_allowed: true,
-                fallback_reason_required: true,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -7446,6 +8696,7 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
@@ -7463,14 +8714,7 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Antigravity',
-                fallback_allowed: true,
-                fallback_reason_required: true,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -7546,12 +8790,10 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
                 actual_execution_mode: 'delegated_subagent',
-                reviewer_session_id: 'agent:test-reviewer',
-                fallback_reason: null
-            }
+                reviewer_session_id: 'agent:test-reviewer'
+            })
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
             review_type: 'code',
@@ -7601,16 +8843,12 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Qwen',
+            reviewer_routing: createReviewerRoutingFixture('Qwen', {
                 capability_level: 'single_agent_only',
                 expected_execution_mode: 'same_agent_fallback',
                 fallback_allowed: true,
-                fallback_reason_required: true,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+                fallback_reason_required: true
+            })
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -7674,11 +8912,11 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Validate delegated test review flow',
-            provider: 'Codex'
+            routedTo: 'AGENTS.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -7718,12 +8956,7 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'test',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: 'testing-strategy' });
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', {
@@ -7822,7 +9055,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Block downstream test review until code review is recorded',
@@ -8019,7 +9252,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Keep downstream test review blocked until upstream code review is gate-eligible',
@@ -8169,7 +9402,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Block downstream test review materialization until upstream code review passes current cycle',
@@ -8197,16 +9430,9 @@ describe('cli/commands/gates', () => {
         const testReviewReceiptPath = testReviewArtifactPath.replace(/\.md$/, '-receipt.json');
         fs.writeFileSync(testReviewContextPath, JSON.stringify({
             review_type: 'test',
-            reviewer_routing: {
-                source_of_truth: 'Codex',
-                capability_level: 'delegation_capable',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
         }, null, 2) + '\n', 'utf8');
         fs.writeFileSync(testReviewOutputPath, [
             '# Review',
@@ -8300,7 +9526,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow downstream test review after code review was recorded from a custom context path',
@@ -8490,7 +9716,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Prefer canonical review-context artifacts over stale legacy default files',
@@ -8615,6 +9841,1503 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('build-review-context, record-review-result, required-reviews-check, and completion honor an explicit custom task-mode artifact path end-to-end', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-custom-task-mode-end-to-end';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        writeReviewCapabilitiesConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.antigravity', 'agents'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            artifactPath: customTaskModePath,
+            taskSummary: 'Honor an explicit custom task-mode artifact path across review and closeout gates',
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation started for custom task-mode path regression fixture.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const defaultTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const driftedDefaultTaskMode = JSON.parse(fs.readFileSync(customTaskModePath, 'utf8')) as Record<string, unknown>;
+        driftedDefaultTaskMode.provider = 'Codex';
+        driftedDefaultTaskMode.routed_to = 'AGENTS.md';
+        driftedDefaultTaskMode.canonical_source_of_truth = 'Codex';
+        driftedDefaultTaskMode.execution_provider = 'Codex';
+        driftedDefaultTaskMode.execution_provider_source = 'task_mode.provider';
+        driftedDefaultTaskMode.runtime_identity_status = 'resolved';
+        fs.mkdirSync(path.dirname(defaultTaskModePath), { recursive: true });
+        fs.writeFileSync(defaultTaskModePath, JSON.stringify(driftedDefaultTaskMode, null, 2) + '\n', 'utf8');
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const customCodeReviewContextPath = path.join(reviewsRoot, 'custom-task-mode-code-review-context.json');
+        const codeReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        let codeReviewBuildExitCode = 0;
+        let codeReviewRecordExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--output-path', customCodeReviewContextPath
+            ]);
+            codeReviewBuildExitCode = Number(process.exitCode ?? 0);
+
+            const builtReviewContext = JSON.parse(fs.readFileSync(customCodeReviewContextPath, 'utf8')) as Record<string, unknown>;
+            const reviewerRouting = builtReviewContext.reviewer_routing as Record<string, unknown>;
+            assert.equal(reviewerRouting.canonical_source_of_truth, 'Codex');
+            assert.equal(reviewerRouting.execution_provider, 'Antigravity');
+            assert.equal(reviewerRouting.source_of_truth, 'Antigravity');
+
+            fs.writeFileSync(codeReviewOutputPath, [
+                '# Review',
+                '',
+                'Validated `src/gates/build-review-context.ts`, `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gate-flows/review-flow.ts`, and `src/gates/completion.ts`, confirming that the explicit custom task-mode artifact path remains authoritative through review materialization, review-gate verification, and completion-gate closeout even when a conflicting default task-mode artifact exists.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--review-output-path', codeReviewOutputPath,
+                '--review-context-path', customCodeReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            codeReviewRecordExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(codeReviewBuildExitCode, 0);
+        assert.equal(codeReviewRecordExitCode, 0);
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            taskModePath: customTaskModePath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Custom task-mode path regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId,
+            taskModePath: customTaskModePath
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('build-review-context and record-review-result honor explicit custom task-mode paths for downstream test-review dependency checks', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-custom-task-mode-downstream-test';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        writeReviewCapabilitiesConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.antigravity', 'agents'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            artifactPath: customTaskModePath,
+            taskSummary: 'Honor an explicit custom task-mode path when unblocking downstream test review',
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation started for downstream custom task-mode dependency regression fixture.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const defaultTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const driftedDefaultTaskMode = JSON.parse(fs.readFileSync(customTaskModePath, 'utf8')) as Record<string, unknown>;
+        driftedDefaultTaskMode.provider = 'Codex';
+        driftedDefaultTaskMode.routed_to = 'AGENTS.md';
+        driftedDefaultTaskMode.canonical_source_of_truth = 'Codex';
+        driftedDefaultTaskMode.execution_provider = 'Codex';
+        driftedDefaultTaskMode.execution_provider_source = 'task_mode.provider';
+        driftedDefaultTaskMode.runtime_identity_status = 'resolved';
+        fs.mkdirSync(path.dirname(defaultTaskModePath), { recursive: true });
+        fs.writeFileSync(defaultTaskModePath, JSON.stringify(driftedDefaultTaskMode, null, 2) + '\n', 'utf8');
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const customCodeReviewContextPath = path.join(reviewsRoot, 'custom-task-mode-downstream-code-context.json');
+        const customTestReviewContextPath = path.join(reviewsRoot, 'custom-task-mode-downstream-test-context.json');
+        const codeReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const testReviewOutputPath = path.join(reviewsRoot, `${taskId}-test-review-output.md`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        let codeReviewBuildExitCode = 0;
+        let codeReviewRecordExitCode = 0;
+        let testReviewBuildExitCode = 0;
+        let testReviewRecordExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--output-path', customCodeReviewContextPath
+            ]);
+            codeReviewBuildExitCode = Number(process.exitCode ?? 0);
+
+            fs.writeFileSync(codeReviewOutputPath, [
+                '# Review',
+                '',
+                'Validated `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that upstream code-review evidence remains bound to the explicit custom task-mode artifact path even when a drifted default task-mode artifact exists.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--review-output-path', codeReviewOutputPath,
+                '--review-context-path', customCodeReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            codeReviewRecordExitCode = Number(process.exitCode ?? 0);
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'test',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--output-path', customTestReviewContextPath
+            ]);
+            testReviewBuildExitCode = Number(process.exitCode ?? 0);
+
+            const builtTestReviewContext = JSON.parse(fs.readFileSync(customTestReviewContextPath, 'utf8')) as Record<string, unknown>;
+            const reviewerRouting = builtTestReviewContext.reviewer_routing as Record<string, unknown>;
+            assert.equal(reviewerRouting.execution_provider, 'Antigravity');
+            assert.equal(reviewerRouting.canonical_source_of_truth, 'Codex');
+
+            fs.writeFileSync(testReviewOutputPath, [
+                '# Review',
+                '',
+                'Validated `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that downstream test-review dependency checks now stay bound to the explicit custom task-mode artifact path instead of falling back to a drifted default task-mode artifact.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'TEST REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--review-output-path', testReviewOutputPath,
+                '--review-context-path', customTestReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            testReviewRecordExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(codeReviewBuildExitCode, 0);
+        assert.equal(codeReviewRecordExitCode, 0);
+        assert.equal(testReviewBuildExitCode, 0);
+        assert.equal(testReviewRecordExitCode, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-routing and record-review-receipt honor an explicit custom task-mode artifact path when the default artifact drifts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-custom-task-mode-routing-receipt';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        writeReviewCapabilitiesConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.antigravity', 'agents'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            artifactPath: customTaskModePath,
+            taskSummary: 'Honor explicit custom task-mode evidence across split routing and receipt recording',
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation started for split routing and receipt custom task-mode path regression fixture.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const defaultTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        fs.mkdirSync(path.dirname(defaultTaskModePath), { recursive: true });
+        fs.writeFileSync(defaultTaskModePath, JSON.stringify({
+            timestamp_utc: '2026-04-17T12:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Drifted default task-mode artifact for split routing/receipt regression coverage',
+            provider: 'Qwen',
+            routed_to: 'QWEN.md',
+            canonical_source_of_truth: 'Qwen',
+            execution_provider: 'Qwen',
+            execution_provider_source: 'task_mode',
+            runtime_identity_status: 'resolved'
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        let buildExitCode = 0;
+        let routingExitCode = 0;
+        let receiptExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--output-path', reviewContextPath
+            ]);
+            buildExitCode = Number(process.exitCode ?? 0);
+
+            const builtReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+            const reviewerRouting = builtReviewContext.reviewer_routing as Record<string, unknown>;
+            assert.equal(reviewerRouting.canonical_source_of_truth, 'Codex');
+            assert.equal(reviewerRouting.execution_provider, 'Antigravity');
+            assert.equal(reviewerRouting.source_of_truth, 'Antigravity');
+
+            fs.writeFileSync(artifactPath, [
+                '# Review',
+                '',
+                'Validated `src/cli/commands/gate-review-handlers.ts`, `src/gates/reviewer-routing.ts`, and the split routing/receipt lifecycle, confirming that the explicit custom task-mode artifact path remains authoritative even when a conflicting default task-mode artifact exists.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--review-context-path', reviewContextPath,
+                '--task-mode-path', customTaskModePath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            routingExitCode = Number(process.exitCode ?? 0);
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-context-path', reviewContextPath,
+                '--task-mode-path', customTaskModePath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            receiptExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(buildExitCode, 0);
+        assert.equal(routingExitCode, 0);
+        assert.equal(receiptExitCode, 0);
+
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerRouting = reviewContext.reviewer_routing as Record<string, unknown>;
+        const receipt = JSON.parse(fs.readFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), 'utf8')) as Record<string, unknown>;
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+
+        assert.equal(reviewerRouting.actual_execution_mode, 'delegated_subagent');
+        assert.equal(reviewerRouting.reviewer_session_id, 'agent:code-reviewer');
+        assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
+        assert.equal(receipt.reviewer_identity, 'agent:code-reviewer');
+        assert.ok(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'));
+        assert.ok(events.some((event) => event.event_type === 'REVIEW_RECORDED'));
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            taskModePath: customTaskModePath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Custom task-mode path split routing/receipt regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId,
+            taskModePath: customTaskModePath
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects stripped split runtime identity for explicit custom task-mode paths', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-custom-task-mode-receipt-identity-guard';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        writeReviewCapabilitiesConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.antigravity', 'agents'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            artifactPath: customTaskModePath,
+            taskSummary: 'Reject stripped split runtime identity on the public receipt path',
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation started for stripped split runtime identity receipt guard regression fixture.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        let buildExitCode = 0;
+        let routingExitCode = 0;
+        let receiptExitCode = 0;
+        try {
+            console.error = (...args: unknown[]) => {
+                capturedErrors.push(args.map((arg) => String(arg)).join(' '));
+            };
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--task-mode-path', customTaskModePath,
+                '--output-path', reviewContextPath
+            ]);
+            buildExitCode = Number(process.exitCode ?? 0);
+
+            fs.writeFileSync(artifactPath, [
+                '# Review',
+                '',
+                'Validated `src/cli/commands/gate-review-handlers.ts` and the stripped split runtime identity fixture while keeping the artifact realistic and non-trivial.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--review-context-path', reviewContextPath,
+                '--task-mode-path', customTaskModePath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            routingExitCode = Number(process.exitCode ?? 0);
+
+            const strippedContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+            const reviewerRouting = strippedContext.reviewer_routing as Record<string, unknown>;
+            delete reviewerRouting.canonical_source_of_truth;
+            delete reviewerRouting.execution_provider;
+            delete reviewerRouting.execution_provider_source;
+            delete reviewerRouting.identity_status;
+            strippedContext.reviewer_routing = reviewerRouting;
+            fs.writeFileSync(reviewContextPath, JSON.stringify(strippedContext, null, 2) + '\n', 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-receipt',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-context-path', reviewContextPath,
+                '--task-mode-path', customTaskModePath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            receiptExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(buildExitCode, 0);
+        assert.equal(routingExitCode, 0);
+        assert.notEqual(receiptExitCode, 0);
+        assert.ok(capturedErrors.some((line) => (
+            line.includes('missing canonical_source_of_truth')
+            || line.includes('missing execution_provider')
+            || line.includes('missing identity_status')
+        )));
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'),
+            false
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects pre-recorded review artifacts when task-mode identity metadata is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-task-mode-identity-missing-at-review';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject required-reviews-check when pinned task-mode identity metadata is missing',
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
+            'agent:code-reviewer'
+        );
+
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const tamperedTaskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        delete tamperedTaskMode.canonical_source_of_truth;
+        delete tamperedTaskMode.execution_provider_source;
+        delete tamperedTaskMode.runtime_identity_status;
+        fs.writeFileSync(taskModePath, JSON.stringify(tamperedTaskMode, null, 2) + '\n', 'utf8');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(reviewResult.outputLines.some((line) => line.includes('missing canonical_source_of_truth')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('completion-gate rejects stale task-mode artifacts after review pass when runtime identity metadata is removed', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-task-mode-identity-missing-at-completion';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject completion when pinned task-mode identity metadata is removed after review pass',
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
+            'agent:code-reviewer'
+        );
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Runtime identity regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const tamperedTaskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        delete tamperedTaskMode.canonical_source_of_truth;
+        delete tamperedTaskMode.execution_provider_source;
+        delete tamperedTaskMode.runtime_identity_status;
+        fs.writeFileSync(taskModePath, JSON.stringify(tamperedTaskMode, null, 2) + '\n', 'utf8');
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.status, 'FAILED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'FAIL');
+        assert.ok(completionResult.violations.some((entry) => entry.includes('missing canonical_source_of_truth')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check fails when workspace canonical ownership drifts after task-mode identity was pinned', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-review-runtime-identity-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Fail required-reviews-check when workspace canonical SourceOfTruth drifts after task-mode entry',
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
+            'agent:code-reviewer'
+        );
+
+        seedInitAnswers(repoRoot, 'Qwen');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(reviewResult.outputLines.some((line) => line.includes('contradicts task-mode canonical_source_of_truth')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('completion-gate fails when workspace canonical ownership drifts after task-mode identity was pinned', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-completion-runtime-identity-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Fail completion when workspace canonical SourceOfTruth drifts after task-mode entry',
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
+            'agent:code-reviewer'
+        );
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Runtime identity drift regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        seedInitAnswers(repoRoot, 'Qwen');
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.status, 'FAILED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'FAIL');
+        assert.ok(completionResult.violations.some((entry) => entry.includes('contradicts task-mode canonical_source_of_truth')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('legacy task-mode artifacts can resume review and completion after upgrade when runtime identity can be backfilled safely', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-legacy-task-mode-resume';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.writeFileSync(taskModePath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume legacy task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: 'AGENTS.md'
+        }, null, 2) + '\n', 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'TASK_MODE_ENTERED', 'PASS', 'Legacy task-mode entry before runtime identity split.', {
+            artifact_path: taskModePath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume legacy task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: 'AGENTS.md'
+        });
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
+
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation resumed after upgrade on a legacy task-mode artifact.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            path.join(reviewsRoot, `${taskId}-code-review-context.json`),
+            'agent:code-reviewer',
+            {
+                legacyReviewContextIdentity: true,
+                legacyReviewContextSourceOfTruth: 'Codex'
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started for resumed legacy task-mode fixture.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_DELEGATION_ROUTED',
+            'INFO',
+            'Delegated code review routed for resumed legacy task-mode fixture.',
+            {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                delegation_used: true
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_RECORDED',
+            'PASS',
+            'Code review evidence recorded for resumed legacy task-mode fixture.',
+            { review_type: 'code' }
+        );
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Legacy task-mode compatibility regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('legacy provider-bridge task-mode artifacts can resume review and completion after upgrade when runtime identity can be backfilled safely', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-legacy-bridge-task-mode-resume';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.antigravity', 'agents'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.writeFileSync(taskModePath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume legacy provider-bridge task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: '.antigravity/agents/orchestrator.md'
+        }, null, 2) + '\n', 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'TASK_MODE_ENTERED', 'PASS', 'Legacy provider-bridge task-mode entry before runtime identity split.', {
+            artifact_path: taskModePath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume legacy provider-bridge task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: '.antigravity/agents/orchestrator.md'
+        });
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
+
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation resumed after upgrade on a legacy provider-bridge task-mode artifact.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            path.join(reviewsRoot, `${taskId}-code-review-context.json`),
+            'agent:code-reviewer',
+            { legacyReviewContextIdentity: true }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started for resumed legacy provider-bridge task-mode fixture.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_DELEGATION_ROUTED',
+            'INFO',
+            'Delegated code review routed for resumed legacy provider-bridge task-mode fixture.',
+            {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                delegation_used: true
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_RECORDED',
+            'PASS',
+            'Code review evidence recorded for resumed legacy provider-bridge task-mode fixture.',
+            { review_type: 'code' }
+        );
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0);
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Legacy provider-bridge task-mode compatibility regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('legacy provider-bridge task-mode artifacts can resume review and completion from an explicit custom task-mode path when the default artifact drifts', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-legacy-bridge-custom-task-mode-resume';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.dirname(customTaskModePath), { recursive: true });
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, '.antigravity', 'agents'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.writeFileSync(customTaskModePath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume legacy provider-bridge task-mode artifact from a custom path after upgrade',
+            provider: 'Codex',
+            routed_to: '.antigravity/agents/orchestrator.md'
+        }, null, 2) + '\n', 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'TASK_MODE_ENTERED', 'PASS', 'Legacy provider-bridge task-mode entry before runtime identity split.', {
+            artifact_path: customTaskModePath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume legacy provider-bridge task-mode artifact from a custom path after upgrade',
+            provider: 'Codex',
+            routed_to: '.antigravity/agents/orchestrator.md'
+        });
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
+
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', customTaskModePath).exitCode, 0);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'IMPLEMENTATION_STARTED',
+            'INFO',
+            'Implementation resumed after upgrade on a legacy provider-bridge custom task-mode artifact.',
+            {}
+        );
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const defaultTaskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+        fs.writeFileSync(defaultTaskModePath, JSON.stringify({
+            timestamp_utc: '2026-04-17T12:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Drifted default task-mode artifact for legacy custom-path compatibility coverage',
+            provider: 'Qwen',
+            routed_to: 'QWEN.md',
+            canonical_source_of_truth: 'Qwen',
+            execution_provider: 'Qwen',
+            execution_provider_source: 'task_mode',
+            runtime_identity_status: 'resolved'
+        }, null, 2) + '\n', 'utf8');
+
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            path.join(reviewsRoot, `${taskId}-code-review-context.json`),
+            'agent:code-reviewer',
+            {
+                legacyReviewContextIdentity: true,
+                taskModePath: customTaskModePath
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_PHASE_STARTED',
+            'INFO',
+            'Review phase started for resumed legacy provider-bridge custom task-mode fixture.',
+            { review_type: 'code' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_SELECTED',
+            'INFO',
+            'Skill selected: code-review',
+            { skill_id: 'code-review', trigger_reason: 'required_review' }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Reference loaded: garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            {
+                skill_id: 'code-review',
+                reference_path: 'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+                trigger_reason: 'review_skill'
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_DELEGATION_ROUTED',
+            'INFO',
+            'Delegated code review routed for resumed legacy provider-bridge custom task-mode fixture.',
+            {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                delegation_used: true
+            }
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_RECORDED',
+            'PASS',
+            'Code review evidence recorded for resumed legacy provider-bridge custom task-mode fixture.',
+            { review_type: 'code' }
+        );
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            taskModePath: customTaskModePath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Legacy provider-bridge custom task-mode compatibility regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId,
+            taskModePath: customTaskModePath
+        });
+        assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
+        assert.equal(completionResult.outcome, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('build-review-context keeps downstream test review blocked when upstream code review uses a legacy custom context path without strict binding metadata', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904b-custom-code-context-legacy-blocked';
@@ -8642,7 +11365,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Keep downstream test review blocked when legacy custom upstream review contexts fail strict gate validation',
@@ -8823,7 +11546,7 @@ describe('cli/commands/gates', () => {
             }
         });
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject foreign review-context materialization for delegated review evidence',
@@ -8941,7 +11664,7 @@ describe('cli/commands/gates', () => {
             }
         });
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Reject legacy custom review-context artifacts without fresh-cycle binding metadata',
@@ -9037,6 +11760,132 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result rejects stripped current-style review-context identity metadata before materialization', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-105-record-review-result-stripped-runtime-identity';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stripped current-style review-context identity metadata before review materialization',
+            provider: 'Codex'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const canonicalContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const reviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        let buildExitCode = 0;
+        let recordExitCode = 0;
+        try {
+            console.error = (...args: unknown[]) => {
+                capturedErrors.push(args.map((arg) => String(arg)).join(' '));
+            };
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--repo-root', repoRoot,
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', canonicalContextPath
+            ]);
+            buildExitCode = Number(process.exitCode ?? 0);
+
+            const strippedContext = JSON.parse(fs.readFileSync(canonicalContextPath, 'utf8')) as Record<string, unknown>;
+            const reviewerRouting = strippedContext.reviewer_routing as Record<string, unknown>;
+            delete reviewerRouting.canonical_source_of_truth;
+            delete reviewerRouting.execution_provider;
+            delete reviewerRouting.execution_provider_source;
+            delete reviewerRouting.identity_status;
+            strippedContext.reviewer_routing = reviewerRouting;
+            fs.writeFileSync(canonicalContextPath, JSON.stringify(strippedContext, null, 2) + '\n', 'utf8');
+            applyReviewerRoutingMetadata(canonicalContextPath, {
+                actualExecutionMode: 'delegated_subagent',
+                reviewerSessionId: 'agent:code-reviewer',
+                fallbackReason: null
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Delegated code review routed for stripped runtime-identity fixture.', {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                delegation_used: true
+            });
+
+            fs.writeFileSync(reviewOutputPath, [
+                '# Review',
+                '',
+                'Validated the scoped implementation and found no blocking issues, with concrete references to `src/cli/commands/gate-review-handlers.ts` and the stripped runtime-identity review-context fixture.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            recordExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(buildExitCode, 0);
+        assert.notEqual(recordExitCode, 0);
+        assert.ok(capturedErrors.some((line) => (
+            line.includes('missing canonical_source_of_truth')
+            || line.includes('missing execution_provider')
+            || line.includes('missing identity_status')
+        )));
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('required-reviews-check rejects rerun after the review gate already passed without mutating the timeline', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904b-rerun-review-gate';
@@ -9079,7 +11928,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Allow review-gate rerun after a new compile cycle'
@@ -9142,7 +11991,7 @@ describe('cli/commands/gates', () => {
             '```'
         ].join('\n'), 'utf8');
 
-        runEnterTaskModeCommand({
+        runEnterTaskMode({
             repoRoot,
             taskId,
             taskSummary: 'Validate fallback review flow',
@@ -9184,16 +12033,13 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: {
-                source_of_truth: 'Antigravity',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                execution_provider_source: 'explicit_provider',
                 capability_level: 'delegation_conditional',
                 expected_execution_mode: 'delegated_subagent',
                 fallback_allowed: true,
-                fallback_reason_required: true,
-                actual_execution_mode: null,
-                reviewer_session_id: null,
-                fallback_reason: null
-            }
+                fallback_reason_required: true
+            })
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: 'code-review' });
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', {

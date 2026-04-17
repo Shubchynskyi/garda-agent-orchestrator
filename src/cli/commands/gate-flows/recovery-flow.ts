@@ -457,7 +457,8 @@ export async function runRestartReviewCycleCommand(
                     repoRoot,
                     reviewType,
                     depth: String(effectiveDepth),
-                    preflightPath: refreshedPreflightPath
+                    preflightPath: refreshedPreflightPath,
+                    taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined
                 });
                 preparedResults.push(prepared);
                 if (prepared.reusedReviewEvidence) {

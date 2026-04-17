@@ -5,6 +5,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
+import {
+    buildProviderOrchestratorAgentContent,
+    buildSharedStartTaskWorkflowContent
+} from '../../../src/materialization/content-builders';
 
 function readRepoFile(relativePath: string): string {
     const repoRoot = getRepoRoot();
@@ -88,4 +92,26 @@ test('template TASK scaffold is tracked and not ignored by root gitignore', () =
         0,
         `template/TASK.md must not be ignored by .gitignore.\n${ignoredResult.stdout || ignoredResult.stderr}`
     );
+});
+
+test('source-checkout router files stay synced with generated task-start/runtime-identity guidance', () => {
+    const normalize = (content: string) => content.replace(/\r\n/g, '\n').trim();
+    assert.equal(
+        normalize(readRepoFile('.agents/workflows/start-task.md')),
+        normalize(buildSharedStartTaskWorkflowContent('AGENTS.md'))
+    );
+
+    const providerFiles = [
+        ['.github/agents/orchestrator.md', 'GitHub Copilot', '.github/agents/orchestrator.md'],
+        ['.windsurf/agents/orchestrator.md', 'Windsurf', '.windsurf/agents/orchestrator.md'],
+        ['.junie/agents/orchestrator.md', 'Junie', '.junie/agents/orchestrator.md'],
+        ['.antigravity/agents/orchestrator.md', 'Antigravity', '.antigravity/agents/orchestrator.md']
+    ] as const;
+    for (const [relativePath, providerLabel, bridgePath] of providerFiles) {
+        assert.equal(
+            normalize(readRepoFile(relativePath)),
+            normalize(buildProviderOrchestratorAgentContent(providerLabel, 'AGENTS.md', bridgePath)),
+            `${relativePath} must stay synced with generated provider bridge content`
+        );
+    }
 });

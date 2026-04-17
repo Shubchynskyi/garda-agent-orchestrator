@@ -29,12 +29,18 @@ import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshak
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
 import { getReviewContextContractViolations } from './review-context-contract';
+import { resolveReviewContextRoutingIdentity } from './review-context-routing';
 import { getCanonicalReviewContextPath, resolveCanonicalReviewContextPath } from './review-context-paths';
 import {
     getRequiredUpstreamReviewsFromRecord,
     normalizeRequiredReviewRecord
 } from './review-dependencies';
-import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
+import {
+    normalizeRuntimeIdentitySource,
+    normalizeSourceOfTruthValue,
+    resolveRuntimeReviewerIdentity,
+    resolveReviewerRoutingPolicy
+} from './reviewer-routing';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
 /**
@@ -584,7 +590,10 @@ export function validateReviewSkillEvidence(
     }>,
     codeChanged: boolean,
     timelinePath: string,
-    sourceOfTruth: string | null = null
+    sourceOfTruth: string | null = null,
+    canonicalSourceOfTruth: string | null = null,
+    allowLegacyReviewContextIdentityFallback = false,
+    executionProviderSource: string | null = null
 ): { skill_ids: string[]; reference_paths: string[]; artifact_keys: string[]; reviewer_execution_modes: string[]; violations: string[] } {
     const result = {
         skill_ids: [] as string[],
@@ -819,9 +828,70 @@ export function validateReviewSkillEvidence(
                     `Required review '${key}' is missing a valid review-context artifact with reviewer_routing metadata.`
                 );
             } else {
+                const resolvedRoutingIdentity = resolveReviewContextRoutingIdentity({
+                    reviewerRouting,
+                    canonicalSourceOfTruth,
+                    executionProvider: sourceOfTruth,
+                    allowLegacyCompatibility: allowLegacyReviewContextIdentityFallback
+                });
+                const reviewContextCanonicalSourceOfTruth = resolvedRoutingIdentity.canonical_source_of_truth;
+                const reviewContextExecutionProvider = resolvedRoutingIdentity.execution_provider;
+                const reviewContextExecutionProviderSource = normalizeRuntimeIdentitySource(reviewerRouting.execution_provider_source);
+                const reviewContextIdentityStatus = resolvedRoutingIdentity.identity_status;
                 const actualExecutionMode = normalizeReviewerExecutionMode(reviewerRouting.actual_execution_mode);
                 const reviewerSessionId = normalizeTimelineDetailString(reviewerRouting.reviewer_session_id);
                 const fallbackReason = normalizeTimelineDetailString(reviewerRouting.fallback_reason);
+                if (!canonicalSourceOfTruth) {
+                    result.violations.push(
+                        `Required review '${key}' cannot be validated because the active workspace is missing canonical SourceOfTruth.`
+                    );
+                } else if (!reviewContextCanonicalSourceOfTruth) {
+                    result.violations.push(
+                        `Required review '${key}' review-context is missing canonical_source_of_truth.`
+                    );
+                } else if (reviewContextCanonicalSourceOfTruth !== canonicalSourceOfTruth) {
+                    result.violations.push(
+                        `Required review '${key}' review-context canonical_source_of_truth (${reviewContextCanonicalSourceOfTruth}) ` +
+                        `does not match canonical provider (${canonicalSourceOfTruth}).`
+                    );
+                }
+                if (!sourceOfTruth) {
+                    result.violations.push(
+                        `Required review '${key}' cannot be validated because the active task is missing execution provider identity.`
+                    );
+                } else if (!reviewContextExecutionProvider) {
+                    result.violations.push(
+                        `Required review '${key}' review-context is missing execution_provider.`
+                    );
+                } else if (reviewContextExecutionProvider !== sourceOfTruth) {
+                    result.violations.push(
+                        `Required review '${key}' review-context execution_provider (${reviewContextExecutionProvider}) ` +
+                        `does not match active runtime provider (${sourceOfTruth}).`
+                    );
+                }
+                if (resolvedRoutingIdentity.explicit_split_identity_present && !reviewContextExecutionProviderSource) {
+                    result.violations.push(
+                        `Required review '${key}' review-context is missing execution_provider_source.`
+                    );
+                } else if (
+                    resolvedRoutingIdentity.explicit_split_identity_present
+                    && executionProviderSource
+                    && reviewContextExecutionProviderSource !== executionProviderSource
+                ) {
+                    result.violations.push(
+                        `Required review '${key}' review-context execution_provider_source (${reviewContextExecutionProviderSource}) ` +
+                        `does not match active runtime source (${executionProviderSource}).`
+                    );
+                }
+                if (!reviewContextIdentityStatus) {
+                    result.violations.push(
+                        `Required review '${key}' review-context is missing identity_status.`
+                    );
+                } else if (reviewContextIdentityStatus !== 'resolved') {
+                    result.violations.push(
+                        `Required review '${key}' review-context runtime identity status must be 'resolved', got '${reviewContextIdentityStatus}'.`
+                    );
+                }
                 if (reviewerRouting.actual_execution_mode && !actualExecutionMode) {
                     result.violations.push(
                         `Required review '${key}' has invalid reviewer_routing.actual_execution_mode ` +
@@ -1525,7 +1595,19 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         receipt: ReviewReceipt | null;
         findings_evidence: ReturnType<typeof getReviewArtifactFindingsEvidence>;
     }> = {};
-    const sourceOfTruth = readRuntimeReviewerProvider(repoRoot, resolvedTaskId);
+    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        taskId: resolvedTaskId,
+        taskModePath: options.taskModePath || '',
+        allowLegacyFallback: true
+    });
+    const executionProvider = runtimeIdentity.execution_provider;
+    if (runtimeIdentity.identity_status !== 'resolved') {
+        errors.push(
+            `Runtime reviewer identity must stay resolved for completion, got '${runtimeIdentity.identity_status}'.`
+        );
+    }
+    errors.push(...runtimeIdentity.violations);
 
     for (const [reviewKey] of REVIEW_CONTRACTS) {
         const required = !!requiredReviews[reviewKey];
@@ -1619,7 +1701,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         reviewArtifacts,
         codeChanged,
         timelinePath,
-        sourceOfTruth
+        executionProvider,
+        runtimeIdentity.canonical_source_of_truth,
+        runtimeIdentity.task_mode_identity_backfilled,
+        runtimeIdentity.execution_provider_source
     );
     errors.push(...reviewSkillEvidence.violations);
 
@@ -1630,8 +1715,16 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     stageSequence.reviewer_execution_modes = reviewSkillEvidence.reviewer_execution_modes;
 
     // T-1005: Build reviewer routing enforcement summary
-    const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth);
+    const routingPolicy = resolveReviewerRoutingPolicy(executionProvider);
     const reviewerRoutingEnforcement = {
+        canonical_source_of_truth: runtimeIdentity.canonical_source_of_truth,
+        canonical_entrypoint: runtimeIdentity.canonical_entrypoint,
+        execution_provider: runtimeIdentity.execution_provider,
+        execution_provider_source: runtimeIdentity.execution_provider_source,
+        routed_to: runtimeIdentity.routed_to,
+        provider_bridge: runtimeIdentity.provider_bridge,
+        identity_status: runtimeIdentity.identity_status,
+        identity_violations: runtimeIdentity.violations,
         source_of_truth: routingPolicy.source_of_truth,
         capability_level: routingPolicy.capability_level,
         delegation_required: routingPolicy.delegation_required,

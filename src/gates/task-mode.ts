@@ -1,7 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { SOURCE_OF_TRUTH_VALUES } from '../core/constants';
 import { assertValidTaskId } from '../gate-runtime/task-events';
+import { getCanonicalEntrypointFile, getProviderOrchestratorProfileDefinitions } from '../materialization/common';
 import {
     normalizeDirtyWorkspaceBaseline,
     type DirtyWorkspaceBaseline
@@ -11,6 +13,19 @@ import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo 
 export const TASK_MODE_ENTRY_MODES = Object.freeze([
     'EXPLICIT_TASK_EXECUTION',
     'TASK_CREATED_FROM_REQUEST'
+] as const);
+
+const TASK_MODE_ENTRY_EXECUTION_PROVIDER_SOURCES = Object.freeze([
+    'provider_bridge',
+    'provider_entrypoint',
+    'explicit_provider'
+] as const);
+
+const TASK_MODE_RUNTIME_IDENTITY_STATUSES = Object.freeze([
+    'resolved',
+    'legacy_fallback',
+    'missing',
+    'contradictory'
 ] as const);
 
 export type TaskModeEntryMode = (typeof TASK_MODE_ENTRY_MODES)[number];
@@ -46,6 +61,14 @@ export interface TaskModeArtifact {
     task_summary: string;
     orchestrator_work: boolean;
     provider: string | null;
+    canonical_source_of_truth: string | null;
+    execution_provider_source: string | null;
+    reviewer_capability_level: string | null;
+    reviewer_expected_execution_mode: string | null;
+    reviewer_fallback_allowed: boolean | null;
+    reviewer_fallback_reason_required: boolean | null;
+    runtime_identity_status: string | null;
+    runtime_identity_violations: string[];
     routed_to: string | null;
     actor: string;
     plan: TaskModePlanMetadata | null;
@@ -62,6 +85,14 @@ export interface BuildTaskModeArtifactOptions {
     taskSummary: string;
     orchestratorWork?: boolean;
     provider?: string | null;
+    canonicalSourceOfTruth?: string | null;
+    executionProviderSource?: string | null;
+    reviewerCapabilityLevel?: string | null;
+    reviewerExpectedExecutionMode?: string | null;
+    reviewerFallbackAllowed?: boolean | null;
+    reviewerFallbackReasonRequired?: boolean | null;
+    runtimeIdentityStatus?: string | null;
+    runtimeIdentityViolations?: string[] | null;
     routedTo?: string | null;
     actor?: string;
     plan?: TaskModePlanMetadata | null;
@@ -74,7 +105,10 @@ export interface TaskModeEvidenceResult {
     task_id: string | null;
     evidence_path: string | null;
     timeline_artifact_path: string | null;
+    timeline_declares_runtime_identity_metadata: boolean;
     evidence_hash: string | null;
+    declares_runtime_identity_metadata: boolean;
+    identity_backfilled_from_legacy: boolean;
     evidence_status: string;
     evidence_outcome: string | null;
     evidence_task_id: string | null;
@@ -85,6 +119,14 @@ export interface TaskModeEvidenceResult {
     task_summary: string | null;
     orchestrator_work: boolean | null;
     provider: string | null;
+    canonical_source_of_truth: string | null;
+    execution_provider_source: string | null;
+    reviewer_capability_level: string | null;
+    reviewer_expected_execution_mode: string | null;
+    reviewer_fallback_allowed: boolean | null;
+    reviewer_fallback_reason_required: boolean | null;
+    runtime_identity_status: string | null;
+    runtime_identity_violations: string[];
     routed_to: string | null;
     plan: TaskModePlanMetadata | null;
     active_profile: string | null;
@@ -143,10 +185,16 @@ function getTaskTimelinePath(repoRoot: string, taskId: string): string {
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
 }
 
-function getLatestTaskModeTimelineArtifactPath(repoRoot: string, taskId: string): string | null {
+function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
+    artifact_path: string | null;
+    declares_runtime_identity_metadata: boolean;
+} {
     const timelinePath = getTaskTimelinePath(repoRoot, taskId);
     if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
-        return null;
+        return {
+            artifact_path: null,
+            declares_runtime_identity_metadata: false
+        };
     }
 
     const lines = fs.readFileSync(timelinePath, 'utf8')
@@ -164,13 +212,166 @@ function getLatestTaskModeTimelineArtifactPath(repoRoot: string, taskId: string)
                 ? parsed.details as Record<string, unknown>
                 : null;
             const artifactPath = String(details?.artifact_path || details?.artifactPath || '').trim();
-            return artifactPath ? normalizePath(artifactPath) : null;
+            const declaresRuntimeIdentityMetadata = [
+                'canonical_source_of_truth',
+                'execution_provider_source',
+                'reviewer_capability_level',
+                'reviewer_expected_execution_mode',
+                'reviewer_fallback_allowed',
+                'reviewer_fallback_reason_required',
+                'runtime_identity_status',
+                'runtime_identity_violations'
+            ].some((key) => Object.prototype.hasOwnProperty.call(details || {}, key));
+            return {
+                artifact_path: artifactPath ? normalizePath(artifactPath) : null,
+                declares_runtime_identity_metadata: declaresRuntimeIdentityMetadata
+            };
         } catch {
-            return null;
+            return {
+                artifact_path: null,
+                declares_runtime_identity_metadata: false
+            };
+        }
+    }
+
+    return {
+        artifact_path: null,
+        declares_runtime_identity_metadata: false
+    };
+}
+
+function normalizeLegacySourceOfTruthValue(value: unknown): string | null {
+    const text = String(value || '').trim();
+    if (!text) {
+        return null;
+    }
+    const normalizedInput = text.toLowerCase().replace(/[\s_-]+/g, '');
+    const match = SOURCE_OF_TRUTH_VALUES.find((candidate) => (
+        candidate.toLowerCase().replace(/[\s_-]+/g, '') === normalizedInput
+    ));
+    return match || null;
+}
+
+function normalizeLegacyRoutePath(value: unknown): string | null {
+    const text = String(value || '').trim().replace(/\\/g, '/');
+    if (!text) {
+        return null;
+    }
+    return text.replace(/^\.\//, '');
+}
+
+function readLegacyCanonicalSourceOfTruth(repoRoot: string): string | null {
+    const normalizedRepoRoot = path.resolve(repoRoot);
+    const initAnswersPath = joinOrchestratorPath(normalizedRepoRoot, path.join('runtime', 'init-answers.json'));
+    if (fs.existsSync(initAnswersPath) && fs.statSync(initAnswersPath).isFile()) {
+        try {
+            const initAnswers = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+            const sourceOfTruth = normalizeLegacySourceOfTruthValue(initAnswers.SourceOfTruth);
+            if (sourceOfTruth) {
+                return sourceOfTruth;
+            }
+        } catch {
+            // Legacy compatibility fallback only.
+        }
+    }
+
+    const liveVersionPath = joinOrchestratorPath(normalizedRepoRoot, path.join('live', 'version.json'));
+    if (fs.existsSync(liveVersionPath) && fs.statSync(liveVersionPath).isFile()) {
+        try {
+            const liveVersion = JSON.parse(fs.readFileSync(liveVersionPath, 'utf8')) as Record<string, unknown>;
+            return normalizeLegacySourceOfTruthValue(liveVersion.SourceOfTruth);
+        } catch {
+            // Legacy compatibility fallback only.
         }
     }
 
     return null;
+}
+
+function resolveLegacyRouteIdentity(routedTo: string | null): {
+    provider: string | null;
+    routeKind: 'provider_bridge' | 'provider_entrypoint' | null;
+} {
+    const normalizedRoute = normalizeLegacyRoutePath(routedTo);
+    if (!normalizedRoute) {
+        return {
+            provider: null,
+            routeKind: null
+        };
+    }
+
+    for (const profile of getProviderOrchestratorProfileDefinitions()) {
+        if (normalizeLegacyRoutePath(profile.orchestratorRelativePath) === normalizedRoute) {
+            return {
+                provider: normalizeLegacySourceOfTruthValue(profile.providerLabel),
+                routeKind: 'provider_bridge'
+            };
+        }
+    }
+
+    for (const providerLabel of SOURCE_OF_TRUTH_VALUES) {
+        try {
+            if (normalizeLegacyRoutePath(getCanonicalEntrypointFile(providerLabel)) === normalizedRoute) {
+                return {
+                    provider: providerLabel,
+                    routeKind: 'provider_entrypoint'
+                };
+            }
+        } catch {
+            // Ignore unmaterialized entrypoints in compatibility inference.
+        }
+    }
+
+    return {
+        provider: null,
+        routeKind: null
+    };
+}
+
+function applyLegacyTaskModeIdentityBackfill(repoRoot: string, result: TaskModeEvidenceResult): void {
+    const legacyRoutingMetadataMissing = (
+        result.reviewer_capability_level == null
+        && result.reviewer_expected_execution_mode == null
+        && result.reviewer_fallback_allowed == null
+        && result.reviewer_fallback_reason_required == null
+    );
+    const identityMetadataMissing = !result.canonical_source_of_truth || !result.execution_provider_source || !result.runtime_identity_status;
+    if (
+        !legacyRoutingMetadataMissing
+        || !identityMetadataMissing
+        || result.declares_runtime_identity_metadata
+        || result.timeline_declares_runtime_identity_metadata
+    ) {
+        return;
+    }
+
+    const workspaceCanonicalSourceOfTruth = readLegacyCanonicalSourceOfTruth(repoRoot);
+    const provider = normalizeLegacySourceOfTruthValue(result.provider);
+    const routeIdentity = resolveLegacyRouteIdentity(result.routed_to);
+    if (!workspaceCanonicalSourceOfTruth || !provider) {
+        return;
+    }
+    let executionProvider = provider;
+    if (routeIdentity.provider && routeIdentity.provider !== provider) {
+        if (routeIdentity.routeKind === 'provider_bridge' && provider === workspaceCanonicalSourceOfTruth) {
+            executionProvider = routeIdentity.provider;
+        } else {
+            result.runtime_identity_violations = [
+                ...result.runtime_identity_violations,
+                `Legacy task-mode routed_to '${result.routed_to}' identifies provider '${routeIdentity.provider}', ` +
+                `but legacy task-mode provider is '${provider}'.`
+            ];
+            return;
+        }
+    }
+
+    result.provider = executionProvider;
+    result.canonical_source_of_truth = result.canonical_source_of_truth || workspaceCanonicalSourceOfTruth;
+    result.execution_provider_source = result.execution_provider_source
+        || routeIdentity.routeKind
+        || (executionProvider === workspaceCanonicalSourceOfTruth ? 'provider_entrypoint' : 'explicit_provider');
+    result.runtime_identity_status = result.runtime_identity_status || 'resolved';
+    result.identity_backfilled_from_legacy = true;
 }
 
 export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): TaskModeArtifact {
@@ -204,6 +405,18 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         task_summary: taskSummary,
         orchestrator_work: !!options.orchestratorWork,
         provider: String(options.provider || '').trim() || null,
+        canonical_source_of_truth: String(options.canonicalSourceOfTruth || '').trim() || null,
+        execution_provider_source: String(options.executionProviderSource || '').trim() || null,
+        reviewer_capability_level: String(options.reviewerCapabilityLevel || '').trim() || null,
+        reviewer_expected_execution_mode: String(options.reviewerExpectedExecutionMode || '').trim() || null,
+        reviewer_fallback_allowed: typeof options.reviewerFallbackAllowed === 'boolean' ? options.reviewerFallbackAllowed : null,
+        reviewer_fallback_reason_required: typeof options.reviewerFallbackReasonRequired === 'boolean'
+            ? options.reviewerFallbackReasonRequired
+            : null,
+        runtime_identity_status: String(options.runtimeIdentityStatus || '').trim() || null,
+        runtime_identity_violations: Array.isArray(options.runtimeIdentityViolations)
+            ? options.runtimeIdentityViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
+            : [],
         routed_to: String(options.routedTo || '').trim() || null,
         actor,
         plan,
@@ -218,7 +431,10 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         task_id: taskId,
         evidence_path: null,
         timeline_artifact_path: null,
+        timeline_declares_runtime_identity_metadata: false,
         evidence_hash: null,
+        declares_runtime_identity_metadata: false,
+        identity_backfilled_from_legacy: false,
         evidence_status: 'UNKNOWN',
         evidence_outcome: null,
         evidence_task_id: null,
@@ -229,6 +445,14 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         task_summary: null,
         orchestrator_work: null,
         provider: null,
+        canonical_source_of_truth: null,
+        execution_provider_source: null,
+        reviewer_capability_level: null,
+        reviewer_expected_execution_mode: null,
+        reviewer_fallback_allowed: null,
+        reviewer_fallback_reason_required: null,
+        runtime_identity_status: null,
+        runtime_identity_violations: [],
         routed_to: null,
         plan: null,
         active_profile: null,
@@ -259,6 +483,16 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     }
 
     result.evidence_hash = fileSha256(resolvedPath);
+    result.declares_runtime_identity_metadata = [
+        'canonical_source_of_truth',
+        'execution_provider_source',
+        'reviewer_capability_level',
+        'reviewer_expected_execution_mode',
+        'reviewer_fallback_allowed',
+        'reviewer_fallback_reason_required',
+        'runtime_identity_status',
+        'runtime_identity_violations'
+    ].some((key) => Object.prototype.hasOwnProperty.call(artifactObject, key));
     result.evidence_status = String(artifactObject.status || '').trim().toUpperCase();
     result.evidence_outcome = String(artifactObject.outcome || '').trim().toUpperCase();
     result.evidence_task_id = String(artifactObject.task_id || '').trim() || null;
@@ -267,7 +501,25 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.task_summary = String(artifactObject.task_summary || '').trim() || null;
     result.orchestrator_work = typeof artifactObject.orchestrator_work === 'boolean' ? artifactObject.orchestrator_work : null;
     result.provider = String(artifactObject.provider || '').trim() || null;
+    result.canonical_source_of_truth = String(artifactObject.canonical_source_of_truth || '').trim() || null;
+    result.execution_provider_source = String(artifactObject.execution_provider_source || '').trim() || null;
+    result.reviewer_capability_level = String(artifactObject.reviewer_capability_level || '').trim() || null;
+    result.reviewer_expected_execution_mode = String(artifactObject.reviewer_expected_execution_mode || '').trim() || null;
+    result.reviewer_fallback_allowed = typeof artifactObject.reviewer_fallback_allowed === 'boolean'
+        ? artifactObject.reviewer_fallback_allowed
+        : null;
+    result.reviewer_fallback_reason_required = typeof artifactObject.reviewer_fallback_reason_required === 'boolean'
+        ? artifactObject.reviewer_fallback_reason_required
+        : null;
+    result.runtime_identity_status = String(artifactObject.runtime_identity_status || '').trim() || null;
+    result.runtime_identity_violations = Array.isArray(artifactObject.runtime_identity_violations)
+        ? artifactObject.runtime_identity_violations.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
     result.routed_to = String(artifactObject.routed_to || '').trim() || null;
+    const timelineMetadata = getLatestTaskModeTimelineMetadata(repoRoot, resolvedTaskId);
+    result.timeline_artifact_path = timelineMetadata.artifact_path;
+    result.timeline_declares_runtime_identity_metadata = timelineMetadata.declares_runtime_identity_metadata;
+    applyLegacyTaskModeIdentityBackfill(repoRoot, result);
 
     // Extract optional plan metadata
     const rawPlan = artifactObject.plan;
@@ -319,7 +571,49 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         result.evidence_status = 'EVIDENCE_SUMMARY_INVALID';
         return result;
     }
-    result.timeline_artifact_path = getLatestTaskModeTimelineArtifactPath(repoRoot, resolvedTaskId);
+    if (!result.canonical_source_of_truth) {
+        result.evidence_status = 'EVIDENCE_CANONICAL_SOURCE_OF_TRUTH_INVALID';
+        return result;
+    }
+    if (
+        !result.execution_provider_source
+        || !TASK_MODE_ENTRY_EXECUTION_PROVIDER_SOURCES.includes(
+            result.execution_provider_source as (typeof TASK_MODE_ENTRY_EXECUTION_PROVIDER_SOURCES)[number]
+        )
+    ) {
+        result.evidence_status = 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_INVALID';
+        return result;
+    }
+    if (
+        !result.runtime_identity_status
+        || !TASK_MODE_RUNTIME_IDENTITY_STATUSES.includes(
+            result.runtime_identity_status as (typeof TASK_MODE_RUNTIME_IDENTITY_STATUSES)[number]
+        )
+    ) {
+        result.evidence_status = 'EVIDENCE_RUNTIME_IDENTITY_STATUS_INVALID';
+        return result;
+    }
+    if (result.runtime_identity_status !== 'resolved') {
+        result.evidence_status = 'EVIDENCE_RUNTIME_IDENTITY_NOT_RESOLVED';
+        return result;
+    }
+    if (result.runtime_identity_violations.length > 0) {
+        result.evidence_status = 'EVIDENCE_RUNTIME_IDENTITY_VIOLATIONS_PRESENT';
+        return result;
+    }
+    const routeIdentity = resolveLegacyRouteIdentity(result.routed_to);
+    if (routeIdentity.provider && result.provider && routeIdentity.provider !== result.provider) {
+        result.evidence_status = 'EVIDENCE_PROVIDER_ROUTE_MISMATCH';
+        return result;
+    }
+    if (
+        routeIdentity.routeKind
+        && result.execution_provider_source
+        && routeIdentity.routeKind !== result.execution_provider_source
+    ) {
+        result.evidence_status = 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_ROUTE_MISMATCH';
+        return result;
+    }
     if (
         result.timeline_artifact_path
         && result.evidence_path
@@ -370,6 +664,37 @@ export function getTaskModeEvidenceViolations(result: TaskModeEvidenceResult): s
             return ['Task-mode entry evidence is missing a valid effective_depth (1..3).'];
         case 'EVIDENCE_SUMMARY_INVALID':
             return ['Task-mode entry evidence is missing a usable task_summary (>= 8 chars).'];
+        case 'EVIDENCE_CANONICAL_SOURCE_OF_TRUTH_INVALID':
+            return ['Task-mode entry evidence is missing canonical_source_of_truth. Re-run enter-task-mode.'];
+        case 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_INVALID':
+            return [
+                `Task-mode entry evidence must record an explicit execution_provider_source (` +
+                `${TASK_MODE_ENTRY_EXECUTION_PROVIDER_SOURCES.join(', ')}), got '${result.execution_provider_source || 'missing'}'.`
+            ];
+        case 'EVIDENCE_RUNTIME_IDENTITY_STATUS_INVALID':
+            return [
+                `Task-mode entry evidence has invalid runtime_identity_status '${result.runtime_identity_status || 'missing'}'. ` +
+                `Allowed values: ${TASK_MODE_RUNTIME_IDENTITY_STATUSES.join(', ')}.`
+            ];
+        case 'EVIDENCE_RUNTIME_IDENTITY_NOT_RESOLVED':
+            return [
+                `Task-mode entry evidence must record runtime_identity_status='resolved', got '${result.runtime_identity_status}'. ` +
+                'Re-run enter-task-mode with explicit runtime identity; legacy fallback and contradictory runtime identity are invalid.'
+            ];
+        case 'EVIDENCE_RUNTIME_IDENTITY_VIOLATIONS_PRESENT':
+            return [
+                `Task-mode entry evidence recorded runtime identity violations: ${result.runtime_identity_violations.join(' ')}`
+            ];
+        case 'EVIDENCE_PROVIDER_ROUTE_MISMATCH':
+            return [
+                `Task-mode entry evidence records provider '${result.provider || 'missing'}', ` +
+                `but routed_to '${result.routed_to || 'missing'}' identifies a different provider.`
+            ];
+        case 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_ROUTE_MISMATCH':
+            return [
+                `Task-mode entry evidence records execution_provider_source='${result.execution_provider_source || 'missing'}', ` +
+                `but routed_to '${result.routed_to || 'missing'}' resolves to a different runtime source.`
+            ];
         case 'EVIDENCE_ARTIFACT_PATH_MISMATCH':
             return [
                 `Task-mode entry evidence artifact path mismatch. Timeline recorded '${result.timeline_artifact_path}', ` +

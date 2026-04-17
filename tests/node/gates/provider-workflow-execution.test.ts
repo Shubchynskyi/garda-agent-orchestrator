@@ -110,6 +110,12 @@ function scaffoldProviderWorkspace(root: string, options: ScaffoldOptions): void
         fs.writeFileSync(path.join(root, 'VERSION'), '1.0.0', 'utf8');
     }
 
+    const initAnswersPath = path.join(root, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+    fs.writeFileSync(initAnswersPath, JSON.stringify({
+        SourceOfTruth: provider
+    }, null, 2), 'utf8');
+
     // Template content for canonical block builder
     const templatePath = path.join(process.cwd(), 'template', 'CLAUDE.md');
     const templateContent = fs.readFileSync(templatePath, 'utf-8');
@@ -209,13 +215,17 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     assert.equal(result.status, 'PASSED', `${provider} should pass handshake in source-checkout`);
                     assert.equal(result.outcome, 'PASS');
                     assert.equal(result.provider, provider);
+                    assert.equal(result.execution_provider, provider);
+                    assert.equal(result.canonical_source_of_truth, provider);
                     assert.equal(result.canonical_entrypoint, canonicalFile);
                     assert.equal(result.canonical_entrypoint_exists, true);
+                    assert.equal(result.execution_provider_source, 'explicit_provider');
+                    assert.equal(result.runtime_identity_status, 'resolved');
                     assert.equal(result.execution_context, 'source-checkout');
                     assert.equal(result.cli_path, 'node bin/garda.js');
                     assert.equal(result.start_task_router_exists, true);
                     assert.equal(result.violations.length, 0);
-                    assert.equal(result.diagnostics.length, 7, 'Should produce exactly 7 diagnostic checks');
+                    assert.equal(result.diagnostics.length, 8, 'Should produce exactly 8 diagnostic checks');
 
                     if (hasBridge) {
                         assert.equal(result.provider_bridge, bridgeProfile!.orchestratorRelativePath);
@@ -239,6 +249,10 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                         provider
                     });
                     assert.equal(result.status, 'PASSED', `${provider} should pass handshake in materialized-bundle`);
+                    assert.equal(result.execution_provider, provider);
+                    assert.equal(result.canonical_source_of_truth, provider);
+                    assert.equal(result.execution_provider_source, 'explicit_provider');
+                    assert.equal(result.runtime_identity_status, 'resolved');
                     assert.equal(result.execution_context, 'materialized-bundle');
                     assert.equal(result.cli_path, 'node garda-agent-orchestrator/bin/garda.js');
                     assert.equal(result.violations.length, 0);
@@ -250,6 +264,11 @@ describe('provider-workflow-execution: handshake per provider family', () => {
             it('FAIL when canonical entrypoint is missing', () => {
                 const dir = createTempDir();
                 try {
+                    const initAnswersPath = path.join(dir, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+                    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+                    fs.writeFileSync(initAnswersPath, JSON.stringify({
+                        SourceOfTruth: provider
+                    }, null, 2), 'utf8');
                     // Only write router, skip entrypoint
                     const routerPath = path.join(dir, SHARED_START_TASK_WORKFLOW_RELATIVE_PATH);
                     fs.mkdirSync(path.dirname(routerPath), { recursive: true });
@@ -334,6 +353,51 @@ describe('provider-workflow-execution: handshake per provider family', () => {
     }
 });
 
+describe('provider-workflow-execution: split canonical/runtime identity', () => {
+    let tempDir: string;
+
+    beforeEach(() => { tempDir = createTempDir(); });
+    afterEach(() => { removeTempDir(tempDir); });
+
+    it('passes handshake and evidence binding when canonical SourceOfTruth differs from execution provider', () => {
+        const taskId = 'T-EXEC-SPLIT-01';
+        scaffoldProviderWorkspace(tempDir, { provider: 'Codex', sourceCheckout: true });
+        const antigravityBridgePath = path.join(tempDir, '.antigravity', 'agents', 'orchestrator.md');
+        fs.mkdirSync(path.dirname(antigravityBridgePath), { recursive: true });
+        fs.writeFileSync(antigravityBridgePath, '# Bridge', 'utf8');
+
+        const artifact = buildHandshakeDiagnostics({
+            taskId,
+            repoRoot: tempDir,
+            provider: 'Antigravity'
+        });
+
+        assert.equal(artifact.status, 'PASSED');
+        assert.equal(artifact.outcome, 'PASS');
+        assert.equal(artifact.provider, 'Antigravity');
+        assert.equal(artifact.execution_provider, 'Antigravity');
+        assert.equal(artifact.canonical_source_of_truth, 'Codex');
+        assert.equal(artifact.canonical_entrypoint, 'AGENTS.md');
+        assert.equal(artifact.provider_bridge, '.antigravity/agents/orchestrator.md');
+        assert.equal(artifact.provider_bridge_exists, true);
+        assert.equal(artifact.execution_provider_source, 'explicit_provider');
+        assert.equal(artifact.runtime_identity_status, 'resolved');
+        assert.equal(artifact.violations.length, 0);
+
+        const artifactPath = writeHandshakeArtifact(tempDir, taskId, artifact);
+        const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+        const timelinePath = writeTimelineEvent(tempDir, taskId, [
+            { event_type: 'TASK_MODE_ENTERED', timestamp_utc: new Date().toISOString() },
+            { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED', timestamp_utc: new Date().toISOString(), details: { artifact_hash: hash } }
+        ]);
+
+        const evidence = getHandshakeEvidence(tempDir, taskId, { timelinePath, artifactPath });
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.provider, 'Antigravity');
+        assert.equal(evidence.violations.length, 0);
+    });
+});
+
 // ===========================================================================
 // 2. Handshake evidence lifecycle per provider family
 // ===========================================================================
@@ -358,10 +422,14 @@ describe('provider-workflow-execution: evidence lifecycle per provider', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider,
+                execution_provider: provider,
+                canonical_source_of_truth: provider,
                 canonical_entrypoint: canonicalFile,
                 canonical_entrypoint_exists: true,
                 provider_bridge: bridgeProfile?.orchestratorRelativePath ?? null,
                 provider_bridge_exists: !!bridgeProfile,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -402,10 +470,14 @@ describe('provider-workflow-execution: evidence lifecycle per provider', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider,
+                execution_provider: provider,
+                canonical_source_of_truth: provider,
                 canonical_entrypoint: canonicalFile,
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',

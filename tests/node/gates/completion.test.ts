@@ -103,6 +103,9 @@ describe('gates/completion', () => {
                 task_summary: 'Protect orchestrator control plane',
                 orchestrator_work: orchestratorWork,
                 provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                execution_provider_source: 'provider_entrypoint',
+                runtime_identity_status: 'resolved',
                 routed_to: 'AGENTS.md',
                 actor: 'orchestrator'
             });
@@ -161,10 +164,14 @@ describe('gates/completion', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
                 canonical_entrypoint: 'AGENTS.md',
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'provider_entrypoint',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'materialized-bundle',
@@ -1056,6 +1063,10 @@ describe('gates/completion', () => {
                     path: '/reviews/T-123-code.md',
                     reviewContext: {
                         reviewer_routing: {
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
                             actual_execution_mode: 'delegated_subagent',
                             reviewer_session_id: 'agent:code-reviewer'
                         }
@@ -1078,6 +1089,10 @@ describe('gates/completion', () => {
                     path: '/reviews/T-123-test.md',
                     reviewContext: {
                         reviewer_routing: {
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
                             actual_execution_mode: 'delegated_subagent',
                             reviewer_session_id: 'agent:test-reviewer'
                         }
@@ -1121,6 +1136,7 @@ describe('gates/completion', () => {
                     reviewArtifacts,
                     true,
                     '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                    'Codex',
                     'Codex'
                 );
                 if (result.violations.length > 0) {
@@ -1422,6 +1438,77 @@ describe('gates/completion', () => {
                         path: '/reviews/T-123-code.md',
                         reviewContext: {
                             reviewer_routing: {
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                execution_provider_source: 'provider_entrypoint',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:fresh-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:fresh-reviewer',
+                            reviewer_fallback_reason: null,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex',
+                'Codex',
+                false,
+                'provider_entrypoint'
+            );
+
+            assert.equal(result.violations.length, 0, JSON.stringify(result, null, 2));
+        });
+
+        it('fails when the latest reviewer routing telemetry records a different reviewer identity', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:fresh-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_PHASE_STARTED', 6),
+                makeEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:stale-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 11)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
                                 actual_execution_mode: 'delegated_subagent',
                                 reviewer_session_id: 'agent:fresh-reviewer'
                             }
@@ -1446,11 +1533,11 @@ describe('gates/completion', () => {
                 'Codex'
             );
 
-            assert.equal(
-                result.violations.some((entry) => entry.includes('stale-reviewer')),
-                false,
-                'Repeated review attempts must bind to the latest REVIEWER_DELEGATION_ROUTED event.'
-            );
+            assert.ok(result.violations.some((entry) => (
+                entry.includes('REVIEWER_DELEGATION_ROUTED telemetry')
+                && entry.includes('agent:stale-reviewer')
+                && entry.includes('agent:fresh-reviewer')
+            )));
         });
 
         it('fails when delegation-required provider records same-agent fallback for a required review', () => {
@@ -1489,6 +1576,179 @@ describe('gates/completion', () => {
             );
 
             assert.ok(result.violations.some((entry) => entry.includes('delegated_subagent')));
+        });
+
+        it('fails when review-context omits canonical_source_of_truth for a required review', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                execution_provider: 'Codex',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('missing canonical_source_of_truth')));
+        });
+
+        it('fails when review-context omits execution_provider_source for a required review', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex',
+                'Codex',
+                false,
+                'provider_entrypoint'
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('missing execution_provider_source')));
+        });
+
+        it('fails when canonical SourceOfTruth is unavailable for required review validation', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex',
+                null
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('missing canonical SourceOfTruth')));
+        });
+
+        it('fails when review-context omits execution_provider and identity_status for a required review', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                source_of_truth: 'Codex',
+                                canonical_source_of_truth: 'Codex',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some((entry) => entry.includes('missing execution_provider')));
+            assert.ok(result.violations.some((entry) => entry.includes('missing identity_status')));
         });
 
         it('fails when a single-agent provider records delegated_subagent for a required review', () => {

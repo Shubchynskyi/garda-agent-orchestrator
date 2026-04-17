@@ -442,6 +442,8 @@ export function buildProviderOrchestratorAgentContent(
     canonicalFile: string,
     bridgePath: string
 ): string {
+    const runtimeIdentityInstruction = `include explicit runtime identity with ` +
+        `\`--provider "${providerLabel}"\` or \`--routed-to "${bridgePath}"\`; do not rely on canonical SourceOfTruth fallback`;
     if (bridgePath.replace(/\\/g, '/') === '.antigravity/agents/orchestrator.md') {
         return `${MANAGED_START}
 # Antigravity Agent: Orchestrator
@@ -491,7 +493,7 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 4. In the first execution reply, explicitly state \`files not modified yet\` before any edits and list the first mandatory gates to run.
 5. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
 6. If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
-7. Enter task mode explicitly via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace.
+7. Enter task mode explicitly via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace; ${runtimeIdentityInstruction}.
 8. Record baseline downstream rules explicitly via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack ...\` inside a materialized/deployed workspace.
 9. Run handshake diagnostics via \`node bin/garda.js gate handshake-diagnostics ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} handshake-diagnostics ...\` inside a materialized/deployed workspace.
 10. Run shell smoke preflight via \`node bin/garda.js gate shell-smoke-preflight ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} shell-smoke-preflight ...\` inside a materialized/deployed workspace.
@@ -560,7 +562,7 @@ Before any code changes:
 - Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
 Mandatory gate order:
-1. \`gate enter-task-mode\`
+1. \`gate enter-task-mode\` with explicit runtime identity via \`--provider "<runtime-provider>"\` or \`--routed-to "<provider-bridge-or-entrypoint>"\`; never rely on canonical SourceOfTruth fallback
 2. \`gate load-rule-pack --stage TASK_ENTRY\`
 3. \`gate handshake-diagnostics\`
 4. \`gate shell-smoke-preflight\`

@@ -6,7 +6,7 @@ import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-run
 import { fileSha256, normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPath, resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { getCanonicalReviewContextPath } from './review-context-paths';
-import { readRuntimeReviewerProvider, resolveReviewerRoutingPolicy } from './reviewer-routing';
+import { resolveRuntimeReviewerIdentity } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 
 /**
@@ -141,6 +141,7 @@ export interface BuildReviewContextOptions {
     depth: number;
     preflightPath: string;
     preflightPayload?: Record<string, unknown> | null;
+    taskModePath?: string | null;
     tokenEconomyConfigPath: string;
     scopedDiffMetadataPath: string;
     outputPath: string;
@@ -188,8 +189,30 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const requiredReviews = preflight.required_reviews || {};
     const requiredReview = parseBool(requiredReviews[reviewType]);
     const taskId = String(preflight.task_id || '').trim() || null;
-    const sourceOfTruth = readRuntimeReviewerProvider(repoRoot, taskId);
-    const reviewerRoutingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth);
+    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        taskId,
+        taskModePath: options.taskModePath || '',
+        allowLegacyFallback: true
+    });
+    const runtimeIdentityViolations = [...runtimeIdentity.violations];
+    if (!runtimeIdentity.canonical_source_of_truth) {
+        runtimeIdentityViolations.push('Pinned canonical_source_of_truth is missing from task-mode identity evidence.');
+    }
+    if (!runtimeIdentity.execution_provider) {
+        runtimeIdentityViolations.push('Pinned execution_provider is missing from task-mode identity evidence.');
+    }
+    if (runtimeIdentity.identity_status !== 'resolved') {
+        runtimeIdentityViolations.push(
+            `Active runtime identity for task '${taskId || '<unknown>'}' is '${runtimeIdentity.identity_status}'. ` +
+            'Re-enter task mode with explicit runtime identity before preparing review context.'
+        );
+    }
+    if (runtimeIdentityViolations.length > 0) {
+        throw new Error(
+            `Review context cannot be built because runtime identity is invalid. ${runtimeIdentityViolations.join(' ')}`
+        );
+    }
 
     // Read plan metadata from task-mode evidence (optional, never blocks)
     let planMetadata: { plan_guided: boolean; plan_path: string | null; plan_sha256: string | null; plan_summary: string | null } = {
@@ -199,7 +222,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         plan_summary: null
     };
     if (taskId) {
-        const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
+        const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, options.taskModePath || '');
         if (taskModeEvidence.plan) {
             planMetadata = {
                 plan_guided: true,
@@ -333,18 +356,26 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             metadata: scopedDiffMetadata
         },
         reviewer_routing: {
-            source_of_truth: reviewerRoutingPolicy.source_of_truth,
-            capability_level: reviewerRoutingPolicy.capability_level,
-            delegation_required: !!requiredReview && reviewerRoutingPolicy.delegation_required,
-            expected_execution_mode: reviewerRoutingPolicy.expected_execution_mode,
-            fallback_allowed: reviewerRoutingPolicy.fallback_allowed,
-            fallback_reason_required: reviewerRoutingPolicy.fallback_reason_required,
+            source_of_truth: runtimeIdentity.execution_provider,
+            canonical_source_of_truth: runtimeIdentity.canonical_source_of_truth,
+            canonical_entrypoint: runtimeIdentity.canonical_entrypoint,
+            execution_provider: runtimeIdentity.execution_provider,
+            execution_provider_source: runtimeIdentity.execution_provider_source,
+            routed_to: runtimeIdentity.routed_to,
+            provider_bridge: runtimeIdentity.provider_bridge,
+            identity_status: runtimeIdentity.identity_status,
+            capability_level: runtimeIdentity.capability_level,
+            delegation_required: !!requiredReview && runtimeIdentity.delegation_required,
+            expected_execution_mode: runtimeIdentity.expected_execution_mode,
+            fallback_allowed: runtimeIdentity.fallback_allowed,
+            fallback_reason_required: runtimeIdentity.fallback_reason_required,
             reviewer_execution_mode_required: !!requiredReview,
             reviewer_identity_required: !!requiredReview,
             actual_execution_mode: null as string | null,
             reviewer_session_id: null as string | null,
             fallback_reason: null as string | null,
-            note: reviewerRoutingPolicy.note
+            note: runtimeIdentity.note,
+            identity_violations: runtimeIdentity.violations
         },
         plan: planMetadata
     };

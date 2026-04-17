@@ -300,6 +300,8 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('Task Timeline Logging'));
         assert.ok(result!.includes('.github/agents/orchestrator.md'));
         assert.ok(result!.includes('.agents/workflows/start-task.md'));
+        assert.ok(result!.includes('--provider "GitHub Copilot"'));
+        assert.ok(result!.includes('--routed-to ".github/agents/orchestrator.md"'));
     });
 
     it('includes compact-command protocol in full provider bridge', () => {
@@ -345,6 +347,8 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
         assert.ok(result.includes('# Start Task'));
         assert.ok(result.includes('gate enter-task-mode'));
+        assert.ok(result.includes('--provider "<runtime-provider>"'));
+        assert.ok(result.includes('--routed-to "<provider-bridge-or-entrypoint>"'));
         assert.ok(result.includes('gate handshake-diagnostics'));
         assert.ok(result.includes('gate shell-smoke-preflight'));
         assert.ok(result.includes('gate completion-gate'));

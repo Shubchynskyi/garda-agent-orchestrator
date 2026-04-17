@@ -21,7 +21,7 @@ import {
     validatePreflightForReview,
     validateZeroDiffForReviewGate
 } from '../../../gates/required-reviews-check';
-import { readRuntimeReviewerProvider } from '../../../gates/reviewer-routing';
+import { resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
 import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
@@ -468,13 +468,28 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         }
     }
 
+    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        taskId: resolvedTaskId,
+        taskModePath: String(options.taskModePath || ''),
+        allowLegacyFallback: true
+    });
+    if (runtimeIdentity.identity_status !== 'resolved') {
+        errors.push(
+            `Runtime reviewer identity must stay resolved for required-reviews-check, got '${runtimeIdentity.identity_status}'.`
+        );
+    }
+    errors.push(...runtimeIdentity.violations);
     const baseResult = checkRequiredReviews({
         validatedPreflight: { ...validatedPreflight, errors },
         verdicts,
         skipReviews: skipReviewsList,
         compileGateEvidence: compileGateEvidence.status === 'PASS' ? { status: 'PASSED' } : null,
         reviewArtifacts: reviewArtifactsMap,
-        sourceOfTruth: readRuntimeReviewerProvider(repoRoot, resolvedTaskId)
+        canonicalSourceOfTruth: runtimeIdentity.canonical_source_of_truth,
+        executionProvider: runtimeIdentity.execution_provider,
+        executionProviderSource: runtimeIdentity.execution_provider_source,
+        allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled
     });
     const allViolations = [...baseResult.violations, ...artifactEvidence.violations];
     const status = allViolations.length > 0 ? 'FAILED' : 'PASSED';

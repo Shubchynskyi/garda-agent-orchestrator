@@ -26,6 +26,7 @@ function scaffoldWorkspace(root: string, options: {
     entrypoint?: string;
     bridge?: string;
     startTaskRouter?: boolean;
+    canonicalSourceOfTruth?: string;
 } = {}): void {
     if (options.sourceCheckout) {
         fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }), 'utf8');
@@ -47,6 +48,13 @@ function scaffoldWorkspace(root: string, options: {
         fs.mkdirSync(path.dirname(routerPath), { recursive: true });
         fs.writeFileSync(routerPath, '# Start task router', 'utf8');
     }
+    if (options.canonicalSourceOfTruth) {
+        const initAnswersPath = path.join(root, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+        fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+        fs.writeFileSync(initAnswersPath, JSON.stringify({
+            SourceOfTruth: options.canonicalSourceOfTruth
+        }, null, 2), 'utf8');
+    }
 }
 
 describe('gates/handshake-diagnostics', () => {
@@ -66,7 +74,8 @@ describe('gates/handshake-diagnostics', () => {
                 sourceCheckout: true,
                 entrypoint: '.github/copilot-instructions.md',
                 bridge: '.github/agents/orchestrator.md',
-                startTaskRouter: true
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'GitHubCopilot'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -79,10 +88,14 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(result.outcome, 'PASS');
             assert.equal(result.task_id, 'T-TEST-01');
             assert.equal(result.provider, 'GitHubCopilot');
+            assert.equal(result.execution_provider, 'GitHubCopilot');
+            assert.equal(result.canonical_source_of_truth, 'GitHubCopilot');
             assert.equal(result.canonical_entrypoint, '.github/copilot-instructions.md');
             assert.equal(result.canonical_entrypoint_exists, true);
             assert.equal(result.provider_bridge, '.github/agents/orchestrator.md');
             assert.equal(result.provider_bridge_exists, true);
+            assert.equal(result.execution_provider_source, 'explicit_provider');
+            assert.equal(result.runtime_identity_status, 'resolved');
             assert.equal(result.start_task_router_exists, true);
             assert.equal(result.execution_context, 'source-checkout');
             assert.equal(result.cli_path, 'node bin/garda.js');
@@ -94,7 +107,8 @@ describe('gates/handshake-diagnostics', () => {
         it('produces PASS for Claude root-entrypoint-only workspace', () => {
             scaffoldWorkspace(tempDir, {
                 entrypoint: 'CLAUDE.md',
-                startTaskRouter: true
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Claude'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -106,15 +120,51 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(result.status, 'PASSED');
             assert.equal(result.outcome, 'PASS');
             assert.equal(result.provider, 'Claude');
+            assert.equal(result.execution_provider, 'Claude');
+            assert.equal(result.canonical_source_of_truth, 'Claude');
             assert.equal(result.canonical_entrypoint, 'CLAUDE.md');
             assert.equal(result.canonical_entrypoint_exists, true);
             assert.equal(result.provider_bridge, null);
             assert.equal(result.provider_bridge_exists, false);
+            assert.equal(result.execution_provider_source, 'explicit_provider');
+            assert.equal(result.runtime_identity_status, 'resolved');
             assert.equal(result.execution_context, 'materialized-bundle');
         });
 
+        it('produces PASS when canonical SourceOfTruth and execution provider intentionally differ', () => {
+            scaffoldWorkspace(tempDir, {
+                sourceCheckout: true,
+                entrypoint: 'AGENTS.md',
+                bridge: '.antigravity/agents/orchestrator.md',
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Codex'
+            });
+
+            const result = buildHandshakeDiagnostics({
+                taskId: 'T-TEST-02B',
+                repoRoot: tempDir,
+                provider: 'Antigravity'
+            });
+
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.equal(result.provider, 'Antigravity');
+            assert.equal(result.execution_provider, 'Antigravity');
+            assert.equal(result.canonical_source_of_truth, 'Codex');
+            assert.equal(result.canonical_entrypoint, 'AGENTS.md');
+            assert.equal(result.provider_bridge, '.antigravity/agents/orchestrator.md');
+            assert.equal(result.provider_bridge_exists, true);
+            assert.equal(result.execution_provider_source, 'explicit_provider');
+            assert.equal(result.runtime_identity_status, 'resolved');
+            assert.equal(result.execution_context, 'source-checkout');
+            assert.equal(result.violations.length, 0);
+        });
+
         it('reports FAIL when canonical entrypoint is missing', () => {
-            scaffoldWorkspace(tempDir, { startTaskRouter: true });
+            scaffoldWorkspace(tempDir, {
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Windsurf'
+            });
 
             const result = buildHandshakeDiagnostics({
                 taskId: 'T-TEST-03',
@@ -131,7 +181,8 @@ describe('gates/handshake-diagnostics', () => {
         it('reports FAIL when start-task router is missing', () => {
             scaffoldWorkspace(tempDir, {
                 entrypoint: 'AGENTS.md',
-                startTaskRouter: false
+                startTaskRouter: false,
+                canonicalSourceOfTruth: 'Codex'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -168,13 +219,20 @@ describe('gates/handshake-diagnostics', () => {
             for (const provider of providers) {
                 const providerDir = createTempDir();
                 try {
-                    scaffoldWorkspace(providerDir, { startTaskRouter: true });
+                    scaffoldWorkspace(providerDir, {
+                        startTaskRouter: true,
+                        canonicalSourceOfTruth: provider
+                    });
                     const result = buildHandshakeDiagnostics({
                         taskId: 'T-TEST-06',
                         repoRoot: providerDir,
                         provider
                     });
                     assert.equal(result.provider, provider, `Provider family should match for ${provider}`);
+                    assert.equal(result.execution_provider, provider, `Execution provider should match for ${provider}`);
+                    assert.equal(result.canonical_source_of_truth, provider, `Canonical provider should match for ${provider}`);
+                    assert.equal(result.execution_provider_source, 'explicit_provider', `Identity source should stay explicit for ${provider}`);
+                    assert.equal(result.runtime_identity_status, 'resolved', `Runtime identity should resolve for ${provider}`);
                     assert.ok(result.canonical_entrypoint, `Should resolve entrypoint for ${provider}`);
                 } finally {
                     removeTempDir(providerDir);
@@ -182,7 +240,7 @@ describe('gates/handshake-diagnostics', () => {
             }
         });
 
-        it('handles null provider gracefully', () => {
+        it('fails when runtime identity is missing', () => {
             scaffoldWorkspace(tempDir, { startTaskRouter: true });
 
             const result = buildHandshakeDiagnostics({
@@ -191,13 +249,34 @@ describe('gates/handshake-diagnostics', () => {
                 provider: null
             });
 
+            assert.equal(result.status, 'FAILED');
             assert.equal(result.provider, null);
             assert.equal(result.canonical_entrypoint, null);
-            assert.ok(result.diagnostics.some(d => d.check === 'provider_family' && d.status === 'warning'));
+            assert.equal(result.runtime_identity_status, 'missing');
+            assert.ok(result.diagnostics.some(d => d.check === 'runtime_identity' && d.status === 'error'));
+        });
+
+        it('fails when canonical SourceOfTruth is missing even if runtime provider is explicit', () => {
+            scaffoldWorkspace(tempDir, { startTaskRouter: true });
+
+            const result = buildHandshakeDiagnostics({
+                taskId: 'T-TEST-07B',
+                repoRoot: tempDir,
+                provider: 'Codex'
+            });
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.execution_provider, 'Codex');
+            assert.equal(result.canonical_source_of_truth, null);
+            assert.ok(result.violations.some(v => v.includes('Canonical SourceOfTruth is missing')));
+            assert.ok(result.diagnostics.some(d => d.check === 'canonical_source_of_truth' && d.status === 'error'));
         });
 
         it('records explicit cliPath and effectiveCwd overrides and fails on cli_path mismatch', () => {
-            scaffoldWorkspace(tempDir, { startTaskRouter: true });
+            scaffoldWorkspace(tempDir, {
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Claude'
+            });
 
             const result = buildHandshakeDiagnostics({
                 taskId: 'T-TEST-08',
@@ -219,7 +298,8 @@ describe('gates/handshake-diagnostics', () => {
             scaffoldWorkspace(tempDir, {
                 entrypoint: '.antigravity/rules.md',
                 bridge: '.antigravity/agents/orchestrator.md',
-                startTaskRouter: true
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Antigravity'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -235,7 +315,8 @@ describe('gates/handshake-diagnostics', () => {
         it('reports FAIL when expected provider bridge is missing', () => {
             scaffoldWorkspace(tempDir, {
                 entrypoint: '.github/copilot-instructions.md',
-                startTaskRouter: true
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'GitHubCopilot'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -254,7 +335,8 @@ describe('gates/handshake-diagnostics', () => {
         it('cli_path mismatch alone causes FAIL even when all other checks pass', () => {
             scaffoldWorkspace(tempDir, {
                 entrypoint: 'CLAUDE.md',
-                startTaskRouter: true
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Claude'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -275,7 +357,8 @@ describe('gates/handshake-diagnostics', () => {
             scaffoldWorkspace(tempDir, {
                 sourceCheckout: true,
                 entrypoint: 'CLAUDE.md',
-                startTaskRouter: true
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Claude'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -294,7 +377,8 @@ describe('gates/handshake-diagnostics', () => {
         it('cli_path mismatch in materialized-bundle context uses correct expected path', () => {
             scaffoldWorkspace(tempDir, {
                 entrypoint: 'AGENTS.md',
-                startTaskRouter: true
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Codex'
             });
 
             const result = buildHandshakeDiagnostics({
@@ -321,10 +405,14 @@ describe('gates/handshake-diagnostics', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider: 'Claude',
+                execution_provider: 'Claude',
+                canonical_source_of_truth: 'Claude',
                 canonical_entrypoint: 'CLAUDE.md',
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -385,10 +473,14 @@ describe('gates/handshake-diagnostics', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider: 'Claude',
+                execution_provider: 'Claude',
+                canonical_source_of_truth: 'Claude',
                 canonical_entrypoint: 'CLAUDE.md',
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -423,10 +515,14 @@ describe('gates/handshake-diagnostics', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider: 'Claude',
+                execution_provider: 'Claude',
+                canonical_source_of_truth: 'Claude',
                 canonical_entrypoint: 'CLAUDE.md',
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -471,10 +567,14 @@ describe('gates/handshake-diagnostics', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider: 'Claude',
+                execution_provider: 'Claude',
+                canonical_source_of_truth: 'Claude',
                 canonical_entrypoint: 'CLAUDE.md',
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -522,10 +622,14 @@ describe('gates/handshake-diagnostics', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider: 'Claude',
+                execution_provider: 'Claude',
+                canonical_source_of_truth: 'Claude',
                 canonical_entrypoint: 'CLAUDE.md',
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -582,10 +686,14 @@ describe('gates/handshake-diagnostics', () => {
                 status: 'PASSED',
                 outcome: 'PASS',
                 provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
                 canonical_entrypoint: 'AGENTS.md',
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',

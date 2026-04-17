@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import {buildTaskModeArtifact, getTaskModeEvidence, type TaskModePlanMetadata} from '../../../src/gates/task-mode';
+import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
+import {
+    buildTaskModeArtifact,
+    getTaskModeEvidence,
+    getTaskModeEvidenceViolations,
+    type TaskModePlanMetadata
+} from '../../../src/gates/task-mode';
 import {runEnterTaskModeCommand} from '../../../src/cli/commands/gates';
 import {serializeTaskPlan, validateTaskPlan} from '../../../src/schemas/task-plan';
 import {formatCompletionGateResult} from '../../../src/gates/completion';
@@ -64,6 +70,43 @@ const PLAN_METADATA: TaskModePlanMetadata = {
     plan_sha256: 'a'.repeat(64),
     plan_summary: 'Implement the widget feature end to end'
 };
+
+function buildResolvedTaskModeArtifact(
+    options: Parameters<typeof buildTaskModeArtifact>[0]
+) {
+    return buildTaskModeArtifact({
+        provider: 'Codex',
+        canonicalSourceOfTruth: 'Codex',
+        executionProviderSource: 'provider_entrypoint',
+        runtimeIdentityStatus: 'resolved',
+        routedTo: 'AGENTS.md',
+        ...options
+    });
+}
+
+function runEnterTaskModeWithDefaultRouting(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+    if (!fs.existsSync(initAnswersPath)) {
+        fs.writeFileSync(initAnswersPath, JSON.stringify({
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'AGENT_INIT_PROMPT.md',
+            ActiveAgentFiles: 'AGENTS.md'
+        }, null, 2), 'utf8');
+    }
+
+    return runEnterTaskModeCommand({
+        provider: 'Codex',
+        routedTo: 'AGENTS.md',
+        ...options
+    });
+}
 
 // ---------------------------------------------------------------------------
 // buildTaskModeArtifact — plan threading
@@ -129,7 +172,7 @@ test('getTaskModeEvidence reads plan metadata from artifact', () => {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(bundleDir, { recursive: true });
         const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
-        const artifact = buildTaskModeArtifact({
+        const artifact = buildResolvedTaskModeArtifact({
             taskId: 'T-099',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
@@ -156,7 +199,7 @@ test('getTaskModeEvidence returns null plan when artifact has no plan', () => {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(bundleDir, { recursive: true });
         const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
-        const artifact = buildTaskModeArtifact({
+        const artifact = buildResolvedTaskModeArtifact({
             taskId: 'T-099',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
@@ -179,7 +222,7 @@ test('getTaskModeEvidence ignores malformed plan object in artifact', () => {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(bundleDir, { recursive: true });
         const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
-        const artifact = buildTaskModeArtifact({
+        const artifact = buildResolvedTaskModeArtifact({
             taskId: 'T-099',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
@@ -205,7 +248,7 @@ test('getTaskModeEvidence ignores non-object plan value in artifact', () => {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(bundleDir, { recursive: true });
         const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
-        const artifact = buildTaskModeArtifact({
+        const artifact = buildResolvedTaskModeArtifact({
             taskId: 'T-099',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
@@ -230,7 +273,7 @@ test('getTaskModeEvidence ignores array plan value in artifact', () => {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(bundleDir, { recursive: true });
         const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
-        const artifact = buildTaskModeArtifact({
+        const artifact = buildResolvedTaskModeArtifact({
             taskId: 'T-099',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
@@ -244,6 +287,253 @@ test('getTaskModeEvidence ignores array plan value in artifact', () => {
         const evidence = getTaskModeEvidence(tmpDir, 'T-099');
         assert.equal(evidence.evidence_status, 'PASS');
         assert.equal(evidence.plan, null);
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence rejects task-mode artifacts that omit pinned runtime identity metadata', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(bundleDir, { recursive: true });
+        const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
+        const artifact = buildTaskModeArtifact({
+            taskId: 'T-099',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Implement the widget feature end to end',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        });
+        const raw = JSON.parse(JSON.stringify(artifact));
+        delete raw.canonical_source_of_truth;
+        delete raw.execution_provider_source;
+        delete raw.runtime_identity_status;
+        fs.writeFileSync(artifactPath, JSON.stringify(raw, null, 2));
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.evidence_status, 'EVIDENCE_CANONICAL_SOURCE_OF_TRUTH_INVALID');
+        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes('canonical_source_of_truth')));
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence rejects implicit runtime-provider fallback at task-mode entry', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(bundleDir, { recursive: true });
+        const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
+        const artifact = buildTaskModeArtifact({
+            taskId: 'T-099',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Implement the widget feature end to end',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'legacy_source_of_truth',
+            runtimeIdentityStatus: 'legacy_fallback'
+        });
+        fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2));
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.evidence_status, 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_INVALID');
+        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes('execution_provider_source')));
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence backfills legacy runtime identity for pre-change task-mode artifacts', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const runtimeRoot = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime');
+        const reviewsRoot = path.join(runtimeRoot, 'reviews');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
+            SourceOfTruth: 'Codex'
+        }, null, 2), 'utf8');
+        const artifactPath = path.join(reviewsRoot, 'T-099-task-mode.json');
+        fs.writeFileSync(artifactPath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: 'T-099',
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume a legacy task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: 'AGENTS.md'
+        }, null, 2), 'utf8');
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.canonical_source_of_truth, 'Codex');
+        assert.equal(evidence.execution_provider_source, 'provider_entrypoint');
+        assert.equal(evidence.runtime_identity_status, 'resolved');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence still backfills honest legacy artifacts that include pre-split execution metadata', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const runtimeRoot = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime');
+        const reviewsRoot = path.join(runtimeRoot, 'reviews');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
+            SourceOfTruth: 'Codex'
+        }, null, 2), 'utf8');
+        const artifactPath = path.join(reviewsRoot, 'T-099-task-mode.json');
+        fs.writeFileSync(artifactPath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: 'T-099',
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume an honest legacy task-mode artifact after upgrade',
+            orchestrator_work: false,
+            provider: 'Codex',
+            routed_to: 'AGENTS.md',
+            actor: 'orchestrator'
+        }, null, 2), 'utf8');
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.canonical_source_of_truth, 'Codex');
+        assert.equal(evidence.execution_provider_source, 'provider_entrypoint');
+        assert.equal(evidence.runtime_identity_status, 'resolved');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence does not backfill stripped current-style artifacts when current-era task-mode provenance remains', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const orchestratorRoot = path.join(tmpDir, 'garda-agent-orchestrator');
+        const runtimeRoot = path.join(orchestratorRoot, 'runtime');
+        const reviewsRoot = path.join(runtimeRoot, 'reviews');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
+            SourceOfTruth: 'Codex'
+        }, null, 2), 'utf8');
+        const artifactPath = path.join(reviewsRoot, 'T-099-task-mode.json');
+        const artifact = buildTaskModeArtifact({
+            taskId: 'T-099',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Reject stripped current-style task-mode artifacts',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            reviewerCapabilityLevel: 'delegation_required',
+            reviewerExpectedExecutionMode: 'delegated_subagent',
+            reviewerFallbackAllowed: false,
+            reviewerFallbackReasonRequired: false,
+            runtimeIdentityStatus: 'resolved'
+        });
+        const raw = JSON.parse(JSON.stringify(artifact));
+        delete raw.canonical_source_of_truth;
+        delete raw.execution_provider_source;
+        delete raw.reviewer_capability_level;
+        delete raw.reviewer_expected_execution_mode;
+        delete raw.reviewer_fallback_allowed;
+        delete raw.reviewer_fallback_reason_required;
+        delete raw.runtime_identity_status;
+        delete raw.runtime_identity_violations;
+        fs.writeFileSync(artifactPath, JSON.stringify(raw, null, 2), 'utf8');
+        appendTaskEvent(orchestratorRoot, 'T-099', 'TASK_MODE_ENTERED', 'PASS', 'Current task-mode entry before tampering.', {
+            artifact_path: artifactPath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Reject stripped current-style task-mode artifacts',
+            canonical_source_of_truth: 'Codex',
+            execution_provider_source: 'explicit_provider',
+            runtime_identity_status: 'resolved'
+        });
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.timeline_declares_runtime_identity_metadata, true);
+        assert.equal(evidence.evidence_status, 'EVIDENCE_CANONICAL_SOURCE_OF_TRUTH_INVALID');
+        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes('canonical_source_of_truth')));
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence backfills legacy provider-bridge task-mode artifacts without breaking canonical ownership', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const runtimeRoot = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime');
+        const reviewsRoot = path.join(runtimeRoot, 'reviews');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
+            SourceOfTruth: 'Codex'
+        }, null, 2), 'utf8');
+        const artifactPath = path.join(reviewsRoot, 'T-099-task-mode.json');
+        fs.writeFileSync(artifactPath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: 'T-099',
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Resume a legacy bridge-started task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: '.antigravity/agents/orchestrator.md'
+        }, null, 2), 'utf8');
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.provider, 'Antigravity');
+        assert.equal(evidence.canonical_source_of_truth, 'Codex');
+        assert.equal(evidence.execution_provider_source, 'provider_bridge');
+        assert.equal(evidence.runtime_identity_status, 'resolved');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('getTaskModeEvidence rejects routed task-mode artifacts whose execution_provider_source contradicts routed_to', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(bundleDir, { recursive: true });
+        const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
+        const artifact = buildTaskModeArtifact({
+            taskId: 'T-099',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Reject contradictory routed runtime source evidence',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'provider_bridge',
+            runtimeIdentityStatus: 'resolved',
+            routedTo: 'AGENTS.md'
+        });
+        fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.evidence_status, 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_ROUTE_MISMATCH');
+        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes("execution_provider_source='provider_bridge'")));
     } finally {
         cleanupDir(tmpDir);
     }
@@ -301,7 +591,7 @@ test('runEnterTaskModeCommand without --plan-path produces plan: null', () => {
         fs.mkdirSync(bundleDir, { recursive: true });
         fs.mkdirSync(eventsDir, { recursive: true });
 
-        const result = runEnterTaskModeCommand({
+        const result = runEnterTaskModeWithDefaultRouting({
             repoRoot: tmpDir,
             taskId: 'T-099',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -341,7 +631,7 @@ test('runEnterTaskModeCommand with valid approved plan attaches plan metadata', 
         const planPath = path.join(bundleDir, 'T-099-task-plan.json');
         fs.writeFileSync(planPath, serializeTaskPlan(plan));
 
-        const result = runEnterTaskModeCommand({
+        const result = runEnterTaskModeWithDefaultRouting({
             repoRoot: tmpDir,
             taskId: 'T-099',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -386,7 +676,7 @@ test('runEnterTaskModeCommand rejects plan with mismatched task_id', () => {
         fs.writeFileSync(planPath, serializeTaskPlan(plan));
 
         assert.throws(
-            () => runEnterTaskModeCommand({
+            () => runEnterTaskModeWithDefaultRouting({
                 repoRoot: tmpDir,
                 taskId: 'T-099',
                 entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -424,7 +714,7 @@ test('runEnterTaskModeCommand rejects draft plan', () => {
         fs.writeFileSync(planPath, serializeTaskPlan(plan));
 
         assert.throws(
-            () => runEnterTaskModeCommand({
+            () => runEnterTaskModeWithDefaultRouting({
                 repoRoot: tmpDir,
                 taskId: 'T-099',
                 entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -465,7 +755,7 @@ test('runEnterTaskModeCommand rejects plan with sha256 mismatch', () => {
         fs.writeFileSync(planPath, JSON.stringify(raw, null, 2) + '\n');
 
         assert.throws(
-            () => runEnterTaskModeCommand({
+            () => runEnterTaskModeWithDefaultRouting({
                 repoRoot: tmpDir,
                 taskId: 'T-099',
                 entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -594,7 +884,7 @@ test('getTaskModeEvidence reads profile metadata from artifact', () => {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(bundleDir, { recursive: true });
         const artifactPath = path.join(bundleDir, 'T-100-task-mode.json');
-        const artifact = buildTaskModeArtifact({
+        const artifact = buildResolvedTaskModeArtifact({
             taskId: 'T-100',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
@@ -620,7 +910,7 @@ test('getTaskModeEvidence returns null profile fields when absent', () => {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(bundleDir, { recursive: true });
         const artifactPath = path.join(bundleDir, 'T-100-task-mode.json');
-        const artifact = buildTaskModeArtifact({
+        const artifact = buildResolvedTaskModeArtifact({
             taskId: 'T-100',
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
@@ -655,7 +945,7 @@ test('runEnterTaskModeCommand banner includes ActiveProfile when profile is set'
             user_profiles: {}
         }), 'utf8');
 
-        const result = runEnterTaskModeCommand({
+        const result = runEnterTaskModeWithDefaultRouting({
             repoRoot: tmpDir,
             taskId: 'T-100',
             entryMode: 'EXPLICIT_TASK_EXECUTION',

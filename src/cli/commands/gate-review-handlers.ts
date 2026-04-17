@@ -27,7 +27,9 @@ import {
 } from '../../gates/review-reuse';
 import { resolveCanonicalReviewContextPath } from '../../gates/review-context-paths';
 import { getReviewContextContractViolations } from '../../gates/review-context-contract';
+import { resolveReviewContextRoutingIdentity } from '../../gates/review-context-routing';
 import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
+import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '../../gates/reviewer-routing';
 import {
     extractMarkdownSectionLines,
     getReviewArtifactFindingsEvidence,
@@ -464,33 +466,46 @@ function buildPassReviewTemplateHintMessage(options: {
 }
 
 function assertRoutingCompatibility(
-    reviewType: string,
-    currentRouting: Record<string, unknown> | null,
-    reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>,
-    reviewerFallbackReason: string | null
+    options: {
+        reviewType: string;
+        runtimeIdentity: ReturnType<typeof resolveRuntimeReviewerIdentity>;
+        currentRouting: Record<string, unknown> | null;
+        reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
+        reviewerFallbackReason: string | null;
+    }
 ): void {
-    const capabilityLevel = String(currentRouting?.capability_level || '').trim().toLowerCase();
-    const expectedExecutionMode = normalizeReviewerExecutionMode(currentRouting?.expected_execution_mode);
-    const fallbackAllowed = currentRouting?.fallback_allowed !== false;
-    const fallbackReasonRequired = currentRouting?.fallback_reason_required === true;
+    const {
+        reviewType,
+        runtimeIdentity,
+        currentRouting,
+        reviewerExecutionMode,
+        reviewerFallbackReason
+    } = options;
+    const capabilityLevel = runtimeIdentity.capability_level;
+    const expectedExecutionMode = runtimeIdentity.expected_execution_mode;
+    const fallbackAllowed = runtimeIdentity.fallback_allowed;
+    const fallbackReasonRequired = runtimeIdentity.fallback_reason_required;
+    const providerLabel = runtimeIdentity.execution_provider
+        || runtimeIdentity.canonical_source_of_truth
+        || String(currentRouting?.execution_provider || currentRouting?.source_of_truth || 'unknown');
     if (
         reviewerExecutionMode === 'delegated_subagent' &&
         (capabilityLevel === 'single_agent_only' || expectedExecutionMode === 'same_agent_fallback')
     ) {
         throw new Error(
             `Review '${reviewType}' cannot record delegated_subagent routing for provider ` +
-            `'${String(currentRouting?.source_of_truth || 'unknown')}'. Explicit fallback is required instead.`
+            `'${providerLabel}'. Explicit fallback is required instead.`
         );
     }
     if (reviewerExecutionMode === 'same_agent_fallback' && !fallbackAllowed) {
         throw new Error(
-            `Review '${reviewType}' does not allow same_agent_fallback for provider '${String(currentRouting?.source_of_truth || 'unknown')}'.`
+            `Review '${reviewType}' does not allow same_agent_fallback for provider '${providerLabel}'.`
         );
     }
     if (reviewerExecutionMode === 'same_agent_fallback' && fallbackReasonRequired && !reviewerFallbackReason) {
         throw new Error(
             `Review '${reviewType}' requires --reviewer-fallback-reason for same_agent_fallback ` +
-            `on provider '${String(currentRouting?.source_of_truth || 'unknown')}'.`
+            `on provider '${providerLabel}'.`
         );
     }
 }
@@ -521,34 +536,174 @@ function assertReviewContextContractOrThrow(options: {
     }
 }
 
-function hasMatchingRoutingEvent(
-    timelinePath: string,
+function assertExplicitReviewContextRuntimeIdentity(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    contextPath: string;
+    reviewerRouting: Record<string, unknown> | null;
+    taskModePath?: string | null;
+}): ReturnType<typeof resolveRuntimeReviewerIdentity> {
+    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        taskModePath: String(options.taskModePath || '').trim(),
+        allowLegacyFallback: true
+    });
+    if (runtimeIdentity.identity_status !== 'resolved') {
+        throw new Error(
+            `Review '${options.reviewType}' cannot be recorded because runtime reviewer identity is ` +
+            `'${runtimeIdentity.identity_status}'.`
+        );
+    }
+    if (runtimeIdentity.violations.length > 0) {
+        throw new Error(runtimeIdentity.violations.join(' '));
+    }
+    const resolvedRoutingIdentity = resolveReviewContextRoutingIdentity({
+        reviewerRouting: options.reviewerRouting,
+        canonicalSourceOfTruth: runtimeIdentity.canonical_source_of_truth,
+        executionProvider: runtimeIdentity.execution_provider,
+        allowLegacyCompatibility: runtimeIdentity.task_mode_identity_backfilled
+    });
+    const reviewContextExecutionProviderSource = normalizeRuntimeIdentitySource(options.reviewerRouting?.execution_provider_source);
+    if (!runtimeIdentity.canonical_source_of_truth) {
+        throw new Error(
+            `Review '${options.reviewType}' cannot be recorded because the active workspace is missing canonical SourceOfTruth.`
+        );
+    }
+    if (!resolvedRoutingIdentity.canonical_source_of_truth) {
+        throw new Error(
+            `Review '${options.reviewType}' review-context is missing canonical_source_of_truth in ${normalizePath(options.contextPath)}.`
+        );
+    }
+    if (resolvedRoutingIdentity.canonical_source_of_truth !== runtimeIdentity.canonical_source_of_truth) {
+        throw new Error(
+            `Review '${options.reviewType}' review-context canonical_source_of_truth ` +
+            `(${resolvedRoutingIdentity.canonical_source_of_truth}) does not match canonical provider ` +
+            `(${runtimeIdentity.canonical_source_of_truth}).`
+        );
+    }
+    if (!runtimeIdentity.execution_provider) {
+        throw new Error(
+            `Review '${options.reviewType}' cannot be recorded because the active task is missing execution provider identity.`
+        );
+    }
+    if (!resolvedRoutingIdentity.execution_provider) {
+        throw new Error(
+            `Review '${options.reviewType}' review-context is missing execution_provider in ${normalizePath(options.contextPath)}.`
+        );
+    }
+    if (resolvedRoutingIdentity.execution_provider !== runtimeIdentity.execution_provider) {
+        throw new Error(
+            `Review '${options.reviewType}' review-context execution_provider ` +
+            `(${resolvedRoutingIdentity.execution_provider}) does not match active runtime provider ` +
+            `(${runtimeIdentity.execution_provider}).`
+        );
+    }
+    if (resolvedRoutingIdentity.explicit_split_identity_present && !reviewContextExecutionProviderSource) {
+        throw new Error(
+            `Review '${options.reviewType}' review-context is missing execution_provider_source in ${normalizePath(options.contextPath)}.`
+        );
+    }
+    if (
+        resolvedRoutingIdentity.explicit_split_identity_present
+        && runtimeIdentity.execution_provider_source
+        && reviewContextExecutionProviderSource !== runtimeIdentity.execution_provider_source
+    ) {
+        throw new Error(
+            `Review '${options.reviewType}' review-context execution_provider_source ` +
+            `(${reviewContextExecutionProviderSource}) does not match active runtime source ` +
+            `(${runtimeIdentity.execution_provider_source}).`
+        );
+    }
+    if (!resolvedRoutingIdentity.identity_status) {
+        throw new Error(
+            `Review '${options.reviewType}' review-context is missing identity_status in ${normalizePath(options.contextPath)}.`
+        );
+    }
+    if (resolvedRoutingIdentity.identity_status !== 'resolved') {
+        throw new Error(
+            `Review '${options.reviewType}' review-context runtime identity status must be 'resolved', ` +
+            `got '${resolvedRoutingIdentity.identity_status}'.`
+        );
+    }
+    return runtimeIdentity;
+}
+
+function matchesRoutingEvent(
+    entry: ReviewDependencyTimelineEvent,
     reviewType: string,
     reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>,
     reviewerIdentity: string,
     reviewerFallbackReason: string | null
 ): boolean {
-    return fs.existsSync(timelinePath) && fs.statSync(timelinePath).isFile()
-        ? fs.readFileSync(timelinePath, 'utf8')
-            .split('\n')
-            .filter((line) => line.trim().length > 0)
-            .some((line) => {
-                try {
-                    const parsed = JSON.parse(line) as Record<string, unknown>;
-                    const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
-                        ? parsed.details as Record<string, unknown>
-                        : null;
-                    const eventFallbackReason = String((details?.reviewer_fallback_reason ?? details?.reviewerFallbackReason) || '').trim();
-                    return String(parsed.event_type || '').trim().toUpperCase() === 'REVIEWER_DELEGATION_ROUTED'
-                        && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === reviewType
-                        && normalizeReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
-                        && String((details?.reviewer_session_id ?? details?.reviewerSessionId) || '').trim() === reviewerIdentity
-                        && (reviewerExecutionMode !== 'same_agent_fallback' || eventFallbackReason === (reviewerFallbackReason || ''));
-                } catch {
-                    return false;
-                }
-            })
-        : false;
+    const details = entry.details;
+    const eventFallbackReason = String((details?.reviewer_fallback_reason ?? details?.reviewerFallbackReason) || '').trim();
+    return entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
+        && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === reviewType
+        && normalizeReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
+        && String((details?.reviewer_session_id ?? details?.reviewerSessionId) || '').trim() === reviewerIdentity
+        && (reviewerExecutionMode !== 'same_agent_fallback' || eventFallbackReason === (reviewerFallbackReason || ''));
+}
+
+function findLatestTimelineSequence(
+    events: readonly ReviewDependencyTimelineEvent[],
+    predicate: (entry: ReviewDependencyTimelineEvent) => boolean
+): number | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        if (predicate(events[index])) {
+            return events[index].sequence;
+        }
+    }
+    return null;
+}
+
+function hasMatchingRoutingEvent(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    reviewType: string,
+    reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>,
+    reviewerIdentity: string,
+    reviewerFallbackReason: string | null
+): boolean {
+    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
+    const latestCompilePassSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
+    );
+    const latestReviewPhaseSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => (
+            entry.event_type === 'REVIEW_PHASE_STARTED'
+            && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+        )
+    );
+    const cycleFloorSequence = latestCompilePassSequence == null
+        ? latestReviewPhaseSequence
+        : latestReviewPhaseSequence == null
+            ? latestCompilePassSequence
+            : Math.max(latestCompilePassSequence, latestReviewPhaseSequence);
+    if (cycleFloorSequence == null) {
+        return false;
+    }
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+        const entry = timelineEvents[index];
+        if (entry.sequence <= cycleFloorSequence) {
+            break;
+        }
+        if (
+            entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
+            && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+        ) {
+            return matchesRoutingEvent(
+                entry,
+                normalizedReviewType,
+                reviewerExecutionMode,
+                reviewerIdentity,
+                reviewerFallbackReason
+            );
+        }
+    }
+    return false;
 }
 
 function readDependencyTimelineEvents(timelinePath: string): ReviewDependencyTimelineEvent[] {
@@ -582,6 +737,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     preflightPath: string;
     artifactPath: string;
     contextPath: string;
+    taskModePath?: string | null;
     reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
     reviewerIdentity: string;
     reviewerFallbackReason: string | null;
@@ -609,6 +765,21 @@ async function recordReviewReceiptFromArtifacts(options: {
         && !Array.isArray(parsedReviewContext.reviewer_routing)
         ? parsedReviewContext.reviewer_routing as Record<string, unknown>
         : null;
+    const runtimeIdentity = assertExplicitReviewContextRuntimeIdentity({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        contextPath: options.contextPath,
+        reviewerRouting: currentRouting,
+        taskModePath: String(options.taskModePath || '').trim()
+    });
+    assertRoutingCompatibility({
+        reviewType: options.reviewType,
+        runtimeIdentity,
+        currentRouting,
+        reviewerExecutionMode: options.reviewerExecutionMode,
+        reviewerFallbackReason: options.reviewerFallbackReason
+    });
     const currentExecutionMode = normalizeReviewerExecutionMode(currentRouting?.actual_execution_mode);
     const currentReviewerSessionId = currentRouting?.reviewer_session_id != null
         ? String(currentRouting.reviewer_session_id).trim()
@@ -646,8 +817,9 @@ async function recordReviewReceiptFromArtifacts(options: {
     }
 
     const timelinePath = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'task-events', `${options.taskId}.jsonl`));
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
     if (!hasMatchingRoutingEvent(
-        timelinePath,
+        timelineEvents,
         options.reviewType,
         options.reviewerExecutionMode,
         options.reviewerIdentity,
@@ -655,6 +827,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     )) {
         throw new Error(
             `Review receipts require pre-recorded REVIEWER_DELEGATION_ROUTED telemetry for '${options.reviewType}' ` +
+            'in the current cycle ' +
             `with reviewer '${options.reviewerIdentity}' and execution mode '${options.reviewerExecutionMode}'.`
         );
     }
@@ -730,6 +903,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
         '--task-id': { key: 'taskId', type: 'string' },
         '--review-type': { key: 'reviewType', type: 'string' },
         '--review-context-path': { key: 'reviewContextPath', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
         '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
         '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
@@ -790,7 +964,8 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
         preflightPath,
         preflightPayload,
         reviewType,
-        timelineEvents: readDependencyTimelineEvents(timelinePath)
+        timelineEvents: readDependencyTimelineEvents(timelinePath),
+        taskModePath: String(options.taskModePath || '').trim()
     });
 
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
@@ -808,30 +983,21 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
         && !Array.isArray(parsedReviewContext.reviewer_routing)
         ? parsedReviewContext.reviewer_routing as Record<string, unknown>
         : null;
-    const capabilityLevel = String(currentRouting?.capability_level || '').trim().toLowerCase();
-    const expectedExecutionMode = normalizeReviewerExecutionMode(currentRouting?.expected_execution_mode);
-    const fallbackAllowed = currentRouting?.fallback_allowed !== false;
-    const fallbackReasonRequired = currentRouting?.fallback_reason_required === true;
-    if (
-        reviewerExecutionMode === 'delegated_subagent' &&
-        (capabilityLevel === 'single_agent_only' || expectedExecutionMode === 'same_agent_fallback')
-    ) {
-        throw new Error(
-            `Review '${reviewType}' cannot record delegated_subagent routing for provider ` +
-            `'${String(currentRouting?.source_of_truth || 'unknown')}'. Explicit fallback is required instead.`
-        );
-    }
-    if (reviewerExecutionMode === 'same_agent_fallback' && !fallbackAllowed) {
-        throw new Error(
-            `Review '${reviewType}' does not allow same_agent_fallback for provider '${String(currentRouting?.source_of_truth || 'unknown')}'.`
-        );
-    }
-    if (reviewerExecutionMode === 'same_agent_fallback' && fallbackReasonRequired && !reviewerFallbackReason) {
-        throw new Error(
-            `Review '${reviewType}' requires --reviewer-fallback-reason for same_agent_fallback ` +
-            `on provider '${String(currentRouting?.source_of_truth || 'unknown')}'.`
-        );
-    }
+    const runtimeIdentity = assertExplicitReviewContextRuntimeIdentity({
+        repoRoot,
+        taskId,
+        reviewType,
+        contextPath,
+        reviewerRouting: currentRouting,
+        taskModePath: String(options.taskModePath || '').trim()
+    });
+    assertRoutingCompatibility({
+        reviewType,
+        runtimeIdentity,
+        currentRouting,
+        reviewerExecutionMode,
+        reviewerFallbackReason
+    });
 
     const routingUpdate = applyReviewerRoutingMetadata(contextPath, {
         actualExecutionMode: reviewerExecutionMode,
@@ -858,6 +1024,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         '--task-id': { key: 'taskId', type: 'string' },
         '--review-type': { key: 'reviewType', type: 'string' },
         '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--review-output-path': { key: 'reviewOutputPath', type: 'string' },
         '--review-output-stdin': { key: 'reviewOutputStdin', type: 'boolean' },
         '--review-context-path': { key: 'reviewContextPath', type: 'string' },
@@ -928,7 +1095,8 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         preflightPath,
         preflightPayload,
         reviewType,
-        timelineEvents: readDependencyTimelineEvents(timelinePath)
+        timelineEvents: readDependencyTimelineEvents(timelinePath),
+        taskModePath: String(options.taskModePath || '').trim()
     });
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
     assertReviewContextContractOrThrow({
@@ -945,12 +1113,21 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         && !Array.isArray(parsedReviewContext.reviewer_routing)
         ? parsedReviewContext.reviewer_routing as Record<string, unknown>
         : null;
-    assertRoutingCompatibility(
+    const runtimeIdentity = assertExplicitReviewContextRuntimeIdentity({
+        repoRoot,
+        taskId,
         reviewType,
+        contextPath,
+        reviewerRouting: currentRouting,
+        taskModePath: String(options.taskModePath || '').trim()
+    });
+    assertRoutingCompatibility({
+        reviewType,
+        runtimeIdentity,
         currentRouting,
         reviewerExecutionMode,
         reviewerFallbackReason
-    );
+    });
 
     const artifactRollbackState = captureReviewArtifactRollbackState(artifactPath);
     const previousRoutingUpdate = {
@@ -1007,6 +1184,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         preflightPath,
         artifactPath,
         contextPath,
+        taskModePath: String(options.taskModePath || '').trim(),
         reviewerExecutionMode,
         reviewerIdentity,
         reviewerFallbackReason,
@@ -1038,6 +1216,7 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         '--review-type': { key: 'reviewType', type: 'string' },
         '--preflight-path': { key: 'preflightPath', type: 'string' },
         '--review-context-path': { key: 'reviewContextPath', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
         '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
         '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
@@ -1069,7 +1248,8 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         preflightPath,
         preflightPayload,
         reviewType,
-        timelineEvents: readDependencyTimelineEvents(timelinePath)
+        timelineEvents: readDependencyTimelineEvents(timelinePath),
+        taskModePath: String(options.taskModePath || '').trim()
     });
     const receiptPath = await recordReviewReceiptFromArtifacts({
         repoRoot,
@@ -1078,6 +1258,7 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         preflightPath,
         artifactPath,
         contextPath,
+        taskModePath: String(options.taskModePath || '').trim(),
         reviewerExecutionMode,
         reviewerIdentity,
         reviewerFallbackReason,

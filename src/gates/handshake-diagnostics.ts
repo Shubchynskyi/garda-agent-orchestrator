@@ -4,16 +4,19 @@ import * as path from 'node:path';
 import {
     getBundleCliCommand,
     getSourceCliCommand,
-    SOURCE_OF_TRUTH_VALUES,
     SOURCE_TO_ENTRYPOINT_MAP,
     resolveBundleName
 } from '../core/constants';
 import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
-    getProviderOrchestratorProfileDefinitions,
     SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
 } from '../materialization/common';
+import {
+    normalizeSourceOfTruthValue,
+    resolveReviewerRoutingPolicy,
+    resolveRuntimeReviewerIdentity
+} from './reviewer-routing';
 import {
     fileSha256,
     isOrchestratorSourceCheckout,
@@ -32,10 +35,20 @@ export interface HandshakeDiagnosticsArtifact {
     outcome: 'PASS' | 'FAIL';
 
     provider: string | null;
+    execution_provider?: string | null;
+    canonical_source_of_truth?: string | null;
     canonical_entrypoint: string | null;
     canonical_entrypoint_exists: boolean;
     provider_bridge: string | null;
     provider_bridge_exists: boolean;
+    routed_to?: string | null;
+    execution_provider_source?: string | null;
+    reviewer_capability_level?: string | null;
+    reviewer_expected_execution_mode?: string | null;
+    reviewer_fallback_allowed?: boolean | null;
+    reviewer_fallback_reason_required?: boolean | null;
+    runtime_identity_status?: string | null;
+    runtime_identity_violations?: string[];
     start_task_router_path: string;
     start_task_router_exists: boolean;
     execution_context: 'source-checkout' | 'materialized-bundle';
@@ -66,37 +79,20 @@ export interface BuildHandshakeDiagnosticsOptions {
     taskId: string;
     repoRoot: string;
     provider?: string | null;
+    canonicalSourceOfTruth?: string | null;
     cliPath?: string | null;
     effectiveCwd?: string | null;
     canonicalEntrypoint?: string | null;
     providerBridge?: string | null;
+    routedTo?: string | null;
+    executionProviderSource?: string | null;
+    reviewerCapabilityLevel?: string | null;
+    reviewerExpectedExecutionMode?: string | null;
+    reviewerFallbackAllowed?: boolean | null;
+    reviewerFallbackReasonRequired?: boolean | null;
+    runtimeIdentityStatus?: string | null;
+    runtimeIdentityViolations?: string[] | null;
     precheckViolations?: string[];
-}
-
-function resolveProviderFamily(provider: string | null): string | null {
-    if (!provider) return null;
-    const normalized = String(provider).trim();
-    const match = SOURCE_OF_TRUTH_VALUES.find(
-        (v) => v.toLowerCase() === normalized.toLowerCase().replace(/\s+/g, '')
-    );
-    return match || null;
-}
-
-function resolveCanonicalEntrypoint(provider: string | null): string | null {
-    const family = resolveProviderFamily(provider);
-    if (!family) return null;
-    const map = SOURCE_TO_ENTRYPOINT_MAP as Record<string, string>;
-    return map[family] || null;
-}
-
-function resolveProviderBridge(provider: string | null): string | null {
-    const family = resolveProviderFamily(provider);
-    if (!family) return null;
-    const entrypoint = resolveCanonicalEntrypoint(family);
-    if (!entrypoint) return null;
-    const profiles = getProviderOrchestratorProfileDefinitions();
-    const match = profiles.find((p) => p.entrypointFile === entrypoint);
-    return match ? match.orchestratorRelativePath : null;
 }
 
 function resolveCliPath(repoRoot: string, isSourceCheckout: boolean): string {
@@ -122,8 +118,48 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
     const taskId = assertValidTaskId(options.taskId);
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const isSourceCheckout = isOrchestratorSourceCheckout(repoRoot);
-    const provider = String(options.provider || '').trim() || null;
-    const providerFamily = resolveProviderFamily(provider);
+    const identity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        executionProvider: options.provider,
+        routedTo: options.routedTo ?? options.providerBridge,
+        allowLegacyFallback: true
+    });
+    const executionProvider = normalizeSourceOfTruthValue(options.provider) ?? identity.execution_provider;
+    const canonicalSourceOfTruth = normalizeSourceOfTruthValue(options.canonicalSourceOfTruth)
+        ?? identity.canonical_source_of_truth;
+    const canonicalEntrypoint = options.canonicalEntrypoint
+        ? String(options.canonicalEntrypoint).trim()
+        : (canonicalSourceOfTruth
+            ? (SOURCE_TO_ENTRYPOINT_MAP as Record<string, string>)[canonicalSourceOfTruth] || null
+            : null);
+    const providerBridge = options.providerBridge
+        ? String(options.providerBridge).trim()
+        : identity.provider_bridge;
+    const routedTo = String(options.routedTo || '').trim() || identity.routed_to || null;
+    const executionProviderSource = String(options.executionProviderSource || '').trim()
+        || identity.execution_provider_source
+        || null;
+    const runtimeIdentityStatus = String(options.runtimeIdentityStatus || '').trim()
+        || identity.identity_status
+        || null;
+    const runtimeIdentityViolations = Array.isArray(options.runtimeIdentityViolations)
+        ? options.runtimeIdentityViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [...identity.violations];
+    const reviewerPolicy = resolveReviewerRoutingPolicy(executionProvider);
+    const reviewerCapabilityLevel = String(options.reviewerCapabilityLevel || '').trim()
+        || identity.capability_level
+        || reviewerPolicy.capability_level
+        || null;
+    const reviewerExpectedExecutionMode = String(options.reviewerExpectedExecutionMode || '').trim()
+        || identity.expected_execution_mode
+        || reviewerPolicy.expected_execution_mode
+        || null;
+    const reviewerFallbackAllowed = typeof options.reviewerFallbackAllowed === 'boolean'
+        ? options.reviewerFallbackAllowed
+        : identity.fallback_allowed;
+    const reviewerFallbackReasonRequired = typeof options.reviewerFallbackReasonRequired === 'boolean'
+        ? options.reviewerFallbackReasonRequired
+        : identity.fallback_reason_required;
     const diagnostics: HandshakeDiagnostic[] = [];
     const precheckViolations = Array.isArray(options.precheckViolations)
         ? options.precheckViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
@@ -138,11 +174,21 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
             task_id: taskId,
             status: 'FAILED',
             outcome: 'FAIL',
-            provider: providerFamily,
+            provider: executionProvider,
+            execution_provider: executionProvider,
+            canonical_source_of_truth: canonicalSourceOfTruth,
             canonical_entrypoint: null,
             canonical_entrypoint_exists: false,
             provider_bridge: null,
             provider_bridge_exists: false,
+            routed_to: routedTo,
+            execution_provider_source: executionProviderSource,
+            reviewer_capability_level: reviewerCapabilityLevel,
+            reviewer_expected_execution_mode: reviewerExpectedExecutionMode,
+            reviewer_fallback_allowed: reviewerFallbackAllowed,
+            reviewer_fallback_reason_required: reviewerFallbackReasonRequired,
+            runtime_identity_status: runtimeIdentityStatus,
+            runtime_identity_violations: runtimeIdentityViolations,
             start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
             start_task_router_exists: false,
             execution_context: isSourceCheckout ? 'source-checkout' : 'materialized-bundle',
@@ -153,18 +199,72 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
             violations
         };
     }
-
-    // 1. Canonical entrypoint
-    const canonicalEntrypoint = options.canonicalEntrypoint
-        ? String(options.canonicalEntrypoint).trim()
-        : resolveCanonicalEntrypoint(provider);
     const canonicalEntrypointFullPath = canonicalEntrypoint
         ? path.resolve(repoRoot, canonicalEntrypoint)
         : null;
     const canonicalEntrypointExists = canonicalEntrypointFullPath
         ? fs.existsSync(canonicalEntrypointFullPath) && fs.statSync(canonicalEntrypointFullPath).isFile()
         : false;
+    const providerBridgeFullPath = providerBridge
+        ? path.resolve(repoRoot, providerBridge)
+        : null;
+    const providerBridgeExists = providerBridgeFullPath
+        ? fs.existsSync(providerBridgeFullPath) && fs.statSync(providerBridgeFullPath).isFile()
+        : false;
 
+    if (runtimeIdentityViolations.length > 0) {
+        for (const violation of runtimeIdentityViolations) {
+            if (!violations.includes(violation)) {
+                violations.push(violation);
+            }
+        }
+    }
+
+    if (runtimeIdentityStatus === 'resolved') {
+        diagnostics.push({
+            check: 'runtime_identity',
+            status: 'ok',
+            detail: `Runtime identity resolved: execution_provider=${executionProvider || 'unknown'}, source=${executionProviderSource || 'unknown'}, routed_to=${routedTo || 'none'}.`
+        });
+    } else if (runtimeIdentityStatus === 'legacy_fallback') {
+        diagnostics.push({
+            check: 'runtime_identity',
+            status: 'error',
+            detail: 'Runtime identity fell back to canonical SourceOfTruth. New task cycles require provider bridge, routed entrypoint, or explicit provider selection.'
+        });
+        violations.push(
+            'Runtime execution identity relied on legacy SourceOfTruth fallback. ' +
+            'Re-enter task mode with a deterministic routed entrypoint/bridge or explicit provider selection before handshake.'
+        );
+    } else if (runtimeIdentityStatus === 'missing') {
+        diagnostics.push({
+            check: 'runtime_identity',
+            status: 'error',
+            detail: 'Runtime execution identity is missing. Handshake requires provider bridge, routed entrypoint, or explicit provider selection.'
+        });
+        violations.push(
+            'Runtime execution identity is missing. Handshake requires provider bridge, routed entrypoint, or explicit provider selection.'
+        );
+    } else {
+        diagnostics.push({
+            check: 'runtime_identity',
+            status: 'error',
+            detail: `Runtime execution identity is contradictory. Source=${executionProviderSource || 'unknown'}, routed_to=${routedTo || 'none'}.`
+        });
+    }
+
+    if (!canonicalSourceOfTruth) {
+        diagnostics.push({
+            check: 'canonical_source_of_truth',
+            status: 'error',
+            detail: 'Canonical SourceOfTruth is missing. Handshake requires explicit workspace ownership from init answers or version metadata.'
+        });
+        violations.push(
+            'Canonical SourceOfTruth is missing. Handshake requires explicit workspace ownership from init answers or version metadata.'
+        );
+    }
+
+    // 1. Canonical entrypoint
     if (canonicalEntrypoint) {
         if (canonicalEntrypointExists) {
             diagnostics.push({
@@ -189,16 +289,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
     }
 
     // 2. Provider bridge
-    const providerBridge = options.providerBridge
-        ? String(options.providerBridge).trim()
-        : resolveProviderBridge(provider);
-    const providerBridgeFullPath = providerBridge
-        ? path.resolve(repoRoot, providerBridge)
-        : null;
-    const providerBridgeExists = providerBridgeFullPath
-        ? fs.existsSync(providerBridgeFullPath) && fs.statSync(providerBridgeFullPath).isFile()
-        : false;
-
     if (providerBridge) {
         if (providerBridgeExists) {
             diagnostics.push({
@@ -284,17 +374,17 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
     });
 
     // 7. Provider family
-    if (providerFamily) {
+    if (executionProvider) {
         diagnostics.push({
             check: 'provider_family',
             status: 'ok',
-            detail: `Active provider family: ${providerFamily}.`
+            detail: `Active execution provider: ${executionProvider}.`
         });
-    } else if (provider) {
+    } else if (options.provider) {
         diagnostics.push({
             check: 'provider_family',
             status: 'warning',
-            detail: `Provider '${provider}' is not a recognized provider family.`
+            detail: `Provider '${String(options.provider).trim()}' is not a recognized provider family.`
         });
     } else {
         diagnostics.push({
@@ -312,11 +402,21 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         task_id: taskId,
         status: hasErrors ? 'FAILED' : 'PASSED',
         outcome: hasErrors ? 'FAIL' : 'PASS',
-        provider: providerFamily,
+        provider: executionProvider,
+        execution_provider: executionProvider,
+        canonical_source_of_truth: canonicalSourceOfTruth,
         canonical_entrypoint: canonicalEntrypoint,
         canonical_entrypoint_exists: canonicalEntrypointExists,
         provider_bridge: providerBridge,
         provider_bridge_exists: providerBridgeExists,
+        routed_to: routedTo,
+        execution_provider_source: executionProviderSource,
+        reviewer_capability_level: reviewerCapabilityLevel,
+        reviewer_expected_execution_mode: reviewerExpectedExecutionMode,
+        reviewer_fallback_allowed: reviewerFallbackAllowed,
+        reviewer_fallback_reason_required: reviewerFallbackReasonRequired,
+        runtime_identity_status: runtimeIdentityStatus,
+        runtime_identity_violations: runtimeIdentityViolations,
         start_task_router_path: startTaskRouterPath,
         start_task_router_exists: startTaskRouterExists,
         execution_context: executionContext,
@@ -425,7 +525,7 @@ export function getHandshakeEvidence(repoRoot: string, taskId: string | null, ar
     }
 
     result.evidence_hash = fileSha256(resolvedPath);
-    result.provider = String(artifact.provider || '').trim() || null;
+    result.provider = String(artifact.execution_provider || artifact.provider || '').trim() || null;
 
     const evidenceTaskId = String(artifact.task_id || '').trim();
     if (evidenceTaskId !== resolvedTaskId) {
@@ -557,8 +657,15 @@ export function formatHandshakeDiagnosticsResult(artifact: HandshakeDiagnosticsA
         artifact.outcome === 'PASS' ? 'HANDSHAKE_DIAGNOSTICS_PASSED' : 'HANDSHAKE_DIAGNOSTICS_FAILED',
         `TaskId: ${artifact.task_id}`,
         `Provider: ${artifact.provider || 'unknown'}`,
+        `ExecutionProvider: ${artifact.execution_provider || artifact.provider || 'unknown'}`,
+        `CanonicalSourceOfTruth: ${artifact.canonical_source_of_truth || 'unknown'}`,
         `CanonicalEntrypoint: ${artifact.canonical_entrypoint || 'none'} (${artifact.canonical_entrypoint_exists ? 'exists' : 'missing'})`,
         `ProviderBridge: ${artifact.provider_bridge || 'none'} (${artifact.provider_bridge_exists ? 'exists' : 'not expected or missing'})`,
+        `RoutedTo: ${artifact.routed_to || 'none'}`,
+        `ExecutionProviderSource: ${artifact.execution_provider_source || 'unknown'}`,
+        `RuntimeIdentityStatus: ${artifact.runtime_identity_status || 'unknown'}`,
+        `ReviewerCapabilityLevel: ${artifact.reviewer_capability_level || 'unknown'}`,
+        `ReviewerExpectedExecutionMode: ${artifact.reviewer_expected_execution_mode || 'unknown'}`,
         `StartTaskRouter: ${artifact.start_task_router_path} (${artifact.start_task_router_exists ? 'exists' : 'missing'})`,
         `ExecutionContext: ${artifact.execution_context}`,
         `CliPath: ${artifact.cli_path}`,
@@ -578,6 +685,13 @@ export function formatHandshakeDiagnosticsResult(artifact: HandshakeDiagnosticsA
         lines.push('Violations:');
         for (const v of artifact.violations) {
             lines.push(`  - ${v}`);
+        }
+    }
+
+    if (Array.isArray(artifact.runtime_identity_violations) && artifact.runtime_identity_violations.length > 0) {
+        lines.push('RuntimeIdentityViolations:');
+        for (const violation of artifact.runtime_identity_violations) {
+            lines.push(`  - ${violation}`);
         }
     }
 

@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
 import { buildReviewContext, getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../../../src/gates/build-review-context';
 import {
     getCanonicalReviewContextPath,
@@ -11,7 +12,33 @@ import {
     resolveCanonicalReviewContextPath
 } from '../../../src/gates/review-context-paths';
 import { buildTaskModeArtifact, resolveTaskModeArtifactPath } from '../../../src/gates/task-mode';
-import { resolveReviewerRoutingPolicy } from '../../../src/gates/reviewer-routing';
+import { resolveReviewerRoutingPolicy, resolveRuntimeReviewerIdentity } from '../../../src/gates/reviewer-routing';
+
+function writeTaskModeArtifactFixture(
+    repoRoot: string,
+    taskId: string,
+    options: {
+        provider: string | null;
+        canonicalSourceOfTruth: string | null;
+        routedTo?: string | null;
+        executionProviderSource?: string | null;
+        runtimeIdentityStatus?: string | null;
+    }
+): void {
+    const taskModePath = resolveTaskModeArtifactPath(repoRoot, taskId, '');
+    fs.writeFileSync(taskModePath, JSON.stringify(buildTaskModeArtifact({
+        taskId,
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 3,
+        effectiveDepth: 3,
+        taskSummary: 'Enforce delegated reviewer routing',
+        provider: options.provider,
+        canonicalSourceOfTruth: options.canonicalSourceOfTruth,
+        routedTo: options.routedTo ?? null,
+        executionProviderSource: options.executionProviderSource ?? null,
+        runtimeIdentityStatus: options.runtimeIdentityStatus ?? null
+    }), null, 2), 'utf8');
+}
 
 describe('gates/build-review-context', () => {
     describe('getRulePack', () => {
@@ -171,16 +198,13 @@ describe('gates/build-review-context', () => {
                 task_id: 'T-901',
                 required_reviews: { code: true }
             }, null, 2), 'utf8');
-            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-901', '');
-            fs.writeFileSync(taskModePath, JSON.stringify(buildTaskModeArtifact({
-                taskId: 'T-901',
-                entryMode: 'EXPLICIT_TASK_EXECUTION',
-                requestedDepth: 3,
-                effectiveDepth: 3,
-                taskSummary: 'Enforce delegated reviewer routing',
+            writeTaskModeArtifactFixture(repoRoot, 'T-901', {
                 provider: 'Codex',
-                routedTo: 'AGENTS.md'
-            }), null, 2), 'utf8');
+                canonicalSourceOfTruth: 'Qwen',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
             fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
                 enabled: true,
                 enabled_depths: [1, 2]
@@ -198,11 +222,112 @@ describe('gates/build-review-context', () => {
             });
 
             assert.equal(result.reviewer_routing.source_of_truth, 'Codex');
+            assert.equal(result.reviewer_routing.execution_provider, 'Codex');
+            assert.equal(result.reviewer_routing.canonical_source_of_truth, 'Qwen');
+            assert.equal(result.reviewer_routing.identity_status, 'resolved');
             assert.equal(result.reviewer_routing.delegation_required, true);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
-        it('falls back to init-answers provider when task-mode provider is unavailable', () => {
+        it('keeps pinned explicit-provider task-mode identity resolved when no routed_to is present', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-explicit-provider-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-explicit-provider', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+
+            const result = resolveRuntimeReviewerIdentity({
+                repoRoot,
+                taskId: 'T-901-explicit-provider',
+                allowLegacyFallback: false
+            });
+
+            assert.equal(result.execution_provider, 'Codex');
+            assert.equal(result.execution_provider_source, 'explicit_provider');
+            assert.equal(result.identity_status, 'resolved');
+            assert.deepEqual(result.violations, []);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('reads plan metadata from the explicit custom task-mode artifact path', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-plan-path-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-plan-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-plan',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+
+            const defaultTaskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-901-plan', '');
+            fs.writeFileSync(defaultTaskModePath, JSON.stringify(buildTaskModeArtifact({
+                taskId: 'T-901-plan',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Drifted default task-mode artifact without plan metadata',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            }), null, 2), 'utf8');
+
+            const customTaskModePath = path.join(orchestratorRoot, 'runtime', 'custom-artifacts', 'T-901-plan-task-mode.json');
+            fs.mkdirSync(path.dirname(customTaskModePath), { recursive: true });
+            fs.writeFileSync(customTaskModePath, JSON.stringify(buildTaskModeArtifact({
+                taskId: 'T-901-plan',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Preserve plan metadata from a custom task-mode artifact path',
+                provider: 'Antigravity',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: '.antigravity/agents/orchestrator.md',
+                executionProviderSource: 'provider_bridge',
+                runtimeIdentityStatus: 'resolved',
+                plan: {
+                    plan_path: 'garda-agent-orchestrator/runtime/reviews/T-901-plan-task-plan.json',
+                    plan_sha256: 'a'.repeat(64),
+                    plan_summary: 'Preserve the approved plan from a custom task-mode artifact path'
+                }
+            }), null, 2), 'utf8');
+
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-plan-code-review-context.json');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                taskModePath: customTaskModePath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '',
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.reviewer_routing.execution_provider, 'Antigravity');
+            assert.equal(result.plan.plan_guided, true);
+            assert.equal(result.plan.plan_path, 'garda-agent-orchestrator/runtime/reviews/T-901-plan-task-plan.json');
+            assert.equal(result.plan.plan_summary, 'Preserve the approved plan from a custom task-mode artifact path');
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('rejects task-mode artifacts that omit pinned identity metadata', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-taskmode-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
             fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
@@ -215,34 +340,183 @@ describe('gates/build-review-context', () => {
                 task_id: 'T-901',
                 required_reviews: { test: true }
             }, null, 2), 'utf8');
-            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-901', '');
-            fs.writeFileSync(taskModePath, JSON.stringify(buildTaskModeArtifact({
-                taskId: 'T-901',
-                entryMode: 'EXPLICIT_TASK_EXECUTION',
-                requestedDepth: 3,
-                effectiveDepth: 3,
-                taskSummary: 'Enforce delegated reviewer routing',
+            writeTaskModeArtifactFixture(repoRoot, 'T-901', {
                 provider: null,
-                routedTo: 'AGENTS.md'
-            }), null, 2), 'utf8');
+                canonicalSourceOfTruth: null,
+                routedTo: null,
+                executionProviderSource: null,
+                runtimeIdentityStatus: null
+            });
             fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
                 enabled: true,
                 enabled_depths: [1, 2]
             }, null, 2), 'utf8');
             const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-test-review-context.json');
 
-            const result = buildReviewContext({
-                reviewType: 'test',
-                depth: 3,
-                preflightPath,
-                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
-                scopedDiffMetadataPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-test-scoped.json'),
-                outputPath,
-                repoRoot
-            });
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'test',
+                    depth: 3,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-test-scoped.json'),
+                    outputPath,
+                    repoRoot
+                }),
+                /missing canonical_source_of_truth|missing execution_provider_source|missing runtime_identity_status/i
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
 
-            assert.equal(result.reviewer_routing.source_of_truth, 'Qwen');
-            assert.equal(result.reviewer_routing.delegation_required, false);
+        it('rejects stripped current-style task-mode artifacts when latest TASK_MODE_ENTERED still carries current-era markers', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-current-era-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901c-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901c',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-901c', '');
+            const raw = JSON.parse(JSON.stringify(buildTaskModeArtifact({
+                taskId: 'T-901c',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Reject stripped current-style task-mode artifacts at review-context build',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                reviewerCapabilityLevel: 'delegation_required',
+                reviewerExpectedExecutionMode: 'delegated_subagent',
+                reviewerFallbackAllowed: false,
+                reviewerFallbackReasonRequired: false,
+                runtimeIdentityStatus: 'resolved'
+            })));
+            delete raw.canonical_source_of_truth;
+            delete raw.execution_provider_source;
+            delete raw.reviewer_capability_level;
+            delete raw.reviewer_expected_execution_mode;
+            delete raw.reviewer_fallback_allowed;
+            delete raw.reviewer_fallback_reason_required;
+            delete raw.runtime_identity_status;
+            delete raw.runtime_identity_violations;
+            fs.writeFileSync(taskModePath, JSON.stringify(raw, null, 2), 'utf8');
+            appendTaskEvent(orchestratorRoot, 'T-901c', 'TASK_MODE_ENTERED', 'PASS', 'Current task-mode entry before tampering.', {
+                artifact_path: taskModePath.replace(/\\/g, '/'),
+                entry_mode: 'EXPLICIT_TASK_EXECUTION',
+                requested_depth: 2,
+                effective_depth: 2,
+                task_summary: 'Reject stripped current-style task-mode artifacts at review-context build',
+                canonical_source_of_truth: 'Codex',
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901c-code-review-context.json');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: '',
+                    outputPath,
+                    repoRoot
+                }),
+                /missing canonical_source_of_truth|execution_provider_source/i
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('rejects stale provider-only task-mode artifacts even when provider matches workspace canonical owner', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-provider-only-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901b-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901b',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901b', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: null,
+                routedTo: null,
+                executionProviderSource: null,
+                runtimeIdentityStatus: null
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901b-code-review-context.json');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: '',
+                    outputPath,
+                    repoRoot
+                }),
+                /legacy_fallback|runtime identity is invalid/i
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('rejects workspace canonical drift after task-mode identity is pinned', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-drift-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-902-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-902',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-902', {
+                provider: 'Antigravity',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: '.antigravity/agents/orchestrator.md',
+                executionProviderSource: 'provider_bridge',
+                runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Qwen'
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-902-code-review-context.json');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: '',
+                    outputPath,
+                    repoRoot
+                }),
+                /contradicts task-mode canonical_source_of_truth/i
+            );
+
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -260,6 +534,12 @@ describe('gates/build-review-context', () => {
                 task_id: 'T-1005',
                 required_reviews: { code: true }
             }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-1005', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
             fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
                 enabled: false
             }, null, 2), 'utf8');
@@ -297,6 +577,12 @@ describe('gates/build-review-context', () => {
                 task_id: 'T-1005b',
                 required_reviews: { code: false }
             }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-1005b', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
             fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
                 enabled: false
             }, null, 2), 'utf8');
@@ -330,6 +616,12 @@ describe('gates/build-review-context', () => {
                 task_id: 'T-1006',
                 required_reviews: { code: true }
             }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-1006', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
             fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
                 enabled: false
             }, null, 2), 'utf8');

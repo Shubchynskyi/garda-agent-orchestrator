@@ -11,7 +11,8 @@ import { getReviewArtifactFindingsEvidence, isTrivialReview } from './completion
 import { fileSha256, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getReviewContextContractViolations } from './review-context-contract';
-import { normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
+import { resolveReviewContextRoutingIdentity } from './review-context-routing';
+import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { resolveBundleName } from '../core/constants';
 
 export const REVIEW_CONTRACTS = [
@@ -183,6 +184,10 @@ export function validateReviewArtifactGateEligibility(options: {
     preflightPath?: string | null;
     preflightSha256?: string | null;
     sourceOfTruth?: string | null;
+    canonicalSourceOfTruth?: string | null;
+    executionProvider?: string | null;
+    executionProviderSource?: string | null;
+    allowLegacyReviewContextIdentityFallback?: boolean;
 }): ReviewArtifactGateEligibilityResult {
     const { resolvedTaskId, reviewKey, required, skippedByOverride, reviewArtifact } = options;
     const errors: string[] = [];
@@ -197,11 +202,32 @@ export function validateReviewArtifactGateEligibility(options: {
     const contextFallbackReason = typeof routingMetadata?.fallback_reason === 'string'
         ? String(routingMetadata.fallback_reason).trim()
         : '';
-    const canonicalSourceOfTruth = normalizeSourceOfTruthValue(options.sourceOfTruth);
-    const routingSourceOfTruth = canonicalSourceOfTruth ?? normalizeSourceOfTruthValue(routingMetadata?.source_of_truth);
-    const routingPolicy = resolveReviewerRoutingPolicy(routingSourceOfTruth);
+    const canonicalSourceOfTruth = normalizeSourceOfTruthValue(options.canonicalSourceOfTruth);
+    const currentExecutionProvider = normalizeSourceOfTruthValue(options.executionProvider);
+    const resolvedRoutingIdentity = resolveReviewContextRoutingIdentity({
+        reviewerRouting: routingMetadata,
+        canonicalSourceOfTruth,
+        executionProvider: currentExecutionProvider,
+        allowLegacyCompatibility: options.allowLegacyReviewContextIdentityFallback === true
+    });
+    const legacySourceOfTruth = resolvedRoutingIdentity.legacy_source_of_truth;
+    const routingCanonicalSourceOfTruth = resolvedRoutingIdentity.canonical_source_of_truth;
+    const routingExecutionProvider = resolvedRoutingIdentity.execution_provider;
+    const routingExecutionProviderSource = normalizeRuntimeIdentitySource(routingMetadata?.execution_provider_source);
+    const routingIdentityStatus = resolvedRoutingIdentity.identity_status;
+    const currentExecutionProviderSource = normalizeRuntimeIdentitySource(options.executionProviderSource);
+    const routingPolicy = resolveReviewerRoutingPolicy(routingExecutionProvider ?? legacySourceOfTruth);
     const routingPolicySummary = {
-        source_of_truth: routingPolicy.source_of_truth,
+        source_of_truth: legacySourceOfTruth,
+        canonical_source_of_truth: routingCanonicalSourceOfTruth,
+        execution_provider: routingExecutionProvider,
+        execution_provider_source: routingExecutionProviderSource,
+        identity_status: routingIdentityStatus,
+        explicit_split_identity_present: resolvedRoutingIdentity.explicit_split_identity_present,
+        legacy_identity_compatibility_applied: resolvedRoutingIdentity.legacy_identity_compatibility_applied,
+        routed_to: typeof routingMetadata?.routed_to === 'string' ? String(routingMetadata.routed_to).trim() || null : null,
+        provider_bridge: typeof routingMetadata?.provider_bridge === 'string' ? String(routingMetadata.provider_bridge).trim() || null : null,
+        routing_provider: routingPolicy.source_of_truth,
         capability_level: routingPolicy.capability_level,
         delegation_required: routingPolicy.delegation_required,
         expected_execution_mode: routingPolicy.expected_execution_mode,
@@ -262,13 +288,46 @@ export function validateReviewArtifactGateEligibility(options: {
                     `('${String(routingMetadata.actual_execution_mode)}').`
                 );
             }
-            if (canonicalSourceOfTruth && routingMetadata?.source_of_truth) {
-                const artifactSourceOfTruth = normalizeSourceOfTruthValue(routingMetadata.source_of_truth);
-                if (artifactSourceOfTruth && artifactSourceOfTruth !== canonicalSourceOfTruth) {
-                    errors.push(
-                        `Review '${reviewKey}' review-context source_of_truth (${artifactSourceOfTruth}) does not match canonical provider (${canonicalSourceOfTruth}).`
-                    );
-                }
+            if (!canonicalSourceOfTruth) {
+                errors.push(
+                    `Review '${reviewKey}' cannot be validated because the active workspace is missing canonical SourceOfTruth.`
+                );
+            } else if (!routingCanonicalSourceOfTruth) {
+                errors.push(`Review '${reviewKey}' review-context is missing canonical_source_of_truth.`);
+            } else if (routingCanonicalSourceOfTruth !== canonicalSourceOfTruth) {
+                errors.push(
+                    `Review '${reviewKey}' review-context canonical_source_of_truth (${routingCanonicalSourceOfTruth}) does not match canonical provider (${canonicalSourceOfTruth}).`
+                );
+            }
+            if (!currentExecutionProvider) {
+                errors.push(
+                    `Review '${reviewKey}' cannot be validated because the active task is missing execution provider identity.`
+                );
+            } else if (!routingExecutionProvider) {
+                errors.push(`Review '${reviewKey}' review-context is missing execution_provider.`);
+            } else if (routingExecutionProvider !== currentExecutionProvider) {
+                errors.push(
+                    `Review '${reviewKey}' review-context execution_provider (${routingExecutionProvider}) does not match active runtime provider (${currentExecutionProvider}).`
+                );
+            }
+            if (resolvedRoutingIdentity.explicit_split_identity_present && !routingExecutionProviderSource) {
+                errors.push(`Review '${reviewKey}' review-context is missing execution_provider_source.`);
+            } else if (
+                resolvedRoutingIdentity.explicit_split_identity_present
+                && currentExecutionProviderSource
+                && routingExecutionProviderSource !== currentExecutionProviderSource
+            ) {
+                errors.push(
+                    `Review '${reviewKey}' review-context execution_provider_source (${routingExecutionProviderSource}) ` +
+                    `does not match active runtime source (${currentExecutionProviderSource}).`
+                );
+            }
+            if (!routingIdentityStatus) {
+                errors.push(`Review '${reviewKey}' review-context is missing identity_status.`);
+            } else if (routingIdentityStatus !== 'resolved') {
+                errors.push(
+                    `Review '${reviewKey}' review-context runtime identity status must be 'resolved', got '${routingIdentityStatus}'.`
+                );
             }
         }
 
@@ -409,6 +468,10 @@ export interface CheckRequiredReviewsOptions {
     compileGateEvidence?: Record<string, unknown> | null;
     reviewArtifacts?: Record<string, ReviewArtifactEntry>;
     sourceOfTruth?: string | null;
+    canonicalSourceOfTruth?: string | null;
+    executionProvider?: string | null;
+    executionProviderSource?: string | null;
+    allowLegacyReviewContextIdentityFallback?: boolean;
 }
 
 /**
@@ -420,6 +483,14 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const skipReviews = options.skipReviews || [];
     const compileGateEvidence = options.compileGateEvidence || null;
     const reviewArtifacts = options.reviewArtifacts || {};
+    const legacySourceOfTruth = normalizeSourceOfTruthValue(options.sourceOfTruth);
+    const canonicalSourceOfTruth = options.canonicalSourceOfTruth ?? legacySourceOfTruth;
+    const executionProvider = options.executionProvider ?? legacySourceOfTruth;
+    const allowLegacyReviewContextIdentityFallback = options.allowLegacyReviewContextIdentityFallback ?? (
+        !!legacySourceOfTruth
+        && !options.canonicalSourceOfTruth
+        && !options.executionProvider
+    );
 
     const errors = [...validatedPreflight.errors];
     const resolvedTaskId = validatedPreflight.resolved_task_id;
@@ -459,7 +530,11 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 reviewArtifact: reviewArtifacts[reviewKey],
                 preflightPath: validatedPreflight.preflight_path,
                 preflightSha256: validatedPreflight.preflight_hash,
-                sourceOfTruth: options.sourceOfTruth
+                sourceOfTruth: options.sourceOfTruth,
+                canonicalSourceOfTruth,
+                executionProvider,
+                executionProviderSource: options.executionProviderSource,
+                allowLegacyReviewContextIdentityFallback
             });
             compactionAudit = validation.compactionAudit;
             receiptValid = validation.receiptValid;

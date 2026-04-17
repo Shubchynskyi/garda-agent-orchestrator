@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as gateHelpers from '../../../gates/helpers';
 import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
-import { getCanonicalEntrypointFile } from '../../../materialization/common';
+import { resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
 import { requireResolvedPath } from '../shared-command-utils';
 
 export function getErrorMessage(error: unknown): string {
@@ -95,34 +95,38 @@ export function syncTaskQueueStatus(repoRoot: string, taskId: string, nextStatus
     return true;
 }
 
-export function readRoutingDecision(repoRoot: string, providerOverride?: unknown, routedToOverride?: unknown): { provider: string | null; routedTo: string | null } {
-    const explicitProvider = String(providerOverride || '').trim();
-    const explicitRoutedTo = String(routedToOverride || '').trim();
-    if (explicitProvider) {
-        return {
-            provider: explicitProvider,
-            routedTo: explicitRoutedTo || getCanonicalEntrypointFile(explicitProvider)
-        };
-    }
-
-    const initAnswersPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'init-answers.json'));
-    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
-        return { provider: null, routedTo: null };
-    }
-
-    try {
-        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
-        const sourceOfTruth = String(payload.SourceOfTruth || '').trim();
-        if (!sourceOfTruth) {
-            return { provider: null, routedTo: null };
-        }
-        return {
-            provider: sourceOfTruth,
-            routedTo: getCanonicalEntrypointFile(sourceOfTruth)
-        };
-    } catch {
-        return { provider: null, routedTo: null };
-    }
+export function readRoutingDecision(
+    repoRoot: string,
+    providerOverride?: unknown,
+    routedToOverride?: unknown,
+    taskId?: string | null
+): {
+    provider: string | null;
+    routedTo: string | null;
+    canonicalSourceOfTruth: string | null;
+    canonicalEntrypoint: string | null;
+    executionProviderSource: string | null;
+    providerBridge: string | null;
+    identityStatus: string;
+    violations: string[];
+} {
+    const identity = resolveRuntimeReviewerIdentity({
+        repoRoot,
+        taskId,
+        executionProvider: providerOverride,
+        routedTo: routedToOverride,
+        allowLegacyFallback: true
+    });
+    return {
+        provider: identity.execution_provider,
+        routedTo: identity.routed_to,
+        canonicalSourceOfTruth: identity.canonical_source_of_truth,
+        canonicalEntrypoint: identity.canonical_entrypoint,
+        executionProviderSource: identity.execution_provider_source,
+        providerBridge: identity.provider_bridge,
+        identityStatus: identity.identity_status,
+        violations: identity.violations
+    };
 }
 
 export function splitOutputLines(text: unknown): string[] {

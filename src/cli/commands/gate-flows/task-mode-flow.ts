@@ -54,6 +54,7 @@ import {
     resolveTaskModeArtifactPath,
     type TaskModePlanMetadata
 } from '../../../gates/task-mode';
+import { resolveReviewerRoutingPolicy } from '../../../gates/reviewer-routing';
 import { captureDirtyWorkspaceBaseline } from '../../../gates/dirty-worktree-protection';
 import {
     validateTaskPlan,
@@ -260,6 +261,101 @@ function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: strin
     ].join(' ');
 }
 
+function buildTaskModeIdentitySuggestionCommand(
+    repoRoot: string,
+    taskId: string,
+    routingDecision: ReturnType<typeof readRoutingDecision>
+): string {
+    const commandParts = [
+        `${buildGateCommandPrefix(repoRoot)} gate enter-task-mode`,
+        `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
+        `--task-id ${quotePowerShellCliValue(taskId)}`,
+        '--task-summary "<task-summary>"'
+    ];
+    const safeRoutedIdentityHint = (
+        routingDecision.identityStatus !== 'contradictory'
+        && (
+            routingDecision.executionProviderSource === 'provider_bridge'
+            || routingDecision.executionProviderSource === 'provider_entrypoint'
+        )
+    )
+        ? (routingDecision.routedTo || routingDecision.providerBridge)
+        : null;
+    if (safeRoutedIdentityHint) {
+        commandParts.push(`--routed-to ${quotePowerShellCliValue(safeRoutedIdentityHint)}`);
+    } else if (routingDecision.provider && routingDecision.executionProviderSource === 'explicit_provider') {
+        commandParts.push(`--provider ${quotePowerShellCliValue(routingDecision.provider)}`);
+    } else {
+        commandParts.push('--provider "<runtime-provider>"');
+    }
+    return commandParts.join(' ');
+}
+
+function assertTaskModeRuntimeIdentity(
+    repoRoot: string,
+    taskId: string,
+    routingDecision: ReturnType<typeof readRoutingDecision>
+): void {
+    if (!routingDecision.canonicalSourceOfTruth) {
+        throw new Error(
+            'Canonical SourceOfTruth is missing at task-mode entry. Re-run setup/reinit to restore canonical owner files ' +
+            `before starting '${taskId}'. Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)}`
+        );
+    }
+
+    if (routingDecision.identityStatus === 'resolved') {
+        return;
+    }
+
+    const violationText = routingDecision.violations.length > 0
+        ? ` ${routingDecision.violations.join(' ')}`
+        : '';
+    const remediation = routingDecision.routedTo || routingDecision.providerBridge
+        ? 'Re-run enter-task-mode with explicit runtime identity via the active provider bridge/entrypoint route, ' +
+            'or pass --provider <runtime-provider>. Do not infer runtime provider from canonical SourceOfTruth.'
+        : 'Re-run enter-task-mode with explicit --provider <runtime-provider> or --routed-to <provider-bridge-or-entrypoint>. ' +
+            'Do not infer runtime provider from canonical SourceOfTruth.';
+
+    throw new Error(
+        `Runtime execution identity is '${routingDecision.identityStatus}' at task-mode entry.${violationText} ${remediation} ` +
+        `Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)}`
+    );
+}
+
+function assertResolvedRuntimeIdentityForDependentPreflightGate(
+    repoRoot: string,
+    taskId: string,
+    gateName: string,
+    routingDecision: ReturnType<typeof readRoutingDecision>
+): void {
+    if (!routingDecision.canonicalSourceOfTruth) {
+        throw new Error(
+            `Canonical SourceOfTruth is missing before ${gateName}. Re-run setup/reinit to restore canonical owner files, ` +
+            `then re-enter task mode before ${gateName}. Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)} ; ` +
+            `${buildGateRerunCommand(repoRoot, taskId, gateName)}`
+        );
+    }
+
+    if (routingDecision.identityStatus === 'resolved') {
+        return;
+    }
+
+    const violationText = routingDecision.violations.length > 0
+        ? ` ${routingDecision.violations.join(' ')}`
+        : '';
+    const remediation = routingDecision.routedTo || routingDecision.providerBridge
+        ? 'Re-enter task mode with explicit runtime identity via the active provider bridge/entrypoint route, ' +
+            'or pass --provider <runtime-provider>. Do not infer runtime provider from canonical SourceOfTruth.'
+        : 'Re-enter task mode with explicit --provider <runtime-provider> or --routed-to <provider-bridge-or-entrypoint>. ' +
+            'Do not infer runtime provider from canonical SourceOfTruth.';
+
+    throw new Error(
+        `Runtime execution identity is '${routingDecision.identityStatus}' before ${gateName}.${violationText} ${remediation} ` +
+        `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)} ; ` +
+        `${buildGateRerunCommand(repoRoot, taskId, gateName)}`
+    );
+}
+
 function resolvePrePreflightSequenceLockPath(repoRoot: string, taskId: string): string {
     return gateHelpers.joinOrchestratorPath(
         repoRoot,
@@ -272,7 +368,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
     const artifactPath = resolveTaskModeArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
+    // A new task-mode entry must never inherit runtime identity from an older task-mode artifact.
     const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
+    assertTaskModeRuntimeIdentity(repoRoot, taskId, routingDecision);
     const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot);
     const plannedChangedFiles = normalizePlannedChangedFiles(repoRoot, options.plannedChangedFiles);
     const protectedPlannedFiles = plannedChangedFiles.filter((entry) =>
@@ -344,6 +442,22 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         taskSummary: String(options.taskSummary || ''),
         orchestratorWork,
         provider: routingDecision.provider,
+        canonicalSourceOfTruth: routingDecision.canonicalSourceOfTruth,
+        executionProviderSource: routingDecision.executionProviderSource,
+        reviewerCapabilityLevel: routingDecision.provider
+            ? resolveReviewerRoutingPolicy(routingDecision.provider).capability_level
+            : null,
+        reviewerExpectedExecutionMode: routingDecision.provider
+            ? resolveReviewerRoutingPolicy(routingDecision.provider).expected_execution_mode
+            : null,
+        reviewerFallbackAllowed: routingDecision.provider
+            ? resolveReviewerRoutingPolicy(routingDecision.provider).fallback_allowed
+            : null,
+        reviewerFallbackReasonRequired: routingDecision.provider
+            ? resolveReviewerRoutingPolicy(routingDecision.provider).fallback_reason_required
+            : null,
+        runtimeIdentityStatus: routingDecision.identityStatus,
+        runtimeIdentityViolations: routingDecision.violations,
         routedTo: routingDecision.routedTo,
         actor: String(options.actor || 'orchestrator'),
         plan: planMetadata,
@@ -391,6 +505,14 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 task_summary: taskModeArtifact.task_summary,
                 orchestrator_work: taskModeArtifact.orchestrator_work,
                 provider: taskModeArtifact.provider,
+                canonical_source_of_truth: taskModeArtifact.canonical_source_of_truth,
+                execution_provider_source: taskModeArtifact.execution_provider_source,
+                reviewer_capability_level: taskModeArtifact.reviewer_capability_level,
+                reviewer_expected_execution_mode: taskModeArtifact.reviewer_expected_execution_mode,
+                reviewer_fallback_allowed: taskModeArtifact.reviewer_fallback_allowed,
+                reviewer_fallback_reason_required: taskModeArtifact.reviewer_fallback_reason_required,
+                runtime_identity_status: taskModeArtifact.runtime_identity_status,
+                runtime_identity_violations: taskModeArtifact.runtime_identity_violations,
                 routed_to: taskModeArtifact.routed_to,
                 actor: taskModeArtifact.actor,
                 plan_guided: !!taskModeArtifact.plan,
@@ -416,6 +538,10 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         effective_depth: taskModeArtifact.effective_depth,
         task_summary: taskModeArtifact.task_summary,
         provider: taskModeArtifact.provider,
+        canonical_source_of_truth: taskModeArtifact.canonical_source_of_truth,
+        execution_provider_source: taskModeArtifact.execution_provider_source,
+        runtime_identity_status: taskModeArtifact.runtime_identity_status,
+        runtime_identity_violations: taskModeArtifact.runtime_identity_violations,
         routed_to: taskModeArtifact.routed_to,
         plan_guided: !!taskModeArtifact.plan,
         plan_path: taskModeArtifact.plan?.plan_path ?? null,
@@ -448,6 +574,9 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `RequestedDepth: ${taskModeArtifact.requested_depth}`,
             `EffectiveDepth: ${taskModeArtifact.effective_depth}`,
             ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),
+            ...(routingDecision.canonicalSourceOfTruth ? [`CanonicalSourceOfTruth: ${routingDecision.canonicalSourceOfTruth}`] : []),
+            ...(routingDecision.executionProviderSource ? [`ExecutionProviderSource: ${routingDecision.executionProviderSource}`] : []),
+            ...(routingDecision.identityStatus ? [`RuntimeIdentityStatus: ${routingDecision.identityStatus}`] : []),
             ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : []),
             ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`]),
             ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : []),
@@ -633,7 +762,7 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider);
+    const routingDecision = readRoutingDecision(repoRoot, options.provider, options.providerBridge, taskId);
     const provider = routingDecision.provider;
     const sequenceLockPath = resolvePrePreflightSequenceLockPath(repoRoot, taskId);
 
@@ -657,10 +786,27 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
             taskId,
             repoRoot,
             provider,
+            canonicalSourceOfTruth: routingDecision.canonicalSourceOfTruth,
             cliPath: options.cliPath ? String(options.cliPath) : undefined,
             effectiveCwd: options.effectiveCwd ? String(options.effectiveCwd) : undefined,
             canonicalEntrypoint: options.canonicalEntrypoint ? String(options.canonicalEntrypoint) : undefined,
             providerBridge: options.providerBridge ? String(options.providerBridge) : undefined,
+            routedTo: routingDecision.routedTo,
+            executionProviderSource: routingDecision.executionProviderSource,
+            reviewerCapabilityLevel: provider
+                ? resolveReviewerRoutingPolicy(provider).capability_level
+                : null,
+            reviewerExpectedExecutionMode: provider
+                ? resolveReviewerRoutingPolicy(provider).expected_execution_mode
+                : null,
+            reviewerFallbackAllowed: provider
+                ? resolveReviewerRoutingPolicy(provider).fallback_allowed
+                : null,
+            reviewerFallbackReasonRequired: provider
+                ? resolveReviewerRoutingPolicy(provider).fallback_reason_required
+                : null,
+            runtimeIdentityStatus: routingDecision.identityStatus,
+            runtimeIdentityViolations: routingDecision.violations,
             precheckViolations: handshakePrecheckViolations
         });
 
@@ -707,7 +853,8 @@ export function runShellSmokePreflightCommand(options: ShellSmokePreflightComman
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider);
+    const routingDecision = readRoutingDecision(repoRoot, options.provider, undefined, taskId);
+    assertResolvedRuntimeIdentityForDependentPreflightGate(repoRoot, taskId, 'shell-smoke-preflight', routingDecision);
     const provider = routingDecision.provider;
 
     const sequenceLockPath = resolvePrePreflightSequenceLockPath(repoRoot, taskId);
@@ -776,7 +923,8 @@ export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagn
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider);
+    const routingDecision = readRoutingDecision(repoRoot, options.provider, undefined, taskId);
+    assertResolvedRuntimeIdentityForDependentPreflightGate(repoRoot, taskId, 'command-timeout-diagnostics', routingDecision);
     const provider = routingDecision.provider;
 
     const artifactPath = options.artifactPath
