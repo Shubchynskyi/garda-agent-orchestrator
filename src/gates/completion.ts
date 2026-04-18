@@ -42,6 +42,22 @@ import {
     resolveReviewerRoutingPolicy
 } from './reviewer-routing';
 import { collectTaskTimelineEventTypes, getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
+import {
+    collectOrderedTimelineEvents,
+    readJsonArtifact,
+    ensurePassedArtifactStatus,
+    readOptionalArtifactStringField,
+    normalizeTimelineDetailString,
+    getTimelineSkillId,
+    getTimelineReferencePath,
+    eventMatchesReviewSkill,
+    eventMatchesStage,
+    findLatestTimelineEvent,
+    findLatestStageOccurrence,
+    findLatestStageOccurrenceInRange,
+    findLatestRecordedReviewContextPath
+} from './completion-evidence';
+import type { TimelineEventEntry } from './completion-evidence';
 
 /**
  * Canonical stage ordering for code-changing tasks.
@@ -68,12 +84,23 @@ export const NON_CODE_STAGE_SEQUENCE_ORDER = NO_REVIEW_RECORDED_STAGE_SEQUENCE_O
 
 export { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
 
-export interface TimelineEventEntry {
-    event_type: string;
-    timestamp_utc: string;
-    sequence: number;
-    details: Record<string, unknown> | null;
-}
+// Re-export evidence loading and normalization helpers from dedicated module
+export {
+    collectOrderedTimelineEvents,
+    readJsonArtifact,
+    ensurePassedArtifactStatus,
+    readOptionalArtifactStringField,
+    normalizeTimelineDetailString,
+    getTimelineSkillId,
+    getTimelineReferencePath,
+    eventMatchesReviewSkill,
+    eventMatchesStage,
+    findLatestTimelineEvent,
+    findLatestStageOccurrence,
+    findLatestStageOccurrenceInRange,
+    findLatestRecordedReviewContextPath
+} from './completion-evidence';
+export type { TimelineEventEntry } from './completion-evidence';
 
 export interface StageSequenceEvidence {
     observed_order: string[];
@@ -95,72 +122,6 @@ export interface ZeroDiffCompletionEvidence {
     violations: string[];
 }
 
-function eventMatchesStage(entry: TimelineEventEntry, stage: string): boolean {
-    if (stage === 'REVIEW_GATE_PASSED') {
-        return entry.event_type === 'REVIEW_GATE_PASSED' || entry.event_type === 'REVIEW_GATE_PASSED_WITH_OVERRIDE';
-    }
-    return entry.event_type === stage;
-}
-
-function findLatestStageOccurrence(
-    events: readonly TimelineEventEntry[],
-    stage: string,
-    upperBoundExclusive: number
-): TimelineEventEntry | null {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const entry = events[index];
-        if (entry.sequence >= upperBoundExclusive) {
-            continue;
-        }
-        if (eventMatchesStage(entry, stage)) {
-            return entry;
-        }
-    }
-    return null;
-}
-
-function findLatestRecordedReviewContextPath(
-    events: readonly TimelineEventEntry[],
-    reviewKey: string
-): string | null {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const entry = events[index];
-        if (entry.event_type !== 'REVIEW_RECORDED') {
-            continue;
-        }
-        const recordedReviewType = String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase();
-        if (recordedReviewType !== reviewKey) {
-            continue;
-        }
-        const reviewContextPath = String(entry.details?.review_context_path || entry.details?.reviewContextPath || '').trim();
-        if (reviewContextPath) {
-            return reviewContextPath;
-        }
-    }
-    return null;
-}
-
-function findLatestStageOccurrenceInRange(
-    events: readonly TimelineEventEntry[],
-    stage: string,
-    lowerBoundExclusive: number,
-    upperBoundExclusive: number
-): TimelineEventEntry | null {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const entry = events[index];
-        if (entry.sequence >= upperBoundExclusive) {
-            continue;
-        }
-        if (entry.sequence <= lowerBoundExclusive) {
-            break;
-        }
-        if (eventMatchesStage(entry, stage)) {
-            return entry;
-        }
-    }
-    return null;
-}
-
 const CYCLE_BOUNDARY_EVENTS = new Set([
     'REVIEW_GATE_PASSED',
     'REVIEW_GATE_PASSED_WITH_OVERRIDE',
@@ -173,55 +134,6 @@ const UPSTREAM_CYCLE_RESTART_EVENTS = new Set([
     'SHELL_SMOKE_PREFLIGHT_RECORDED',
     'PREFLIGHT_CLASSIFIED'
 ]);
-
-/**
- * Read ordered timeline events from a JSONL file.
- * Returns events in file order (integrity-sequence order) with their event types.
- */
-export function collectOrderedTimelineEvents(timelinePath: string, errors: string[]): TimelineEventEntry[] {
-    const entries: TimelineEventEntry[] = [];
-    const resolvedPath = path.resolve(String(timelinePath || ''));
-    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-        errors.push(`Task timeline not found: ${normalizePath(resolvedPath)}`);
-        return entries;
-    }
-
-    const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n').filter(line => line.trim().length > 0);
-    let seq = 0;
-    for (const line of lines) {
-        try {
-            const parsed = JSON.parse(line) as Record<string, unknown>;
-            const eventType = String(parsed.event_type || '').trim().toUpperCase();
-            const timestampUtc = String(parsed.timestamp_utc || '').trim();
-            const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
-                ? parsed.details as Record<string, unknown>
-                : null;
-            if (eventType) {
-                entries.push({ event_type: eventType, timestamp_utc: timestampUtc, sequence: seq, details });
-            }
-            seq++;
-        } catch {
-            errors.push(`Task timeline contains invalid JSON line: ${normalizePath(resolvedPath)}`);
-            seq++;
-            continue;
-        }
-    }
-
-    return entries;
-}
-
-function findLatestTimelineEvent(
-    events: readonly TimelineEventEntry[],
-    predicate: (entry: TimelineEventEntry) => boolean
-): TimelineEventEntry | null {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const entry = events[index];
-        if (predicate(entry)) {
-            return entry;
-        }
-    }
-    return null;
-}
 
 /**
  * Validate that required stage events occurred in the canonical order.
@@ -495,56 +407,6 @@ function buildReviewCycleRestartCommand(
         parts.push(`--output-filters-path ${quotePowerShellCliValue(outputFiltersPath)}`);
     }
     return parts.join(' ');
-}
-
-function readOptionalArtifactStringField(
-    artifact: Record<string, unknown> | null,
-    fieldName: string
-): string | null {
-    if (!artifact) {
-        return null;
-    }
-    const value = artifact[fieldName];
-    if (typeof value !== 'string') {
-        return null;
-    }
-    const trimmed = value.trim();
-    return trimmed || null;
-}
-
-function normalizeTimelineDetailString(value: unknown): string | null {
-    const text = String(value || '').trim();
-    return text || null;
-}
-
-function getTimelineSkillId(event: TimelineEventEntry): string | null {
-    if (!event.details) {
-        return null;
-    }
-    return normalizeTimelineDetailString(event.details.skill_id ?? event.details.skillId)?.toLowerCase() || null;
-}
-
-function getTimelineReferencePath(event: TimelineEventEntry): string | null {
-    if (!event.details) {
-        return null;
-    }
-    const raw = normalizeTimelineDetailString(event.details.reference_path ?? event.details.referencePath);
-    return raw ? normalizePath(raw).toLowerCase() : null;
-}
-
-function eventMatchesReviewSkill(event: TimelineEventEntry, candidateSkillIds: string[]): boolean {
-    const normalizedCandidates = candidateSkillIds.map(candidate => candidate.toLowerCase());
-    const skillId = getTimelineSkillId(event);
-    if (skillId && normalizedCandidates.includes(skillId)) {
-        return true;
-    }
-
-    const referencePath = getTimelineReferencePath(event);
-    if (!referencePath) {
-        return false;
-    }
-
-    return normalizedCandidates.some((candidate) => referencePath.includes(`/live/skills/${candidate.toLowerCase()}/`));
 }
 
 /**
@@ -1339,35 +1201,6 @@ export function validatePreflightForCompletion(preflightPath: string, explicitTa
         preflight_hash: fileSha256(path.resolve(preflightPath)),
         errors
     };
-}
-
-function readJsonArtifact(artifactPath: string, label: string, errors: string[], { required = true } = {}): Record<string, unknown> | null {
-    const resolvedPath = path.resolve(String(artifactPath || ''));
-    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-        if (required) {
-            errors.push(`${label} artifact not found: ${normalizePath(resolvedPath)}`);
-        }
-        return null;
-    }
-
-    try {
-        return JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
-    } catch {
-        errors.push(`${label} artifact is not valid JSON: ${normalizePath(resolvedPath)}`);
-        return null;
-    }
-}
-
-function ensurePassedArtifactStatus(artifact: Record<string, unknown> | null, label: string, errors: string[]): void {
-    if (!artifact) {
-        return;
-    }
-    if (String(artifact.status || '').trim().toUpperCase() !== 'PASSED') {
-        errors.push(`${label} artifact status must be PASSED, got '${String(artifact.status || 'UNKNOWN')}'.`);
-    }
-    if (String(artifact.outcome || '').trim().toUpperCase() !== 'PASS') {
-        errors.push(`${label} artifact outcome must be PASS, got '${String(artifact.outcome || 'UNKNOWN')}'.`);
-    }
 }
 
 export interface RunCompletionGateOptions {
