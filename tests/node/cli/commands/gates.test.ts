@@ -1951,6 +1951,24 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('syncTaskQueueStatus preserves escaped pipes in TASK.md notes cells', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-escaped-notes';
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+            `| ${taskId} | TODO | P1 | test | Update app flow | unassigned | 2026-03-28 | default | before \\| blocked_reason_code=ESCAPED_PIPE |`
+        ].join('\n'), 'utf8');
+
+        assert.equal(syncTaskQueueStatus(repoRoot, taskId, 'IN_PROGRESS'), true);
+
+        const taskFile = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        assert.match(taskFile, /\|\s*T-900c-escaped-notes\s*\|\s*IN_PROGRESS\s*\|/);
+        assert.ok(taskFile.includes('before \\| blocked_reason_code=ESCAPED_PIPE'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('uses explicit provider override for task-mode routing evidence', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900c-provider';

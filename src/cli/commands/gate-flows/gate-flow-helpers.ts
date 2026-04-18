@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../core/task-md-table';
 import * as gateHelpers from '../../../gates/helpers';
 import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
 import { resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
@@ -26,11 +27,11 @@ export function readTaskQueueStatus(repoRoot: string, taskId: string): string | 
         if (!trimmed.startsWith('|')) {
             continue;
         }
-        const cells = trimmed.split('|').map((cell) => cell.trim()).filter(Boolean);
-        if (cells.length < 2 || cells[0] !== taskId) {
+        const cells = parseTaskMdTableRow(rawLine);
+        if (cells.length < 2 || cells[0].trimmed !== taskId) {
             continue;
         }
-        const statusMatch = statusPattern.exec(cells[1]);
+        const statusMatch = statusPattern.exec(cells[1].trimmed);
         return statusMatch ? statusMatch[1].toUpperCase() : null;
     }
 
@@ -97,18 +98,21 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             continue;
         }
 
-        const cells = rawLine.split('|');
-        if (cells.length < 4 || cells[1].trim() !== taskId) {
+        const cells = parseTaskMdTableRow(rawLine);
+        if (cells.length < 4 || cells[0].trimmed !== taskId) {
             continue;
         }
 
         taskFound = true;
-        const statusMatch = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i.exec(cells[2]);
+        const statusMatch = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i.exec(cells[1].trimmed);
         previousStatus = statusMatch ? statusMatch[1].toUpperCase() : null;
-        const updatedStatusCell = formatTaskQueueStatusCell(cells[2], normalizedNextStatus);
-        if (updatedStatusCell !== cells[2]) {
-            cells[2] = updatedStatusCell;
-            lines[index] = cells.join('|');
+        const updatedStatusCell = formatTaskQueueStatusCell(cells[1].raw, normalizedNextStatus);
+        if (updatedStatusCell !== cells[1].raw) {
+            const updatedLine = replaceTaskMdTableCell(rawLine, 1, updatedStatusCell);
+            if (!updatedLine) {
+                continue;
+            }
+            lines[index] = updatedLine;
             changed = true;
         }
         break;

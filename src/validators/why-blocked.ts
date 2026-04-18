@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists } from '../core/fs';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, resolveBundleName } from '../core/constants';
+import { parseTaskMdTableRow } from '../core/task-md-table';
 import { getMandatoryEvents } from '../gate-runtime/lifecycle-event-types';
 import { scanTaskEventLocks, type TaskEventLockHealth } from '../gate-runtime/task-events';
 import { scanReviewArtifactLocks, type ReviewArtifactLockHealth } from '../gate-runtime/review-artifacts';
@@ -71,36 +72,38 @@ function normalizeStatus(raw: string): string {
 }
 
 function parseTaskMdRow(row: string): TaskStatus | null {
-    const cells = row.split('|').map(function (c) { return c.trim(); }).filter(Boolean);
+    const cells = parseTaskMdTableRow(row);
     if (cells.length < 9) {
         return null;
     }
 
     // Skip separator rows
-    if (cells[0].startsWith('-') || cells[0].startsWith('=')) {
+    if (cells[0].trimmed.startsWith('-') || cells[0].trimmed.startsWith('=')) {
         return null;
     }
 
     // Skip header rows
-    if (cells[0].toLowerCase() === 'id') {
+    if (cells[0].trimmed.toLowerCase() === 'id') {
         return null;
     }
 
-    const id = cells[0];
+    const id = cells[0].trimmed;
     if (!id || !id.match(/^T-\d+/i)) {
         return null;
     }
 
+    const notes = cells.slice(8).map(function (cell) { return cell.trimmed; }).join(' | ').trim();
+
     return {
         id: id,
-        status: normalizeStatus(cells[1] || ''),
-        priority: cells[2] || '',
-        area: cells[3] || '',
-        title: cells[4] || '',
-        owner: cells[5] || '',
-        updated: cells[6] || '',
-        profile: cells[7] || '',
-        notes: cells[8] || ''
+        status: normalizeStatus(cells[1]?.trimmed || ''),
+        priority: cells[2]?.trimmed || '',
+        area: cells[3]?.trimmed || '',
+        title: cells[4]?.trimmed || '',
+        owner: cells[5]?.trimmed || '',
+        updated: cells[6]?.trimmed || '',
+        profile: cells[7]?.trimmed || '',
+        notes
     };
 }
 

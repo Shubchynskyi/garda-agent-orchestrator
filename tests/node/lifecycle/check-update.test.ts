@@ -52,6 +52,21 @@ function createSourcePathFixture(repoRoot: string): string {
     return sourceRoot;
 }
 
+function setupUpToDateSourceWorkspace(repoRoot: string) {
+    const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
+    const sourceRoot = createSourcePathFixture(repoRoot);
+    const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
+        syncSurfaceFrom: sourceRoot
+    });
+
+    return {
+        currentVersion,
+        sourceRoot,
+        projectRoot,
+        bundleRoot
+    };
+}
+
 function setupCheckUpdateWorkspace(
     repoRoot: string,
     deployedVersion: string,
@@ -78,16 +93,13 @@ describe('runCheckUpdate', () => {
     const repoRoot = findRepoRoot();
 
     it('detects UP_TO_DATE when versions match', async () => {
-        const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
-            syncSurfaceFrom: repoRoot
-        });
+        const { currentVersion, sourceRoot, projectRoot, bundleRoot } = setupUpToDateSourceWorkspace(repoRoot);
         try {
             // Point to local repo as the "remote"
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 dryRun: true,
                 trustOverride: true
@@ -101,6 +113,7 @@ describe('runCheckUpdate', () => {
             assert.equal(result.trustOverrideUsed, true);
             assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
@@ -129,15 +142,12 @@ describe('runCheckUpdate', () => {
     });
 
     it('can acquire update source from an npm package spec', async () => {
-        const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
-            syncSurfaceFrom: repoRoot
-        });
+        const { currentVersion, sourceRoot, projectRoot, bundleRoot } = setupUpToDateSourceWorkspace(repoRoot);
         try {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                packageSpec: repoRoot,
+                packageSpec: sourceRoot,
                 noPrompt: true,
                 dryRun: true,
                 trustOverride: true
@@ -148,6 +158,7 @@ describe('runCheckUpdate', () => {
             assert.equal(result.updateAvailable, false);
             assert.equal(result.currentVersion, currentVersion);
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
@@ -261,6 +272,7 @@ describe('runCheckUpdate', () => {
 
     it('revalidates workspace state after lock acquisition and skips redundant apply', async () => {
         const latestVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
+        const sourceRoot = createSourcePathFixture(repoRoot);
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             let releaseBlocker!: () => void;
@@ -274,7 +286,7 @@ describe('runCheckUpdate', () => {
             });
 
             const blocker = withLifecycleOperationLockAsync(projectRoot, 'concurrent-update', async () => {
-                seedBundleSyncSurface(repoRoot, bundleRoot);
+                seedBundleSyncSurface(sourceRoot, bundleRoot);
                 fs.writeFileSync(path.join(bundleRoot, 'VERSION'), `${latestVersion}\n`, 'utf8');
                 blockerEntered();
                 await blockerReleasePromise;
@@ -285,7 +297,7 @@ describe('runCheckUpdate', () => {
             const resultPromise = runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 apply: true,
                 trustOverride: true,
@@ -306,6 +318,7 @@ describe('runCheckUpdate', () => {
             assert.equal(result.updateApplied, false);
             assert.equal(result.syncItemsUpdated, 0);
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
@@ -649,16 +662,13 @@ describe('runCheckUpdate', () => {
     });
 
     it('accepts signal option without error on sourcePath flow (T-061)', async () => {
-        const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
-            syncSurfaceFrom: repoRoot
-        });
+        const { sourceRoot, projectRoot, bundleRoot } = setupUpToDateSourceWorkspace(repoRoot);
         try {
             const ac = new AbortController();
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 dryRun: true,
                 trustOverride: true,
@@ -666,20 +676,18 @@ describe('runCheckUpdate', () => {
             });
             assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });
 
     it('accepts onProgress option without error (T-061)', async () => {
-        const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
-        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion, {
-            syncSurfaceFrom: repoRoot
-        });
+        const { sourceRoot, projectRoot, bundleRoot } = setupUpToDateSourceWorkspace(repoRoot);
         try {
             const result = await runCheckUpdate({
                 targetRoot: projectRoot,
                 bundleRoot,
-                sourcePath: repoRoot,
+                sourcePath: sourceRoot,
                 noPrompt: true,
                 dryRun: true,
                 trustOverride: true,
@@ -687,6 +695,7 @@ describe('runCheckUpdate', () => {
             });
             assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
         } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });

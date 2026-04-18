@@ -89,6 +89,26 @@ test('getWhyBlocked extracts blocked_reason_code from notes column', () => {
     }
 });
 
+test('getWhyBlocked keeps blocked_reason_code when notes include escaped pipes', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-003a | 🟥 BLOCKED | P2 | area | Some task | me | 2026-01-01 | strict | before \\| blocked_reason_code=REVIEW_DEPENDENCY |']),
+            'utf8'
+        );
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.blocked_tasks.length, 1);
+
+        const reasons = result.blocked_tasks[0].blocking_reasons;
+        const explicitReason = reasons.find(function (r) { return r.reason_code === 'REVIEW_DEPENDENCY'; });
+        assert.ok(explicitReason !== undefined, 'Expected blocking reason REVIEW_DEPENDENCY from notes after escaped pipe');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getWhyBlocked detects IN_PROGRESS task with missing timeline events', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
     const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
