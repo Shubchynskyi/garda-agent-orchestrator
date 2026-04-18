@@ -1,19 +1,17 @@
 import { runVerify, formatVerifyResult, formatVerifyResultCompact } from '../../validators/verify';
 import {
-    ensureDirectoryExists,
-    normalizePathValue,
     normalizeSourceOfTruth,
     PackageJsonLike,
-    parseOptions,
-    printHelp,
-    readInitAnswersArtifact
+    parseOptions
 } from './cli-helpers';
 import {
-    ensureBundleExists,
-    getDefaultInitAnswersPath,
     ParsedOptionsRecord,
     ValidationFailureError
 } from './shared-command-utils';
+import {
+    handleStandardFlags,
+    resolveWorkspaceContext
+} from './workspace-helpers';
 
 export function handleVerify(commandArgv: string[], packageJson: PackageJsonLike): void {
     const verifyDefinitions = {
@@ -25,22 +23,9 @@ export function handleVerify(commandArgv: string[], packageJson: PackageJsonLike
     const { options: rawOptions } = parseOptions(commandArgv, verifyDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
-    const bundlePath = ensureBundleExists(targetRoot, 'verify');
-    const initAnswersPath = typeof options.initAnswersPath === 'string'
-        ? options.initAnswersPath
-        : getDefaultInitAnswersPath(targetRoot, bundlePath);
-    const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'verify');
+    const { targetRoot, answers } = resolveWorkspaceContext(options.targetRoot, options.initAnswersPath, 'verify');
     const sourceOfTruth = options.sourceOfTruth !== undefined
         ? normalizeSourceOfTruth(options.sourceOfTruth)
         : answers.sourceOfTruth;

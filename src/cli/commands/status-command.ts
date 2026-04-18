@@ -5,23 +5,24 @@ import { runDoctor, formatDoctorResult, formatDoctorResultCompact, formatDoctorR
 import { getStatusSnapshot, formatStatusSnapshotCompact, formatStatusSnapshotJson } from '../../validators/status';
 import { getWhyBlocked, formatWhyBlockedResult } from '../../validators/why-blocked';
 import {
-    ensureDirectoryExists,
     getInitAnswerValue,
-    normalizePathValue,
     PackageJsonLike,
     parseOptions,
     printBanner,
-    printHelp,
     printStatus,
     readInitAnswersArtifact,
     resolveWorkspaceDisplayVersion
 } from './cli-helpers';
 import {
     ensureBundleExists,
-    getDefaultInitAnswersPath,
     ParsedOptionsRecord
 } from './shared-command-utils';
 import { EXIT_VALIDATION_FAILURE } from '../exit-codes';
+import {
+    handleStandardFlags,
+    resolveInitAnswersPath,
+    resolveTargetRoot
+} from './workspace-helpers';
 
 export function handleStatus(commandArgv: string[], packageJson: PackageJsonLike): void {
     if (commandArgv.length > 0 && commandArgv[0].toLowerCase() === 'why-blocked') {
@@ -38,17 +39,9 @@ export function handleStatus(commandArgv: string[], packageJson: PackageJsonLike
     const { options: rawOptions } = parseOptions(commandArgv, statusDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
+    const targetRoot = resolveTargetRoot(options.targetRoot);
     const snapshot = getStatusSnapshot(
         targetRoot,
         typeof options.initAnswersPath === 'string' ? options.initAnswersPath : undefined
@@ -72,8 +65,7 @@ export function handleStatusWhyBlocked(commandArgv: string[]): void {
     const { options: rawOptions } = parseOptions(commandArgv, definitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
+    const targetRoot = resolveTargetRoot(options.targetRoot);
 
     const result = getWhyBlocked(targetRoot);
     console.log(formatWhyBlockedResult(result));
@@ -100,17 +92,9 @@ export function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike
     const { options: rawOptions } = parseOptions(commandArgv, doctorDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
+    const targetRoot = resolveTargetRoot(options.targetRoot);
     if (options.compact !== true && options.json !== true) {
         printBanner(packageJson, 'Workspace doctor', targetRoot, {
             versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
@@ -118,9 +102,7 @@ export function handleDoctor(commandArgv: string[], packageJson: PackageJsonLike
     }
 
     const bundlePath = ensureBundleExists(targetRoot, 'doctor');
-    const initAnswersPath = typeof options.initAnswersPath === 'string'
-        ? options.initAnswersPath
-        : getDefaultInitAnswersPath(targetRoot, bundlePath);
+    const initAnswersPath = resolveInitAnswersPath(options.initAnswersPath, targetRoot, bundlePath);
     const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'doctor');
     let activeAgentFilesList = answers.activeAgentFiles
         ? answers.activeAgentFiles.split(/[,;]+/).map((value: string) => value.trim()).filter(Boolean)

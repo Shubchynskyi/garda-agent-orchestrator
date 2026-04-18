@@ -7,23 +7,19 @@ import { runUninstall } from '../../lifecycle/uninstall';
 import { runReinit } from '../../materialization/reinit';
 import { runInit } from '../../materialization/init';
 import { runInstall } from '../../materialization/install';
-import { runVerify, formatVerifyResult, formatVerifyResultCompact } from '../../validators/verify';
 import {
     acquireSourceRoot,
     cyan,
     dim,
-    ensureDirectoryExists,
     getBundlePath,
     getInitAnswerValue,
     green,
     normalizeActiveAgentFiles,
     normalizeAssistantBrevity,
-    normalizePathValue,
     normalizeSourceOfTruth,
     PackageJsonLike,
     parseOptions,
     printBanner,
-    printHelp,
     printHighlightedPair,
     promptSingleSelect,
     promptTextInput,
@@ -42,11 +38,16 @@ import {
     countStoragePolicyActions,
     ensureBundleExists,
     formatKeyValueOutput,
-    getDefaultInitAnswersPath,
     normalizeYesNo,
-    ParsedOptionsRecord,
-    ValidationFailureError
+    ParsedOptionsRecord
 } from './shared-command-utils';
+import {
+    handleStandardFlags,
+    resolveInitAnswersPath,
+    resolveTargetRoot,
+    resolveWorkspaceContext,
+    resolveWorkspacePaths
+} from './workspace-helpers';
 
 export async function handleInstall(commandArgv: string[], packageJson: PackageJsonLike, packageRoot: string): Promise<void> {
     const installDefinitions = {
@@ -59,17 +60,9 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
     const { options: rawOptions } = parseOptions(commandArgv, installDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
+    const targetRoot = resolveTargetRoot(options.targetRoot);
 
     const source = await acquireSourceRoot(
         typeof options.repoUrl === 'string' ? options.repoUrl : undefined,
@@ -86,10 +79,8 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
         }
 
         const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
-        const initAnswersPath = typeof options.initAnswersPath === 'string'
-            ? options.initAnswersPath
-            : getDefaultInitAnswersPath(targetRoot, bundlePath);
-        const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, getBundlePath(targetRoot), 'install');
+        const initAnswersPath = resolveInitAnswersPath(options.initAnswersPath, targetRoot, bundlePath);
+        const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'install');
         const installResult = runInstall({
             targetRoot,
             bundleRoot: effectiveBundlePath,
@@ -123,22 +114,9 @@ export function handleInit(commandArgv: string[], packageJson: PackageJsonLike):
     const { options: rawOptions } = parseOptions(commandArgv, initDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
-    const bundlePath = ensureBundleExists(targetRoot, 'init');
-    const initAnswersPath = typeof options.initAnswersPath === 'string'
-        ? options.initAnswersPath
-        : getDefaultInitAnswersPath(targetRoot, bundlePath);
-    const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'init');
+    const { targetRoot, bundlePath, answers } = resolveWorkspaceContext(options.targetRoot, options.initAnswersPath, 'init');
 
     const initResult = runInit({
         targetRoot,
@@ -176,22 +154,11 @@ export async function handleReinit(commandArgv: string[], packageJson: PackageJs
     const { options: rawOptions } = parseOptions(commandArgv, reinitDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
-    const bundlePath = ensureBundleExists(targetRoot, 'reinit');
+    const { targetRoot, bundlePath } = resolveWorkspacePaths(options.targetRoot, 'reinit');
 
-    const initAnswersPath = typeof options.initAnswersPath === 'string'
-        ? options.initAnswersPath
-        : getDefaultInitAnswersPath(targetRoot, bundlePath);
+    const initAnswersPath = resolveInitAnswersPath(options.initAnswersPath, targetRoot, bundlePath);
     const resolvedInitAnswersPath = path.resolve(targetRoot, initAnswersPath);
     const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
 
@@ -314,24 +281,13 @@ export function handleUninstall(commandArgv: string[], packageJson: PackageJsonL
     const { options: rawOptions } = parseOptions(commandArgv, uninstallDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
-    const bundlePath = ensureBundleExists(targetRoot, 'uninstall');
+    const { targetRoot, bundlePath } = resolveWorkspacePaths(options.targetRoot, 'uninstall');
     const uninstallResult = runUninstall({
         targetRoot,
         bundleRoot: bundlePath,
-        initAnswersPath: typeof options.initAnswersPath === 'string'
-            ? options.initAnswersPath
-            : getDefaultInitAnswersPath(targetRoot, bundlePath),
+        initAnswersPath: resolveInitAnswersPath(options.initAnswersPath, targetRoot, bundlePath),
         noPrompt: options.noPrompt === true,
         dryRun: options.dryRun === true,
         skipBackups: options.skipBackups === true,
@@ -416,22 +372,13 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         const { options: rawPolicyOptions } = parseOptions(policyCommandArgv, cleanupPolicyDefinitions);
         const policyOptions = rawPolicyOptions as ParsedOptionsRecord;
 
-        if (policyOptions.help) {
-            printHelp(packageJson);
-            return;
-        }
-        if (policyOptions.version) {
-            console.log(packageJson.version);
-            return;
-        }
+        if (handleStandardFlags(policyOptions, packageJson)) return;
 
         if (!['show', 'edit', 'reset'].includes(policySubcommand)) {
             throw new Error(`Unknown cleanup policy action: ${policySubcommand}. Allowed values: show, edit, reset.`);
         }
 
-        const targetRoot = normalizePathValue(policyOptions.targetRoot || '.');
-        ensureDirectoryExists(targetRoot, 'Target root');
-        const bundlePath = ensureBundleExists(targetRoot, 'cleanup policy');
+        const { targetRoot, bundlePath } = resolveWorkspacePaths(policyOptions.targetRoot, 'cleanup policy');
 
         return handleCleanupPolicyCommand(bundlePath, {
             retentionMode: typeof policyOptions.retentionMode === 'string' ? policyOptions.retentionMode : undefined,
@@ -460,17 +407,9 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
     const { options: rawOptions } = parseOptions(commandArgv, cleanupDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
+    const targetRoot = resolveTargetRoot(options.targetRoot);
     printBanner(packageJson, 'Runtime cleanup', targetRoot, {
         versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
     });
@@ -571,17 +510,9 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
     const { options: rawOptions } = parseOptions(commandArgv, gcDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) {
-        printHelp(packageJson);
-        return;
-    }
-    if (options.version) {
-        console.log(packageJson.version);
-        return;
-    }
+    if (handleStandardFlags(options, packageJson)) return;
 
-    const targetRoot = normalizePathValue(options.targetRoot || '.');
-    ensureDirectoryExists(targetRoot, 'Target root');
+    const targetRoot = resolveTargetRoot(options.targetRoot);
     printBanner(packageJson, 'Runtime gc', targetRoot, {
         versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
     });
