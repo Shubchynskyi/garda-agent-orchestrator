@@ -2,78 +2,28 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES, resolveBundleName } from '../core/constants';
 import { getProviderBridgeDirectoryPaths } from '../core/provider-registry';
-import { pathExists, readTextFile } from '../core/fs';
-import { readJsonFile } from '../core/json';
-import { isPathInsideRoot } from '../core/paths';
-import { validateInitAnswers } from '../schemas/init-answers';
-import { runInstall } from '../materialization/install';
-import { runInit } from '../materialization/init';
-import { writeProtectedControlPlaneManifest } from '../gates/helpers';
-import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
-import {
-    buildRefreshAgentInitState,
-    createAgentInitState,
-    doesAgentInitStateMatchAnswers,
-    readAgentInitStateSafe,
-    writeAgentInitState
-} from '../runtime/agent-init-state';
-import { getActiveAgentEntrypointFiles } from '../materialization/common';
-import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
 import {
     createRollbackSnapshot,
     getTimestamp,
     getRollbackRecordsPath,
-    restoreRollbackSnapshot,
     withLifecycleOperationLock,
     validateTargetRoot,
     writeRollbackRecords
 } from './common';
-
-interface LiveVersionPayload {
-    Version?: unknown;
-}
+import { resolveUpdateSources } from './update-source';
+import {
+    executeUpdatePipelineStages,
+    type InstallRunnerOptions,
+    type MaterializationRunnerOptions,
+    type VerifyRunnerOptions,
+    type ManifestRunnerOptions,
+    type ContractMigrationResult
+} from './update-execution';
 
 interface RollbackRecord {
     relativePath: string;
     existed: boolean;
     pathType: string;
-}
-
-interface InstallRunnerOptions {
-    targetRoot: string;
-    bundleRoot: string;
-    dryRun?: boolean;
-    runInit?: boolean;
-    assistantLanguage: string;
-    assistantBrevity: string;
-    sourceOfTruth: string;
-    initAnswersPath: string;
-}
-
-interface MaterializationRunnerOptions {
-    targetRoot: string;
-    bundleRoot: string;
-    dryRun?: boolean;
-    assistantLanguage: string;
-    assistantBrevity: string;
-    sourceOfTruth: string;
-    enforceNoAutoCommit: boolean;
-    tokenEconomyEnabled: boolean;
-}
-
-interface VerifyRunnerOptions {
-    targetRoot: string;
-    sourceOfTruth: string;
-    initAnswersPath: string;
-}
-
-interface ManifestRunnerOptions {
-    targetRoot: string;
-}
-
-interface ContractMigrationResult {
-    appliedCount?: number;
-    appliedFiles?: string[];
 }
 
 interface UpdateTrustContext {
@@ -97,16 +47,6 @@ interface RunUpdateOptions {
     manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
     contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;
     trustContext?: UpdateTrustContext | null;
-}
-
-function getErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
-function getLiveVersionPayload(value: unknown): LiveVersionPayload {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as LiveVersionPayload
-        : {};
 }
 
 /**
@@ -184,72 +124,9 @@ export function runUpdate(options: RunUpdateOptions) {
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
     return withLifecycleOperationLock(normalizedTarget, 'update', () => {
-    // Resolve init answers path
-    let initAnswersResolvedPath;
-    if (path.isAbsolute(initAnswersPath)) {
-        initAnswersResolvedPath = initAnswersPath;
-    } else {
-        initAnswersResolvedPath = path.resolve(normalizedTarget, initAnswersPath);
-    }
 
-    if (!isPathInsideRoot(normalizedTarget, initAnswersResolvedPath)) {
-        throw new Error(`InitAnswersPath must resolve inside target root '${normalizedTarget}'.`);
-    }
-    if (!pathExists(initAnswersResolvedPath)) {
-        throw new Error(`Init answers artifact not found: ${initAnswersResolvedPath}`);
-    }
-
-    const initAnswersRaw = readTextFile(initAnswersResolvedPath);
-    if (!initAnswersRaw.trim()) {
-        throw new Error(`Init answers artifact is empty: ${initAnswersResolvedPath}`);
-    }
-
-    let initAnswers;
-    try {
-        initAnswers = JSON.parse(initAnswersRaw);
-    } catch (_e) {
-        throw new Error(`Init answers artifact is not valid JSON: ${initAnswersResolvedPath}`);
-    }
-
-    // Detect previous version from live/version.json
-    const liveVersionPath = path.join(normalizedTarget, resolveBundleName(), 'live', 'version.json');
-    let existingLiveVersion: LiveVersionPayload | null = null;
-    let previousVersion = 'unknown';
-    let previousVersionSource = 'missing';
-    if (pathExists(liveVersionPath)) {
-        try {
-            existingLiveVersion = getLiveVersionPayload(readJsonFile(liveVersionPath));
-            const parsedVersion = existingLiveVersion && existingLiveVersion.Version
-                ? String(existingLiveVersion.Version).trim()
-                : null;
-            if (parsedVersion) {
-                previousVersion = parsedVersion;
-                previousVersionSource = 'live/version.json';
-            } else {
-                previousVersionSource = existingLiveVersion && existingLiveVersion.Version !== undefined
-                    ? 'live/version.json-empty'
-                    : 'live/version.json-no-version-field';
-            }
-        } catch (_e) {
-            previousVersionSource = 'live/version.json-invalid-json';
-        }
-    }
-
-    // Read bundle version
-    const bundleVersionPath = path.join(bundleRoot, 'VERSION');
-    if (!pathExists(bundleVersionPath)) {
-        throw new Error(`Bundle version file not found: ${bundleVersionPath}`);
-    }
-    const bundleVersion = readTextFile(bundleVersionPath).trim();
-    if (!bundleVersion) {
-        throw new Error(`Bundle version file is empty: ${bundleVersionPath}`);
-    }
-
-    // Validate required init answer fields
-    const validated = validateInitAnswers(initAnswers);
-    const assistantLanguage = validated.AssistantLanguage;
-    const assistantBrevity = validated.AssistantBrevity;
-    const sourceOfTruth = validated.SourceOfTruth;
+    // Source resolution
+    const sources = resolveUpdateSources(normalizedTarget, initAnswersPath, bundleRoot);
 
     const timestamp = getTimestamp();
     const rollbackSnapshotRelativePath = `${resolveBundleName()}/runtime/update-rollbacks/update-${timestamp}`;
@@ -260,19 +137,8 @@ export function runUpdate(options: RunUpdateOptions) {
 
     let rollbackSnapshotCreated = false;
     let rollbackRecordCount = 0;
-    let rollbackStatus = 'NOT_NEEDED';
     let rollbackRecords: RollbackRecord[] = [];
 
-    let installStatus = 'NOT_RUN';
-    let materializationStatus = 'NOT_RUN';
-    let contractMigrationStatus = 'NOT_RUN';
-    let verifyStatus = 'NOT_RUN';
-    let manifestStatus = 'NOT_RUN';
-    let invariantStatus = 'NOT_RUN';
-    let updatedVersion = bundleVersion;
-    let contractMigrationCount = 0;
-    let contractMigrationFiles: string[] = [];
-    const expectedInvariantPaths = getExpectedBundleInvariantPaths(bundleRoot);
     const effectiveTrustContext: UpdateTrustContext = trustContext || {
         policy: 'unknown',
         overrideUsed: false,
@@ -284,197 +150,32 @@ export function runUpdate(options: RunUpdateOptions) {
     // Create rollback snapshot (not in dry-run)
     if (!dryRun) {
         fs.mkdirSync(path.dirname(rollbackSnapshotPath), { recursive: true });
-        const rollbackItems = getUpdateRollbackItems(normalizedTarget, initAnswersResolvedPath);
+        const rollbackItems = getUpdateRollbackItems(normalizedTarget, sources.initAnswersResolvedPath);
         rollbackRecords = createRollbackSnapshot(normalizedTarget, rollbackSnapshotPath, rollbackItems) as RollbackRecord[];
         writeRollbackRecords(rollbackSnapshotPath, rollbackRecords);
         rollbackRecordCount = rollbackRecords.length;
         rollbackSnapshotCreated = true;
     }
 
-    let currentStage = 'INSTALL';
-    try {
-        // Install step
-        currentStage = 'INSTALL';
-        if (installRunner) {
-            installRunner({
-                targetRoot: normalizedTarget,
-                bundleRoot,
-                dryRun,
-                assistantLanguage,
-                assistantBrevity,
-                sourceOfTruth,
-                initAnswersPath: initAnswersResolvedPath
-            });
-        } else {
-            runInstall({
-                targetRoot: normalizedTarget,
-                bundleRoot,
-                runInit: false,
-                dryRun,
-                assistantLanguage,
-                assistantBrevity,
-                sourceOfTruth,
-                initAnswersPath: initAnswersResolvedPath
-            });
-        }
-        installStatus = 'PASS';
-
-        if (dryRun) {
-            materializationStatus = 'SKIPPED_DRY_RUN';
-            contractMigrationStatus = 'SKIPPED_DRY_RUN';
-            verifyStatus = 'SKIPPED_DRY_RUN';
-            manifestStatus = 'SKIPPED_DRY_RUN';
-        } else {
-            // Materialization - rematerialize live/ from updated templates
-            currentStage = 'MATERIALIZATION';
-            if (materializationRunner) {
-                materializationRunner({
-                    targetRoot: normalizedTarget,
-                    bundleRoot,
-                    assistantLanguage,
-                    assistantBrevity,
-                    sourceOfTruth,
-                    enforceNoAutoCommit: validated.EnforceNoAutoCommit,
-                    tokenEconomyEnabled: validated.TokenEconomyEnabled
-                });
-            } else {
-                runInit({
-                    targetRoot: normalizedTarget,
-                    bundleRoot,
-                    dryRun: false,
-                    assistantLanguage,
-                    assistantBrevity,
-                    sourceOfTruth,
-                    enforceNoAutoCommit: validated.EnforceNoAutoCommit,
-                    tokenEconomyEnabled: validated.TokenEconomyEnabled
-                });
-            }
-            materializationStatus = 'PASS';
-
-            // Contract migrations
-            currentStage = 'CONTRACT_MIGRATIONS';
-            if (contractMigrationRunner) {
-                const migResult = contractMigrationRunner({ rootPath: normalizedTarget });
-                contractMigrationCount = migResult.appliedCount || 0;
-                contractMigrationFiles = migResult.appliedFiles || [];
-                contractMigrationStatus = 'PASS';
-            } else {
-                contractMigrationStatus = 'SKIPPED_NO_RUNNER';
-            }
-
-            // Verify
-            currentStage = 'VERIFY';
-            if (skipVerify) {
-                verifyStatus = 'SKIPPED';
-            } else if (verifyRunner) {
-                verifyRunner({
-                    targetRoot: normalizedTarget,
-                    sourceOfTruth,
-                    initAnswersPath: initAnswersResolvedPath
-                });
-                verifyStatus = 'PASS';
-            } else {
-                verifyStatus = 'SKIPPED_NO_RUNNER';
-            }
-
-            // Manifest validation
-            currentStage = 'MANIFEST_VALIDATION';
-            if (skipManifestValidation) {
-                manifestStatus = 'SKIPPED';
-            } else if (manifestRunner) {
-                manifestRunner({ targetRoot: normalizedTarget });
-                manifestStatus = 'PASS';
-            } else {
-                manifestStatus = 'SKIPPED_NO_RUNNER';
-            }
-
-            // Bundle invariant check (enforce consistency).
-            currentStage = 'INVARIANT_CHECK';
-            const invariantResult = validateBundleInvariants(path.join(normalizedTarget, resolveBundleName()), expectedInvariantPaths);
-            if (!invariantResult.isValid) {
-                throw new Error(`Bundle invariant violation after update: ${invariantResult.violations.join('; ')}`);
-            }
-            invariantStatus = 'PASS';
-            writeProtectedControlPlaneManifest(normalizedTarget);
-
-            // Sync agent init state after successful update
-            const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);
-            const previousAgentInitState = previousAgentInitStateResult.state;
-            const activeEntryFilesSeed = initAnswers.ActiveAgentFiles
-                ? (Array.isArray(initAnswers.ActiveAgentFiles) ? initAnswers.ActiveAgentFiles.join(', ') : String(initAnswers.ActiveAgentFiles))
-                : null;
-            const activeEntryFiles = getActiveAgentEntrypointFiles(activeEntryFilesSeed, sourceOfTruth);
-
-            const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
-                AssistantLanguage: assistantLanguage,
-                SourceOfTruth: sourceOfTruth,
-                ActiveAgentFiles: activeEntryFiles
-            });
-
-            // Automatic stale lock cleanup during update.
-            try {
-                cleanupStaleTaskEventLocks(path.join(normalizedTarget, resolveBundleName()), { dryRun: false });
-            } catch (lockError: unknown) {
-                // Log and continue
-                contractMigrationFiles.push(`Warning: Lock cleanup failed: ${getErrorMessage(lockError)}`);
-            }
-
-            writeAgentInitState(normalizedTarget, buildRefreshAgentInitState({
-                previousState: previousAgentInitState,
-                preserveExistingCheckpoints,
-                assistantLanguage,
-                sourceOfTruth,
-                orchestratorVersion: bundleVersion,
-                activeAgentFiles: activeEntryFiles,
-                verificationPassed: skipVerify ? null : true,
-                manifestValidationPassed: skipManifestValidation ? null : true,
-                autoConfirmPrompts: true,
-                autoAcceptRules: true
-            }));
-
-            // Re-read updated version
-            if (pathExists(liveVersionPath)) {
-                try {
-                    const newLiveVersion = getLiveVersionPayload(readJsonFile(liveVersionPath));
-                    if (newLiveVersion && newLiveVersion.Version) {
-                        const newParsed = String(newLiveVersion.Version).trim();
-                        if (newParsed) updatedVersion = newParsed;
-                    }
-                } catch (_e) {
-                    updatedVersion = 'unknown';
-                }
-            }
-        }
-    } catch (error: unknown) {
-        const errorMessage = getErrorMessage(error);
-
-        switch (currentStage) {
-            case 'INSTALL': installStatus = 'FAIL'; break;
-            case 'BUNDLE_SYNC': installStatus = 'FAIL'; break;
-            case 'MATERIALIZATION': materializationStatus = 'FAIL'; break;
-            case 'CONTRACT_MIGRATIONS': contractMigrationStatus = 'FAIL'; break;
-            case 'VERIFY': verifyStatus = 'FAIL'; break;
-            case 'MANIFEST_VALIDATION': manifestStatus = 'FAIL'; break;
-            case 'INVARIANT_CHECK': invariantStatus = 'FAIL'; break;
-        }
-
-        if (!dryRun && rollbackSnapshotCreated) {
-            try {
-                restoreRollbackSnapshot(normalizedTarget, rollbackSnapshotPath, rollbackRecords);
-                rollbackStatus = 'SUCCESS';
-            } catch (rollbackError: unknown) {
-                const rollbackMsg = getErrorMessage(rollbackError);
-                rollbackStatus = `FAILED: ${rollbackMsg}`;
-                throw new Error(`Update failed during ${currentStage}. Original error: ${errorMessage}. Rollback failed: ${rollbackMsg}`);
-            }
-            throw new Error(`Update failed during ${currentStage} and rollback completed successfully. Original error: ${errorMessage}`);
-        }
-        throw new Error(`Update failed during ${currentStage}. Error: ${errorMessage}`);
-    }
-
-    if (!dryRun && rollbackSnapshotCreated && rollbackStatus === 'NOT_NEEDED') {
-        rollbackStatus = 'NOT_TRIGGERED';
-    }
+    // Execute pipeline stages with rollback support
+    const stageResult = executeUpdatePipelineStages({
+        normalizedTarget,
+        bundleRoot,
+        dryRun,
+        skipVerify,
+        skipManifestValidation,
+        sources,
+        runners: {
+            installRunner,
+            materializationRunner,
+            verifyRunner,
+            manifestRunner,
+            contractMigrationRunner
+        },
+        rollbackSnapshotCreated,
+        rollbackSnapshotPath,
+        rollbackRecords
+    });
 
     // Generate update report
     if (!dryRun) {
@@ -484,11 +185,11 @@ export function runUpdate(options: RunUpdateOptions) {
             '',
             `GeneratedAt: ${new Date().toISOString()}`,
             `TargetRoot: ${normalizedTarget}`,
-            `InitAnswersPath: ${initAnswersResolvedPath}`,
+            `InitAnswersPath: ${sources.initAnswersResolvedPath}`,
             `RollbackSnapshotPath: ${rollbackSnapshotRelativePath}`,
             `RollbackRecordsPath: ${rollbackRecordsRelativePath}`,
             `RollbackSnapshotRecordCount: ${rollbackRecordCount}`,
-            `RollbackStatus: ${rollbackStatus}`,
+            `RollbackStatus: ${stageResult.rollbackStatus}`,
             '',
             '## Trust',
             `SourceType: ${effectiveTrustContext.sourceType}`,
@@ -498,23 +199,23 @@ export function runUpdate(options: RunUpdateOptions) {
             `TrustOverrideSource: ${effectiveTrustContext.overrideSource}`,
             '',
             '## Version',
-            `PreviousVersion: ${previousVersion}`,
-            `PreviousVersionSource: ${previousVersionSource}`,
-            `BundleVersion: ${bundleVersion}`,
-            `UpdatedVersion: ${updatedVersion}`,
+            `PreviousVersion: ${sources.previousVersion}`,
+            `PreviousVersionSource: ${sources.previousVersionSource}`,
+            `BundleVersion: ${sources.bundleVersion}`,
+            `UpdatedVersion: ${stageResult.updatedVersion}`,
             '',
             '## CommandStatus',
-            `Install: ${installStatus}`,
-            `Materialization: ${materializationStatus}`,
-            `ContractMigrations: ${contractMigrationStatus}`,
-            `Verify: ${verifyStatus}`,
-            `ManifestValidation: ${manifestStatus}`,
-            `InvariantCheck: ${invariantStatus}`,
+            `Install: ${stageResult.installStatus}`,
+            `Materialization: ${stageResult.materializationStatus}`,
+            `ContractMigrations: ${stageResult.contractMigrationStatus}`,
+            `Verify: ${stageResult.verifyStatus}`,
+            `ManifestValidation: ${stageResult.manifestStatus}`,
+            `InvariantCheck: ${stageResult.invariantStatus}`,
             '',
             '## ContractMigrations',
-            `AppliedCount: ${contractMigrationCount}`,
-            contractMigrationFiles.length > 0
-                ? `AppliedFiles: ${contractMigrationFiles.join(', ')}`
+            `AppliedCount: ${stageResult.contractMigrationCount}`,
+            stageResult.contractMigrationFiles.length > 0
+                ? `AppliedFiles: ${stageResult.contractMigrationFiles.join(', ')}`
                 : 'AppliedFiles: none'
         ];
         fs.writeFileSync(updateReportPath, reportLines.join('\r\n'), 'utf8');
@@ -522,29 +223,29 @@ export function runUpdate(options: RunUpdateOptions) {
 
     return {
         targetRoot: normalizedTarget,
-        initAnswersPath: initAnswersResolvedPath,
+        initAnswersPath: sources.initAnswersResolvedPath,
         rollbackSnapshotPath: rollbackSnapshotRelativePath,
         rollbackRecordsPath: dryRun ? 'not-generated-in-dry-run' : rollbackRecordsRelativePath,
         rollbackSnapshotCreated,
         rollbackRecordCount,
-        rollbackStatus,
-        assistantLanguage,
-        assistantBrevity,
-        sourceOfTruth,
+        rollbackStatus: stageResult.rollbackStatus,
+        assistantLanguage: sources.assistantLanguage,
+        assistantBrevity: sources.assistantBrevity,
+        sourceOfTruth: sources.sourceOfTruth,
         trustPolicy: effectiveTrustContext.policy,
         trustOverrideUsed: effectiveTrustContext.overrideUsed,
         trustOverrideSource: effectiveTrustContext.overrideSource,
-        previousVersion,
-        previousVersionSource,
-        bundleVersion,
-        updatedVersion,
-        installStatus,
-        materializationStatus,
-        contractMigrationStatus,
-        contractMigrationCount,
-        contractMigrationFiles,
-        verifyStatus,
-        manifestValidationStatus: manifestStatus,
+        previousVersion: sources.previousVersion,
+        previousVersionSource: sources.previousVersionSource,
+        bundleVersion: sources.bundleVersion,
+        updatedVersion: stageResult.updatedVersion,
+        installStatus: stageResult.installStatus,
+        materializationStatus: stageResult.materializationStatus,
+        contractMigrationStatus: stageResult.contractMigrationStatus,
+        contractMigrationCount: stageResult.contractMigrationCount,
+        contractMigrationFiles: stageResult.contractMigrationFiles,
+        verifyStatus: stageResult.verifyStatus,
+        manifestValidationStatus: stageResult.manifestStatus,
         updateReportPath: dryRun ? 'not-generated-in-dry-run' : updateReportRelativePath
     };
     });
