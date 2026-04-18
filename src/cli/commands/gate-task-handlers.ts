@@ -1,8 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-    emitMandatoryCompletionGateEventAsync,
-    emitStatusChangedEventAsync
+    emitMandatoryCompletionGateEventAsync
 } from '../../gate-runtime/lifecycle-events';
 import * as gateHelpers from '../../gates/helpers';
 import { formatCompletionGateResult, runCompletionGate } from '../../gates/completion';
@@ -36,7 +35,7 @@ import {
     type ParsedOptionsRecord,
     requireResolvedPath
 } from './shared-command-utils';
-import { syncTaskQueueStatus } from './gate-flows/gate-flow-helpers';
+import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion-finalization';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 
 export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
@@ -354,22 +353,57 @@ export async function handleCompletionGate(gateArgv: string[]): Promise<void> {
         const resolvedCompletionTaskId = String(completionResult.task_id || '').trim();
         if (resolvedCompletionTaskId) {
             const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-            try {
-                await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, completionResult.outcome === 'PASS', {
-                    status: completionResult.status,
-                    outcome: completionResult.outcome,
-                    preflight_path: completionResult.preflight_path,
-                    timeline_path: completionResult.timeline_path,
-                    violations: completionResult.violations
-                });
-            } catch (error: unknown) {
-                throw new Error(
-                    `completion-gate failed because mandatory lifecycle event '${completionResult.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED'}' could not be appended. ${error instanceof Error ? error.message : String(error)}`
-                );
-            }
             if (completionResult.outcome === 'PASS') {
-                await emitStatusChangedEventAsync(orchestratorRoot, resolvedCompletionTaskId, 'IN_REVIEW', 'DONE');
-                syncTaskQueueStatus(repoRoot, resolvedCompletionTaskId, 'DONE');
+                try {
+                    await reconcileSuccessfulCompletionFinalizationAsync({
+                        repoRoot,
+                        taskId: resolvedCompletionTaskId,
+                        preflightPath: String(completionResult.preflight_path || ''),
+                        previousStatusHint: 'IN_REVIEW',
+                        completionEventDetails: {
+                            status: completionResult.status,
+                            outcome: completionResult.outcome,
+                            preflight_path: completionResult.preflight_path,
+                            timeline_path: completionResult.timeline_path,
+                            violations: completionResult.violations
+                        }
+                    });
+                } catch (error: unknown) {
+                    try {
+                        await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, false, {
+                            status: completionResult.status,
+                            outcome: 'FINALIZATION_FAILED',
+                            preflight_path: completionResult.preflight_path,
+                            timeline_path: completionResult.timeline_path,
+                            violations: completionResult.violations,
+                            finalization_error: error instanceof Error ? error.message : String(error)
+                        });
+                    } catch (eventError: unknown) {
+                        throw new Error(
+                            `completion-gate finalization failed after validation PASS, and mandatory lifecycle event `
+                            + `'COMPLETION_GATE_FAILED' could not be appended. FinalizationError: `
+                            + `${error instanceof Error ? error.message : String(error)} EventError: `
+                            + `${eventError instanceof Error ? eventError.message : String(eventError)}`
+                        );
+                    }
+                    throw new Error(
+                        `completion-gate finalization failed after validation PASS. ${error instanceof Error ? error.message : String(error)}`
+                    );
+                }
+            } else {
+                try {
+                    await emitMandatoryCompletionGateEventAsync(orchestratorRoot, resolvedCompletionTaskId, false, {
+                        status: completionResult.status,
+                        outcome: completionResult.outcome,
+                        preflight_path: completionResult.preflight_path,
+                        timeline_path: completionResult.timeline_path,
+                        violations: completionResult.violations
+                    });
+                } catch (error: unknown) {
+                    throw new Error(
+                        `completion-gate failed because mandatory lifecycle event 'COMPLETION_GATE_FAILED' could not be appended. ${error instanceof Error ? error.message : String(error)}`
+                    );
+                }
             }
         }
 

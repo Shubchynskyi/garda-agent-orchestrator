@@ -138,8 +138,50 @@ export function emitStatusChangedEvent(repoRoot: string, taskId: string, previou
     );
 }
 
+export function emitMandatoryStatusChangedEvent(
+    repoRoot: string,
+    taskId: string,
+    previousStatus: string,
+    newStatus: string,
+    options: AutoEmitOptions = {}
+) {
+    return emitMandatoryLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.STATUS_CHANGED,
+        'INFO',
+        `Task status changed: ${previousStatus} → ${newStatus}.`,
+        {
+            previous_status: previousStatus,
+            new_status: newStatus
+        },
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
 export async function emitStatusChangedEventAsync(repoRoot: string, taskId: string, previousStatus: string, newStatus: string, options: AutoEmitOptions = {}) {
     return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.STATUS_CHANGED,
+        'INFO',
+        `Task status changed: ${previousStatus} → ${newStatus}.`,
+        {
+            previous_status: previousStatus,
+            new_status: newStatus
+        },
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
+export async function emitMandatoryStatusChangedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    previousStatus: string,
+    newStatus: string,
+    options: AutoEmitOptions = {}
+) {
+    return emitMandatoryLifecycleEventAsync(
         repoRoot,
         taskId,
         LIFECYCLE_EVENT_TYPES.STATUS_CHANGED,

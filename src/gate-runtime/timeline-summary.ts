@@ -295,15 +295,7 @@ export function updateTimelineSummaryForTask(
     // Otherwise reuse the current summary entry's stable code_changed bit
     // to avoid re-reading preflight JSON on every append, and only fall
     // back to preflight parsing when no summary entry exists yet.
-    const bundlePath = path.resolve(eventsRoot, '..', '..');
-    const effectiveCodeChanged = typeof codeChanged === 'boolean'
-        ? codeChanged
-        : (() => {
-            const existingSummaryCodeChanged = readTimelineSummaryIndex(eventsRoot)?.entries?.[taskId]?.code_changed;
-            return typeof existingSummaryCodeChanged === 'boolean'
-                ? existingSummaryCodeChanged
-                : detectCodeChangedFromPreflight(bundlePath, taskId);
-        })();
+    const effectiveCodeChanged = resolveEffectiveCodeChangedForTask(eventsRoot, taskId, codeChanged);
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const entry = buildTimelineSummaryEntry(timelinePath, taskId, effectiveCodeChanged);
     if (!entry) return;
@@ -322,6 +314,86 @@ export function updateTimelineSummaryForTask(
     }
 }
 
+function resolveEffectiveCodeChangedForTask(
+    eventsRoot: string,
+    taskId: string,
+    codeChanged?: boolean
+): boolean {
+    if (typeof codeChanged === 'boolean') {
+        return codeChanged;
+    }
+    const existingSummaryCodeChanged = readTimelineSummaryIndex(eventsRoot)?.entries?.[taskId]?.code_changed;
+    if (typeof existingSummaryCodeChanged === 'boolean') {
+        return existingSummaryCodeChanged;
+    }
+    const bundlePath = path.resolve(eventsRoot, '..', '..');
+    return detectCodeChangedFromPreflight(bundlePath, taskId);
+}
+
+export function reconcileTimelineSummaryForTask(
+    eventsRoot: string,
+    taskId: string,
+    codeChanged?: boolean
+): void {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const summaryPath = getTimelineSummaryPath(eventsRoot);
+    withTimelineSummaryLock(eventsRoot, () => {
+        const summaryFileExists = (() => {
+            try {
+                return fs.existsSync(summaryPath) && fs.statSync(summaryPath).isFile();
+            } catch {
+                return false;
+            }
+        })();
+        let timelineExists = false;
+        try {
+            timelineExists = fs.existsSync(timelinePath) && fs.statSync(timelinePath).isFile();
+        } catch {
+            timelineExists = false;
+        }
+
+        if (!timelineExists) {
+            const cleanupIndex = readTimelineSummaryIndexForCleanupPrune(eventsRoot);
+            if (summaryFileExists && !cleanupIndex) {
+                throw new Error(`Unable to safely read existing timeline summary index before removing '${taskId}'.`);
+            }
+            const index = cleanupIndex?.index ?? null;
+            if (!index || !Object.prototype.hasOwnProperty.call(index.entries, taskId)) {
+                return;
+            }
+            delete index.entries[taskId];
+            index.updated_at_utc = new Date().toISOString();
+            writeTimelineSummaryIndex(eventsRoot, index);
+            return;
+        }
+
+        const entry = buildTimelineSummaryEntry(
+            timelinePath,
+            taskId,
+            resolveEffectiveCodeChangedForTask(eventsRoot, taskId, codeChanged)
+        );
+        if (!entry) {
+            throw new Error(`Unable to rebuild timeline summary entry for '${taskId}'.`);
+        }
+
+        const cleanupIndex = readTimelineSummaryIndexForCleanupPrune(eventsRoot);
+        if (summaryFileExists && !cleanupIndex) {
+            throw new Error(`Unable to safely read existing timeline summary index before reconciling '${taskId}'.`);
+        }
+        let index = cleanupIndex?.index ?? null;
+        if (!index) {
+            index = {
+                version: SUMMARY_VERSION,
+                updated_at_utc: new Date().toISOString(),
+                entries: {}
+            };
+        }
+        index.entries[taskId] = entry;
+        index.updated_at_utc = new Date().toISOString();
+        writeTimelineSummaryIndex(eventsRoot, index);
+    });
+}
+
 const MAX_MERGE_ATTEMPTS = 2;
 
 function mergeEntryWithRetry(
@@ -330,7 +402,19 @@ function mergeEntryWithRetry(
     entry: TimelineSummaryEntry
 ): void {
     for (let attempt = 0; attempt < MAX_MERGE_ATTEMPTS; attempt++) {
-        let index = readTimelineSummaryIndex(eventsRoot);
+        const summaryPath = getTimelineSummaryPath(eventsRoot);
+        const summaryFileExists = (() => {
+            try {
+                return fs.existsSync(summaryPath) && fs.statSync(summaryPath).isFile();
+            } catch {
+                return false;
+            }
+        })();
+        const cleanupIndex = readTimelineSummaryIndexForCleanupPrune(eventsRoot);
+        if (summaryFileExists && !cleanupIndex) {
+            return;
+        }
+        let index = cleanupIndex?.index ?? null;
         if (!index) {
             index = {
                 version: SUMMARY_VERSION,
