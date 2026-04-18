@@ -9,6 +9,11 @@ import {
     EXIT_GENERAL_FAILURE
 } from '../../../../src/cli/exit-codes';
 import {
+    buildGateHelpText,
+    buildTaskIdSyntaxRemediationMessage
+} from '../../../../src/cli/commands/gate-command-help';
+import { getAllShimmedGateNames } from '../../../../src/compat/shim-registry';
+import {
     acquireFilesystemLock,
     releaseFilesystemLock
 } from '../../../../src/gate-runtime/task-events-locking';
@@ -102,6 +107,61 @@ async function captureExpectedAsyncError(callback: () => Promise<void>): Promise
     }
     assert.fail('Expected command to throw an error.');
 }
+
+async function runCliWithCapturedOutput(
+    argv: readonly string[],
+    options: { cwd?: string } = {}
+): Promise<{ exitCode: number; logs: string[]; errors: string[] }> {
+    const previousExitCode = process.exitCode;
+    const previousCwd = process.cwd();
+    const originalConsoleLog = console.log;
+    const originalConsoleError = console.error;
+    const logs: string[] = [];
+    const errors: string[] = [];
+    process.exitCode = 0;
+    console.log = (...args: unknown[]) => {
+        logs.push(args.map((value) => String(value)).join(' '));
+    };
+    console.error = (...args: unknown[]) => {
+        errors.push(args.map((value) => String(value)).join(' '));
+    };
+    try {
+        process.chdir(path.resolve(options.cwd || '.'));
+        await runCliMainWithHandling(Array.from(argv));
+        return {
+            exitCode: process.exitCode ?? 0,
+            logs,
+            errors
+        };
+    } finally {
+        console.log = originalConsoleLog;
+        console.error = originalConsoleError;
+        process.chdir(previousCwd);
+        process.exitCode = previousExitCode;
+    }
+}
+
+const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
+    'enter-task-mode',
+    'load-rule-pack',
+    'record-no-op',
+    'handshake-diagnostics',
+    'shell-smoke-preflight',
+    'command-timeout-diagnostics',
+    'classify-change',
+    'restart-coherent-cycle',
+    'restart-review-cycle',
+    'compile-gate',
+    'required-reviews-check',
+    'doc-impact-gate',
+    'record-review-result',
+    'record-review-routing',
+    'record-review-receipt',
+    'completion-gate',
+    'log-task-event',
+    'task-events-summary',
+    'task-audit-summary'
+]);
 
 function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
@@ -942,6 +1002,245 @@ describe('cli/commands/gates', () => {
             splitCommandLine('"C:\\Program Files\\nodejs\\npm.cmd" --version'),
             ['C:\\Program Files\\nodejs\\npm.cmd', '--version']
         );
+    });
+
+    it('prints gate subcommand help without triggering required-argument validation', async () => {
+        const helpCases: Array<{ argv: string[]; expectedSnippets: string[] }> = [
+            {
+                argv: ['gate', 'enter-task-mode', '--help'],
+                expectedSnippets: ['Gate: enter-task-mode', '--task-id "<task-id>"', '--provider "<runtime-provider>"']
+            },
+            {
+                argv: ['gate', 'build-review-context', '--help'],
+                expectedSnippets: ['Gate: build-review-context', '--review-type "<code|db|security|refactor|api|test|performance|infra|dependency>"', '--preflight-path']
+            },
+            {
+                argv: ['gate', 'completion-gate', '--help'],
+                expectedSnippets: ['Gate: completion-gate', '--task-id "<task-id>"', '--preflight-path']
+            }
+        ];
+
+        for (const helpCase of helpCases) {
+            const result = await runCliWithCapturedOutput(helpCase.argv);
+            assert.equal(result.exitCode, 0, helpCase.argv.join(' '));
+            assert.equal(result.errors.length, 0, helpCase.argv.join(' '));
+            const combinedOutput = result.logs.join('\n');
+            for (const snippet of helpCase.expectedSnippets) {
+                assert.ok(combinedOutput.includes(snippet), `${helpCase.argv.join(' ')} must include '${snippet}'`);
+            }
+        }
+    });
+
+    it('prints help successfully for every public gate subcommand', async () => {
+        for (const gateName of getAllShimmedGateNames()) {
+            const result = await runCliWithCapturedOutput(['gate', gateName, '--help']);
+            assert.equal(result.exitCode, 0, gateName);
+            assert.equal(result.errors.length, 0, gateName);
+            const combinedOutput = result.logs.join('\n');
+            assert.ok(combinedOutput.includes(`Gate: ${gateName}`), gateName);
+            assert.ok(combinedOutput.includes('Usage:'), gateName);
+            assert.ok(!combinedOutput.includes('TaskId must not be empty'), gateName);
+            assert.ok(!combinedOutput.includes('ReviewType must not be empty'), gateName);
+        }
+    });
+
+    it('prints canonical --task-id remediation for common task-start flag mistakes', async () => {
+        const flagResult = await runCliWithCapturedOutput(['gate', 'enter-task-mode', '--task', 'T-008']);
+        assert.notEqual(flagResult.exitCode, 0);
+        const flagErrorOutput = flagResult.errors.join('\n');
+        assert.ok(flagErrorOutput.includes('GARDA_CLI_FAILED'));
+        assert.ok(flagErrorOutput.includes("uses '--task-id', not '--task'"));
+        assert.ok(flagErrorOutput.includes('Suggested command: node bin/garda.js gate enter-task-mode --task-id "T-008"'));
+
+        const equalsFlagResult = await runCliWithCapturedOutput(['gate', 'enter-task-mode', '--task=T-008']);
+        assert.notEqual(equalsFlagResult.exitCode, 0);
+        const equalsFlagErrorOutput = equalsFlagResult.errors.join('\n');
+        assert.ok(equalsFlagErrorOutput.includes('GARDA_CLI_FAILED'));
+        assert.ok(equalsFlagErrorOutput.includes("uses '--task-id', not '--task'"));
+        assert.ok(equalsFlagErrorOutput.includes('Suggested command: node bin/garda.js gate enter-task-mode --task-id "T-008"'));
+
+        const positionalResult = await runCliWithCapturedOutput(['gate', 'load-rule-pack', 'T-008']);
+        assert.notEqual(positionalResult.exitCode, 0);
+        const positionalErrorOutput = positionalResult.errors.join('\n');
+        assert.ok(positionalErrorOutput.includes('GARDA_CLI_FAILED'));
+        assert.ok(positionalErrorOutput.includes('requires \'--task-id "<task-id>"\', not a positional task id'));
+        assert.ok(positionalErrorOutput.includes('Suggested command: node bin/garda.js gate load-rule-pack --task-id "T-008"'));
+
+        const booleanPrefixedResult = await runCliWithCapturedOutput([
+            'gate',
+            'task-events-summary',
+            '--as-json',
+            'T-008'
+        ]);
+        assert.notEqual(booleanPrefixedResult.exitCode, 0);
+        const booleanPrefixedErrorOutput = booleanPrefixedResult.errors.join('\n');
+        assert.ok(booleanPrefixedErrorOutput.includes('GARDA_CLI_FAILED'));
+        assert.ok(booleanPrefixedErrorOutput.includes('requires \'--task-id "<task-id>"\', not a positional task id'));
+        assert.ok(booleanPrefixedErrorOutput.includes('Suggested command: node bin/garda.js gate task-events-summary --task-id "T-008"'));
+
+        const emitMetricsResult = await runCliWithCapturedOutput([
+            'gate',
+            'enter-task-mode',
+            '--emit-metrics',
+            'T-008'
+        ]);
+        assert.notEqual(emitMetricsResult.exitCode, 0);
+        const emitMetricsErrorOutput = emitMetricsResult.errors.join('\n');
+        assert.ok(emitMetricsErrorOutput.includes('GARDA_CLI_FAILED'));
+        assert.ok(emitMetricsErrorOutput.includes('requires \'--task-id "<task-id>"\', not a positional task id'));
+        assert.ok(emitMetricsErrorOutput.includes('Suggested command: node bin/garda.js gate enter-task-mode --task-id "T-008"'));
+    });
+
+    it('prints canonical --task-id remediation for every gate that requires task-id syntax', async () => {
+        for (const gateName of TASK_ID_REMEDIATION_GATE_NAMES) {
+            const result = await runCliWithCapturedOutput(['gate', gateName, '--task=T-008']);
+            assert.notEqual(result.exitCode, 0, gateName);
+            const errorOutput = result.errors.join('\n');
+            assert.ok(errorOutput.includes('GARDA_CLI_FAILED'), gateName);
+            assert.ok(errorOutput.includes("uses '--task-id', not '--task'"), gateName);
+            assert.ok(errorOutput.includes(`Canonical task-id syntax for '${gateName}'`), gateName);
+            assert.ok(errorOutput.includes(`Suggested command: node bin/garda.js gate ${gateName} --task-id "T-008"`), gateName);
+            const suggestedLine = errorOutput
+                .split('\n')
+                .find((line) => line.startsWith('Suggested command:')) ?? '';
+            assert.ok(!suggestedLine.includes('<task-id>'), gateName);
+        }
+    });
+
+    it('keeps source-checkout help and remediation snippets canonical from nested cwd values', async () => {
+        const nestedSourceCwd = path.join(path.resolve('.'), 'src', 'cli');
+
+        const helpResult = await runCliWithCapturedOutput(
+            ['gate', 'enter-task-mode', '--help'],
+            { cwd: nestedSourceCwd }
+        );
+        assert.equal(helpResult.exitCode, 0);
+        const helpOutput = helpResult.logs.join('\n');
+        assert.ok(helpOutput.includes('node bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+        assert.ok(!helpOutput.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode'));
+
+        const remediationResult = await runCliWithCapturedOutput(
+            ['gate', 'enter-task-mode', '--task', 'T-008'],
+            { cwd: nestedSourceCwd }
+        );
+        assert.notEqual(remediationResult.exitCode, 0);
+        const remediationOutput = remediationResult.errors.join('\n');
+        assert.ok(remediationOutput.includes('Suggested command: node bin/garda.js gate enter-task-mode --task-id "T-008"'));
+        assert.ok(!remediationOutput.includes('Suggested command: node garda-agent-orchestrator/bin/garda.js'));
+    });
+
+    it('uses deployed-workspace CLI prefixes for help and remediation outside a source checkout', () => {
+        const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-help-bundle-'));
+        const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+        const nestedCwd = path.join(workspaceRoot, 'packages', 'feature');
+
+        fs.mkdirSync(path.join(bundleRoot, 'bin'), { recursive: true });
+        fs.mkdirSync(nestedCwd, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n', 'utf8');
+        fs.writeFileSync(path.join(bundleRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }), 'utf8');
+        fs.writeFileSync(path.join(bundleRoot, 'bin', 'garda.js'), '// test fixture\n', 'utf8');
+
+        try {
+            const helpOutput = buildGateHelpText('enter-task-mode', nestedCwd);
+            assert.ok(helpOutput.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+            assert.ok(!helpOutput.includes('node bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+
+            const remediationOutput = buildTaskIdSyntaxRemediationMessage('enter-task-mode', ['--task=T-008'], nestedCwd);
+            assert.ok(remediationOutput);
+            assert.ok(remediationOutput!.includes('Suggested command: node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "T-008"'));
+        } finally {
+            fs.rmSync(workspaceRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('renders help paths with the configured bundle name instead of hardcoding the default bundle', { concurrency: false }, async () => {
+        const previousBundleName = process.env.GARDA_BUNDLE_NAME;
+        process.env.GARDA_BUNDLE_NAME = 'custom-garda-bundle';
+        try {
+            const helpOutput = buildGateHelpText('load-rule-pack', path.resolve('.'));
+            assert.ok(helpOutput.includes('custom-garda-bundle/live/docs/agent-rules/00-core.md'));
+            assert.ok(helpOutput.includes('custom-garda-bundle/runtime/reviews/<task-id>-preflight.json'));
+            assert.ok(!helpOutput.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
+        } finally {
+            if (previousBundleName == null) {
+                delete process.env.GARDA_BUNDLE_NAME;
+            } else {
+                process.env.GARDA_BUNDLE_NAME = previousBundleName;
+            }
+        }
+    });
+
+    it('does not treat --help as a standalone help request when it is a string option value', async () => {
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'validate-config',
+            '--config-path',
+            '--help'
+        ]);
+
+        assert.notEqual(result.exitCode, 0);
+        assert.equal(result.logs.length, 0);
+        const errorOutput = result.errors.join('\n');
+        assert.ok(errorOutput.includes('GARDA_CLI_FAILED'));
+        assert.ok(!errorOutput.includes('Gate: validate-config'));
+        assert.ok(errorOutput.includes('Unknown option: --config-path') || errorOutput.includes('ConfigPath'));
+    });
+
+    it('treats trailing --help after --task-id as gate help for malformed task-start invocations', async () => {
+        const enterTaskModeResult = await runCliWithCapturedOutput([
+            'gate',
+            'enter-task-mode',
+            '--task-id',
+            '--help'
+        ]);
+        assert.equal(enterTaskModeResult.exitCode, 0);
+        assert.equal(enterTaskModeResult.errors.length, 0);
+        const enterTaskModeOutput = enterTaskModeResult.logs.join('\n');
+        assert.ok(enterTaskModeOutput.includes('Gate: enter-task-mode'));
+        assert.ok(enterTaskModeOutput.includes('Usage:'));
+        assert.ok(!enterTaskModeOutput.includes('legacy_fallback'));
+
+        const loadRulePackResult = await runCliWithCapturedOutput([
+            'gate',
+            'load-rule-pack',
+            '--task-id',
+            '--help'
+        ]);
+        assert.equal(loadRulePackResult.exitCode, 0);
+        assert.equal(loadRulePackResult.errors.length, 0);
+        const loadRulePackOutput = loadRulePackResult.logs.join('\n');
+        assert.ok(loadRulePackOutput.includes('Gate: load-rule-pack'));
+        assert.ok(loadRulePackOutput.includes('Usage:'));
+        assert.ok(!loadRulePackOutput.includes('RULE_PACK_LOAD_FAILED'));
+    });
+
+    it('keeps POST_PREFLIGHT help generic instead of hardcoding one downstream rule-pack shape', async () => {
+        const result = await runCliWithCapturedOutput(['gate', 'load-rule-pack', '--help']);
+        assert.equal(result.exitCode, 0);
+        const combinedOutput = result.logs.join('\n');
+        assert.ok(combinedOutput.includes('<task-specific-downstream-rule-file>'));
+        assert.ok(combinedOutput.includes('<additional-task-specific-rule-file>'));
+        assert.ok(!combinedOutput.includes('50-structure-and-docs.md'));
+        assert.ok(!combinedOutput.includes('70-security.md'));
+    });
+
+    it('does not emit task-id remediation for gates that do not accept --task-id', async () => {
+        const result = await runCliWithCapturedOutput(['gate', 'build-review-context', 'T-008']);
+        assert.notEqual(result.exitCode, 0);
+        const errorOutput = result.errors.join('\n');
+        assert.ok(errorOutput.includes('GARDA_CLI_FAILED'));
+        assert.ok(errorOutput.includes('Unexpected positional argument: T-008'));
+        assert.ok(!errorOutput.includes('Canonical task-id syntax'));
+        assert.ok(!errorOutput.includes('Suggested command:'));
+    });
+
+    it('lists every public gate in root gate help output', async () => {
+        const result = await runCliWithCapturedOutput(['gate', '--help']);
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.errors.length, 0);
+        const combinedOutput = result.logs.join('\n');
+        assert.ok(combinedOutput.includes('record-no-op'));
+        assert.ok(combinedOutput.includes('task-audit-summary'));
     });
 
     it('classifies security file and emits risk_aware_depth with promoted effective depth', { concurrency: false }, () => {

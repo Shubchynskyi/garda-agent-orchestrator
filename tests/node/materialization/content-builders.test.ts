@@ -33,6 +33,13 @@ import {
     syncManagedBlockInContent
 } from '../../../src/materialization/content-builders';
 
+const TASK_ENTRY_RULE_FILE_SNIPPETS = Object.freeze([
+    '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"',
+    '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md"',
+    '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md"',
+    '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"'
+]);
+
 describe('extractManagedBlockFromContent', () => {
     it('extracts block between markers', () => {
         const content = `before\n${MANAGED_START}\ninner\n${MANAGED_END}\nafter`;
@@ -353,6 +360,49 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
         assert.ok(result!.includes('build:node-foundation'));
     });
+
+    it('includes exact copy-paste task-start snippets in full provider bridges', () => {
+        const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'AGENTS.md', '.github/agents/orchestrator.md');
+        assert.ok(result.includes('Copy-Paste Start Commands'));
+        assert.ok(result.includes('node bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+        assert.ok(result.includes('--provider "GitHub Copilot"'));
+        assert.ok(result.includes('--routed-to ".github/agents/orchestrator.md"'));
+        assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --routed-to ".github/agents/orchestrator.md" --repo-root "."'));
+        for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
+            assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
+        }
+    });
+
+    it('includes exact copy-paste task-start snippets in compact provider bridges too', () => {
+        const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result.includes('Copy-Paste Start Commands'));
+        assert.ok(result.includes('--provider "Antigravity"'));
+        assert.ok(result.includes('--routed-to ".antigravity/agents/orchestrator.md"'));
+        assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --routed-to ".antigravity/agents/orchestrator.md" --repo-root "."'));
+        for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
+            assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
+        }
+    });
+
+    it('uses the configured bundle name in provider bridge snippets', { concurrency: false }, () => {
+        const previousBundleName = process.env.GARDA_BUNDLE_NAME;
+        process.env.GARDA_BUNDLE_NAME = 'custom-garda-bundle';
+        try {
+            const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'AGENTS.md', '.github/agents/orchestrator.md');
+            assert.ok(result.includes('node custom-garda-bundle/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+            assert.ok(result.includes('custom-garda-bundle/live/docs/agent-rules/00-core.md'));
+            assert.ok(!result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+        } finally {
+            if (previousBundleName == null) {
+                delete process.env.GARDA_BUNDLE_NAME;
+            } else {
+                process.env.GARDA_BUNDLE_NAME = previousBundleName;
+            }
+        }
+    });
 });
 
 describe('buildSharedStartTaskWorkflowContent', () => {
@@ -383,6 +433,20 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('Parallel reviewer fan-out is allowed only between independent review types'));
         assert.ok(result.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
         assert.ok(result.includes('build:node-foundation'));
+    });
+
+    it('includes exact copy-paste task-start snippets for provider and routed task entry', () => {
+        const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
+        assert.ok(result.includes('Copy-Paste Start Commands'));
+        assert.ok(result.includes('node bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+        assert.ok(result.includes('--provider "<runtime-provider>"'));
+        assert.ok(result.includes('--routed-to "<provider-bridge-or-entrypoint>"'));
+        assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."'));
+        for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
+            assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
+        }
     });
 });
 

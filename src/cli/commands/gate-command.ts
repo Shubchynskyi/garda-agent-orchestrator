@@ -1,5 +1,10 @@
 import { getAllShimmedGateNames } from '../../compat/shim-registry';
 import { bold } from './cli-helpers';
+import {
+    buildGateHelpText,
+    buildTaskIdSyntaxRemediationMessage,
+    hasStandaloneGateHelpFlag
+} from './gate-command-help';
 import { handleValidateManifest, handleValidateConfig } from './gate-validate-handlers';
 import {
     handleClassifyChange,
@@ -42,6 +47,14 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
 
     const gateName = commandArgv[0];
     const gateArgv = commandArgv.slice(1);
+    if (hasStandaloneGateHelpFlag(gateArgv)) {
+        console.log(buildGateHelpText(gateName));
+        return;
+    }
+    const taskIdRemediationMessage = buildTaskIdSyntaxRemediationMessage(gateName, gateArgv);
+    if (taskIdRemediationMessage) {
+        throw new Error(taskIdRemediationMessage);
+    }
 
     switch (gateName) {
         case 'validate-manifest':

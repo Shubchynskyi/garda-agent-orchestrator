@@ -37,6 +37,60 @@ function getReviewSkillBridgeHost(): { bridgePath: string; providerLabel: string
     };
 }
 
+function getSourceGateCommandPrefix(): string {
+    return 'node bin/garda.js gate';
+}
+
+function buildBundleRelativePath(relativePath: string, bundleName = resolveBundleName()): string {
+    return `${bundleName}/${relativePath}`;
+}
+
+function buildTaskEntryRuleFileFlags(bundleName = resolveBundleName()): string {
+    return [
+        `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/00-core.md', bundleName)}"`,
+        `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/40-commands.md', bundleName)}"`,
+        `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/80-task-workflow.md', bundleName)}"`,
+        `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/90-skill-catalog.md', bundleName)}"`
+    ].join(' ');
+}
+
+function buildEnterTaskModeSnippet(commandPrefix: string, runtimeIdentityFlag: string): string {
+    return [
+        `${commandPrefix} enter-task-mode`,
+        '--task-id "<task-id>"',
+        '--entry-mode "EXPLICIT_TASK_EXECUTION"',
+        '--requested-depth "<1|2|3>"',
+        '--task-summary "<task summary>"',
+        runtimeIdentityFlag,
+        '--repo-root "."'
+    ].join(' ');
+}
+
+function buildTaskEntryRulePackSnippet(commandPrefix: string, bundleName = resolveBundleName()): string {
+    return [
+        `${commandPrefix} load-rule-pack`,
+        '--task-id "<task-id>"',
+        '--stage "TASK_ENTRY"',
+        buildTaskEntryRuleFileFlags(bundleName),
+        '--repo-root "."'
+    ].join(' ');
+}
+
+function buildTaskStartSnippetSection(runtimeProviderLabel: string, routeTarget: string): string {
+    const sourcePrefix = getSourceGateCommandPrefix();
+    const bundlePrefix = getNodeGateCommandPrefix();
+    const bundleName = resolveBundleName();
+    return [
+        '## Copy-Paste Start Commands',
+        `- Source checkout (\`--provider\`): \`${buildEnterTaskModeSnippet(sourcePrefix, `--provider "${runtimeProviderLabel}"`)}\``,
+        `- Source checkout (\`--routed-to\`): \`${buildEnterTaskModeSnippet(sourcePrefix, `--routed-to "${routeTarget}"`)}\``,
+        `- Source checkout (\`TASK_ENTRY\` rules): \`${buildTaskEntryRulePackSnippet(sourcePrefix, bundleName)}\``,
+        `- Deployed workspace (\`--provider\`): \`${buildEnterTaskModeSnippet(bundlePrefix, `--provider "${runtimeProviderLabel}"`)}\``,
+        `- Deployed workspace (\`--routed-to\`): \`${buildEnterTaskModeSnippet(bundlePrefix, `--routed-to "${routeTarget}"`)}\``,
+        `- Deployed workspace (\`TASK_ENTRY\` rules): \`${buildTaskEntryRulePackSnippet(bundlePrefix, bundleName)}\``
+    ].join('\n');
+}
+
 export const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 export const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
 export const COMMIT_GUARD_START = '# garda-agent-orchestrator:commit-guard-start';
@@ -493,6 +547,8 @@ Required:
 9. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
 10. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
 
+${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
+
 Canonical workflow skill: \`${resolveBundleName()}/live/skills/orchestration/SKILL.md\`
 Skill catalog: \`${resolveBundleName()}/live/docs/agent-rules/90-skill-catalog.md\`
 Bridge path: \`${bridgePath}\`
@@ -514,6 +570,8 @@ This provider profile is a strict bridge to Garda skills and the Node gate route
 Treat \`.agents/workflows/start-task.md\` as the shared router for every provider surface; it routes to canonical orchestration and does not replace \`80-task-workflow.md\`.
 Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 Do not execute task or review workflow with provider-default reviewer agents that bypass this bridge.
+
+${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 
 ## Required Execution Contract
 1. Read \`${canonicalFile}\` and its routing links before making changes.
@@ -568,6 +626,8 @@ ${MANAGED_END}`.trim();
 }
 
 export function buildSharedStartTaskWorkflowContent(canonicalFile: string): string {
+    const runtimeProviderPlaceholder = '<runtime-provider>';
+    const routePlaceholder = '<provider-bridge-or-entrypoint>';
     return `${MANAGED_START}
 ---
 description: "Mandatory shared router for any task execution through Garda orchestration."
@@ -587,6 +647,8 @@ Before any code changes:
 - Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 - Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
+
+${buildTaskStartSnippetSection(runtimeProviderPlaceholder, routePlaceholder)}
 
 Mandatory gate order:
 1. \`gate enter-task-mode\` with explicit runtime identity via \`--provider "<runtime-provider>"\` or \`--routed-to "<provider-bridge-or-entrypoint>"\`; never rely on canonical SourceOfTruth fallback
