@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
+import { getRequiredReviewSkillBridgeHostEntry } from '../core/provider-registry';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { normalizeLineEndings } from '../core/line-endings';
@@ -203,7 +204,8 @@ export function runInstall(options: RunInstallOptions) {
     const providerOrchestratorProfiles = getProviderOrchestratorProfileDefinitions().filter(
         (p) => activeEntryFiles.includes(p.entrypointFile)
     );
-    const githubSkillBridgeProfiles = activeEntryFiles.includes('.github/copilot-instructions.md')
+    const reviewSkillBridgeHostEntrypoint = getRequiredReviewSkillBridgeHostEntry().entrypointFile;
+    const githubSkillBridgeProfiles = activeEntryFiles.includes(reviewSkillBridgeHostEntrypoint)
         ? getGitHubSkillBridgeProfileDefinitions()
         : [];
     const providerBridgePaths = providerOrchestratorProfiles.map((p) => p.orchestratorRelativePath);
@@ -590,8 +592,8 @@ export function runInstall(options: RunInstallOptions) {
                         desiredManagedFileSet.add(providerProfile.orchestratorRelativePath);
                         preservedBridgePaths.push(providerProfile.orchestratorRelativePath);
                     }
-                    // Cascade: discover associated skill bridges for GitHub Copilot
-                    if (relativePath === '.github/copilot-instructions.md') {
+                    // Cascade: discover associated skill bridges for the review-bridge host provider.
+                    if (reviewSkillBridgeHostEntrypoint && relativePath === reviewSkillBridgeHostEntrypoint) {
                         for (const skillProfile of allSkillBridgeProfiles) {
                             if (!desiredManagedFileSet.has(skillProfile.relativePath)) {
                                 const skillBridgePath = path.join(targetRoot, skillProfile.relativePath);

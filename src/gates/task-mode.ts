@@ -303,7 +303,7 @@ function resolveLegacyRouteIdentity(routedTo: string | null): {
     for (const profile of getProviderOrchestratorProfileDefinitions()) {
         if (normalizeLegacyRoutePath(profile.orchestratorRelativePath) === normalizedRoute) {
             return {
-                provider: normalizeLegacySourceOfTruthValue(profile.providerLabel),
+                provider: normalizeLegacySourceOfTruthValue(profile.providerId),
                 routeKind: 'provider_bridge'
             };
         }

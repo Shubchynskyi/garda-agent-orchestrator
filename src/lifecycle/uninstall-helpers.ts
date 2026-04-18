@@ -5,6 +5,7 @@ import {
     BOOLEAN_FALSE_VALUES,
     BOOLEAN_TRUE_VALUES
 } from '../core/constants';
+import { getProviderBridgeRelativePaths } from '../core/provider-registry';
 import { pathExists, readTextFile } from '../core/fs';
 import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
@@ -34,12 +35,7 @@ function isJsonObject(value: unknown): value is JsonObject {
 
 export const ENTRYPOINT_FILES = Object.freeze([...ALL_AGENT_ENTRYPOINT_FILES]);
 
-export const PROVIDER_AGENT_FILES = Object.freeze([
-    '.github/agents/orchestrator.md',
-    '.windsurf/agents/orchestrator.md',
-    '.junie/agents/orchestrator.md',
-    '.antigravity/agents/orchestrator.md'
-]);
+export const PROVIDER_AGENT_FILES = Object.freeze([...getProviderBridgeRelativePaths()]);
 
 export const GITHUB_SKILL_BRIDGE_FILES = Object.freeze([
     '.github/agents/reviewer.md',

@@ -1,6 +1,13 @@
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolveBundleName } from '../core/constants';
-import { getProviderBridgeEntries, getProviderEntries } from '../core/provider-registry';
+import {
+    getProviderBridgeEntries,
+    getProviderBridgeRelativePaths,
+    getProviderEntries,
+    getProviderEntrypointFiles,
+    getRequiredProviderEntryByBridgePath,
+    getRequiredReviewSkillBridgeHostEntry
+} from '../core/provider-registry';
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
 import { getNodeBundleCliCommand, getNodeGateCommandPrefix, getNodeHumanCommitCommand } from './command-constants';
 
@@ -9,6 +16,25 @@ function getConditionalDelegationProviderList(): string {
         .filter((e) => e.reviewerCapabilityTier === 'delegation_conditional')
         .map((e) => e.id)
         .join(', ');
+}
+
+function getDelegationRequiredProviderLaunchLines(): readonly string[] {
+    return Object.freeze(
+        getProviderEntries()
+            .filter((entry) => entry.reviewerCapabilityTier === 'delegation_required')
+            .map((entry) => (
+                `- ${entry.reviewerLaunchLabel!} (delegation-capable): ${entry.delegatedReviewerLaunchInstruction!}`
+            ))
+    );
+}
+
+function getReviewSkillBridgeHost(): { bridgePath: string; providerLabel: string } {
+    const hostEntry = getRequiredReviewSkillBridgeHostEntry();
+    const bridgePath = hostEntry.bridge!.orchestratorRelativePath;
+    return {
+        bridgePath,
+        providerLabel: hostEntry.displayLabel
+    };
 }
 
 export const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
@@ -34,15 +60,12 @@ export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
 ]);
 
 export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
-    'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'QWEN.md', 'TASK.md',
-    '.antigravity/rules.md', '.github/copilot-instructions.md',
-    '.junie/guidelines.md', '.windsurf/rules/rules.md',
+    ...getProviderEntrypointFiles(), 'TASK.md',
     '.qwen/settings.json', '.claude/settings.local.json',
     '.vscode/settings.json',
     '.git/hooks/pre-commit', '.gitignore',
     '.agents/workflows/start-task.md',
-    '.github/agents/orchestrator.md', '.windsurf/agents/orchestrator.md',
-    '.junie/agents/orchestrator.md', '.antigravity/agents/orchestrator.md',
+    ...getProviderBridgeRelativePaths(),
     '.github/agents/reviewer.md', '.github/agents/code-review.md',
     '.github/agents/db-review.md', '.github/agents/security-review.md',
     '.github/agents/refactor-review.md', '.github/agents/api-review.md',
@@ -446,11 +469,13 @@ export function buildProviderOrchestratorAgentContent(
     canonicalFile: string,
     bridgePath: string
 ): string {
+    const providerEntry = getRequiredProviderEntryByBridgePath(bridgePath);
+    const runtimeProviderLabel = providerEntry.displayLabel;
     const runtimeIdentityInstruction = `include explicit runtime identity with ` +
-        `\`--provider "${providerLabel}"\` or \`--routed-to "${bridgePath}"\`; do not rely on canonical SourceOfTruth fallback`;
-    if (bridgePath.replace(/\\/g, '/') === '.antigravity/agents/orchestrator.md') {
+        `\`--provider "${runtimeProviderLabel}"\` or \`--routed-to "${bridgePath}"\`; do not rely on canonical SourceOfTruth fallback`;
+    if (providerEntry?.bridge?.profileVariant === 'compact_router') {
         return `${MANAGED_START}
-# Antigravity Agent: Orchestrator
+# ${runtimeProviderLabel} Agent: Orchestrator
 
 Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
@@ -475,7 +500,7 @@ ${MANAGED_END}`.trim();
     }
 
     return `${MANAGED_START}
-# ${providerLabel} Agent: Orchestrator
+# ${runtimeProviderLabel} Agent: Orchestrator
 
 Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
@@ -512,9 +537,7 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 
 ## Reviewer Launch Mapping (Mandatory Delegation)
 - Delegation-capable providers must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid when delegation is available.
-- Codex (delegation-capable): launch clean-context reviewers via sub-agents with isolated context.
-- Claude Code (delegation-capable): launch clean-context reviewers via Agent tool (\`fork_context=false\`).
-- GitHub Copilot CLI (delegation-capable): launch clean-context reviewers via \`task\` tool with \`agent_type="general-purpose"\` (one reviewer per isolated task run).
+${getDelegationRequiredProviderLaunchLines().join('\n')}
 - ${getConditionalDelegationProviderList()}: delegate when provider sub-agent support is available; otherwise use fallback.
 - Platforms without task/sub-agent support (fallback only): run sequential isolated reviewer passes in one thread; never use provider-default reviewer agents.
 - Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
@@ -601,12 +624,13 @@ export function buildGitHubSkillBridgeAgentContent(
     reviewRequirement: string,
     capabilityFlag: string
 ): string {
+    const reviewSkillBridgeHost = getReviewSkillBridgeHost();
     return `${MANAGED_START}
 # GitHub Agent: ${profileTitle}
 
 Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
-Hard stop: first open \`.github/agents/orchestrator.md\`, \`${canonicalFile}\`, and \`TASK.md\`.
+Hard stop: first open \`${reviewSkillBridgeHost.bridgePath}\`, \`${canonicalFile}\`, and \`TASK.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
@@ -622,12 +646,12 @@ Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`ins
 - Keep downstream rule-pack evidence current via \`${getNodeGateCommandPrefix()} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.
 - Reviewer preparation must run \`${getNodeGateCommandPrefix()} build-review-context --review-type "<review-type>" ...\` before verdict capture; completion for code-changing tasks validates the resulting review-skill telemetry.
 - Downstream \`test\` review must wait for current-cycle PASS evidence from required upstream non-\`test\` reviews; on pure test-scope reruns, materialize reusable upstream \`code\` review evidence first.
-- On GitHub Copilot CLI, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider.
+- On \`${reviewSkillBridgeHost.providerLabel}\`, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider.
 - Honor specialist skills added after initialization under \`${resolveBundleName()}/live/skills/**\`.
 - Log review invocation and outcomes via \`${getNodeGateCommandPrefix()} log-task-event ...\` into task timeline.
 - Task timeline path (per task): \`${resolveBundleName()}/runtime/task-events/<task-id>.jsonl\`.
 - Review verdicts and completion status are recorded only through orchestrator workflow.
-- Never mark task \`DONE\` from this profile; hand off to \`.github/agents/orchestrator.md\`.
+- Never mark task \`DONE\` from this profile; hand off to \`${reviewSkillBridgeHost.bridgePath}\`.
 ${MANAGED_END}`.trim();
 }
 

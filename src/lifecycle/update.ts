@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveBundleName } from '../core/constants';
+import { ALL_AGENT_ENTRYPOINT_FILES, resolveBundleName } from '../core/constants';
+import { getProviderBridgeDirectoryPaths } from '../core/provider-registry';
 import { pathExists, readTextFile } from '../core/fs';
 import { readJsonFile } from '../core/json';
 import { isPathInsideRoot } from '../core/paths';
@@ -114,20 +115,11 @@ function getLiveVersionPayload(value: unknown): LiveVersionPayload {
  */
 export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath: string): string[] {
     const items = [
-        'CLAUDE.md',
-        'AGENTS.md',
-        'GEMINI.md',
+        ...ALL_AGENT_ENTRYPOINT_FILES,
         'TASK.md',
         '.claude/settings.local.json',
         '.qwen/settings.json',
-        '.github/copilot-instructions.md',
-        '.github/agents',
-        '.windsurf/rules/rules.md',
-        '.windsurf/agents',
-        '.junie/guidelines.md',
-        '.junie/agents',
-        '.antigravity/rules.md',
-        '.antigravity/agents',
+        ...getProviderBridgeDirectoryPaths(),
         '.gitignore',
         '.git/hooks/pre-commit',
         resolveBundleName() + '/.gitattributes',

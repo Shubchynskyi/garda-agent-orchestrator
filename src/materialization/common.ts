@@ -1,5 +1,10 @@
 import { resolveBundleName, ALL_AGENT_ENTRYPOINT_FILES, SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
-import { getProviderAliasMap, getProviderBridgeEntries, getProviderIds } from '../core/provider-registry';
+import {
+    getDirectoryScopedProviderEntrypointFiles,
+    getProviderAliasMap,
+    getProviderBridgeEntries,
+    getProviderIds
+} from '../core/provider-registry';
 
 type SourceOfTruthValue = keyof typeof SOURCE_TO_ENTRYPOINT_MAP;
 
@@ -120,19 +125,21 @@ export function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles:
  */
 export function getProviderOrchestratorProfileDefinitions() {
     return getProviderBridgeEntries().map((entry) => ({
+        providerId: entry.id,
         entrypointFile: entry.entrypointFile,
         providerLabel: entry.displayLabel,
         orchestratorRelativePath: entry.bridge!.orchestratorRelativePath,
-        gitignoreEntries: [...entry.bridge!.gitignoreEntries]
+        managedDirectoryRelativePath: entry.bridge!.managedDirectoryRelativePath,
+        gitignoreEntries: [...entry.bridge!.gitignoreEntries],
+        entrypointCoveredByDirectoryIgnore: entry.bridge!.entrypointCoveredByDirectoryIgnore,
+        profileVariant: entry.bridge!.profileVariant,
+        reviewSkillBridgeHost: entry.bridge!.reviewSkillBridgeHost,
+        selfReferenceRequirement: entry.bridge!.selfReferenceRequirement
     }));
 }
 
 export function getLegacyManagedGitignoreEntries(): string[] {
-    return [
-        '.antigravity/rules.md',
-        '.junie/guidelines.md',
-        '.windsurf/rules/rules.md'
-    ];
+    return [...getDirectoryScopedProviderEntrypointFiles()];
 }
 
 /**

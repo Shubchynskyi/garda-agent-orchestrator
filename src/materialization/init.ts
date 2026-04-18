@@ -8,6 +8,7 @@ import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
     getCanonicalEntrypointFile,
     getGitHubSkillBridgeProfileDefinitions,
+    getLegacyManagedGitignoreEntries,
     getProviderOrchestratorProfileDefinitions,
     SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
 } from './common';
@@ -473,9 +474,7 @@ export function collectSourceInventory(targetRoot: string): SourceInventory {
         'TASK.md',
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
         '.qwen/settings.json',
-        '.antigravity/rules.md',
-        '.junie/guidelines.md',
-        '.windsurf/rules/rules.md'
+        ...getLegacyManagedGitignoreEntries()
     ]);
 
     for (const profile of getProviderOrchestratorProfileDefinitions()) {

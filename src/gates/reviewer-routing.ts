@@ -194,7 +194,7 @@ function resolveKnownBridgePath(provider: string | null): string | null {
         return null;
     }
     for (const profile of getProviderOrchestratorProfileDefinitions()) {
-        if (normalizeSourceOfTruthValue(profile.providerLabel) === provider) {
+        if (normalizeSourceOfTruthValue(profile.providerId) === provider) {
             return profile.orchestratorRelativePath;
         }
     }
@@ -217,7 +217,7 @@ function resolveExecutionProviderFromRoutePath(routedTo: string | null): {
     for (const profile of getProviderOrchestratorProfileDefinitions()) {
         if (normalizeRoutePath(profile.orchestratorRelativePath) === normalizedRoutedTo) {
             return {
-                provider: normalizeSourceOfTruthValue(profile.providerLabel),
+                provider: normalizeSourceOfTruthValue(profile.providerId),
                 routeKind: 'provider_bridge',
                 bridgePath: profile.orchestratorRelativePath
             };

@@ -295,19 +295,19 @@ export function scanProviderCompliance(
         }
     }
 
-    // 4. Antigravity alias alignment: if Antigravity is active, verify its bridge
-    // references its own entrypoint path consistently
-    const antigravityProfile = profiles.find((p) => p.entrypointFile === '.antigravity/rules.md');
-    if (antigravityProfile && activeSet.has(antigravityProfile.entrypointFile)) {
-        const bridgePath = path.join(resolvedRoot, antigravityProfile.orchestratorRelativePath);
+    // 4. Providers with self-referential bridge requirements must reference
+    // their own bridge path consistently.
+    for (const profile of profiles) {
+        if (profile.selfReferenceRequirement !== 'bridge_path') continue;
+        if (!activeSet.has(profile.entrypointFile)) continue;
+
+        const bridgePath = path.join(resolvedRoot, profile.orchestratorRelativePath);
         const bridgeContent = readFileSafe(bridgePath);
-        if (bridgeContent !== null) {
-            if (!bridgeContent.includes(antigravityProfile.orchestratorRelativePath)) {
-                violations.push(
-                    `Antigravity bridge '${antigravityProfile.orchestratorRelativePath}' does not reference its own bridge path. ` +
-                    'Provider alias may be misaligned.'
-                );
-            }
+        if (bridgeContent !== null && !bridgeContent.includes(profile.orchestratorRelativePath)) {
+            violations.push(
+                `${profile.providerLabel} bridge '${profile.orchestratorRelativePath}' does not reference its own bridge path. ` +
+                'Provider alias may be misaligned.'
+            );
         }
     }
 

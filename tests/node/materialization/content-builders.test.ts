@@ -326,6 +326,19 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(!result.includes('## Required Execution Contract'));
     });
 
+    it('derives compact router behavior from bridge metadata instead of caller label', () => {
+        const result = buildProviderOrchestratorAgentContent('Not Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result.includes('Antigravity Agent: Orchestrator'));
+        assert.ok(!result.includes('## Required Execution Contract'));
+    });
+
+    it('fails fast when asked to build a provider bridge that is missing from the registry', () => {
+        assert.throws(
+            () => buildProviderOrchestratorAgentContent('Unknown Provider', 'AGENTS.md', '.unknown/agents/orchestrator.md'),
+            /does not define bridge path/i
+        );
+    });
+
     it('includes compact-command protocol in Antigravity bridge', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result!.includes('compact command protocol'));

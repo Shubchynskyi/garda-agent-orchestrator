@@ -4,14 +4,24 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import {
+    getDirectoryScopedProviderEntrypointFiles,
+    getProviderBridgeDirectoryPaths,
     getProviderEntries,
+    getProviderEntryByBridgePath,
+    getProviderEntryById,
     getProviderIds,
+    getProviderBridgeRelativePaths,
     getProviderEntrypointMap,
     getProviderEntrypointFiles,
     getProviderAliasMap,
     getProviderBridgeEntries,
+    getRequiredProviderEntryByBridgePath,
+    getRequiredReviewSkillBridgeHostEntry,
+    getReviewSkillBridgeHostEntry,
     getReviewerCapabilityTier
 } from '../../../src/core/provider-registry';
 import {
@@ -21,11 +31,15 @@ import {
 } from '../../../src/core/constants';
 import {
     getCanonicalEntrypointFile,
+    getLegacyManagedGitignoreEntries,
     getProviderOrchestratorProfileDefinitions
 } from '../../../src/materialization/common';
+import { INSTALL_BACKUP_CANDIDATE_PATHS } from '../../../src/materialization/content-builders';
 import {
     resolveReviewerRoutingPolicy
 } from '../../../src/gates/reviewer-routing';
+import { getUpdateRollbackItems } from '../../../src/lifecycle/update';
+import { PROVIDER_AGENT_FILES } from '../../../src/lifecycle/uninstall-helpers';
 
 // ===========================================================================
 // 1. Registry internal consistency
@@ -45,6 +59,16 @@ describe('provider-registry: internal consistency', () => {
     it('every entry has at least one alias', () => {
         for (const entry of getProviderEntries()) {
             assert.ok(entry.aliases.length > 0, `${entry.id} has no aliases`);
+        }
+    });
+
+    it('delegation-required providers always expose launch metadata', () => {
+        for (const entry of getProviderEntries().filter((provider) => provider.reviewerCapabilityTier === 'delegation_required')) {
+            assert.ok(entry.reviewerLaunchLabel?.trim(), `${entry.id} is missing reviewerLaunchLabel`);
+            assert.ok(
+                entry.delegatedReviewerLaunchInstruction?.trim(),
+                `${entry.id} is missing delegatedReviewerLaunchInstruction`
+            );
         }
     });
 
@@ -72,6 +96,69 @@ describe('provider-registry: internal consistency', () => {
         for (const entry of getProviderBridgeEntries()) {
             assert.ok(entry.bridge !== null, `${entry.id} returned from getProviderBridgeEntries but bridge is null`);
         }
+    });
+
+    it('bridge directory metadata stays self-consistent', () => {
+        for (const entry of getProviderBridgeEntries()) {
+            const bridge = entry.bridge!;
+            assert.strictEqual(
+                bridge.managedDirectoryRelativePath,
+                path.posix.dirname(bridge.orchestratorRelativePath),
+                `${entry.id} managedDirectoryRelativePath drifted from orchestratorRelativePath`
+            );
+
+            const directoryIgnoreEntries = bridge.gitignoreEntries.filter((gitignoreEntry) => gitignoreEntry.endsWith('/'));
+            const entrypointCoveredByDirectoryIgnore = directoryIgnoreEntries.some((gitignoreEntry) => (
+                entry.entrypointFile.startsWith(gitignoreEntry)
+            ));
+            assert.strictEqual(
+                bridge.entrypointCoveredByDirectoryIgnore,
+                entrypointCoveredByDirectoryIgnore,
+                `${entry.id} entrypointCoveredByDirectoryIgnore drifted from gitignoreEntries`
+            );
+
+            if (bridge.profileVariant === 'compact_router') {
+                assert.strictEqual(
+                    bridge.selfReferenceRequirement,
+                    'bridge_path',
+                    `${entry.id} compact_router bridge must require bridge_path self-reference`
+                );
+            }
+        }
+    });
+
+    it('getProviderEntryById resolves providers case-insensitively', () => {
+        assert.strictEqual(getProviderEntryById('githubcopilot')?.entrypointFile, '.github/copilot-instructions.md');
+        assert.strictEqual(getProviderEntryById('UnknownProvider'), null);
+    });
+
+    it('getProviderEntryByBridgePath resolves providers case-insensitively', () => {
+        assert.strictEqual(getProviderEntryByBridgePath('.GITHUB/agents/orchestrator.md')?.id, 'GitHubCopilot');
+        assert.strictEqual(getProviderEntryByBridgePath('missing/bridge.md'), null);
+    });
+
+    it('required bridge lookup fails fast for unknown bridge paths', () => {
+        assert.strictEqual(
+            getRequiredProviderEntryByBridgePath('.github/agents/orchestrator.md').id,
+            'GitHubCopilot'
+        );
+        assert.throws(
+            () => getRequiredProviderEntryByBridgePath('missing/bridge.md'),
+            /does not define bridge path/i
+        );
+    });
+
+    it('review-skill bridge host stays anchored in the registry', () => {
+        const hostEntry = getReviewSkillBridgeHostEntry();
+        assert.ok(hostEntry, 'expected a review-skill bridge host');
+        assert.strictEqual(hostEntry.id, 'GitHubCopilot');
+        assert.strictEqual(hostEntry.bridge?.reviewSkillBridgeHost, true);
+    });
+
+    it('required review-skill bridge host lookup enforces uniqueness at access time', () => {
+        const hostEntry = getRequiredReviewSkillBridgeHostEntry();
+        assert.strictEqual(hostEntry.id, 'GitHubCopilot');
+        assert.strictEqual(hostEntry.bridge?.reviewSkillBridgeHost, true);
     });
 });
 
@@ -118,11 +205,80 @@ describe('provider-registry: materialization profiles sync', () => {
         }
     });
 
+    it('orchestrator profiles preserve bridge metadata flags from the registry', () => {
+        const antigravityProfile = getProviderOrchestratorProfileDefinitions().find(
+            (profile) => profile.orchestratorRelativePath === '.antigravity/agents/orchestrator.md'
+        );
+        assert.ok(antigravityProfile);
+        assert.strictEqual(antigravityProfile.managedDirectoryRelativePath, '.antigravity/agents');
+        assert.strictEqual(antigravityProfile.entrypointCoveredByDirectoryIgnore, true);
+        assert.strictEqual(antigravityProfile.profileVariant, 'compact_router');
+        assert.strictEqual(antigravityProfile.selfReferenceRequirement, 'bridge_path');
+        assert.strictEqual(antigravityProfile.reviewSkillBridgeHost, false);
+
+        const skillBridgeHostProfile = getProviderOrchestratorProfileDefinitions().find(
+            (profile) => profile.reviewSkillBridgeHost
+        );
+        assert.ok(skillBridgeHostProfile);
+        assert.strictEqual(skillBridgeHostProfile.orchestratorRelativePath, '.github/agents/orchestrator.md');
+        assert.strictEqual(skillBridgeHostProfile.managedDirectoryRelativePath, '.github/agents');
+        assert.strictEqual(skillBridgeHostProfile.entrypointCoveredByDirectoryIgnore, false);
+    });
+
     it('getCanonicalEntrypointFile resolves all registered providers', () => {
         for (const id of getProviderIds()) {
             const file = getCanonicalEntrypointFile(id);
             const expected = getProviderEntrypointMap()[id];
             assert.strictEqual(file, expected, `getCanonicalEntrypointFile mismatch for '${id}'`);
+        }
+    });
+
+    it('directory-scoped entrypoints stay in sync with common gitignore helper', () => {
+        assert.deepStrictEqual(
+            [...getLegacyManagedGitignoreEntries()].sort(),
+            [...getDirectoryScopedProviderEntrypointFiles()]
+        );
+    });
+
+    it('install backup candidates include all registry entrypoints and provider bridges', () => {
+        for (const entrypointFile of getProviderEntrypointFiles()) {
+            assert.ok(
+                INSTALL_BACKUP_CANDIDATE_PATHS.includes(entrypointFile),
+                `Entrypoint '${entrypointFile}' missing from INSTALL_BACKUP_CANDIDATE_PATHS`
+            );
+        }
+        for (const bridgePath of getProviderBridgeRelativePaths()) {
+            assert.ok(
+                INSTALL_BACKUP_CANDIDATE_PATHS.includes(bridgePath),
+                `Bridge '${bridgePath}' missing from INSTALL_BACKUP_CANDIDATE_PATHS`
+            );
+        }
+    });
+
+    it('provider agent uninstall paths match registry bridge paths exactly', () => {
+        assert.deepStrictEqual([...PROVIDER_AGENT_FILES], [...getProviderBridgeRelativePaths()]);
+    });
+
+    it('update rollback items include all registry entrypoints and provider bridge directories', () => {
+        const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-provider-registry-'));
+        const answersPath = path.join(tempDir, 'answers.json');
+        fs.writeFileSync(answersPath, '{}', 'utf8');
+        try {
+            const rollbackItems = getUpdateRollbackItems(tempDir, answersPath);
+            for (const entrypointFile of getProviderEntrypointFiles()) {
+                assert.ok(
+                    rollbackItems.includes(entrypointFile),
+                    `Rollback items missing entrypoint '${entrypointFile}'`
+                );
+            }
+            for (const bridgeDirectory of getProviderBridgeDirectoryPaths()) {
+                assert.ok(
+                    rollbackItems.includes(bridgeDirectory),
+                    `Rollback items missing bridge directory '${bridgeDirectory}'`
+                );
+            }
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
         }
     });
 });
