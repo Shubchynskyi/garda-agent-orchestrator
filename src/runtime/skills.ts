@@ -1,9 +1,72 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { ensureDirectory, pathExists } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { getProjectDiscovery } from '../materialization/project-discovery';
 import { emitSkillSuggestedEvent } from './skill-telemetry';
+
+// Re-export manifest parsing and index loading from focused modules so
+// existing consumers that import from 'runtime/skills' keep working.
+export {
+    BASELINE_SKILL_DIRECTORIES,
+    asObjectRecord,
+    normalizeStringArray,
+    normalizeOptionalString,
+    normalizeRequiredString,
+    normalizeNonNegativeInteger,
+    getPackTemplateRoot,
+    readPackManifest,
+    readSkillManifest,
+    readBaselineSkillManifest,
+    collectMissingReferenceIssues,
+    listPackSkillDefinitions,
+    listBuiltinSkillPacks,
+    getBuiltinSkillPackDefinition
+} from './skill-manifest';
+export type {
+    SkillPackManifestDefinition,
+    SkillManifestDefinition,
+    BaselineSkillManifestDefinition,
+    ManifestWithReferences,
+    BuiltinSkillPackDefinition
+} from './skill-manifest';
+
+export {
+    SKILLS_INDEX_VERSION,
+    getSkillsIndexConfigPath,
+    buildSkillsIndex,
+    writeSkillsIndex,
+    readSkillsIndex,
+    validateSkillsIndex
+} from './skill-index';
+export type {
+    SkillsIndexPackEntry,
+    SkillsIndexSkillEntry,
+    SkillsIndexPayload,
+    SkillsIndexData
+} from './skill-index';
+
+import {
+    BASELINE_SKILL_DIRECTORIES,
+    asObjectRecord,
+    normalizeOptionalString,
+    normalizeNonNegativeInteger,
+    normalizeStringArray,
+    getPackTemplateRoot,
+    getBuiltinSkillPackDefinition,
+    listBuiltinSkillPacks,
+    readBaselineSkillManifest,
+    readSkillManifest,
+    collectMissingReferenceIssues
+} from './skill-manifest';
+import type { BuiltinSkillPackDefinition } from './skill-manifest';
+
+import {
+    getSkillsIndexConfigPath,
+    readSkillsIndex,
+    validateSkillsIndex
+} from './skill-index';
+import type { SkillsIndexPackEntry, SkillsIndexSkillEntry } from './skill-index';
 
 type JsonObject = Record<string, unknown>;
 
@@ -40,108 +103,6 @@ type SignalMatchCategory =
 interface InstalledSkillPacksPayload {
     version: number;
     installed_packs: string[];
-}
-
-interface SkillPackManifestDefinition {
-    id: string;
-    label: string;
-    description: string;
-    tags: string[];
-    recommendedFor: string[];
-    packRoot: string;
-}
-
-interface SkillManifestDefinition {
-    id: string;
-    name: string;
-    pack: string;
-    summary: string;
-    tags: string[];
-    aliases: string[];
-    stackSignals: string[];
-    taskSignals: string[];
-    changedPathSignals: string[];
-    references: string[];
-    costHint: string;
-    priority: number;
-    autoload: string;
-    deprecated: boolean;
-    replacedBy: string | null;
-    implemented: boolean;
-    skillRoot: string;
-}
-
-interface BaselineSkillManifestDefinition {
-    id: string;
-    name: string;
-    summary: string;
-    tags: string[];
-    aliases: string[];
-    references: string[];
-    costHint: string;
-    priority: number;
-    autoload: string;
-    skillRoot: string;
-}
-
-interface ManifestWithReferences {
-    references: string[];
-}
-
-interface BuiltinSkillPackDefinition extends SkillPackManifestDefinition {
-    skills: SkillManifestDefinition[];
-    skillCount: number;
-    skillDirectories: string[];
-    readySkillCount: number;
-    readySkillDirectories: string[];
-    placeholderSkillCount: number;
-    placeholderSkillDirectories: string[];
-    implemented: boolean;
-    collidesWithBaseline: boolean;
-}
-
-interface SkillsIndexPackEntry {
-    id: string;
-    label: string;
-    description: string;
-    tags: string[];
-    recommended_for: string[];
-    skill_count: number;
-    ready_skill_count: number;
-    placeholder_skill_count: number;
-    implemented: boolean;
-    collides_with_baseline: boolean;
-}
-
-interface SkillsIndexSkillEntry {
-    id: string;
-    name: string;
-    pack: string;
-    summary: string;
-    tags: string[];
-    aliases: string[];
-    stack_signals: string[];
-    task_signals: string[];
-    changed_path_signals: string[];
-    references: string[];
-    cost_hint: string;
-    priority: number;
-    autoload: string;
-    deprecated: boolean;
-    replaced_by: string | null;
-    implemented: boolean;
-    template_skill_path: string;
-}
-
-interface SkillsIndexPayload {
-    version: number;
-    packs: SkillsIndexPackEntry[];
-    skills: SkillsIndexSkillEntry[];
-}
-
-interface SkillsIndexData {
-    indexPath: string;
-    payload: SkillsIndexPayload;
 }
 
 export interface SignalMatches {
@@ -246,12 +207,6 @@ interface SkillPackListing {
 
 type FuzzyAliasMap = Map<string, string[]>;
 
-function asObjectRecord(value: unknown): JsonObject {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as JsonObject
-        : {};
-}
-
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
@@ -265,17 +220,6 @@ function createEmptySignalMatches(): SignalMatches {
         aliases_or_tags: []
     };
 }
-
-export const BASELINE_SKILL_DIRECTORIES = Object.freeze([
-    'code-review',
-    'db-review',
-    'dependency-review',
-    'orchestration',
-    'orchestration-depth1',
-    'refactor-review',
-    'security-review',
-    'skill-builder'
-]);
 
 const DEFAULT_INSTALLED_PACKS_PAYLOAD: Readonly<InstalledSkillPacksPayload> = Object.freeze({
     version: 1,
@@ -302,54 +246,11 @@ const OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP: Readonly<Record<OptionalReviewCapabil
     dependency: ['dependency-review']
 });
 
-export const SKILLS_INDEX_VERSION = 1;
-const OPTIONAL_SKILL_PLACEHOLDER_PATTERN = /TODO:\s*fill this optional skill\.?/i;
 const SUGGESTED_SKILL_MIN_SCORE = 75;
 const SUGGESTED_PACK_MIN_SCORE = 75;
 
-function normalizeStringArray(value: unknown): string[] {
-    const items: unknown[] = Array.isArray(value) ? value : (value === undefined || value === null ? [] : [value]);
-    const normalized: string[] = [];
-    for (const item of items) {
-        const text = String(item || '').trim();
-        if (!text || normalized.includes(text)) {
-            continue;
-        }
-        normalized.push(text);
-    }
-    return normalized.sort();
-}
-
-function normalizeOptionalString(value: unknown): string | null {
-    const text = String(value || '').trim();
-    return text || null;
-}
-
-function normalizeRequiredString(value: unknown, fieldName: string): string {
-    const text = normalizeOptionalString(value);
-    if (!text) {
-        throw new Error(`${fieldName} is required.`);
-    }
-    return text;
-}
-
-function normalizeNonNegativeInteger(value: unknown, fallbackValue: number): number {
-    if (value === undefined || value === null || value === '') {
-        return fallbackValue;
-    }
-    const numeric = Number(value);
-    if (!Number.isInteger(numeric) || numeric < 0) {
-        throw new Error(`Expected a non-negative integer, got '${value}'.`);
-    }
-    return numeric;
-}
-
 export function getSkillPacksConfigPath(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'config', 'skill-packs.json');
-}
-
-export function getSkillsIndexConfigPath(bundleRoot: string): string {
-    return path.join(bundleRoot, 'live', 'config', 'skills-index.json');
 }
 
 export function getReviewCapabilitiesConfigPath(bundleRoot: string): string {
@@ -358,238 +259,6 @@ export function getReviewCapabilitiesConfigPath(bundleRoot: string): string {
 
 function getLiveSkillsRoot(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'skills');
-}
-
-function getTemplateSkillPacksRoot(bundleRoot: string): string {
-    return path.join(bundleRoot, 'template', 'skill-packs');
-}
-
-function getPackTemplateRoot(bundleRoot: string, packId: string): string {
-    return path.join(getTemplateSkillPacksRoot(bundleRoot), packId);
-}
-
-function getPackManifestPath(packRoot: string): string {
-    return path.join(packRoot, 'pack.json');
-}
-
-function getSkillManifestPath(skillRoot: string): string {
-    return path.join(skillRoot, 'skill.json');
-}
-
-function getTemplateSkillRelativePath(packId: string, skillId: string): string {
-    return path.join('template', 'skill-packs', packId, 'skills', skillId, 'SKILL.md').replace(/\\/g, '/');
-}
-
-function isPlaceholderOptionalSkill(summary: unknown, skillRoot: string): boolean {
-    if (OPTIONAL_SKILL_PLACEHOLDER_PATTERN.test(String(summary || ''))) {
-        return true;
-    }
-
-    const skillPath = path.join(skillRoot, 'SKILL.md');
-    if (!pathExists(skillPath)) {
-        return false;
-    }
-
-    try {
-        return OPTIONAL_SKILL_PLACEHOLDER_PATTERN.test(readTextFile(skillPath));
-    } catch {
-        return false;
-    }
-}
-
-function readPackManifest(packRoot: string): SkillPackManifestDefinition {
-    const manifestPath = getPackManifestPath(packRoot);
-    if (!pathExists(manifestPath)) {
-        throw new Error(`Skill pack manifest is missing: ${manifestPath}`);
-    }
-
-    const manifest = asObjectRecord(readJsonFile(manifestPath));
-    const fallbackPackId = path.basename(packRoot);
-
-    return {
-        id: normalizeRequiredString(manifest.id || fallbackPackId, `pack.json id (${fallbackPackId})`),
-        label: normalizeRequiredString(manifest.label || fallbackPackId, `pack.json label (${fallbackPackId})`),
-        description: normalizeRequiredString(manifest.description, `pack.json description (${fallbackPackId})`),
-        tags: normalizeStringArray(manifest.tags),
-        recommendedFor: normalizeStringArray(manifest.recommended_for),
-        packRoot
-    };
-}
-
-function readSkillManifest(skillRoot: string, fallbackPackId: string): SkillManifestDefinition {
-    const manifestPath = getSkillManifestPath(skillRoot);
-    if (!pathExists(manifestPath)) {
-        throw new Error(`Skill manifest is missing: ${manifestPath}`);
-    }
-
-    const manifest = asObjectRecord(readJsonFile(manifestPath));
-    const fallbackSkillId = path.basename(skillRoot);
-    const skillId = normalizeRequiredString(manifest.id || fallbackSkillId, `skill.json id (${fallbackSkillId})`);
-    const packId = normalizeRequiredString(manifest.pack || fallbackPackId, `skill.json pack (${skillId})`);
-
-    return {
-        id: skillId,
-        name: normalizeRequiredString(manifest.name || skillId, `skill.json name (${skillId})`),
-        pack: packId,
-        summary: normalizeRequiredString(manifest.summary, `skill.json summary (${skillId})`),
-        tags: normalizeStringArray(manifest.tags),
-        aliases: normalizeStringArray(manifest.aliases),
-        stackSignals: normalizeStringArray(manifest.stack_signals),
-        taskSignals: normalizeStringArray(manifest.task_signals),
-        changedPathSignals: normalizeStringArray(manifest.changed_path_signals),
-        references: normalizeStringArray(manifest.references),
-        costHint: normalizeRequiredString(manifest.cost_hint || 'low', `skill.json cost_hint (${skillId})`),
-        priority: normalizeNonNegativeInteger(manifest.priority, 50),
-        autoload: normalizeRequiredString(manifest.autoload || 'never', `skill.json autoload (${skillId})`),
-        deprecated: manifest.deprecated === true,
-        replacedBy: normalizeOptionalString(manifest.replaced_by),
-        implemented: !isPlaceholderOptionalSkill(manifest.summary, skillRoot),
-        skillRoot
-    };
-}
-
-function readBaselineSkillManifest(skillRoot: string): BaselineSkillManifestDefinition {
-    const manifestPath = getSkillManifestPath(skillRoot);
-    if (!pathExists(manifestPath)) {
-        throw new Error(`Skill manifest is missing: ${manifestPath}`);
-    }
-
-    const manifest = asObjectRecord(readJsonFile(manifestPath));
-    const fallbackSkillId = path.basename(skillRoot);
-
-    return {
-        id: normalizeRequiredString(manifest.id || fallbackSkillId, `skill.json id (${fallbackSkillId})`),
-        name: normalizeRequiredString(manifest.name || fallbackSkillId, `skill.json name (${fallbackSkillId})`),
-        summary: normalizeRequiredString(manifest.summary, `skill.json summary (${fallbackSkillId})`),
-        tags: normalizeStringArray(manifest.tags),
-        aliases: normalizeStringArray(manifest.aliases),
-        references: normalizeStringArray(manifest.references),
-        costHint: normalizeRequiredString(manifest.cost_hint || 'low', `skill.json cost_hint (${fallbackSkillId})`),
-        priority: normalizeNonNegativeInteger(manifest.priority, 50),
-        autoload: normalizeRequiredString(manifest.autoload || 'never', `skill.json autoload (${fallbackSkillId})`),
-        skillRoot
-    };
-}
-
-function collectMissingReferenceIssues(skillRoot: string, manifest: ManifestWithReferences, skillLabel: string): string[] {
-    const issues: string[] = [];
-    for (const reference of manifest.references) {
-        const referencePath = path.join(skillRoot, 'references', reference);
-        if (!pathExists(referencePath)) {
-            issues.push(`${skillLabel} declares missing reference '${reference}'.`);
-        }
-    }
-    return issues;
-}
-
-function listPackSkillDefinitions(packRoot: string, packId: string): SkillManifestDefinition[] {
-    const skillsRoot = path.join(packRoot, 'skills');
-    if (!pathExists(skillsRoot)) {
-        return [];
-    }
-
-    return fs.readdirSync(skillsRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => readSkillManifest(path.join(skillsRoot, entry.name), packId))
-        .sort((left, right) => left.id.localeCompare(right.id));
-}
-
-export function listBuiltinSkillPacks(bundleRoot: string): BuiltinSkillPackDefinition[] {
-    const templateSkillPacksRoot = getTemplateSkillPacksRoot(bundleRoot);
-    if (!pathExists(templateSkillPacksRoot)) {
-        return [];
-    }
-
-    return fs.readdirSync(templateSkillPacksRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => {
-            const packRoot = path.join(templateSkillPacksRoot, entry.name);
-            const manifest = readPackManifest(packRoot);
-            const skills = listPackSkillDefinitions(packRoot, manifest.id);
-            const readySkills = skills.filter((skill) => skill.implemented !== false);
-            const placeholderSkills = skills.filter((skill) => skill.implemented === false);
-            return {
-                ...manifest,
-                skills,
-                skillCount: skills.length,
-                skillDirectories: skills.map((skill) => skill.id),
-                readySkillCount: readySkills.length,
-                readySkillDirectories: readySkills.map((skill) => skill.id),
-                placeholderSkillCount: placeholderSkills.length,
-                placeholderSkillDirectories: placeholderSkills.map((skill) => skill.id),
-                implemented: readySkills.length > 0,
-                collidesWithBaseline: BASELINE_SKILL_DIRECTORIES.includes(manifest.id)
-            };
-        })
-        .sort((left, right) => left.id.localeCompare(right.id));
-}
-
-export function getBuiltinSkillPackDefinition(bundleRoot: string, packId: string): BuiltinSkillPackDefinition | null {
-    return listBuiltinSkillPacks(bundleRoot).find((pack) => pack.id === packId) || null;
-}
-
-export function buildSkillsIndex(bundleRoot: string): SkillsIndexPayload {
-    const builtinPacks = listBuiltinSkillPacks(bundleRoot);
-    return {
-        version: SKILLS_INDEX_VERSION,
-        packs: builtinPacks.map((pack) => ({
-            id: pack.id,
-            label: pack.label,
-            description: pack.description,
-            tags: pack.tags,
-            recommended_for: pack.recommendedFor,
-            skill_count: pack.skillCount,
-            ready_skill_count: pack.readySkillCount,
-            placeholder_skill_count: pack.placeholderSkillCount,
-            implemented: pack.implemented,
-            collides_with_baseline: pack.collidesWithBaseline
-        })),
-        skills: builtinPacks
-            .flatMap((pack) => pack.skills.map((skill) => ({
-                id: skill.id,
-                name: skill.name,
-                pack: skill.pack,
-                summary: skill.summary,
-                tags: skill.tags,
-                aliases: skill.aliases,
-                stack_signals: skill.stackSignals,
-                task_signals: skill.taskSignals,
-                changed_path_signals: skill.changedPathSignals,
-                references: skill.references,
-                cost_hint: skill.costHint,
-                priority: skill.priority,
-                autoload: skill.autoload,
-                deprecated: skill.deprecated,
-                replaced_by: skill.replacedBy,
-                implemented: skill.implemented !== false,
-                template_skill_path: getTemplateSkillRelativePath(pack.id, skill.id)
-            })))
-            .sort((left, right) => left.id.localeCompare(right.id))
-    };
-}
-
-export function writeSkillsIndex(bundleRoot: string): string {
-    const indexPath = getSkillsIndexConfigPath(bundleRoot);
-    ensureDirectory(path.dirname(indexPath));
-    writeJsonFile(indexPath, buildSkillsIndex(bundleRoot));
-    return indexPath;
-}
-
-export function readSkillsIndex(bundleRoot: string): SkillsIndexData {
-    const indexPath = getSkillsIndexConfigPath(bundleRoot);
-    if (!pathExists(indexPath)) {
-        throw new Error(`Skills index is missing: ${indexPath}`);
-    }
-
-    const payload = asObjectRecord(readJsonFile(indexPath));
-    if (!payload || !Array.isArray(payload.packs) || !Array.isArray(payload.skills)) {
-        throw new Error(`Skills index has an invalid shape: ${indexPath}`);
-    }
-
-    return {
-        indexPath,
-        payload: payload as unknown as SkillsIndexPayload
-    };
 }
 
 function normalizeReviewCapabilitiesConfig(raw: unknown): ReviewCapabilities {
@@ -1294,38 +963,6 @@ export function removeSkillPack(bundleRoot: string, packId: string) {
         configPath,
         reviewCapabilitiesPath: reviewCapabilities.configPath,
         reviewCapabilities: reviewCapabilities.capabilities
-    };
-}
-
-export function validateSkillsIndex(bundleRoot: string) {
-    const indexPath = getSkillsIndexConfigPath(bundleRoot);
-    const issues: string[] = [];
-    const expected = buildSkillsIndex(bundleRoot);
-
-    if (!pathExists(indexPath)) {
-        issues.push(`Skills index is missing: ${indexPath}`);
-        return { indexPath, expected, issues, passed: false };
-    }
-
-    let parsed: unknown = null;
-    try {
-        parsed = readJsonFile(indexPath);
-    } catch {
-        issues.push(`Skills index is not valid JSON: ${indexPath}`);
-        return { indexPath, expected, issues, passed: false };
-    }
-
-    const actualSerialized = JSON.stringify(parsed);
-    const expectedSerialized = JSON.stringify(expected);
-    if (actualSerialized !== expectedSerialized) {
-        issues.push(`Skills index is stale: ${indexPath}. Re-run init/materialization to refresh it.`);
-    }
-
-    return {
-        indexPath,
-        expected,
-        issues,
-        passed: issues.length === 0
     };
 }
 
