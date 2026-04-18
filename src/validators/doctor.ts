@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveBundleName, resolveInitAnswersRelativePath } from '../core/constants';
+import { resolveInitAnswersRelativePath } from '../core/constants';
 import { pathExists } from '../core/fs';
 import {
     collectTimelineSummaryForDoctor,
@@ -9,16 +9,10 @@ import {
 import { validateManifest, formatManifestResult } from './validate-manifest';
 import { formatVerifyResult } from './verify';
 import { runVerify } from './verify';
-import { getBundlePath, detectSourceBundleParity as getSourceBundleParity, detectNestedBundleDuplication, type NestedBundleDuplicationResult } from './workspace-layout';
+import { getBundlePath, detectSourceBundleParity as getSourceBundleParity } from './workspace-layout';
 import {
-    scanProviderCompliance,
-    formatProviderComplianceDetail,
-    type ProviderComplianceResult
+    formatProviderComplianceDetail
 } from './provider-compliance';
-import {
-    evaluateProtectedControlPlaneManifest,
-    type ProtectedControlPlaneManifestEvidence
-} from '../gates/helpers';
 import { buildProfileAwareNextLine } from './task-command';
 import {
     readUpdateSentinel,
@@ -42,6 +36,19 @@ import {
     type ReviewArtifactLockCleanupResult,
     type CompletionGateFinalizationLockScanResult
 } from './doctor-lock-health';
+import {
+    checkPermissions,
+    type PermissionCheckEvidence
+} from './doctor-permissions';
+import {
+    collectManifestEvidence
+} from './doctor-manifest';
+import {
+    collectComplianceEvidence
+} from './doctor-compliance';
+import type { ProtectedControlPlaneManifestEvidence } from '../gates/helpers';
+import type { ProviderComplianceResult } from './provider-compliance';
+import type { NestedBundleDuplicationResult } from './workspace-layout';
 
 // Re-export extracted collectors for backward compatibility
 export { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor-runtime';
@@ -51,6 +58,19 @@ export {
     type LockHealthEvidence,
     type LockHealthOptions
 } from './doctor-lock-health';
+export {
+    checkPermissions,
+    type PermissionCheckEvidence,
+    type PermissionCheckEntry
+} from './doctor-permissions';
+export {
+    collectManifestEvidence,
+    type ManifestEvidence
+} from './doctor-manifest';
+export {
+    collectComplianceEvidence,
+    type ComplianceEvidence
+} from './doctor-compliance';
 
 interface DoctorOptions {
     targetRoot: string;
@@ -59,94 +79,6 @@ interface DoctorOptions {
     cleanupStaleLocks?: boolean;
     dryRun?: boolean;
     activeAgentFiles?: readonly string[];
-}
-
-// ---------------------------------------------------------------------------
-// Permission check
-// ---------------------------------------------------------------------------
-
-export interface PermissionCheckEvidence {
-    passed: boolean;
-    checks: PermissionCheckEntry[];
-}
-
-export interface PermissionCheckEntry {
-    path: string;
-    kind: 'read' | 'write';
-    exists: boolean;
-    accessible: boolean;
-    error: string | null;
-}
-
-const CRITICAL_WRITABLE_RELATIVE_PATHS: readonly string[] = [
-    resolveBundleName() + '/runtime',
-    resolveBundleName() + '/live/config'
-];
-
-const CRITICAL_READABLE_RELATIVE_PATHS: readonly string[] = [
-    resolveBundleName() + '/VERSION',
-    resolveBundleName() + '/MANIFEST.md'
-];
-
-export function checkPermissions(targetRoot: string): PermissionCheckEvidence {
-    const checks: PermissionCheckEntry[] = [];
-
-    for (const relPath of CRITICAL_WRITABLE_RELATIVE_PATHS) {
-        const absPath = path.join(targetRoot, relPath);
-        const entry: PermissionCheckEntry = {
-            path: relPath,
-            kind: 'write',
-            exists: false,
-            accessible: false,
-            error: null
-        };
-        try {
-            entry.exists = fs.existsSync(absPath);
-            if (entry.exists) {
-                fs.accessSync(absPath, fs.constants.W_OK);
-                entry.accessible = true;
-            } else {
-                // Parent must be writable for directory creation
-                const parentPath = path.dirname(absPath);
-                if (fs.existsSync(parentPath)) {
-                    fs.accessSync(parentPath, fs.constants.W_OK);
-                    entry.accessible = true;
-                } else {
-                    entry.error = 'Parent directory does not exist: ' + parentPath;
-                }
-            }
-        } catch (err: unknown) {
-            entry.error = getErrorMessage(err);
-        }
-        checks.push(entry);
-    }
-
-    for (const relPath of CRITICAL_READABLE_RELATIVE_PATHS) {
-        const absPath = path.join(targetRoot, relPath);
-        const entry: PermissionCheckEntry = {
-            path: relPath,
-            kind: 'read',
-            exists: false,
-            accessible: false,
-            error: null
-        };
-        try {
-            entry.exists = fs.existsSync(absPath);
-            if (entry.exists) {
-                fs.accessSync(absPath, fs.constants.R_OK);
-                entry.accessible = true;
-            }
-        } catch (err: unknown) {
-            entry.error = getErrorMessage(err);
-        }
-        checks.push(entry);
-    }
-
-    const passed = checks.every(function (c) {
-        return !c.exists || c.accessible;
-    });
-
-    return { passed, checks };
 }
 
 // ---------------------------------------------------------------------------
@@ -336,12 +268,11 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         initAnswersPath: initAnswersPath
     });
 
-    var manifestPath = path.join(bundlePath, 'MANIFEST.md');
-    var manifestResult = null;
-    var manifestError = null;
-
-    try { manifestResult = validateManifest(manifestPath, targetRoot); }
-    catch (err: unknown) { manifestError = getErrorMessage(err); }
+    // T-121: delegate manifest + protected manifest evidence collection
+    var manifestEvidence = collectManifestEvidence(bundlePath, targetRoot);
+    var manifestResult = manifestEvidence.manifestResult;
+    var manifestError = manifestEvidence.manifestError;
+    var protectedManifestEvidence = manifestEvidence.protectedManifestEvidence;
 
     // Detect stale deployed bundle in self-hosted checkouts.
     var parityResult = getSourceBundleParity(targetRoot);
@@ -361,32 +292,16 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     var reviewLockCleanup = lockEvidence.reviewLockCleanup;
     var completionFinalizationLockHealth = lockEvidence.completionFinalizationLockHealth;
 
-    // T-1006: provider-control compliance scan
-    var providerComplianceResult: ProviderComplianceResult | null = null;
+    // T-121: delegate compliance evidence collection
     var activeAgentFiles = options.activeAgentFiles || [];
-    if (activeAgentFiles.length > 0) {
-        try {
-            providerComplianceResult = scanProviderCompliance(targetRoot, activeAgentFiles);
-        } catch {
-            // compliance scan failure is non-fatal; will show as null in output
-        }
-    }
-
-    // T-1008: detect nested deployed bundle duplication
-    var nestedBundleDuplication = detectNestedBundleDuplication(targetRoot);
-
-    // T-009: protected control-plane manifest early signal
-    var protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null = null;
-    try {
-        protectedManifestEvidence = evaluateProtectedControlPlaneManifest(targetRoot, null, true);
-    } catch {
-        // evaluation failure is non-fatal; will show as null in output
-    }
+    var complianceEvidence = collectComplianceEvidence(targetRoot, activeAgentFiles);
+    var providerComplianceResult = complianceEvidence.providerComplianceResult;
+    var nestedBundleDuplication = complianceEvidence.nestedBundleDuplication;
 
     // T-012: runtime mismatch check
     var runtimeMismatchEvidence = checkRuntimeMismatch();
 
-    // T-012: permission checks on critical paths
+    // T-121: delegate permission checks on critical paths
     var permissionEvidence = checkPermissions(targetRoot);
 
     // T-012: partial-state detection (interrupted updates/uninstalls, stale locks)
