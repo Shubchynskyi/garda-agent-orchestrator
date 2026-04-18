@@ -1,29 +1,11 @@
 import { resolveBundleName, ALL_AGENT_ENTRYPOINT_FILES, SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
+import { getProviderAliasMap, getProviderBridgeEntries, getProviderIds } from '../core/provider-registry';
 
 type SourceOfTruthValue = keyof typeof SOURCE_TO_ENTRYPOINT_MAP;
 
 export const SHARED_START_TASK_WORKFLOW_RELATIVE_PATH = '.agents/workflows/start-task.md';
 
-const ACTIVE_AGENT_FILE_ALIAS_MAP: Record<string, string> = {
-    'claude': 'CLAUDE.md',
-    'claude.md': 'CLAUDE.md',
-    'codex': 'AGENTS.md',
-    'agents': 'AGENTS.md',
-    'agents.md': 'AGENTS.md',
-    'gemini': 'GEMINI.md',
-    'gemini.md': 'GEMINI.md',
-    'qwen': 'QWEN.md',
-    'qwen.md': 'QWEN.md',
-    'githubcopilot': '.github/copilot-instructions.md',
-    'copilot': '.github/copilot-instructions.md',
-    '.github/copilot-instructions.md': '.github/copilot-instructions.md',
-    'windsurf': '.windsurf/rules/rules.md',
-    '.windsurf/rules/rules.md': '.windsurf/rules/rules.md',
-    'junie': '.junie/guidelines.md',
-    '.junie/guidelines.md': '.junie/guidelines.md',
-    'antigravity': '.antigravity/rules.md',
-    '.antigravity/rules.md': '.antigravity/rules.md'
-};
+const ACTIVE_AGENT_FILE_ALIAS_MAP: Record<string, string> = getProviderAliasMap() as Record<string, string>;
 
 /**
  * Resolves a source-of-truth provider name to its canonical entrypoint file.
@@ -72,7 +54,7 @@ export function normalizeAgentEntrypointToken(token: string): string | null {
     }
 
     throw new Error(
-        `Unsupported ActiveAgentFiles entry '${token}'. Allowed values: ${ALL_AGENT_ENTRYPOINT_FILES.join(', ')}. You may also use provider aliases such as Claude, Codex, Gemini, Qwen, Copilot, Windsurf, Junie, or Antigravity.`
+        `Unsupported ActiveAgentFiles entry '${token}'. Allowed values: ${ALL_AGENT_ENTRYPOINT_FILES.join(', ')}. You may also use provider aliases such as ${getProviderIds().join(', ')}.`
     );
 }
 
@@ -134,35 +116,15 @@ export function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles:
 }
 
 /**
- * Returns provider orchestrator profile definitions.
+ * Returns provider orchestrator profile definitions (derived from provider registry).
  */
 export function getProviderOrchestratorProfileDefinitions() {
-    return [
-        {
-            entrypointFile: '.github/copilot-instructions.md',
-            providerLabel: 'GitHub Copilot',
-            orchestratorRelativePath: '.github/agents/orchestrator.md',
-            gitignoreEntries: ['.github/agents/', '.github/copilot-instructions.md']
-        },
-        {
-            entrypointFile: '.windsurf/rules/rules.md',
-            providerLabel: 'Windsurf',
-            orchestratorRelativePath: '.windsurf/agents/orchestrator.md',
-            gitignoreEntries: ['.windsurf/']
-        },
-        {
-            entrypointFile: '.junie/guidelines.md',
-            providerLabel: 'Junie',
-            orchestratorRelativePath: '.junie/agents/orchestrator.md',
-            gitignoreEntries: ['.junie/']
-        },
-        {
-            entrypointFile: '.antigravity/rules.md',
-            providerLabel: 'Antigravity',
-            orchestratorRelativePath: '.antigravity/agents/orchestrator.md',
-            gitignoreEntries: ['.antigravity/']
-        }
-    ];
+    return getProviderBridgeEntries().map((entry) => ({
+        entrypointFile: entry.entrypointFile,
+        providerLabel: entry.displayLabel,
+        orchestratorRelativePath: entry.bridge!.orchestratorRelativePath,
+        gitignoreEntries: [...entry.bridge!.gitignoreEntries]
+    }));
 }
 
 export function getLegacyManagedGitignoreEntries(): string[] {

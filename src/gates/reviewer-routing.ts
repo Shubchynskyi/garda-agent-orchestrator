@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SOURCE_OF_TRUTH_VALUES, resolveBundleName } from '../core/constants';
+import { getReviewerCapabilityTier } from '../core/provider-registry';
 import { getCanonicalEntrypointFile, getProviderOrchestratorProfileDefinitions } from '../materialization/common';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
@@ -107,10 +108,10 @@ function readJsonObjectIfExists(filePath: string): Record<string, unknown> | nul
 
 export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRoutingPolicy {
     const normalized = normalizeSourceOfTruthValue(sourceOfTruth);
-    switch (normalized) {
-        case 'Codex':
-        case 'Claude':
-        case 'GitHubCopilot':
+    const tier = normalized ? getReviewerCapabilityTier(normalized) : null;
+
+    switch (tier) {
+        case 'delegation_required':
             return {
                 source_of_truth: normalized,
                 capability_level: 'delegation_required',
@@ -120,9 +121,7 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
                 expected_execution_mode: 'delegated_subagent',
                 note: `${normalized} is treated as delegation-capable. Same-agent fallback is invalid for required reviews.`
             };
-        case 'Windsurf':
-        case 'Junie':
-        case 'Antigravity':
+        case 'delegation_conditional':
             return {
                 source_of_truth: normalized,
                 capability_level: 'delegation_conditional',
@@ -132,8 +131,7 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
                 expected_execution_mode: 'delegated_subagent',
                 note: `${normalized} should delegate when provider sub-agent support is available; fallback requires an explicit reason.`
             };
-        case 'Gemini':
-        case 'Qwen':
+        case 'single_agent_only':
             return {
                 source_of_truth: normalized,
                 capability_level: 'single_agent_only',

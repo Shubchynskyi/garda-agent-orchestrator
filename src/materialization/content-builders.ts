@@ -1,7 +1,15 @@
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolveBundleName } from '../core/constants';
+import { getProviderBridgeEntries, getProviderEntries } from '../core/provider-registry';
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
 import { getNodeBundleCliCommand, getNodeGateCommandPrefix, getNodeHumanCommitCommand } from './command-constants';
+
+function getConditionalDelegationProviderList(): string {
+    return getProviderEntries()
+        .filter((e) => e.reviewerCapabilityTier === 'delegation_conditional')
+        .map((e) => e.id)
+        .join(', ');
+}
 
 export const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 export const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
@@ -348,21 +356,17 @@ export function buildRedirectManagedBlock(
     providerBridgePaths: string[] | null | undefined
 ): string {
     const providerLines = [];
+    const bridgeToLabel = new Map(
+        getProviderBridgeEntries().map((e) => [
+            e.bridge!.orchestratorRelativePath,
+            e.displayLabel
+        ])
+    );
     for (const bridgePath of (providerBridgePaths || [])) {
         const normalized = bridgePath.replace(/\\/g, '/');
-        switch (normalized) {
-            case '.github/agents/orchestrator.md':
-                providerLines.push('For GitHub Copilot Agents, run task execution through `.github/agents/orchestrator.md`.');
-                break;
-            case '.windsurf/agents/orchestrator.md':
-                providerLines.push('For Windsurf Agents, run task execution through `.windsurf/agents/orchestrator.md`.');
-                break;
-            case '.junie/agents/orchestrator.md':
-                providerLines.push('For Junie Agents, run task execution through `.junie/agents/orchestrator.md`.');
-                break;
-            case '.antigravity/agents/orchestrator.md':
-                providerLines.push('For Antigravity Agents, run task execution through `.antigravity/agents/orchestrator.md`.');
-                break;
+        const label = bridgeToLabel.get(normalized);
+        if (label) {
+            providerLines.push(`For ${label} Agents, run task execution through \`${normalized}\`.`);
         }
     }
     const uniqueProviderLines = [...new Set(providerLines)].sort();
@@ -511,7 +515,7 @@ Do not execute task or review workflow with provider-default reviewer agents tha
 - Codex (delegation-capable): launch clean-context reviewers via sub-agents with isolated context.
 - Claude Code (delegation-capable): launch clean-context reviewers via Agent tool (\`fork_context=false\`).
 - GitHub Copilot CLI (delegation-capable): launch clean-context reviewers via \`task\` tool with \`agent_type="general-purpose"\` (one reviewer per isolated task run).
-- Windsurf, Junie, Antigravity: delegate when provider sub-agent support is available; otherwise use fallback.
+- ${getConditionalDelegationProviderList()}: delegate when provider sub-agent support is available; otherwise use fallback.
 - Platforms without task/sub-agent support (fallback only): run sequential isolated reviewer passes in one thread; never use provider-default reviewer agents.
 - Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge for the current cycle.

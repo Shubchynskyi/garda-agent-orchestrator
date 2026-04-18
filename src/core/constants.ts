@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { getProviderIds, getProviderEntrypointMap, getProviderEntrypointFiles } from './provider-registry';
 
 export const NODE_ENGINE_RANGE = '>=24.0.0';
 export const NODE_BASELINE_LABEL = 'Node 24 LTS';
@@ -181,16 +182,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'diff-managed'
 ]);
 
-export const SOURCE_OF_TRUTH_VALUES: readonly string[] = Object.freeze([
-    'Claude',
-    'Codex',
-    'Gemini',
-    'Qwen',
-    'GitHubCopilot',
-    'Windsurf',
-    'Junie',
-    'Antigravity'
-]);
+export const SOURCE_OF_TRUTH_VALUES: readonly string[] = Object.freeze([...getProviderIds()]);
 
 export const BREVITY_VALUES: readonly string[] = Object.freeze([
     'concise',
@@ -221,18 +213,9 @@ export const BOOLEAN_FALSE_VALUES: readonly string[] = Object.freeze([
     'нет'
 ]);
 
-export const SOURCE_TO_ENTRYPOINT_MAP = Object.freeze({
-    Claude: 'CLAUDE.md',
-    Codex: 'AGENTS.md',
-    Gemini: 'GEMINI.md',
-    Qwen: 'QWEN.md',
-    GitHubCopilot: '.github/copilot-instructions.md',
-    Windsurf: '.windsurf/rules/rules.md',
-    Junie: '.junie/guidelines.md',
-    Antigravity: '.antigravity/rules.md'
-});
+export const SOURCE_TO_ENTRYPOINT_MAP = Object.freeze(getProviderEntrypointMap());
 
-export const ALL_AGENT_ENTRYPOINT_FILES = Object.freeze(Object.values(SOURCE_TO_ENTRYPOINT_MAP));
+export const ALL_AGENT_ENTRYPOINT_FILES = Object.freeze([...getProviderEntrypointFiles()]);
 
 export const MANAGED_CONFIG_NAMES: readonly string[] = Object.freeze([
     'review-capabilities',
