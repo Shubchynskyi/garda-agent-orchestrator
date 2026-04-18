@@ -95,7 +95,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
             return;
         }
         case 'reinit': {
-            const { handleReinit } = await import('./workspace-command');
+            const { handleReinit } = await import('./workspace-maintenance-command');
             await handleReinit(commandArgv, packageJson);
             return;
         }
@@ -110,18 +110,18 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
             return;
         }
         case 'uninstall': {
-            const { handleUninstall } = await import('./workspace-command');
+            const { handleUninstall } = await import('./workspace-maintenance-command');
             handleUninstall(commandArgv, packageJson);
             return;
         }
         case 'cleanup': {
-            const { handleCleanup } = await import('./workspace-command');
+            const { handleCleanup } = await import('./workspace-maintenance-command');
             await Promise.resolve(handleCleanup(commandArgv, packageJson));
             return;
         }
         case 'gc':
         case 'clean': {
-            const { handleGc } = await import('./workspace-command');
+            const { handleGc } = await import('./workspace-maintenance-command');
             handleGc(commandArgv, packageJson);
             return;
         }
