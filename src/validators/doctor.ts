@@ -1,24 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveBundleName, resolveInitAnswersRelativePath, NODE_ENGINE_RANGE } from '../core/constants';
+import { resolveBundleName, resolveInitAnswersRelativePath } from '../core/constants';
 import { pathExists } from '../core/fs';
-import {
-    cleanupStaleTaskEventLocks,
-    scanTaskEventLocks,
-    type TaskEventLockCleanupResult,
-    type TaskEventLockHealth,
-    type TaskEventLockScanResult
-} from '../gate-runtime/task-events';
-import {
-    cleanupStaleReviewArtifactLocks,
-    scanReviewArtifactLocks,
-    type ReviewArtifactLockCleanupResult,
-    type ReviewArtifactLockScanResult
-} from '../gate-runtime/review-artifacts';
-import {
-    scanCompletionGateFinalizationLocks,
-    type CompletionGateFinalizationLockScanResult
-} from '../gates/finalization-lock';
 import {
     collectTimelineSummaryForDoctor,
     type DoctorTimelineEvidence
@@ -48,6 +31,26 @@ import {
     listRollbackSnapshotPaths,
     getRollbackSnapshotsRoot
 } from '../lifecycle/rollback';
+import { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor-runtime';
+import { checkProfileHealth, type ProfileHealthEvidence } from './doctor-profile';
+import {
+    collectLockHealth,
+    type LockHealthEvidence,
+    type TaskEventLockScanResult,
+    type TaskEventLockCleanupResult,
+    type ReviewArtifactLockScanResult,
+    type ReviewArtifactLockCleanupResult,
+    type CompletionGateFinalizationLockScanResult
+} from './doctor-lock-health';
+
+// Re-export extracted collectors for backward compatibility
+export { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor-runtime';
+export { checkProfileHealth, type ProfileHealthEvidence } from './doctor-profile';
+export {
+    collectLockHealth,
+    type LockHealthEvidence,
+    type LockHealthOptions
+} from './doctor-lock-health';
 
 interface DoctorOptions {
     targetRoot: string;
@@ -56,66 +59,6 @@ interface DoctorOptions {
     cleanupStaleLocks?: boolean;
     dryRun?: boolean;
     activeAgentFiles?: readonly string[];
-}
-
-// ---------------------------------------------------------------------------
-// Runtime mismatch check
-// ---------------------------------------------------------------------------
-
-export interface RuntimeMismatchEvidence {
-    passed: boolean;
-    current_node_version: string;
-    required_range: string;
-    violations: string[];
-}
-
-/**
- * Parse a `>=X.Y.Z` range and test whether the running Node.js version
- * satisfies it.  Handles optional `v` prefix and missing minor/patch.
- */
-export function checkRuntimeMismatch(): RuntimeMismatchEvidence {
-    const currentVersion = process.version;
-    const requiredRange = NODE_ENGINE_RANGE;
-    const violations: string[] = [];
-
-    const rangeMatch = requiredRange.match(/^>=\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
-    if (!rangeMatch) {
-        violations.push('Unable to parse engine range: ' + requiredRange);
-        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations };
-    }
-
-    const requiredMajor = Number(rangeMatch[1]);
-    const requiredMinor = rangeMatch[2] !== undefined ? Number(rangeMatch[2]) : 0;
-    const requiredPatch = rangeMatch[3] !== undefined ? Number(rangeMatch[3]) : 0;
-
-    const versionMatch = currentVersion.match(/^v?(\d+)\.(\d+)\.(\d+)/);
-    if (!versionMatch) {
-        violations.push('Unable to parse current Node.js version: ' + currentVersion);
-        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations };
-    }
-
-    const currentMajor = Number(versionMatch[1]);
-    const currentMinor = Number(versionMatch[2]);
-    const currentPatch = Number(versionMatch[3]);
-
-    const satisfies =
-        currentMajor > requiredMajor ||
-        (currentMajor === requiredMajor && currentMinor > requiredMinor) ||
-        (currentMajor === requiredMajor && currentMinor === requiredMinor && currentPatch >= requiredPatch);
-
-    if (!satisfies) {
-        violations.push(
-            'Node.js ' + currentVersion + ' does not satisfy required range ' + requiredRange +
-            '. Upgrade to ' + NODE_ENGINE_RANGE + ' or later.'
-        );
-    }
-
-    return {
-        passed: violations.length === 0,
-        current_node_version: currentVersion,
-        required_range: requiredRange,
-        violations
-    };
 }
 
 // ---------------------------------------------------------------------------
@@ -347,74 +290,6 @@ export function checkRollbackHealth(targetRoot: string): RollbackHealthEvidence 
     };
 }
 
-// ---------------------------------------------------------------------------
-// Profile health check
-// ---------------------------------------------------------------------------
-
-export interface ProfileHealthEvidence {
-    passed: boolean;
-    active_profile: string | null;
-    profile_source: 'built_in' | 'user' | null;
-    config_path: string;
-    config_exists: boolean;
-    profile_count: number;
-    violations: string[];
-}
-
-export function checkProfileHealth(targetRoot: string): ProfileHealthEvidence {
-    const bundlePath = getBundlePath(targetRoot);
-    const configPath = path.join(bundlePath, 'live', 'config', 'profiles.json');
-    const violations: string[] = [];
-    let activeProfile: string | null = null;
-    let profileSource: 'built_in' | 'user' | null = null;
-    let profileCount = 0;
-    let configExists = false;
-
-    if (!pathExists(configPath)) {
-        violations.push('Profiles config not found: ' + configPath.replace(/\\/g, '/'));
-        return { passed: false, active_profile: null, profile_source: null, config_path: configPath.replace(/\\/g, '/'), config_exists: false, profile_count: 0, violations };
-    }
-    configExists = true;
-
-    try {
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-        const builtIn = raw.built_in_profiles && typeof raw.built_in_profiles === 'object' && !Array.isArray(raw.built_in_profiles)
-            ? raw.built_in_profiles as Record<string, unknown> : {};
-        const user = raw.user_profiles && typeof raw.user_profiles === 'object' && !Array.isArray(raw.user_profiles)
-            ? raw.user_profiles as Record<string, unknown> : {};
-        profileCount = Object.keys(builtIn).length + Object.keys(user).length;
-
-        if (typeof raw.active_profile !== 'string' || !raw.active_profile.trim()) {
-            violations.push('Profiles config has no active_profile set.');
-        } else {
-            activeProfile = raw.active_profile.trim();
-            if (Object.hasOwn(builtIn, activeProfile)) {
-                profileSource = 'built_in';
-            } else if (Object.hasOwn(user, activeProfile)) {
-                profileSource = 'user';
-            } else {
-                violations.push('Active profile \'' + activeProfile + '\' does not match any defined profile.');
-            }
-        }
-
-        if (Object.keys(builtIn).length === 0) {
-            violations.push('At least one built-in profile is required.');
-        }
-    } catch (err: unknown) {
-        violations.push('Profiles config is invalid JSON: ' + getErrorMessage(err));
-    }
-
-    return {
-        passed: violations.length === 0,
-        active_profile: activeProfile,
-        profile_source: profileSource,
-        config_path: configPath.replace(/\\/g, '/'),
-        config_exists: configExists,
-        profile_count: profileCount,
-        violations
-    };
-}
-
 interface DoctorResult {
     passed: boolean;
     targetRoot: string;
@@ -473,15 +348,18 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
 
     // T-002: use aggregate timeline summary for cheap health check (read-only)
     var timelineScan = collectTimelineSummaryForDoctor(bundlePath);
-    var lockCleanup = options.cleanupStaleLocks
-        ? cleanupStaleTaskEventLocks(bundlePath, { dryRun: options.dryRun === true })
-        : null;
-    var lockHealth = scanTaskEventLocks(bundlePath);
-    var reviewLockCleanup = options.cleanupStaleLocks
-        ? cleanupStaleReviewArtifactLocks(bundlePath, { dryRun: options.dryRun === true })
-        : null;
-    var reviewLockHealth = scanReviewArtifactLocks(bundlePath);
-    var completionFinalizationLockHealth = scanCompletionGateFinalizationLocks(path.join(bundlePath, 'runtime', 'reviews'));
+
+    // T-023: delegate lock-health evidence collection
+    var lockEvidence = collectLockHealth({
+        bundlePath: bundlePath,
+        cleanupStaleLocks: options.cleanupStaleLocks,
+        dryRun: options.dryRun
+    });
+    var lockHealth = lockEvidence.lockHealth;
+    var lockCleanup = lockEvidence.lockCleanup;
+    var reviewLockHealth = lockEvidence.reviewLockHealth;
+    var reviewLockCleanup = lockEvidence.reviewLockCleanup;
+    var completionFinalizationLockHealth = lockEvidence.completionFinalizationLockHealth;
 
     // T-1006: provider-control compliance scan
     var providerComplianceResult: ProviderComplianceResult | null = null;
