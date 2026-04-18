@@ -70,3 +70,19 @@ export {
     removeSkillPack,
     validateSkillPacks
 } from './skill-activation';
+
+// Re-export skill telemetry (event types, emit helpers, typed event
+// builders) from the focused module so callers importing 'runtime/skills'
+// can access telemetry without knowing the internal module layout.
+export {
+    SKILL_TELEMETRY_EVENT_TYPES,
+    SKILL_TELEMETRY_ACTOR,
+    buildSkillTelemetryDetails,
+    emitSkillTelemetryEvent,
+    emitSkillTelemetryEventAsync,
+    emitSkillSuggestedEvent,
+    emitSkillSelectedEvent,
+    emitSkillSelectedEventAsync,
+    emitSkillReferenceLoadedEvent,
+    emitSkillReferenceLoadedEventAsync
+} from './skill-telemetry';

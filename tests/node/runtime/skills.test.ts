@@ -23,8 +23,24 @@ import {
     validateSkillPacks,
     writeSkillsIndex,
     SignalMatches,
-    SkillSuggestion
+    SkillSuggestion,
+    SKILL_TELEMETRY_EVENT_TYPES,
+    SKILL_TELEMETRY_ACTOR,
+    buildSkillTelemetryDetails,
+    emitSkillTelemetryEvent,
+    emitSkillTelemetryEventAsync,
+    emitSkillSuggestedEvent,
+    emitSkillSelectedEvent,
+    emitSkillSelectedEventAsync,
+    emitSkillReferenceLoadedEvent,
+    emitSkillReferenceLoadedEventAsync
 } from '../../../src/runtime/skills';
+
+import {
+    emitSkillTelemetryEventAsync as directEmitSkillTelemetryEventAsync,
+    emitSkillSelectedEventAsync as directEmitSkillSelectedEventAsync,
+    emitSkillReferenceLoadedEventAsync as directEmitSkillReferenceLoadedEventAsync
+} from '../../../src/runtime/skill-telemetry';
 
 function findRepoRoot() {
     let current = __dirname;
@@ -642,4 +658,69 @@ test('MATCH_CATEGORIES contains the expected signal categories', () => {
         'stack_signals', 'task_signals', 'changed_path_signals',
         'project_path_signals', 'aliases_or_tags'
     ]);
+});
+
+// -- Barrel re-export: skill-telemetry ----------------------------------------
+
+test('barrel re-exports SKILL_TELEMETRY_EVENT_TYPES from skill-telemetry', () => {
+    assert.ok(SKILL_TELEMETRY_EVENT_TYPES);
+    assert.equal(SKILL_TELEMETRY_EVENT_TYPES.SKILL_SUGGESTED, 'SKILL_SUGGESTED');
+    assert.equal(SKILL_TELEMETRY_EVENT_TYPES.SKILL_SELECTED, 'SKILL_SELECTED');
+    assert.equal(SKILL_TELEMETRY_EVENT_TYPES.SKILL_REFERENCE_LOADED, 'SKILL_REFERENCE_LOADED');
+});
+
+test('barrel re-exports SKILL_TELEMETRY_ACTOR from skill-telemetry', () => {
+    assert.equal(SKILL_TELEMETRY_ACTOR, 'skill-telemetry');
+});
+
+test('barrel re-exports buildSkillTelemetryDetails from skill-telemetry', () => {
+    assert.equal(typeof buildSkillTelemetryDetails, 'function');
+    const details = buildSkillTelemetryDetails({});
+    assert.equal(details.telemetry_type, 'skill_activation');
+    assert.equal(details.skill_id, null);
+});
+
+test('barrel re-exports emitSkillTelemetryEvent from skill-telemetry', () => {
+    assert.equal(typeof emitSkillTelemetryEvent, 'function');
+    const result = emitSkillTelemetryEvent(null, null, 'SKILL_SUGGESTED', 'msg');
+    assert.equal(result, null);
+});
+
+test('barrel re-exports emitSkillTelemetryEventAsync from skill-telemetry', async () => {
+    assert.equal(typeof emitSkillTelemetryEventAsync, 'function');
+    assert.equal(emitSkillTelemetryEventAsync, directEmitSkillTelemetryEventAsync);
+    const result = await emitSkillTelemetryEventAsync(null, null, 'SKILL_SUGGESTED', 'msg');
+    assert.equal(result, null);
+});
+
+test('barrel re-exports emitSkillSuggestedEvent from skill-telemetry', () => {
+    assert.equal(typeof emitSkillSuggestedEvent, 'function');
+    const result = emitSkillSuggestedEvent(null, null, null);
+    assert.equal(result, null);
+});
+
+test('barrel re-exports emitSkillSelectedEvent from skill-telemetry', () => {
+    assert.equal(typeof emitSkillSelectedEvent, 'function');
+    const result = emitSkillSelectedEvent(null, null, 'test-skill');
+    assert.equal(result, null);
+});
+
+test('barrel re-exports emitSkillSelectedEventAsync from skill-telemetry', async () => {
+    assert.equal(typeof emitSkillSelectedEventAsync, 'function');
+    assert.equal(emitSkillSelectedEventAsync, directEmitSkillSelectedEventAsync);
+    const result = await emitSkillSelectedEventAsync(null, null, 'test-skill');
+    assert.equal(result, null);
+});
+
+test('barrel re-exports emitSkillReferenceLoadedEvent from skill-telemetry', () => {
+    assert.equal(typeof emitSkillReferenceLoadedEvent, 'function');
+    const result = emitSkillReferenceLoadedEvent(null, null, 'ref.md');
+    assert.equal(result, null);
+});
+
+test('barrel re-exports emitSkillReferenceLoadedEventAsync from skill-telemetry', async () => {
+    assert.equal(typeof emitSkillReferenceLoadedEventAsync, 'function');
+    assert.equal(emitSkillReferenceLoadedEventAsync, directEmitSkillReferenceLoadedEventAsync);
+    const result = await emitSkillReferenceLoadedEventAsync(null, null, 'ref.md');
+    assert.equal(result, null);
 });
