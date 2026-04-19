@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileSha256, normalizePath, joinOrchestratorPath } from './helpers';
+import { normalizePath, joinOrchestratorPath } from './path-utils';
+import { fileSha256 } from './hashing-metrics';
 
 const CACHE_VERSION = 1;
 
