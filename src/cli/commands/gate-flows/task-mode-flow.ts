@@ -82,11 +82,10 @@ import { requireResolvedPath } from '../shared-command-utils';
 import {
     getErrorMessage,
     resolveOrchestratorRoot,
-    readRoutingDecision,
-    readTaskQueueStatus,
-    appendMetricsIfEnabled,
-    syncTaskQueueStatus
+    appendMetricsIfEnabled
 } from './gate-flow-helpers';
+import { readRoutingDecision } from './routing-decision';
+import { readTaskQueueStatus, syncTaskQueueStatus } from './task-queue-sync';
 
 export interface EnterTaskModeCommandOptions {
     repoRoot?: string;

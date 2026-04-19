@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { syncTaskQueueStatus } from '../../../../src/cli/commands/gate-flows/gate-flow-helpers';
+import { syncTaskQueueStatus } from '../../../../src/cli/commands/gate-flows/task-queue-sync';
 import { handleCompletionGate } from '../../../../src/cli/commands/gate-task-handlers';
 import {
     runCompileGateCommand,

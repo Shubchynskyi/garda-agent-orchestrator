@@ -21,7 +21,7 @@ import {
     readTaskQueueStatus,
     syncTaskQueueStatusDetailed,
     type TaskQueueStatusSyncResult
-} from './gate-flow-helpers';
+} from './task-queue-sync';
 import type { TimelineEventEntry } from '../../../gates/completion-evidence';
 
 interface CompletionEventDetails {
