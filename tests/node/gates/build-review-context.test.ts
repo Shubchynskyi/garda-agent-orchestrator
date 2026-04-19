@@ -436,6 +436,76 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('ignores malformed tail lines after the latest valid current-era TASK_MODE_ENTERED', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-current-era-tail-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Codex'
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901d-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901d',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            const taskModePath = resolveTaskModeArtifactPath(repoRoot, 'T-901d', '');
+            const raw = JSON.parse(JSON.stringify(buildTaskModeArtifact({
+                taskId: 'T-901d',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Ignore malformed tail after current task-mode entry at review-context build',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                reviewerCapabilityLevel: 'delegation_required',
+                reviewerExpectedExecutionMode: 'delegated_subagent',
+                reviewerFallbackAllowed: false,
+                reviewerFallbackReasonRequired: false,
+                runtimeIdentityStatus: 'resolved'
+            })));
+            delete raw.canonical_source_of_truth;
+            delete raw.execution_provider_source;
+            delete raw.reviewer_capability_level;
+            delete raw.reviewer_expected_execution_mode;
+            delete raw.reviewer_fallback_allowed;
+            delete raw.reviewer_fallback_reason_required;
+            delete raw.runtime_identity_status;
+            delete raw.runtime_identity_violations;
+            fs.writeFileSync(taskModePath, JSON.stringify(raw, null, 2), 'utf8');
+            appendTaskEvent(orchestratorRoot, 'T-901d', 'TASK_MODE_ENTERED', 'PASS', 'Current task-mode entry before malformed tail.', {
+                artifact_path: taskModePath.replace(/\\/g, '/'),
+                entry_mode: 'EXPLICIT_TASK_EXECUTION',
+                requested_depth: 2,
+                effective_depth: 2,
+                task_summary: 'Ignore malformed tail after current task-mode entry at review-context build',
+                canonical_source_of_truth: 'Codex',
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved'
+            });
+            fs.appendFileSync(path.join(orchestratorRoot, 'runtime', 'task-events', 'T-901d.jsonl'), '{"event_type":"TASK_MODE_ENTERED"', 'utf8');
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901d-code-review-context.json');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: '',
+                    outputPath,
+                    repoRoot
+                }),
+                /missing canonical_source_of_truth|execution_provider_source/i
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('rejects stale provider-only task-mode artifacts even when provider matches workspace canonical owner', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-provider-only-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

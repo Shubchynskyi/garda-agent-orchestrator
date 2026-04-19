@@ -476,6 +476,72 @@ test('getTaskModeEvidence does not backfill stripped current-style artifacts whe
     }
 });
 
+test('getTaskModeEvidence skips malformed tail lines and keeps the latest valid current-era TASK_MODE_ENTERED', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const orchestratorRoot = path.join(tmpDir, 'garda-agent-orchestrator');
+        const runtimeRoot = path.join(orchestratorRoot, 'runtime');
+        const reviewsRoot = path.join(runtimeRoot, 'reviews');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
+            SourceOfTruth: 'Codex'
+        }, null, 2), 'utf8');
+        const artifactPath = path.join(reviewsRoot, 'T-099-task-mode.json');
+        const legacyArtifactPath = path.join(reviewsRoot, 'T-099-task-mode-legacy.json');
+        const artifact = buildTaskModeArtifact({
+            taskId: 'T-099',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Skip malformed tail lines after current task-mode entry',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            reviewerCapabilityLevel: 'delegation_required',
+            reviewerExpectedExecutionMode: 'delegated_subagent',
+            reviewerFallbackAllowed: false,
+            reviewerFallbackReasonRequired: false,
+            runtimeIdentityStatus: 'resolved'
+        });
+        const raw = JSON.parse(JSON.stringify(artifact));
+        delete raw.canonical_source_of_truth;
+        delete raw.execution_provider_source;
+        delete raw.reviewer_capability_level;
+        delete raw.reviewer_expected_execution_mode;
+        delete raw.reviewer_fallback_allowed;
+        delete raw.reviewer_fallback_reason_required;
+        delete raw.runtime_identity_status;
+        delete raw.runtime_identity_violations;
+        fs.writeFileSync(artifactPath, JSON.stringify(raw, null, 2), 'utf8');
+        appendTaskEvent(orchestratorRoot, 'T-099', 'TASK_MODE_ENTERED', 'PASS', 'Legacy task-mode entry before current cycle.', {
+            artifact_path: legacyArtifactPath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Legacy task-mode entry before current cycle'
+        });
+        appendTaskEvent(orchestratorRoot, 'T-099', 'TASK_MODE_ENTERED', 'PASS', 'Current task-mode entry before malformed tail.', {
+            artifact_path: artifactPath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Skip malformed tail lines after current task-mode entry',
+            canonical_source_of_truth: 'Codex',
+            execution_provider_source: 'explicit_provider',
+            runtime_identity_status: 'resolved'
+        });
+        fs.appendFileSync(path.join(runtimeRoot, 'task-events', 'T-099.jsonl'), '{"event_type":"TASK_MODE_ENTERED"', 'utf8');
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.timeline_artifact_path, artifactPath.replace(/\\/g, '/'));
+        assert.equal(evidence.timeline_declares_runtime_identity_metadata, true);
+        assert.equal(evidence.evidence_status, 'EVIDENCE_CANONICAL_SOURCE_OF_TRUTH_INVALID');
+        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes('canonical_source_of_truth')));
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
 test('getTaskModeEvidence backfills legacy provider-bridge task-mode artifacts without breaking canonical ownership', () => {
     const tmpDir = makeTempDir();
     try {

@@ -227,10 +227,7 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
                 declares_runtime_identity_metadata: declaresRuntimeIdentityMetadata
             };
         } catch {
-            return {
-                artifact_path: null,
-                declares_runtime_identity_metadata: false
-            };
+            continue;
         }
     }
 
