@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import { ensureDirectory, pathExists } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { asObjectRecord, listBuiltinSkillPacks } from './skill-manifest';
+import { writeSkillsHeadlines } from './skill-headlines';
 
 export interface SkillsIndexPackEntry {
     id: string;
@@ -101,6 +102,7 @@ export function writeSkillsIndex(bundleRoot: string): string {
     const indexPath = getSkillsIndexConfigPath(bundleRoot);
     ensureDirectory(path.dirname(indexPath));
     writeJsonFile(indexPath, buildSkillsIndex(bundleRoot));
+    writeSkillsHeadlines(bundleRoot);
     return indexPath;
 }
 

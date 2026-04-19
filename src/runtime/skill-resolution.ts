@@ -490,7 +490,7 @@ function aggregatePackSuggestions(
 export function suggestSkills(bundleRoot: string, targetRoot: string, options: SuggestSkillsOptions = {}) {
     const { indexPath, payload } = readSkillsIndex(bundleRoot);
     const { installedPackIds } = readInstalledSkillPacks(bundleRoot);
-    const listing = listSkillPacks(bundleRoot);
+    const listing = listSkillPacks(bundleRoot, { refreshHeadlines: false });
     const liveSkillDirectorySet = new Set(listing.liveSkillDirectories);
     const context = buildSuggestionContext(targetRoot, options.taskText || '', options.changedPaths || []);
     const packIndex = new Map<string, SkillsIndexPackEntry>(payload.packs.map((pack: SkillsIndexPackEntry) => [pack.id, pack]));

@@ -376,6 +376,7 @@ describe('runUpdate', () => {
             const liveConfigDir = path.join(bundleRoot, 'live', 'config');
             fs.mkdirSync(liveConfigDir, { recursive: true });
             fs.writeFileSync(path.join(liveConfigDir, 'skills-index.json'), '{"stale":true}');
+            fs.writeFileSync(path.join(liveConfigDir, 'skills-headlines.json'), '{"stale":true}');
 
             const liveSkillsDir = path.join(bundleRoot, 'live', 'skills');
             fs.mkdirSync(liveSkillsDir, { recursive: true });
@@ -402,6 +403,10 @@ describe('runUpdate', () => {
             assert.ok(!skillsIndex.stale, 'Skills index should be regenerated');
             assert.ok(Array.isArray(skillsIndex.packs) || Array.isArray(skillsIndex.skills),
                 'Skills index should have valid structure');
+
+            const skillsHeadlines = JSON.parse(fs.readFileSync(path.join(liveConfigDir, 'skills-headlines.json'), 'utf8'));
+            assert.ok(!skillsHeadlines.stale, 'Skills headlines should be regenerated');
+            assert.ok(Array.isArray(skillsHeadlines.skills), 'Skills headlines should expose compact skill entries');
 
             // live/version.json should have been written
             const liveVersion = JSON.parse(

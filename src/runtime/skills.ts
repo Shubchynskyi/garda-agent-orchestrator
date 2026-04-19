@@ -39,6 +39,21 @@ export type {
     SkillsIndexData
 } from './skill-index';
 
+export {
+    SKILLS_HEADLINES_VERSION,
+    getSkillsHeadlinesConfigPath,
+    buildSkillsHeadlines,
+    writeSkillsHeadlines,
+    readSkillsHeadlines,
+    validateSkillsHeadlines
+} from './skill-headlines';
+export type {
+    SkillsHeadlineSkillEntry,
+    SkillsHeadlinePackEntry,
+    SkillsHeadlinesPayload,
+    SkillsHeadlinesData
+} from './skill-headlines';
+
 // Re-export skill resolution (fuzzy alias, scoring, suggestion, dedupe)
 // from the focused module so callers importing 'runtime/skills' keep working.
 export {

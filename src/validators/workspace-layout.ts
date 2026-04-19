@@ -61,6 +61,7 @@ export function getBaseRequiredPaths(bundleName: string): readonly string[] {
         `${bundleName}/live/config/isolation-mode.json`,
         `${bundleName}/live/config/profiles.json`,
         `${bundleName}/live/config/skills-index.json`,
+        `${bundleName}/live/config/skills-headlines.json`,
         `${bundleName}/live/config/garda.config.json`,
         `${bundleName}/template/config/garda.config.json`,
         `${bundleName}/live/skills/README.md`,
@@ -167,6 +168,7 @@ export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
     'live/config/isolation-mode.json',
     'live/config/profiles.json',
     'live/config/skills-index.json',
+    'live/config/skills-headlines.json',
     'live/config/garda.config.json'
 ]);
 

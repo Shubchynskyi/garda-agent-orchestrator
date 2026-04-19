@@ -18,6 +18,12 @@ import {
     getSkillsIndexConfigPath,
     validateSkillsIndex
 } from './skill-index';
+import {
+    ensureSkillsHeadlinesCurrent,
+    getSkillsHeadlinesConfigPath,
+    validateSkillsHeadlines,
+    writeSkillsHeadlines
+} from './skill-headlines';
 
 type JsonObject = Record<string, unknown>;
 
@@ -75,12 +81,17 @@ interface ListedBuiltinPack {
 export interface SkillPackListing {
     configPath: string;
     indexPath: string;
+    headlinesPath: string;
     baselineSkillDirectories: string[];
     liveSkillDirectories: string[];
     installedPackIds: string[];
     installedOptionalSkillDirectories: string[];
     builtinPacks: ListedBuiltinPack[];
     customSkillDirectories: string[];
+}
+
+interface ListSkillPacksOptions {
+    refreshHeadlines?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +248,11 @@ export function writeInstalledSkillPacks(bundleRoot: string, installedPackIds: u
 // Pack listing
 // ---------------------------------------------------------------------------
 
-export function listSkillPacks(bundleRoot: string): SkillPackListing {
+export function listSkillPacks(bundleRoot: string, options: ListSkillPacksOptions = {}): SkillPackListing {
+    const refreshHeadlines = options.refreshHeadlines !== false;
+    const headlinesPath = refreshHeadlines
+        ? ensureSkillsHeadlinesCurrent(bundleRoot).headlinesPath
+        : getSkillsHeadlinesConfigPath(bundleRoot);
     const installed = readInstalledSkillPacks(bundleRoot);
     const liveSkillDirectories = listLiveSkillDirectories(bundleRoot);
     const builtinPacks = listBuiltinSkillPacks(bundleRoot);
@@ -261,6 +276,7 @@ export function listSkillPacks(bundleRoot: string): SkillPackListing {
     return {
         configPath: installed.configPath,
         indexPath: getSkillsIndexConfigPath(bundleRoot),
+        headlinesPath,
         baselineSkillDirectories: [...BASELINE_SKILL_DIRECTORIES],
         liveSkillDirectories,
         installedPackIds: installed.installedPackIds,
@@ -321,7 +337,8 @@ export function addSkillPack(bundleRoot: string, packId: string) {
             changed: false,
             installedPackIds: current.installedPackIds,
             installedSkillDirectories: [...pack.skillDirectories],
-            configPath: current.configPath
+            configPath: current.configPath,
+            headlinesPath: getSkillsHeadlinesConfigPath(bundleRoot)
         };
     }
 
@@ -343,6 +360,7 @@ export function addSkillPack(bundleRoot: string, packId: string) {
     const updatedPackIds = [...current.installedPackIds, packId].sort();
     const configPath = writeInstalledSkillPacks(bundleRoot, updatedPackIds);
     const reviewCapabilities = syncReviewCapabilities(bundleRoot);
+    const headlinesPath = writeSkillsHeadlines(bundleRoot);
 
     return {
         packId,
@@ -350,6 +368,7 @@ export function addSkillPack(bundleRoot: string, packId: string) {
         installedPackIds: updatedPackIds,
         installedSkillDirectories: [...pack.skillDirectories],
         configPath,
+        headlinesPath,
         reviewCapabilitiesPath: reviewCapabilities.configPath,
         reviewCapabilities: reviewCapabilities.capabilities
     };
@@ -368,7 +387,8 @@ export function removeSkillPack(bundleRoot: string, packId: string) {
             changed: false,
             removedSkillDirectories: [],
             installedPackIds: current.installedPackIds,
-            configPath: current.configPath
+            configPath: current.configPath,
+            headlinesPath: getSkillsHeadlinesConfigPath(bundleRoot)
         };
     }
 
@@ -385,6 +405,7 @@ export function removeSkillPack(bundleRoot: string, packId: string) {
     const updatedPackIds = current.installedPackIds.filter((candidate: string) => candidate !== packId);
     const configPath = writeInstalledSkillPacks(bundleRoot, updatedPackIds);
     const reviewCapabilities = syncReviewCapabilities(bundleRoot);
+    const headlinesPath = writeSkillsHeadlines(bundleRoot);
 
     return {
         packId,
@@ -392,6 +413,7 @@ export function removeSkillPack(bundleRoot: string, packId: string) {
         removedSkillDirectories,
         installedPackIds: updatedPackIds,
         configPath,
+        headlinesPath,
         reviewCapabilitiesPath: reviewCapabilities.configPath,
         reviewCapabilities: reviewCapabilities.capabilities
     };
@@ -406,7 +428,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function validateSkillPacks(bundleRoot: string) {
-    const listing = listSkillPacks(bundleRoot);
+    const listing = listSkillPacks(bundleRoot, { refreshHeadlines: false });
     const issues: string[] = [];
     const liveSkillsRoot = getLiveSkillsRoot(bundleRoot);
     const liveSkillsReadmePath = path.join(liveSkillsRoot, 'README.md');
@@ -497,6 +519,8 @@ export function validateSkillPacks(bundleRoot: string) {
 
     const skillsIndexValidation = validateSkillsIndex(bundleRoot);
     issues.push(...skillsIndexValidation.issues);
+    const skillsHeadlinesValidation = validateSkillsHeadlines(bundleRoot);
+    issues.push(...skillsHeadlinesValidation.issues);
 
     return {
         ...listing,

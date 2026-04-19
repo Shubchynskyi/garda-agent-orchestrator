@@ -23,6 +23,7 @@ interface SkillPackMutationResult {
     changed: boolean;
     installedPackIds: string[];
     configPath: string;
+    headlinesPath?: string;
     installedSkillDirectories?: string[];
     removedSkillDirectories?: string[];
 }
@@ -57,6 +58,7 @@ export function buildSkillsListOutput(listing: SkillListingResult, bundleRoot: s
     lines.push(`Bundle: ${bundleRoot}`);
     lines.push(`ConfigPath: ${listing.configPath}`);
     lines.push(`IndexPath: ${listing.indexPath}`);
+    lines.push(`HeadlinesPath: ${listing.headlinesPath}`);
     lines.push('PackVsSkill: optional pack = installable bundle; skill = live/skills/<skill-id>/ after install');
     lines.push(`BaselineSkills: ${listing.baselineSkillDirectories.length > 0 ? listing.baselineSkillDirectories.join(', ') : 'none'}`);
     lines.push(`InstalledPacks: ${listing.installedPackIds.length > 0 ? listing.installedPackIds.join(', ') : 'none'}`);
@@ -102,6 +104,9 @@ export function buildSkillPackMutationOutput(action: string, result: SkillPackMu
     }
     lines.push(`InstalledPacks: ${result.installedPackIds.length > 0 ? result.installedPackIds.join(', ') : 'none'}`);
     lines.push(`ConfigPath: ${result.configPath}`);
+    if (result.headlinesPath) {
+        lines.push(`HeadlinesPath: ${result.headlinesPath}`);
+    }
     return lines.join('\n');
 }
 
@@ -112,6 +117,7 @@ export function buildSkillValidationOutput(result: SkillValidationResult, bundle
     lines.push(`Bundle: ${bundleRoot}`);
     lines.push(`ConfigPath: ${result.configPath}`);
     lines.push(`IndexPath: ${result.indexPath}`);
+    lines.push(`HeadlinesPath: ${result.headlinesPath}`);
     lines.push(`InstalledPacks: ${result.installedPackIds.length > 0 ? result.installedPackIds.join(', ') : 'none'}`);
     lines.push(`IssueCount: ${result.issues.length}`);
     lines.push(`Validation: ${result.passed ? 'PASS' : 'FAIL'}`);

@@ -14,9 +14,11 @@ import {
     getReviewCapabilitiesConfigPath,
     getSignalFuzzyVariants,
     getSkillPacksConfigPath,
+    getSkillsHeadlinesConfigPath,
     getSkillsIndexConfigPath,
     hasDistinctSignalCoverage,
     listSkillPacks,
+    readSkillsHeadlines,
     removeSkillPack,
     suggestSkills,
     textMatchesFuzzyVariant,
@@ -100,6 +102,13 @@ test('built-in skill pack lifecycle installs, validates, lists, and removes pack
         assert.equal(validation.passed, true);
         assert.equal(validation.issues.length, 0);
         assert.ok(fs.existsSync(getSkillsIndexConfigPath(bundleRoot)));
+        assert.ok(fs.existsSync(getSkillsHeadlinesConfigPath(bundleRoot)));
+
+        const headlines = readSkillsHeadlines(bundleRoot);
+        assert.ok(headlines.payload.skills.some((skill) => skill.id === 'node-backend'));
+        assert.ok(headlines.payload.installed_pack_ids.includes('node-backend'));
+        assert.ok(headlines.payload.installed_optional_skill_ids.includes('node-backend'));
+        assert.ok(headlines.payload.optional_packs.some((pack) => pack.id === 'node-backend' && pack.installed));
 
         const removeResult = removeSkillPack(bundleRoot, 'node-backend');
         assert.equal(removeResult.changed, true);
@@ -217,6 +226,199 @@ test('suggestSkills separates already-available skills from optional additions',
 
         assert.ok(result.availableRelevantSkills.some((skill) => skill.id === 'frontend-react'));
         assert.ok(!result.suggestedSkills.some((skill) => skill.id === 'frontend-react'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('skills headlines include baseline, installed optional, and custom live skill summaries', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+        addSkillPack(bundleRoot, 'node-backend');
+
+        const customSkillRoot = path.join(bundleRoot, 'live', 'skills', 'custom-helper');
+        fs.mkdirSync(customSkillRoot, { recursive: true });
+        fs.writeFileSync(path.join(customSkillRoot, 'skill.json'), JSON.stringify({
+            id: 'custom-helper',
+            name: 'Custom Helper',
+            summary: 'Local custom helper skill',
+            tags: ['custom', 'local'],
+            aliases: ['helper'],
+            references: [],
+            cost_hint: 'low',
+            priority: 40,
+            autoload: 'never'
+        }, null, 2), 'utf8');
+        fs.writeFileSync(path.join(customSkillRoot, 'SKILL.md'), '# Custom Helper\n', 'utf8');
+
+        const architectureReviewRoot = path.join(bundleRoot, 'live', 'skills', 'architecture-review');
+        fs.mkdirSync(architectureReviewRoot, { recursive: true });
+        fs.writeFileSync(path.join(architectureReviewRoot, 'skill.json'), JSON.stringify({
+            id: 'architecture-review',
+            name: 'Architecture Review',
+            summary: 'Reviews system design changes for boundary drift and coupling regressions.',
+            tags: ['architecture', 'review'],
+            aliases: ['arch-review'],
+            references: [],
+            cost_hint: 'medium',
+            priority: 70,
+            autoload: 'suggest'
+        }, null, 2), 'utf8');
+        fs.writeFileSync(path.join(architectureReviewRoot, 'SKILL.md'), '# Architecture Review\n', 'utf8');
+
+        const listing = listSkillPacks(bundleRoot);
+        assert.ok(listing.customSkillDirectories.includes('custom-helper'));
+        assert.ok(listing.customSkillDirectories.includes('architecture-review'));
+
+        const headlines = readSkillsHeadlines(bundleRoot).payload;
+        assert.ok(headlines.skills.some((skill) => skill.id === 'code-review' && skill.source === 'baseline'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'node-backend' && skill.source === 'installed_optional'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'custom-helper' && skill.source === 'custom_live'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'architecture-review' && skill.source === 'custom_live'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'code-review' && skill.review_binding === 'review_bound'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'architecture-review' && skill.review_binding === 'review_bound'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'orchestration' && skill.review_binding === 'general_purpose'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'node-backend' && skill.review_binding === 'general_purpose'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'custom-helper' && skill.review_binding === 'general_purpose'));
+        assert.ok(headlines.custom_skill_ids.includes('custom-helper'));
+        assert.ok(headlines.custom_skill_ids.includes('architecture-review'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateSkillPacks reports missing headlines without self-healing them', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-validate-headlines-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+
+        const headlinesPath = getSkillsHeadlinesConfigPath(bundleRoot);
+        fs.rmSync(headlinesPath, { force: true });
+
+        const validation = validateSkillPacks(bundleRoot);
+        assert.equal(validation.passed, false);
+        assert.ok(validation.issues.some((issue) => issue.includes('Skills headlines are missing')));
+        assert.equal(fs.existsSync(headlinesPath), false);
+
+        const listing = listSkillPacks(bundleRoot);
+        assert.equal(fs.existsSync(headlinesPath), true);
+        assert.equal(listing.headlinesPath, headlinesPath);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('skills headlines classify tag-only and special-case review bindings correctly', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-review-binding-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+
+        const taggedAuditRoot = path.join(bundleRoot, 'live', 'skills', 'tagged-audit');
+        fs.mkdirSync(taggedAuditRoot, { recursive: true });
+        fs.writeFileSync(path.join(taggedAuditRoot, 'skill.json'), JSON.stringify({
+            id: 'tagged-audit',
+            name: 'Tagged Audit',
+            summary: 'Focused correctness audit for change safety.',
+            tags: ['quality', 'review'],
+            aliases: ['audit'],
+            references: [],
+            cost_hint: 'low',
+            priority: 45,
+            autoload: 'suggest'
+        }, null, 2), 'utf8');
+        fs.writeFileSync(path.join(taggedAuditRoot, 'SKILL.md'), '# Tagged Audit\n', 'utf8');
+
+        const testingStrategyRoot = path.join(bundleRoot, 'live', 'skills', 'testing-strategy');
+        fs.mkdirSync(testingStrategyRoot, { recursive: true });
+        fs.writeFileSync(path.join(testingStrategyRoot, 'skill.json'), JSON.stringify({
+            id: 'testing-strategy',
+            name: 'Testing Strategy',
+            summary: 'Risk-based test planning without reviewer wording in the summary.',
+            tags: ['testing', 'quality', 'coverage'],
+            aliases: ['test-plan'],
+            references: [],
+            cost_hint: 'medium',
+            priority: 60,
+            autoload: 'suggest'
+        }, null, 2), 'utf8');
+        fs.writeFileSync(path.join(testingStrategyRoot, 'SKILL.md'), '# Testing Strategy\n', 'utf8');
+
+        const devopsK8sRoot = path.join(bundleRoot, 'live', 'skills', 'devops-k8s');
+        fs.mkdirSync(devopsK8sRoot, { recursive: true });
+        fs.writeFileSync(path.join(devopsK8sRoot, 'skill.json'), JSON.stringify({
+            id: 'devops-k8s',
+            name: 'DevOps K8s',
+            summary: 'Container and cluster delivery guidance without reviewer wording in the summary.',
+            tags: ['kubernetes', 'docker', 'cicd'],
+            aliases: ['k8s'],
+            references: [],
+            cost_hint: 'medium',
+            priority: 60,
+            autoload: 'suggest'
+        }, null, 2), 'utf8');
+        fs.writeFileSync(path.join(devopsK8sRoot, 'SKILL.md'), '# DevOps K8s\n', 'utf8');
+
+        const headlines = readSkillsHeadlines(bundleRoot).payload;
+        assert.ok(headlines.skills.some((skill) => skill.id === 'tagged-audit' && skill.review_binding === 'review_bound'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'testing-strategy' && skill.review_binding === 'review_bound'));
+        assert.ok(headlines.skills.some((skill) => skill.id === 'devops-k8s' && skill.review_binding === 'review_bound'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateSkillPacks reports invalid and stale headlines artifacts', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-validate-headlines-shape-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+
+        const headlinesPath = getSkillsHeadlinesConfigPath(bundleRoot);
+
+        fs.writeFileSync(headlinesPath, '{', 'utf8');
+        const invalidValidation = validateSkillPacks(bundleRoot);
+        assert.equal(invalidValidation.passed, false);
+        assert.ok(invalidValidation.issues.some((issue) => issue.includes('Skills headlines are not valid JSON')));
+
+        writeSkillsIndex(bundleRoot);
+        const stalePayload = JSON.parse(fs.readFileSync(headlinesPath, 'utf8'));
+        stalePayload.version = Number(stalePayload.version || 0) + 1;
+        fs.writeFileSync(headlinesPath, JSON.stringify(stalePayload, null, 2), 'utf8');
+        const staleValidation = validateSkillPacks(bundleRoot);
+        assert.equal(staleValidation.passed, false);
+        assert.ok(staleValidation.issues.some((issue) => issue.includes('Skills headlines are stale')));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

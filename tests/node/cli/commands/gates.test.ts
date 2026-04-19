@@ -90,6 +90,10 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'task-audit-summary'
 ]);
 
+function getSourceCheckoutNestedCwd(): string {
+    return path.join(path.resolve('.'), 'src', 'cli');
+}
+
 describe('cli/commands/gates', () => {
     it('splits quoted command lines', () => {
         assert.deepEqual(
@@ -106,6 +110,7 @@ describe('cli/commands/gates', () => {
     });
 
     it('prints gate subcommand help without triggering required-argument validation', async () => {
+        const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
         const helpCases: Array<{ argv: string[]; expectedSnippets: string[] }> = [
             {
                 argv: ['gate', 'enter-task-mode', '--help'],
@@ -122,7 +127,7 @@ describe('cli/commands/gates', () => {
         ];
 
         for (const helpCase of helpCases) {
-            const result = await runCliWithCapturedOutput(helpCase.argv);
+            const result = await runCliWithCapturedOutput(helpCase.argv, { cwd: sourceCheckoutNestedCwd });
             assert.equal(result.exitCode, 0, helpCase.argv.join(' '));
             assert.equal(result.errors.length, 0, helpCase.argv.join(' '));
             const combinedOutput = result.logs.join('\n');
@@ -133,8 +138,9 @@ describe('cli/commands/gates', () => {
     });
 
     it('prints help successfully for every public gate subcommand', async () => {
+        const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
         for (const gateName of getAllShimmedGateNames()) {
-            const result = await runCliWithCapturedOutput(['gate', gateName, '--help']);
+            const result = await runCliWithCapturedOutput(['gate', gateName, '--help'], { cwd: sourceCheckoutNestedCwd });
             assert.equal(result.exitCode, 0, gateName);
             assert.equal(result.errors.length, 0, gateName);
             const combinedOutput = result.logs.join('\n');
@@ -146,21 +152,22 @@ describe('cli/commands/gates', () => {
     });
 
     it('prints canonical --task-id remediation for common task-start flag mistakes', async () => {
-        const flagResult = await runCliWithCapturedOutput(['gate', 'enter-task-mode', '--task', 'T-008']);
+        const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
+        const flagResult = await runCliWithCapturedOutput(['gate', 'enter-task-mode', '--task', 'T-008'], { cwd: sourceCheckoutNestedCwd });
         assert.notEqual(flagResult.exitCode, 0);
         const flagErrorOutput = flagResult.errors.join('\n');
         assert.ok(flagErrorOutput.includes('GARDA_CLI_FAILED'));
         assert.ok(flagErrorOutput.includes("uses '--task-id', not '--task'"));
         assert.ok(flagErrorOutput.includes('Suggested command: node bin/garda.js gate enter-task-mode --task-id "T-008"'));
 
-        const equalsFlagResult = await runCliWithCapturedOutput(['gate', 'enter-task-mode', '--task=T-008']);
+        const equalsFlagResult = await runCliWithCapturedOutput(['gate', 'enter-task-mode', '--task=T-008'], { cwd: sourceCheckoutNestedCwd });
         assert.notEqual(equalsFlagResult.exitCode, 0);
         const equalsFlagErrorOutput = equalsFlagResult.errors.join('\n');
         assert.ok(equalsFlagErrorOutput.includes('GARDA_CLI_FAILED'));
         assert.ok(equalsFlagErrorOutput.includes("uses '--task-id', not '--task'"));
         assert.ok(equalsFlagErrorOutput.includes('Suggested command: node bin/garda.js gate enter-task-mode --task-id "T-008"'));
 
-        const positionalResult = await runCliWithCapturedOutput(['gate', 'load-rule-pack', 'T-008']);
+        const positionalResult = await runCliWithCapturedOutput(['gate', 'load-rule-pack', 'T-008'], { cwd: sourceCheckoutNestedCwd });
         assert.notEqual(positionalResult.exitCode, 0);
         const positionalErrorOutput = positionalResult.errors.join('\n');
         assert.ok(positionalErrorOutput.includes('GARDA_CLI_FAILED'));
@@ -172,7 +179,7 @@ describe('cli/commands/gates', () => {
             'task-events-summary',
             '--as-json',
             'T-008'
-        ]);
+        ], { cwd: sourceCheckoutNestedCwd });
         assert.notEqual(booleanPrefixedResult.exitCode, 0);
         const booleanPrefixedErrorOutput = booleanPrefixedResult.errors.join('\n');
         assert.ok(booleanPrefixedErrorOutput.includes('GARDA_CLI_FAILED'));
@@ -184,7 +191,7 @@ describe('cli/commands/gates', () => {
             'enter-task-mode',
             '--emit-metrics',
             'T-008'
-        ]);
+        ], { cwd: sourceCheckoutNestedCwd });
         assert.notEqual(emitMetricsResult.exitCode, 0);
         const emitMetricsErrorOutput = emitMetricsResult.errors.join('\n');
         assert.ok(emitMetricsErrorOutput.includes('GARDA_CLI_FAILED'));
@@ -193,8 +200,9 @@ describe('cli/commands/gates', () => {
     });
 
     it('prints canonical --task-id remediation for every gate that requires task-id syntax', async () => {
+        const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
         for (const gateName of TASK_ID_REMEDIATION_GATE_NAMES) {
-            const result = await runCliWithCapturedOutput(['gate', gateName, '--task=T-008']);
+            const result = await runCliWithCapturedOutput(['gate', gateName, '--task=T-008'], { cwd: sourceCheckoutNestedCwd });
             assert.notEqual(result.exitCode, 0, gateName);
             const errorOutput = result.errors.join('\n');
             assert.ok(errorOutput.includes('GARDA_CLI_FAILED'), gateName);
@@ -272,12 +280,13 @@ describe('cli/commands/gates', () => {
     });
 
     it('does not treat --help as a standalone help request when it is a string option value', async () => {
+        const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
         const result = await runCliWithCapturedOutput([
             'gate',
             'validate-config',
             '--config-path',
             '--help'
-        ]);
+        ], { cwd: sourceCheckoutNestedCwd });
 
         assert.notEqual(result.exitCode, 0);
         assert.equal(result.logs.length, 0);
@@ -288,12 +297,13 @@ describe('cli/commands/gates', () => {
     });
 
     it('treats trailing --help after --task-id as gate help for malformed task-start invocations', async () => {
+        const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
         const enterTaskModeResult = await runCliWithCapturedOutput([
             'gate',
             'enter-task-mode',
             '--task-id',
             '--help'
-        ]);
+        ], { cwd: sourceCheckoutNestedCwd });
         assert.equal(enterTaskModeResult.exitCode, 0);
         assert.equal(enterTaskModeResult.errors.length, 0);
         const enterTaskModeOutput = enterTaskModeResult.logs.join('\n');
@@ -306,7 +316,7 @@ describe('cli/commands/gates', () => {
             'load-rule-pack',
             '--task-id',
             '--help'
-        ]);
+        ], { cwd: sourceCheckoutNestedCwd });
         assert.equal(loadRulePackResult.exitCode, 0);
         assert.equal(loadRulePackResult.errors.length, 0);
         const loadRulePackOutput = loadRulePackResult.logs.join('\n');
@@ -316,7 +326,7 @@ describe('cli/commands/gates', () => {
     });
 
     it('keeps POST_PREFLIGHT help generic instead of hardcoding one downstream rule-pack shape', async () => {
-        const result = await runCliWithCapturedOutput(['gate', 'load-rule-pack', '--help']);
+        const result = await runCliWithCapturedOutput(['gate', 'load-rule-pack', '--help'], { cwd: getSourceCheckoutNestedCwd() });
         assert.equal(result.exitCode, 0);
         const combinedOutput = result.logs.join('\n');
         assert.ok(combinedOutput.includes('<task-specific-downstream-rule-file>'));
@@ -326,7 +336,7 @@ describe('cli/commands/gates', () => {
     });
 
     it('does not emit task-id remediation for gates that do not accept --task-id', async () => {
-        const result = await runCliWithCapturedOutput(['gate', 'build-review-context', 'T-008']);
+        const result = await runCliWithCapturedOutput(['gate', 'build-review-context', 'T-008'], { cwd: getSourceCheckoutNestedCwd() });
         assert.notEqual(result.exitCode, 0);
         const errorOutput = result.errors.join('\n');
         assert.ok(errorOutput.includes('GARDA_CLI_FAILED'));
@@ -336,7 +346,7 @@ describe('cli/commands/gates', () => {
     });
 
     it('lists every public gate in root gate help output', async () => {
-        const result = await runCliWithCapturedOutput(['gate', '--help']);
+        const result = await runCliWithCapturedOutput(['gate', '--help'], { cwd: getSourceCheckoutNestedCwd() });
         assert.equal(result.exitCode, 0);
         assert.equal(result.errors.length, 0);
         const combinedOutput = result.logs.join('\n');
