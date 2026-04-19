@@ -19,6 +19,7 @@ import {
     type ManifestRunnerOptions,
     type ContractMigrationResult
 } from './update-execution';
+import { writeUpdateReport, buildUpdateResult } from './update-reporting';
 
 interface RollbackRecord {
     relativePath: string;
@@ -179,74 +180,32 @@ export function runUpdate(options: RunUpdateOptions) {
 
     // Generate update report
     if (!dryRun) {
-        fs.mkdirSync(path.dirname(updateReportPath), { recursive: true });
-        const reportLines = [
-            '# Update Report',
-            '',
-            `GeneratedAt: ${new Date().toISOString()}`,
-            `TargetRoot: ${normalizedTarget}`,
-            `InitAnswersPath: ${sources.initAnswersResolvedPath}`,
-            `RollbackSnapshotPath: ${rollbackSnapshotRelativePath}`,
-            `RollbackRecordsPath: ${rollbackRecordsRelativePath}`,
-            `RollbackSnapshotRecordCount: ${rollbackRecordCount}`,
-            `RollbackStatus: ${stageResult.rollbackStatus}`,
-            '',
-            '## Trust',
-            `SourceType: ${effectiveTrustContext.sourceType}`,
-            `SourceReference: ${effectiveTrustContext.sourceReference}`,
-            `TrustPolicy: ${effectiveTrustContext.policy}`,
-            `TrustOverrideUsed: ${effectiveTrustContext.overrideUsed ? 'yes' : 'no'}`,
-            `TrustOverrideSource: ${effectiveTrustContext.overrideSource}`,
-            '',
-            '## Version',
-            `PreviousVersion: ${sources.previousVersion}`,
-            `PreviousVersionSource: ${sources.previousVersionSource}`,
-            `BundleVersion: ${sources.bundleVersion}`,
-            `UpdatedVersion: ${stageResult.updatedVersion}`,
-            '',
-            '## CommandStatus',
-            `Install: ${stageResult.installStatus}`,
-            `Materialization: ${stageResult.materializationStatus}`,
-            `ContractMigrations: ${stageResult.contractMigrationStatus}`,
-            `Verify: ${stageResult.verifyStatus}`,
-            `ManifestValidation: ${stageResult.manifestStatus}`,
-            `InvariantCheck: ${stageResult.invariantStatus}`,
-            '',
-            '## ContractMigrations',
-            `AppliedCount: ${stageResult.contractMigrationCount}`,
-            stageResult.contractMigrationFiles.length > 0
-                ? `AppliedFiles: ${stageResult.contractMigrationFiles.join(', ')}`
-                : 'AppliedFiles: none'
-        ];
-        fs.writeFileSync(updateReportPath, reportLines.join('\r\n'), 'utf8');
+        writeUpdateReport(updateReportPath, {
+            normalizedTarget,
+            initAnswersResolvedPath: sources.initAnswersResolvedPath,
+            rollbackSnapshotRelativePath,
+            rollbackRecordsRelativePath,
+            rollbackRecordCount,
+            rollbackStatus: stageResult.rollbackStatus,
+            trustContext: effectiveTrustContext,
+            previousVersion: sources.previousVersion,
+            previousVersionSource: sources.previousVersionSource,
+            bundleVersion: sources.bundleVersion,
+            stageResult
+        });
     }
 
-    return {
-        targetRoot: normalizedTarget,
-        initAnswersPath: sources.initAnswersResolvedPath,
-        rollbackSnapshotPath: rollbackSnapshotRelativePath,
-        rollbackRecordsPath: dryRun ? 'not-generated-in-dry-run' : rollbackRecordsRelativePath,
+    return buildUpdateResult({
+        normalizedTarget,
+        sources,
+        trustContext: effectiveTrustContext,
+        rollbackSnapshotRelativePath,
+        rollbackRecordsRelativePath,
         rollbackSnapshotCreated,
         rollbackRecordCount,
-        rollbackStatus: stageResult.rollbackStatus,
-        assistantLanguage: sources.assistantLanguage,
-        assistantBrevity: sources.assistantBrevity,
-        sourceOfTruth: sources.sourceOfTruth,
-        trustPolicy: effectiveTrustContext.policy,
-        trustOverrideUsed: effectiveTrustContext.overrideUsed,
-        trustOverrideSource: effectiveTrustContext.overrideSource,
-        previousVersion: sources.previousVersion,
-        previousVersionSource: sources.previousVersionSource,
-        bundleVersion: sources.bundleVersion,
-        updatedVersion: stageResult.updatedVersion,
-        installStatus: stageResult.installStatus,
-        materializationStatus: stageResult.materializationStatus,
-        contractMigrationStatus: stageResult.contractMigrationStatus,
-        contractMigrationCount: stageResult.contractMigrationCount,
-        contractMigrationFiles: stageResult.contractMigrationFiles,
-        verifyStatus: stageResult.verifyStatus,
-        manifestValidationStatus: stageResult.manifestStatus,
-        updateReportPath: dryRun ? 'not-generated-in-dry-run' : updateReportRelativePath
-    };
+        stageResult,
+        dryRun,
+        updateReportRelativePath
+    });
     });
 }
