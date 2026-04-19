@@ -59,6 +59,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
             }
             return;
         }
+        case 'preprompt': {
+            const { handlePreprompt } = await import('./preprompt-command');
+            handlePreprompt(commandArgv, packageJson);
+            return;
+        }
         case 'status': {
             const { handleStatus } = await import('./status-command');
             handleStatus(commandArgv, packageJson);

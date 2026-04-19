@@ -161,6 +161,7 @@ export function resolveAgentInitStateRelativePathForTarget(targetRoot: string, o
 export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'setup',
     'agent-init',
+    'preprompt',
     'status',
     'doctor',
     'debug',

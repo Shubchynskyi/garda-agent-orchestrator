@@ -13,6 +13,11 @@ interface GateHelpEntry {
     taskIdRemediation: boolean;
 }
 
+export interface GateHelpInfo {
+    summary: string;
+    usage: readonly string[];
+}
+
 const TASK_ID_PLACEHOLDER = '<task-id>';
 const TASK_ID_POSITIONAL_RE = /^T-[A-Z0-9-]+$/i;
 const BOOLEAN_GATE_OPTIONS = new Set([
@@ -346,11 +351,7 @@ function resolveSuggestedCommand(entry: GateHelpEntry, mistakenTaskId: string | 
 }
 
 export function buildGateHelpText(gateName: string, repoRoot = process.cwd()): string {
-    const resolvedRepoRoot = resolveGateHelpRepoRoot(repoRoot);
-    const entry = buildGateHelpEntries(
-        buildCliPrefix(resolvedRepoRoot),
-        resolveBundleNameForTarget(resolvedRepoRoot)
-    )[gateName];
+    const entry = getGateHelpEntry(gateName, repoRoot);
     if (!entry) {
         throw new Error(`Unknown gate: ${gateName}`);
     }
@@ -364,6 +365,21 @@ export function buildGateHelpText(gateName: string, repoRoot = process.cwd()): s
         'Options:',
         '  -h, --help     Show this gate help and exit.'
     ].join('\n');
+}
+
+export function getGateHelpEntry(gateName: string, repoRoot = process.cwd()): GateHelpInfo {
+    const resolvedRepoRoot = resolveGateHelpRepoRoot(repoRoot);
+    const entry = buildGateHelpEntries(
+        buildCliPrefix(resolvedRepoRoot),
+        resolveBundleNameForTarget(resolvedRepoRoot)
+    )[gateName];
+    if (!entry) {
+        throw new Error(`Unknown gate: ${gateName}`);
+    }
+    return {
+        summary: entry.summary,
+        usage: [...entry.usage]
+    };
 }
 
 export function hasStandaloneGateHelpFlag(argv: readonly string[]): boolean {

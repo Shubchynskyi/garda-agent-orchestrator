@@ -34,6 +34,7 @@ export const COMPILED_RUNTIME_DEPLOY_CANDIDATES = Object.freeze([
 export const COMMAND_SUMMARY = Object.freeze([
     ['setup', 'First-run onboarding'],
     ['agent-init', 'Finalize mandatory agent onboarding'],
+    ['preprompt', 'Read-only task bootstrap context and exact next commands'],
     ['status', 'Show workspace status'],
     ['doctor', 'Run verify + manifest validation'],
     ['debug env', 'Show environment triage snapshot'],

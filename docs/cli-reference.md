@@ -88,6 +88,21 @@ Notes:
 - `doctor explain <FAILURE_ID>` prints remediation steps for known failure IDs such as `TASK_MODE_NOT_ENTERED`, `COMPILE_GATE_FAILED`, and `TIMELINE_INCOMPLETE`.
 - `doctor explain --list` prints the current remediation database keys.
 
+### `garda preprompt`
+
+Read-only task bootstrap helper. It returns current task/workspace context together with the canonical next commands for the active lifecycle stage.
+
+```text
+garda preprompt task --task-id "T-137" --json --target-root "."
+garda preprompt task --task-id "T-137" --target-root "."
+```
+
+Notes:
+- `preprompt task` does not modify task state, timelines, or review artifacts.
+- `preprompt task --json` reuses the current preflight artifact when present to derive required review types and the post-implementation command sequence.
+- If the workspace is dirty but no reusable staged scope or existing preflight scope is available, the output reports that blocker instead of inventing a misleading `--use-staged` classify command.
+- Output stays bounded: review-artifact and changed-file arrays include counts plus truncation metadata instead of dumping arbitrarily large lists.
+
 ### `garda bootstrap`
 
 Deploy the bundle without running install.

@@ -1,0 +1,615 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+import { parseTaskMdTableRow } from '../../core/task-md-table';
+import { getWorkspaceSnapshot } from '../../gates/compile-gate';
+import { readActiveProfileHint } from '../../validators/task-command';
+import { formatStatusSnapshotCompact, getStatusSnapshot } from '../../validators/status';
+import { getWhyBlocked } from '../../validators/why-blocked';
+import {
+    PackageJsonLike,
+    parseOptions
+} from './cli-helpers';
+import { getGateHelpEntry } from './gate-command-help';
+import { resolveTargetRoot } from './workspace-helpers';
+import type { ParsedOptionsRecord } from './shared-command-utils';
+
+const MAX_PREPROMPT_CHANGED_FILES = 12;
+const MAX_PREPROMPT_REVIEW_ARTIFACTS = 12;
+
+interface TaskQueueRow {
+    id: string;
+    status: string;
+    priority: string;
+    area: string;
+    title: string;
+    owner: string;
+    updated: string;
+    profile: string;
+    notes: string;
+}
+
+interface ExistingTaskArtifacts {
+    review_artifacts: string[];
+    review_artifacts_total_count: number;
+    review_artifacts_truncated: boolean;
+    review_artifacts_omitted_count: number;
+    timeline_exists: boolean;
+    timeline_path: string;
+}
+
+interface BoundedListResult<T> {
+    items: T[];
+    total_count: number;
+    truncated: boolean;
+    omitted_count: number;
+}
+
+function buildPrepromptHelpText(): string {
+    return [
+        'Command: preprompt task',
+        'Build a read-only JSON task brief with current workspace/task context and exact next commands.',
+        '',
+        'Usage:',
+        '  garda preprompt task --task-id "<task-id>" --json --target-root "."',
+        '  garda preprompt task --task-id "<task-id>" --target-root "."',
+        '',
+        'Options:',
+        '  --task-id <task-id>        Required task id from TASK.md.',
+        '  --json                     Emit machine-readable JSON.',
+        '  --target-root <path>      Optional workspace root. Defaults to ".".',
+        '  --init-answers-path <p>   Optional init-answers artifact path override.',
+        '  -h, --help                Show this help and exit.'
+    ].join('\n');
+}
+
+function readJsonIfExists<T extends Record<string, unknown>>(filePath: string): T | null {
+    try {
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+            return null;
+        }
+        return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
+    } catch {
+        return null;
+    }
+}
+
+function toPortableRepoPath(targetRoot: string, filePath: string): string {
+    const resolvedTargetRoot = path.resolve(targetRoot);
+    const resolvedFilePath = path.resolve(filePath);
+    const relative = path.relative(resolvedTargetRoot, resolvedFilePath);
+    if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        return relative.replace(/\\/g, '/');
+    }
+    return filePath.replace(/\\/g, '/');
+}
+
+function boundList<T>(items: T[], limit: number): BoundedListResult<T> {
+    const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : items.length;
+    const boundedItems = items.slice(0, normalizedLimit);
+    return {
+        items: boundedItems,
+        total_count: items.length,
+        truncated: items.length > boundedItems.length,
+        omitted_count: Math.max(items.length - boundedItems.length, 0)
+    };
+}
+
+function normalizeTaskRow(taskPath: string, taskId: string): TaskQueueRow | null {
+    if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
+        return null;
+    }
+    const lines = fs.readFileSync(taskPath, 'utf8').split(/\r?\n/);
+    for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (!trimmed.startsWith('|')) {
+            continue;
+        }
+        const cells = parseTaskMdTableRow(rawLine);
+        if (cells.length < 9) {
+            continue;
+        }
+        if (cells[0].trimmed.toLowerCase() === 'id' || cells[0].trimmed.startsWith('-') || cells[0].trimmed.startsWith('=')) {
+            continue;
+        }
+        if (cells[0].trimmed !== taskId) {
+            continue;
+        }
+        return {
+            id: cells[0].trimmed,
+            status: cells[1].trimmed,
+            priority: cells[2].trimmed,
+            area: cells[3].trimmed,
+            title: cells[4].trimmed,
+            owner: cells[5].trimmed,
+            updated: cells[6].trimmed,
+            profile: cells[7].trimmed,
+            notes: cells.slice(8).map((cell) => cell.trimmed).join(' | ').trim()
+        };
+    }
+    return null;
+}
+
+function listTaskArtifacts(targetRoot: string, taskId: string): ExistingTaskArtifacts {
+    const reviewsRoot = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    const timelinePath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    const reviewArtifacts = fs.existsSync(reviewsRoot) && fs.statSync(reviewsRoot).isDirectory()
+        ? fs.readdirSync(reviewsRoot)
+            .filter((entry) => entry.startsWith(`${taskId}-`))
+            .map((entry) => {
+                const absolutePath = path.join(reviewsRoot, entry);
+                let modifiedTimeMs = 0;
+                try {
+                    modifiedTimeMs = fs.statSync(absolutePath).mtimeMs;
+                } catch {
+                    modifiedTimeMs = 0;
+                }
+                return {
+                    path: path.join('garda-agent-orchestrator', 'runtime', 'reviews', entry).replace(/\\/g, '/'),
+                    modified_time_ms: modifiedTimeMs
+                };
+            })
+            .sort((left, right) => (
+                right.modified_time_ms - left.modified_time_ms
+                || left.path.localeCompare(right.path)
+            ))
+            .map((entry) => entry.path)
+        : [];
+    const boundedArtifacts = boundList(reviewArtifacts, MAX_PREPROMPT_REVIEW_ARTIFACTS);
+    return {
+        review_artifacts: boundedArtifacts.items,
+        review_artifacts_total_count: boundedArtifacts.total_count,
+        review_artifacts_truncated: boundedArtifacts.truncated,
+        review_artifacts_omitted_count: boundedArtifacts.omitted_count,
+        timeline_exists: fs.existsSync(timelinePath) && fs.statSync(timelinePath).isFile(),
+        timeline_path: path.join('garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`).replace(/\\/g, '/')
+    };
+}
+
+function readTaskTimelineEvents(targetRoot: string, taskId: string): string[] {
+    const timelinePath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
+        return [];
+    }
+    const eventTypes: string[] = [];
+    for (const line of fs.readFileSync(timelinePath, 'utf8').split(/\r?\n/)) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const eventType = String(parsed.event_type || '').trim().toUpperCase();
+            if (eventType) {
+                eventTypes.push(eventType);
+            }
+        } catch {
+            // Ignore malformed lines in this read-only bootstrap view.
+        }
+    }
+    return eventTypes;
+}
+
+function sanitizeCliValue(value: string): string {
+    return String(value || '').replace(/"/g, '\'').trim();
+}
+
+function hydrateGateUsage(
+    gateName: string,
+    repoRoot: string,
+    replacements: Record<string, string>
+): string {
+    const entry = getGateHelpEntry(gateName, repoRoot);
+    let usage = entry.usage[0];
+    for (const [placeholder, nextValue] of Object.entries(replacements)) {
+        usage = usage.split(placeholder).join(nextValue);
+    }
+    return usage;
+}
+
+function buildClassifyChangeCommand(
+    repoRoot: string,
+    taskId: string,
+    taskSummary: string,
+    changedFiles: string[],
+    stagedWorkspaceChangedFilesCount: number
+): string {
+    const gateHelp = getGateHelpEntry('classify-change', repoRoot);
+    const explicitScopeCommand = hydrateGateUsage('classify-change', repoRoot, {
+        '<task-id>': taskId,
+        '<task summary>': sanitizeCliValue(taskSummary)
+    });
+    if (changedFiles.length > 0) {
+        const changedFileArgs = changedFiles
+            .map((filePath) => ` --changed-file "${filePath}"`)
+            .join('');
+        return explicitScopeCommand.replace('--changed-file "src/<file>"', changedFileArgs.trimStart());
+    }
+    if (stagedWorkspaceChangedFilesCount > 0) {
+        return gateHelp.usage[1]
+            .split('<task-id>').join(taskId)
+            .split('<task summary>').join(sanitizeCliValue(taskSummary));
+    }
+    return explicitScopeCommand;
+}
+
+function readRulePackStageFiles(targetRoot: string, taskId: string, stageKey: 'task_entry' | 'post_preflight'): string[] {
+    const rulePackPath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-rule-pack.json`);
+    const payload = readJsonIfExists<Record<string, unknown>>(rulePackPath);
+    const stages = payload?.stages;
+    if (!stages || typeof stages !== 'object' || Array.isArray(stages)) {
+        return [];
+    }
+    const stagePayload = (stages as Record<string, unknown>)[stageKey];
+    if (!stagePayload || typeof stagePayload !== 'object' || Array.isArray(stagePayload)) {
+        return [];
+    }
+    const loadedRuleFiles = (stagePayload as Record<string, unknown>).loaded_rule_files;
+    if (!Array.isArray(loadedRuleFiles)) {
+        return [];
+    }
+    return loadedRuleFiles
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean);
+}
+
+function buildLoadRulePackCommand(
+    repoRoot: string,
+    taskId: string,
+    targetRoot: string,
+    stage: 'TASK_ENTRY' | 'POST_PREFLIGHT',
+    loadedRuleFiles: string[]
+): string {
+    const gateHelp = getGateHelpEntry('load-rule-pack', repoRoot);
+    const usageIndex = stage === 'TASK_ENTRY' ? 0 : 1;
+    let command = gateHelp.usage[usageIndex].split('<task-id>').join(taskId);
+    if (stage === 'POST_PREFLIGHT') {
+        const defaultPreflightPath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-preflight.json`);
+        command = command.replace(
+            /--preflight-path "[^"]+"/,
+            `--preflight-path "${toPortableRepoPath(targetRoot, defaultPreflightPath)}"`
+        );
+        command = command.replace(/ --loaded-rule-file "<task-specific-downstream-rule-file>"/g, '');
+        command = command.replace(/ --loaded-rule-file "<additional-task-specific-rule-file>"/g, '');
+    }
+    if (loadedRuleFiles.length === 0) {
+        return command;
+    }
+    const normalizedRuleFileArgs = loadedRuleFiles
+        .map((ruleFile) => ` --loaded-rule-file "${toPortableRepoPath(targetRoot, ruleFile)}"`)
+        .join('');
+    command = command.replace(/ --loaded-rule-file "[^"]+"/g, '');
+    return command.replace(' --repo-root "."', `${normalizedRuleFileArgs} --repo-root "."`);
+}
+
+function summarizeWorkspaceSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
+    const changedFiles = Array.isArray(snapshot.changed_files)
+        ? snapshot.changed_files.map((entry) => String(entry)).filter(Boolean)
+        : [];
+    const boundedChangedFiles = boundList(changedFiles, MAX_PREPROMPT_CHANGED_FILES);
+    return {
+        ...snapshot,
+        changed_files: boundedChangedFiles.items,
+        changed_files_total_count: Number(snapshot.changed_files_count || changedFiles.length) || 0,
+        changed_files_truncated: boundedChangedFiles.truncated,
+        changed_files_omitted_count: boundedChangedFiles.omitted_count
+    };
+}
+
+function buildStartupScopeBlocker(
+    changedFiles: string[],
+    workspaceChangedFilesCount: number,
+    stagedWorkspaceChangedFilesCount: number
+): string | null {
+    if (changedFiles.length > 0 || workspaceChangedFilesCount <= 0 || stagedWorkspaceChangedFilesCount > 0) {
+        return null;
+    }
+    return 'Workspace is already dirty, but no reusable preflight scope or staged-only task diff was detected. Enter task mode first, then rerun classify-change with explicit --changed-file entries or stage only the intended task diff before using --use-staged.';
+}
+
+function getRequiredReviewTypes(preflightPayload: Record<string, unknown> | null): string[] {
+    const requiredReviews = preflightPayload?.required_reviews;
+    if (!requiredReviews || typeof requiredReviews !== 'object' || Array.isArray(requiredReviews)) {
+        return [];
+    }
+    return Object.entries(requiredReviews)
+        .filter(([, value]) => value === true)
+        .map(([reviewType]) => reviewType)
+        .sort();
+}
+
+function buildStartupCommands(
+    repoRoot: string,
+    targetRoot: string,
+    taskId: string,
+    taskSummary: string,
+    provider: string,
+    depth: number,
+    orchestratorWork: boolean,
+    changedFiles: string[],
+    stagedWorkspaceChangedFilesCount: number,
+    taskEntryRuleFiles: string[],
+    postPreflightRuleFiles: string[]
+): string[] {
+    const enterTaskModeBase = hydrateGateUsage('enter-task-mode', repoRoot, {
+        '<task-id>': taskId,
+        '<1|2|3>': String(depth),
+        '<task summary>': sanitizeCliValue(taskSummary),
+        '<runtime-provider>': provider
+    });
+    const enterTaskModeCommand = orchestratorWork
+        ? enterTaskModeBase.replace('--provider', '--orchestrator-work --provider')
+        : enterTaskModeBase;
+
+    return [
+        enterTaskModeCommand,
+        buildLoadRulePackCommand(repoRoot, taskId, targetRoot, 'TASK_ENTRY', taskEntryRuleFiles),
+        hydrateGateUsage('handshake-diagnostics', repoRoot, {
+            '<task-id>': taskId,
+            '<runtime-provider>': provider
+        }),
+        hydrateGateUsage('shell-smoke-preflight', repoRoot, {
+            '<task-id>': taskId,
+            '<runtime-provider>': provider
+        }),
+        buildClassifyChangeCommand(repoRoot, taskId, taskSummary, changedFiles, stagedWorkspaceChangedFilesCount),
+        buildLoadRulePackCommand(repoRoot, taskId, targetRoot, 'POST_PREFLIGHT', postPreflightRuleFiles)
+    ];
+}
+
+function buildPostImplementationCommands(
+    repoRoot: string,
+    taskId: string,
+    requiredReviewTypes: string[],
+    depth: number
+): string[] {
+    const taskAuditSummaryUsage = getGateHelpEntry('task-audit-summary', repoRoot).usage[1];
+    const buildReviewContextUsage = getGateHelpEntry('build-review-context', repoRoot).usage[0];
+    const commands = [
+        hydrateGateUsage('compile-gate', repoRoot, { '<task-id>': taskId })
+    ];
+    for (const reviewType of requiredReviewTypes) {
+        commands.push(
+            buildReviewContextUsage
+                .split('<task-id>').join(taskId)
+                .split('<1|2|3>').join(String(depth))
+                .replace('"<code|db|security|refactor|api|test|performance|infra|dependency>"', `"${reviewType}"`)
+        );
+    }
+    commands.push(
+        hydrateGateUsage('required-reviews-check', repoRoot, { '<task-id>': taskId }),
+        hydrateGateUsage('doc-impact-gate', repoRoot, {
+            '<task-id>': taskId,
+            '<why>': 'Update the rationale for the actual behavior/doc impact.'
+        }),
+        hydrateGateUsage('completion-gate', repoRoot, { '<task-id>': taskId }),
+        taskAuditSummaryUsage.split('<task-id>').join(taskId)
+    );
+    return commands;
+}
+
+function inferCurrentStage(eventTypes: string[]): string {
+    if (eventTypes.includes('COMPLETION_GATE_PASSED')) {
+        return 'completion_passed';
+    }
+    if (eventTypes.includes('REVIEW_GATE_PASSED') || eventTypes.includes('REVIEW_GATE_PASSED_WITH_OVERRIDE')) {
+        return 'review_passed';
+    }
+    if (eventTypes.includes('COMPILE_GATE_PASSED')) {
+        return 'compiled';
+    }
+    if (eventTypes.includes('PREFLIGHT_CLASSIFIED')) {
+        return 'preflight_ready';
+    }
+    if (eventTypes.includes('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
+        return 'shell_smoke_ready';
+    }
+    if (eventTypes.includes('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
+        return 'handshake_ready';
+    }
+    if (eventTypes.includes('RULE_PACK_LOADED')) {
+        return 'task_entry_rules_loaded';
+    }
+    if (eventTypes.includes('TASK_MODE_ENTERED')) {
+        return 'task_mode_entered';
+    }
+    return 'start_pending';
+}
+
+function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: string): Record<string, unknown> {
+    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskRow = normalizeTaskRow(taskPath, taskId);
+    if (!taskRow) {
+        throw new Error(`Task '${taskId}' was not found in TASK.md.`);
+    }
+
+    const bundleRoot = path.join(targetRoot, 'garda-agent-orchestrator');
+    const statusSnapshot = getStatusSnapshot(targetRoot, initAnswersPath);
+    const workspaceSnapshot = (() => {
+        try {
+            return summarizeWorkspaceSnapshot(getWorkspaceSnapshot(targetRoot, 'git_auto', true, []));
+        } catch {
+            return summarizeWorkspaceSnapshot({
+                detection_source: 'git_auto',
+                use_staged: false,
+                include_untracked: true,
+                changed_files: [],
+                changed_files_count: 0,
+                additions_total: 0,
+                deletions_total: 0,
+                changed_lines_total: 0,
+                changed_files_sha256: null,
+                scope_sha256: null
+            });
+        }
+    })();
+    const stagedWorkspaceSnapshot = (() => {
+        try {
+            return summarizeWorkspaceSnapshot(getWorkspaceSnapshot(targetRoot, 'git_staged_plus_untracked', true, []));
+        } catch {
+            return summarizeWorkspaceSnapshot({
+                detection_source: 'git_staged_plus_untracked',
+                use_staged: true,
+                include_untracked: true,
+                changed_files: [],
+                changed_files_count: 0,
+                additions_total: 0,
+                deletions_total: 0,
+                changed_lines_total: 0,
+                changed_files_sha256: null,
+                scope_sha256: null
+            });
+        }
+    })();
+    const whyBlocked = getWhyBlocked(targetRoot);
+    const taskArtifacts = listTaskArtifacts(targetRoot, taskId);
+    const eventTypes = readTaskTimelineEvents(targetRoot, taskId);
+    const taskModePath = path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-task-mode.json`);
+    const preflightPath = path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-preflight.json`);
+    const taskModePayload = readJsonIfExists<Record<string, unknown>>(taskModePath);
+    const preflightPayload = readJsonIfExists<Record<string, unknown>>(preflightPath);
+    const activeProfileHint = readActiveProfileHint(bundleRoot);
+    const requiredReviewTypes = getRequiredReviewTypes(preflightPayload);
+    const taskEntryRuleFiles = readRulePackStageFiles(targetRoot, taskId, 'task_entry');
+    const postPreflightRuleFiles = readRulePackStageFiles(targetRoot, taskId, 'post_preflight');
+    const provider = String(
+        taskModePayload?.provider
+        || statusSnapshot.sourceOfTruth
+        || 'Codex'
+    ).trim() || 'Codex';
+    const effectiveDepth = Number(
+        taskModePayload?.effective_depth
+        || taskModePayload?.requested_depth
+        || activeProfileHint.activeProfileDepth
+        || 2
+    ) || 2;
+    const orchestratorWork = taskModePayload?.orchestrator_work === true;
+    const existingChangedFiles = Array.isArray(preflightPayload?.changed_files)
+        ? preflightPayload?.changed_files.map((entry) => String(entry)).filter(Boolean)
+        : [];
+    const boundedPreflightChangedFiles = boundList(existingChangedFiles, MAX_PREPROMPT_CHANGED_FILES);
+    const startupScopeBlocker = buildStartupScopeBlocker(
+        existingChangedFiles,
+        Number(workspaceSnapshot.changed_files_count || 0),
+        Number(stagedWorkspaceSnapshot.changed_files_count || 0)
+    );
+    const startupCommands = buildStartupCommands(
+        targetRoot,
+        targetRoot,
+        taskId,
+        taskRow.title,
+        provider,
+        effectiveDepth,
+        orchestratorWork,
+        existingChangedFiles,
+        Number(stagedWorkspaceSnapshot.changed_files_count || 0),
+        taskEntryRuleFiles,
+        postPreflightRuleFiles
+    );
+    const postImplementationCommands = buildPostImplementationCommands(targetRoot, taskId, requiredReviewTypes, effectiveDepth);
+    const currentTaskBlockers = [
+        ...whyBlocked.blocked_tasks,
+        ...whyBlocked.in_progress_tasks
+    ].filter((entry) => entry.task.id === taskId);
+
+    return {
+        schema_version: 2,
+        command: 'preprompt task',
+        rule_search_required: false,
+        task: {
+            ...taskRow,
+            timeline_event_count: eventTypes.length,
+            current_stage: inferCurrentStage(eventTypes)
+        },
+        workspace: {
+            target_root: targetRoot.replace(/\\/g, '/'),
+            bundle_root: path.join(targetRoot, 'garda-agent-orchestrator').replace(/\\/g, '/'),
+            status_compact: formatStatusSnapshotCompact(statusSnapshot),
+            ready_for_tasks: statusSnapshot.readyForTasks,
+            active_profile: statusSnapshot.activeProfile,
+            current_dirty_workspace: workspaceSnapshot
+        },
+        artifacts: {
+            ...taskArtifacts,
+            has_task_mode: taskModePayload !== null,
+            has_preflight: preflightPayload !== null,
+            task_mode_path: path.join('garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-mode.json`).replace(/\\/g, '/'),
+            preflight_path: path.join('garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-preflight.json`).replace(/\\/g, '/')
+        },
+        diagnostics: {
+            why_blocked: currentTaskBlockers,
+            required_review_types: requiredReviewTypes,
+            latest_preflight: preflightPayload ? {
+                mode: preflightPayload.mode || null,
+                detection_source: preflightPayload.detection_source || null,
+                changed_files: boundedPreflightChangedFiles.items,
+                changed_files_total_count: boundedPreflightChangedFiles.total_count,
+                changed_files_truncated: boundedPreflightChangedFiles.truncated,
+                changed_files_omitted_count: boundedPreflightChangedFiles.omitted_count,
+                required_reviews: preflightPayload.required_reviews || {}
+            } : null,
+            task_mode: taskModePayload ? {
+                provider: taskModePayload.provider || null,
+                effective_depth: taskModePayload.effective_depth || null,
+                orchestrator_work: taskModePayload.orchestrator_work === true,
+                dirty_workspace_baseline: taskModePayload.dirty_workspace_baseline || null
+            } : null
+        },
+        commands: {
+            startup_pending: taskModePayload === null,
+            startup_scope_blocker: taskModePayload === null ? startupScopeBlocker : null,
+            startup_commands: startupCommands,
+            post_implementation_sequence_available: preflightPayload !== null,
+            post_implementation_sequence_blocker: preflightPayload === null
+                ? 'No current preflight artifact is available yet, so required review types are still unknown.'
+                : null,
+            post_implementation_commands: preflightPayload ? postImplementationCommands : []
+        }
+    };
+}
+
+export function handlePreprompt(commandArgv: string[], packageJson: PackageJsonLike): void {
+    if (commandArgv.length === 0 || commandArgv[0] === '--help' || commandArgv[0] === '-h') {
+        console.log(buildPrepromptHelpText());
+        return;
+    }
+
+    const subcommand = String(commandArgv[0] || '').trim().toLowerCase();
+    if (subcommand !== 'task') {
+        throw new Error(`Unsupported preprompt subcommand: ${commandArgv[0]}`);
+    }
+
+    const definitions = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--json': { key: 'json', type: 'boolean' },
+        '--target-root': { key: 'targetRoot', type: 'string' },
+        '--init-answers-path': { key: 'initAnswersPath', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(commandArgv.slice(1), definitions);
+    const options = rawOptions as ParsedOptionsRecord;
+
+    if (options.help === true) {
+        console.log(buildPrepromptHelpText());
+        return;
+    }
+    if (options.version === true) {
+        console.log(packageJson.version);
+        return;
+    }
+
+    const targetRoot = resolveTargetRoot(options.targetRoot);
+    const taskId = String(options.taskId || '').trim();
+    if (!taskId) {
+        throw new Error('TaskId must not be empty.');
+    }
+
+    const result = buildTaskBrief(
+        targetRoot,
+        taskId,
+        typeof options.initAnswersPath === 'string' ? options.initAnswersPath : undefined
+    );
+    if (options.json === true) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+    }
+    console.log(JSON.stringify(result, null, 2));
+}
