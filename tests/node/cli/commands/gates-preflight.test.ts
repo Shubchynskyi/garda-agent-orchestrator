@@ -1,0 +1,921 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import {
+    EXIT_GATE_FAILURE
+} from '../../../../src/cli/exit-codes';
+import {
+    acquireFilesystemLock,
+    releaseFilesystemLock
+} from '../../../../src/gate-runtime/task-events-locking';
+import {
+    runClassifyChangeCommand,
+    runCompileGateCommand,
+    runCommandTimeoutDiagnosticsCommand,
+    runEnterTaskModeCommand,
+    runHandshakeDiagnosticsCommand,
+    runLoadRulePackCommand,
+    runShellSmokePreflightCommand
+} from '../../../../src/cli/commands/gates';
+import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import * as childProcess from 'node:child_process';
+
+const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
+    Claude: 'CLAUDE.md',
+    Codex: 'AGENTS.md',
+    Gemini: 'GEMINI.md',
+    Qwen: 'QWEN.md',
+    GitHubCopilot: '.github/copilot-instructions.md',
+    Windsurf: '.windsurf/rules/rules.md',
+    Junie: '.junie/guidelines.md',
+    Antigravity: '.antigravity/rules.md'
+};
+
+const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
+    GitHubCopilot: '.github/agents/orchestrator.md',
+    Windsurf: '.windsurf/agents/orchestrator.md',
+    Junie: '.junie/agents/orchestrator.md',
+    Antigravity: '.antigravity/agents/orchestrator.md'
+};
+
+function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
+    if (String(options.provider || '').trim() || String(options.routedTo || '').trim()) {
+        return options;
+    }
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
+        return options;
+    }
+
+    try {
+        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+        const sourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+        const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
+        if (!sourceOfTruth || !routedTo) {
+            return options;
+        }
+        return {
+            ...options,
+            provider: sourceOfTruth,
+            routedTo
+        };
+    } catch {
+        return options;
+    }
+}
+
+function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
+    return runEnterTaskModeCommand(withDefaultTaskModeRouting(options));
+}
+
+function captureExpectedError(callback: () => void): Error {
+    try {
+        callback();
+    } catch (error) {
+        assert.ok(error instanceof Error);
+        return error;
+    }
+    assert.fail('Expected command to throw an error.');
+}
+
+function createTempRepo(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+    seedRuleFiles(root);
+    return root;
+}
+
+function seedRuleFiles(repoRoot: string): void {
+    const rulesRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules');
+    fs.mkdirSync(rulesRoot, { recursive: true });
+    const ruleFiles = [
+        '00-core.md',
+        '30-code-style.md',
+        '35-strict-coding-rules.md',
+        '40-commands.md',
+        '50-structure-and-docs.md',
+        '70-security.md',
+        '80-task-workflow.md',
+        '90-skill-catalog.md'
+    ];
+    for (const ruleFile of ruleFiles) {
+        fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+    }
+}
+
+function getReviewsRoot(repoRoot: string): string {
+    return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+}
+
+function getOrchestratorRoot(repoRoot: string): string {
+    return path.join(repoRoot, 'garda-agent-orchestrator');
+}
+
+function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | default | fixture |`
+    ].join('\n'), 'utf8');
+}
+
+function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+    fs.writeFileSync(initAnswersPath, JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: sourceOfTruth,
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        CollectedVia: 'AGENT_INIT_PROMPT.md',
+        ActiveAgentFiles: 'AGENTS.md'
+    }, null, 2), 'utf8');
+}
+
+function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    let canonicalSourceOfTruth = provider;
+    if (fs.existsSync(initAnswersPath) && fs.statSync(initAnswersPath).isFile()) {
+        try {
+            const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+            const seededSourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+            if (seededSourceOfTruth) {
+                canonicalSourceOfTruth = seededSourceOfTruth;
+            }
+        } catch {
+            // Keep the lightweight test fixture tolerant of malformed init answers.
+        }
+    }
+    const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || 'AGENTS.md';
+    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
+    const providerBridgeCandidate = PROVIDER_BRIDGE_BY_SOURCE[provider] || null;
+    const providerBridgePath = providerBridgeCandidate && fs.existsSync(path.join(repoRoot, providerBridgeCandidate))
+        ? providerBridgeCandidate
+        : null;
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'handshake-diagnostics',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        provider,
+        execution_provider: provider,
+        canonical_source_of_truth: canonicalSourceOfTruth,
+        canonical_entrypoint: canonicalEntrypoint,
+        canonical_entrypoint_exists: true,
+        provider_bridge: providerBridgePath,
+        provider_bridge_exists: providerBridgePath !== null,
+        routed_to: routedTo,
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        start_task_router_path: '.agents/workflows/start-task.md',
+        start_task_router_exists: true,
+        execution_context: 'materialized-bundle',
+        cli_path: 'node garda-agent-orchestrator/bin/garda.js',
+        effective_cwd: repoRoot.replace(/\\/g, '/'),
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        diagnostics: [],
+        violations: []
+    }, null, 2), 'utf8');
+}
+
+function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex') {
+    writeHandshakeArtifact(repoRoot, taskId, provider);
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const artifactPath = path.join(orchestratorRoot, 'runtime', 'reviews', `${taskId}-handshake.json`);
+    const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+    const artifact = JSON.parse(artifactContent) as Record<string, unknown>;
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(artifactContent).digest('hex');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'PASS',
+        `Handshake diagnostics passed: provider=${provider}, context=materialized-bundle.`,
+        {
+            provider,
+            execution_provider: artifact.execution_provider ?? provider,
+            canonical_source_of_truth: artifact.canonical_source_of_truth ?? provider,
+            execution_provider_source: artifact.execution_provider_source ?? 'explicit_provider',
+            execution_context: 'materialized-bundle',
+            cli_path: 'node garda-agent-orchestrator/bin/garda.js',
+            passed: true,
+            artifact_hash: artifactHash
+        },
+        { actor: 'gate', passThru: true }
+    );
+}
+
+function writeShellSmokeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-shell-smoke.json`), JSON.stringify({
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'shell-smoke-preflight',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        provider,
+        execution_context: 'materialized-bundle',
+        effective_cwd: repoRoot.replace(/\\/g, '/'),
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        probes: [],
+        violations: []
+    }, null, 2), 'utf8');
+}
+
+function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Codex') {
+    writeShellSmokeArtifact(repoRoot, taskId, provider);
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const artifactPath = path.join(orchestratorRoot, 'runtime', 'reviews', `${taskId}-shell-smoke.json`);
+    const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(artifactContent).digest('hex');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        'PASS',
+        `Shell smoke preflight passed: provider=${provider}, context=materialized-bundle.`,
+        { provider, execution_context: 'materialized-bundle', passed: true, artifact_hash: artifactHash },
+        { actor: 'gate', passThru: true }
+    );
+}
+
+function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
+    const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    return fs.readFileSync(timelinePath, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = '') {
+    return runLoadRulePackCommand({
+        repoRoot,
+        taskId,
+        stage: 'TASK_ENTRY',
+        taskModePath,
+        loadedRuleFiles: [
+            '00-core.md',
+            '40-commands.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ],
+        emitMetrics: false
+    });
+}
+
+function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
+    const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
+    const existingEvents = readTaskTimelineEvents(repoRoot, taskId);
+    const latestMatchingEvent = [...existingEvents].reverse().find((event) => (
+        event.event_type === 'PREFLIGHT_CLASSIFIED'
+        && String((event.details as Record<string, unknown> | undefined)?.output_path || '') === normalizedPreflightPath
+    ));
+    if (latestMatchingEvent) {
+        return;
+    }
+
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : {};
+    const mode = String(preflight.mode || 'FULL_PATH');
+    const changedFilesCount = Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0;
+    const changedLinesTotal = Number(metrics.changed_lines_total || 0);
+    const zeroDiffGuard = preflight.zero_diff_guard && typeof preflight.zero_diff_guard === 'object' && !Array.isArray(preflight.zero_diff_guard)
+        ? preflight.zero_diff_guard
+        : (changedFilesCount === 0 && changedLinesTotal === 0
+            ? { zero_diff_detected: true, status: 'BASELINE_ONLY' }
+            : null);
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'PREFLIGHT_CLASSIFIED',
+        'INFO',
+        zeroDiffGuard
+            ? `Preflight completed with mode ${mode} (zero-diff baseline only).`
+            : `Preflight completed with mode ${mode}.`,
+        {
+            mode,
+            output_path: normalizedPreflightPath,
+            changed_files_count: changedFilesCount,
+            changed_lines_total: changedLinesTotal,
+            required_reviews: preflight.required_reviews || {},
+            zero_diff_guard: zeroDiffGuard
+        }
+    );
+}
+
+function loadPostPreflightRulePack(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    ensurePreflightClassified = true,
+    artifactPath = '',
+    taskModePath = ''
+) {
+    if (ensurePreflightClassified) {
+        appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
+    }
+    return runLoadRulePackCommand({
+        repoRoot,
+        taskId,
+        stage: 'POST_PREFLIGHT',
+        preflightPath,
+        artifactPath,
+        taskModePath,
+        loadedRuleFiles: [
+            '00-core.md',
+            '35-strict-coding-rules.md',
+            '40-commands.md',
+            '50-structure-and-docs.md',
+            '70-security.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ],
+        emitMetrics: false
+    });
+}
+
+function writePreflight(
+    repoRoot: string,
+    taskId: string,
+    overrides: Record<string, unknown> = {},
+    outputFileName = `${taskId}-preflight.json`
+): string {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const preflightPath = path.join(reviewsRoot, outputFileName);
+    const payload = {
+        task_id: taskId,
+        detection_source: 'explicit_changed_files',
+        mode: 'FULL_PATH',
+        metrics: { changed_lines_total: 3 },
+        required_reviews: {
+            code: true,
+            db: false,
+            security: false,
+            refactor: false,
+            api: false,
+            test: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        },
+        triggers: {},
+        changed_files: ['src/app.ts'],
+        ...overrides
+    };
+    fs.writeFileSync(preflightPath, JSON.stringify(payload, null, 2), 'utf8');
+    return preflightPath;
+}
+
+function runExplicitPreflight(
+    repoRoot: string,
+    taskId: string,
+    taskIntent: string,
+    changedFiles: string[],
+    outputFileName = `${taskId}-preflight.json`,
+    taskModePath = ''
+): string {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), outputFileName);
+    const result = runClassifyChangeCommand({
+        repoRoot,
+        taskId,
+        taskIntent,
+        changedFiles,
+        taskModePath,
+        outputPath: preflightPath,
+        emitMetrics: false
+    });
+    const payload = JSON.parse(result.outputText);
+    assert.equal(payload.task_id, taskId);
+    return preflightPath;
+}
+
+function initializeGitRepo(repoRoot: string): void {
+    const runGit = (args: string[]) => {
+        const result = childProcess.spawnSync('git', args, {
+            cwd: repoRoot,
+            windowsHide: true,
+            encoding: 'utf8'
+        });
+        if (result.error) {
+            throw result.error;
+        }
+        assert.equal(
+            result.status,
+            0,
+            `git ${args.join(' ')} failed: ${String(result.stderr || result.stdout || '').trim()}`
+        );
+    };
+    runGit(['init']);
+    runGit(['config', 'user.name', 'Garda Tests']);
+    runGit(['config', 'user.email', 'garda-tests@example.com']);
+    runGit(['add', '.']);
+    runGit(['commit', '-m', 'test: baseline']);
+}
+
+describe('cli/commands/gates — preflight', () => {
+    it('classifies security file and emits risk_aware_depth with promoted effective depth', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const securityFilePath = path.join(repoRoot, 'src', 'auth', 'jwt-guard.ts');
+        fs.mkdirSync(path.dirname(securityFilePath), { recursive: true });
+        fs.writeFileSync(securityFilePath, 'export function verify() { return true; }\n', 'utf8');
+        const outputPath = path.join(repoRoot, 'preflight-sec.json');
+        seedTaskQueue(repoRoot, 'T-930');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId: 'T-930',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Add JWT guard feature'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-930');
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-930');
+        runShellSmokeForTask(repoRoot, 'T-930');
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/auth/jwt-guard.ts'],
+            taskId: 'T-930',
+            taskIntent: 'Add JWT guard feature',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.triggers.security, true);
+        assert.ok(payload.risk_aware_depth, 'risk_aware_depth should be present');
+        assert.equal(payload.risk_aware_depth.effective_depth, 3, 'security trigger should promote to depth 3');
+        assert.equal(payload.risk_aware_depth.escalated, true);
+        assert.equal(payload.risk_aware_depth.compression.risk_level, 'high');
+        assert.equal(payload.risk_aware_depth.compression.strip_examples, false);
+        assert.equal(payload.risk_aware_depth.compression.strip_code_blocks, false);
+        // Budget forecast should use the promoted depth
+        assert.equal(payload.budget_forecast.effective_depth, 3);
+        assert.equal(payload.budget_forecast.depth_escalated, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change uses the explicit custom task-mode artifact path for requested depth and budget forecasting', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-custom-task-mode-depth.json');
+        const taskId = 'T-930-custom-task-mode-depth';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 3,
+            effectiveDepth: 3,
+            taskSummary: 'Preserve requested depth from a custom task-mode artifact path',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId,
+            taskIntent: 'Preserve requested depth from a custom task-mode artifact path',
+            taskModePath: customTaskModePath,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, taskId);
+        assert.equal(payload.risk_aware_depth.requested_depth, 3);
+        assert.equal(payload.risk_aware_depth.effective_depth, 3);
+        assert.equal(payload.risk_aware_depth.escalated, false);
+        assert.equal(payload.budget_forecast.requested_depth, 3);
+        assert.equal(payload.budget_forecast.effective_depth, 3);
+        assert.equal(payload.budget_forecast.depth_escalated, false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classifies explicit changed files and writes preflight artifact', () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight.json');
+        seedTaskQueue(repoRoot, 'T-900');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId: 'T-900',
+            taskSummary: 'Update app flow'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900');
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-900');
+        runShellSmokeForTask(repoRoot, 'T-900');
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId: 'T-900',
+            taskIntent: 'Update app flow',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, 'T-900');
+        assert.equal(payload.changed_files[0], 'src/app.ts');
+        assert.equal(payload.required_reviews.code, true);
+        assert.equal(fs.existsSync(outputPath), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('marks zero-diff preflight as baseline-only instead of complete work', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-zero.json');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, 'T-900z');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId: 'T-900z',
+            taskSummary: 'Implement lifecycle hardening'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900z');
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-900z');
+        runShellSmokeForTask(repoRoot, 'T-900z');
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: [],
+            taskId: 'T-900z',
+            taskIntent: 'Implement lifecycle hardening',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.changed_files.length, 0);
+        assert.equal(payload.zero_diff_guard.zero_diff_detected, true);
+        assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
+        assert.equal(payload.zero_diff_guard.completion_requires_audited_no_op, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects POST_PREFLIGHT rule-pack when the current preflight has not completed classify-change sequencing', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-order';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject POST_PREFLIGHT load-rule-pack before classify-change completes'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = loadPostPreflightRulePack(repoRoot, taskId, preflightPath, false);
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT')));
+        assert.equal(artifact.stages.post_preflight.status, 'FAILED');
+        assert.equal(artifact.stages.post_preflight.preflight_event_sequence, null);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails shell-smoke-preflight when the latest handshake was superseded by a newer task-mode cycle', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-stale-handshake';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale handshake evidence before shell smoke preflight'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Start a newer task cycle before shell smoke preflight'
+        });
+
+        const shellSmokeResult = runShellSmokePreflightCommand({
+            repoRoot,
+            taskId
+        });
+        assert.equal(shellSmokeResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(shellSmokeResult.outputLines[0], 'SHELL_SMOKE_PREFLIGHT_FAILED');
+        assert.ok(shellSmokeResult.outputLines.some((line) => line.includes('predates the latest TASK_MODE_ENTERED')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects shell-smoke-preflight when runtime identity would fall back to canonical SourceOfTruth', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-legacy-fallback';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const error = captureExpectedError(() => runShellSmokePreflightCommand({
+            repoRoot,
+            taskId
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before shell-smoke-preflight/i);
+        assert.match(error.message, /Re-enter task mode with explicit --provider <runtime-provider> or --routed-to/i);
+        assert.match(error.message, /enter-task-mode/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects command-timeout-diagnostics when runtime identity would fall back to canonical SourceOfTruth', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-command-timeout-legacy-fallback';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const error = captureExpectedError(() => runCommandTimeoutDiagnosticsCommand({
+            repoRoot,
+            taskId
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before command-timeout-diagnostics/i);
+        assert.match(error.message, /Re-enter task mode with explicit --provider <runtime-provider> or --routed-to/i);
+        assert.match(error.message, /command-timeout-diagnostics/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('serializes pre-preflight gates behind a shared task lock', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-pre-preflight-sequence-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const lockPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        const { handle } = acquireFilesystemLock(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 25,
+            staleMs: 30_000
+        });
+
+        try {
+            assert.throws(
+                () => runShellSmokePreflightCommand({
+                    repoRoot,
+                    taskId,
+                    provider: 'Codex'
+                }),
+                /Timed out acquiring file lock/
+            );
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('serializes handshake-diagnostics behind the shared pre-preflight task lock', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-pre-preflight-handshake-sequence-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const lockPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        const { handle } = acquireFilesystemLock(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 25,
+            staleMs: 30_000
+        });
+
+        try {
+            assert.throws(
+                () => runHandshakeDiagnosticsCommand({
+                    repoRoot,
+                    taskId
+                }),
+                /Timed out acquiring file lock/
+            );
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('serializes classify-change behind the shared pre-preflight task lock', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-pre-preflight-classify-sequence-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject classify-change overlap while the shared pre-preflight lock is held'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const lockPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        const { handle } = acquireFilesystemLock(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 25,
+            staleMs: 30_000
+        });
+
+        try {
+            assert.throws(
+                () => runClassifyChangeCommand({
+                    repoRoot,
+                    taskId,
+                    taskIntent: 'Reject classify-change overlap while the shared pre-preflight lock is held',
+                    changedFiles: ['src/app.ts'],
+                    emitMetrics: false
+                }),
+                /Timed out acquiring file lock/
+            );
+        } finally {
+            releaseFilesystemLock(handle);
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails handshake-diagnostics when the current task cycle already has valid shell-smoke evidence', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-handshake-after-shell-smoke';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject handshake rerun after shell smoke already passed'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const handshakeResult = runHandshakeDiagnosticsCommand({
+            repoRoot,
+            taskId
+        });
+        assert.equal(handshakeResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(handshakeResult.outputLines[0], 'HANDSHAKE_DIAGNOSTICS_FAILED');
+        assert.ok(handshakeResult.outputLines.some((line) => line.includes('already has valid SHELL_SMOKE_PREFLIGHT_RECORDED evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails classify-change when the latest handshake supersedes shell smoke evidence for the current task cycle', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-classify-handshake-shell-smoke-overlap';
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale shell smoke evidence before preflight classification'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Reject stale shell smoke evidence before preflight classification',
+                changedFiles: ['src/app.ts'],
+                outputPath: preflightPath,
+                emitMetrics: false
+            }),
+            /Unsafe same-task overlap detected/
+        );
+        assert.equal(fs.existsSync(preflightPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate with explicit sequencing remediation when POST_PREFLIGHT rule-pack already failed for the current preflight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-failed-artifact';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-failed.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Surface compile remediation after failed POST_PREFLIGHT sequencing'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath, false).exitCode, EXIT_GATE_FAILURE);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects POST_PREFLIGHT rule-pack when a newer preflight already superseded the requested preflight artifact', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-stale-preflight';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale preflight artifacts during POST_PREFLIGHT rule-pack load'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const stalePreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale preflight artifacts during POST_PREFLIGHT rule-pack load',
+            ['src/app.ts'],
+            `${taskId}-stale-preflight.json`
+        );
+        const latestPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale preflight artifacts during POST_PREFLIGHT rule-pack load',
+            ['src/app.ts']
+        );
+
+        const result = loadPostPreflightRulePack(repoRoot, taskId, stalePreflightPath);
+
+        assert.equal(latestPreflightPath.endsWith(`${taskId}-preflight.json`), true);
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('not the latest PREFLIGHT_CLASSIFIED evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+});
