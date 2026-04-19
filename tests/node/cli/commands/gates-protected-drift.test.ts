@@ -1,0 +1,869 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
+import {
+    runClassifyChangeCommand,
+    runCompileGateCommand,
+    runDocImpactGateCommand,
+    runEnterTaskModeCommand,
+    runLoadRulePackCommand,
+    runRequiredReviewsCheckCommand
+} from '../../../../src/cli/commands/gates';
+import { runCompletionGate } from '../../../../src/gates/completion';
+import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import * as childProcess from 'node:child_process';
+
+function createReviewerRoutingFixture(
+    sourceOfTruth: string,
+    overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+    const normalizedSourceOfTruth = String(sourceOfTruth).trim() || 'Codex';
+    const conditionalFallbackProvider = normalizedSourceOfTruth === 'Antigravity';
+    return {
+        source_of_truth: normalizedSourceOfTruth,
+        canonical_source_of_truth: normalizedSourceOfTruth,
+        execution_provider: normalizedSourceOfTruth,
+        execution_provider_source: 'provider_entrypoint',
+        identity_status: 'resolved',
+        capability_level: conditionalFallbackProvider ? 'delegation_conditional' : 'delegation_capable',
+        expected_execution_mode: conditionalFallbackProvider ? 'delegated_subagent' : 'delegated_subagent',
+        fallback_allowed: conditionalFallbackProvider,
+        fallback_reason_required: conditionalFallbackProvider,
+        actual_execution_mode: null,
+        reviewer_session_id: null,
+        fallback_reason: null,
+        ...overrides
+    };
+}
+
+function createTempRepo(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+    seedRuleFiles(root);
+    return root;
+}
+
+const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
+    Claude: 'CLAUDE.md',
+    Codex: 'AGENTS.md',
+    Gemini: 'GEMINI.md',
+    Qwen: 'QWEN.md',
+    GitHubCopilot: '.github/copilot-instructions.md',
+    Windsurf: '.windsurf/rules/rules.md',
+    Junie: '.junie/guidelines.md',
+    Antigravity: '.antigravity/rules.md'
+};
+
+const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
+    GitHubCopilot: '.github/agents/orchestrator.md',
+    Windsurf: '.windsurf/agents/orchestrator.md',
+    Junie: '.junie/agents/orchestrator.md',
+    Antigravity: '.antigravity/agents/orchestrator.md'
+};
+
+function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
+    if (String(options.provider || '').trim() || String(options.routedTo || '').trim()) {
+        return options;
+    }
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
+        return options;
+    }
+
+    try {
+        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+        const sourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+        const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
+        if (!sourceOfTruth || !routedTo) {
+            return options;
+        }
+        return {
+            ...options,
+            provider: sourceOfTruth,
+            routedTo
+        };
+    } catch {
+        return options;
+    }
+}
+
+function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
+    return runEnterTaskModeCommand(withDefaultTaskModeRouting(options));
+}
+
+function seedRuleFiles(repoRoot: string): void {
+    const rulesRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules');
+    fs.mkdirSync(rulesRoot, { recursive: true });
+    const ruleFiles = [
+        '00-core.md',
+        '30-code-style.md',
+        '35-strict-coding-rules.md',
+        '40-commands.md',
+        '50-structure-and-docs.md',
+        '70-security.md',
+        '80-task-workflow.md',
+        '90-skill-catalog.md'
+    ];
+    for (const ruleFile of ruleFiles) {
+        fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+    }
+}
+
+function getReviewsRoot(repoRoot: string): string {
+    return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+}
+
+function getOrchestratorRoot(repoRoot: string): string {
+    return path.join(repoRoot, 'garda-agent-orchestrator');
+}
+
+function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] = ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']): void {
+    const manifestPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'protected-control-plane-manifest.json');
+    const rulesRoot = path.join(getOrchestratorRoot(repoRoot), 'live', 'docs', 'agent-rules');
+    const crypto = require('node:crypto');
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    const protectedSnapshot: Record<string, string> = {};
+    for (const ruleFile of fs.readdirSync(rulesRoot).filter((entry) => entry.endsWith('.md')).sort()) {
+        const relativePath = `garda-agent-orchestrator/live/docs/agent-rules/${ruleFile}`;
+        const contents = fs.readFileSync(path.join(rulesRoot, ruleFile), 'utf8');
+        protectedSnapshot[relativePath] = crypto.createHash('sha256').update(contents).digest('hex');
+    }
+    for (const changedFile of changedFiles) {
+        protectedSnapshot[changedFile] = 'stale-manifest-hash';
+    }
+    fs.writeFileSync(manifestPath, JSON.stringify({
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        timestamp_utc: '2026-04-02T16:59:00.000Z',
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        orchestrator_root: getOrchestratorRoot(repoRoot).replace(/\\/g, '/'),
+        protected_roots: ['garda-agent-orchestrator/live/docs/agent-rules/'],
+        protected_snapshot: protectedSnapshot,
+        is_source_checkout: false
+    }, null, 2), 'utf8');
+}
+
+function writePreflight(
+    repoRoot: string,
+    taskId: string,
+    overrides: Record<string, unknown> = {},
+    outputFileName = `${taskId}-preflight.json`
+): string {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const preflightPath = path.join(reviewsRoot, outputFileName);
+    const payload = {
+        task_id: taskId,
+        detection_source: 'explicit_changed_files',
+        mode: 'FULL_PATH',
+        metrics: { changed_lines_total: 3 },
+        required_reviews: {
+            code: true,
+            db: false,
+            security: false,
+            refactor: false,
+            api: false,
+            test: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        },
+        triggers: {},
+        changed_files: ['src/app.ts'],
+        ...overrides
+    };
+    fs.writeFileSync(preflightPath, JSON.stringify(payload, null, 2), 'utf8');
+    return preflightPath;
+}
+
+function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
+    const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
+    const existingEvents = readTaskTimelineEvents(repoRoot, taskId);
+    const latestMatchingEvent = [...existingEvents].reverse().find((event) => (
+        event.event_type === 'PREFLIGHT_CLASSIFIED'
+        && String((event.details as Record<string, unknown> | undefined)?.output_path || '') === normalizedPreflightPath
+    ));
+    if (latestMatchingEvent) {
+        return;
+    }
+
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : {};
+    const mode = String(preflight.mode || 'FULL_PATH');
+    const changedFilesCount = Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0;
+    const changedLinesTotal = Number(metrics.changed_lines_total || 0);
+    const zeroDiffGuard = preflight.zero_diff_guard && typeof preflight.zero_diff_guard === 'object' && !Array.isArray(preflight.zero_diff_guard)
+        ? preflight.zero_diff_guard
+        : (changedFilesCount === 0 && changedLinesTotal === 0
+            ? { zero_diff_detected: true, status: 'BASELINE_ONLY' }
+            : null);
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'PREFLIGHT_CLASSIFIED',
+        'INFO',
+        zeroDiffGuard
+            ? `Preflight completed with mode ${mode} (zero-diff baseline only).`
+            : `Preflight completed with mode ${mode}.`,
+        {
+            mode,
+            output_path: normalizedPreflightPath,
+            changed_files_count: changedFilesCount,
+            changed_lines_total: changedLinesTotal,
+            required_reviews: preflight.required_reviews || {},
+            zero_diff_guard: zeroDiffGuard
+        }
+    );
+}
+
+function runExplicitPreflight(
+    repoRoot: string,
+    taskId: string,
+    taskIntent: string,
+    changedFiles: string[],
+    outputFileName = `${taskId}-preflight.json`,
+    taskModePath = ''
+): string {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), outputFileName);
+    const result = runClassifyChangeCommand({
+        repoRoot,
+        taskId,
+        taskIntent,
+        changedFiles,
+        taskModePath,
+        outputPath: preflightPath,
+        emitMetrics: false
+    });
+    const payload = JSON.parse(result.outputText);
+    assert.equal(payload.task_id, taskId);
+    return preflightPath;
+}
+
+function writeReceiptBackedReviewArtifact(
+    repoRoot: string,
+    taskId: string,
+    reviewKey: string,
+    verdict: string,
+    contentLines?: string[]
+): void {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const content = (contentLines || [
+        '# Review',
+        '',
+        `Verified changes in \`src/app.ts\`. This review artifact content has been extended with more words to ensure it strictly passes the newly introduced triviality check, which demands at least thirty words if there are no meaningful findings or risks.`,
+        '',
+        verdict,
+        '',
+        '## Findings by Severity',
+        'none',
+        '',
+        '## Residual Risks',
+        'none',
+        '',
+        '## Verdict',
+        verdict
+    ]).join('\n');
+    const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
+    fs.writeFileSync(artifactPath, content, 'utf8');
+    const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
+    const reviewContext = {
+        review_type: reviewKey,
+        reviewer_routing: createReviewerRoutingFixture('Codex', {
+            actual_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:test-reviewer'
+        })
+    };
+    const reviewContextText = JSON.stringify(reviewContext, null, 2);
+    fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
+
+    // Authenticity hardening: write a verifiable receipt.
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
+    const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
+    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    fs.writeFileSync(receiptPath, JSON.stringify({
+        schema_version: 2,
+        task_id: taskId,
+        review_type: reviewKey,
+        review_artifact_sha256: artifactHash,
+        review_context_sha256: reviewContextHash,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: 'agent:test-reviewer'
+    }));
+
+    // Emit mandatory telemetry for authenticity
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
+        const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
+            review_type: reviewKey
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
+            review_type: reviewKey,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:test-reviewer',
+            delegation_used: true
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
+    }
+}
+
+function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
+    writeReceiptBackedReviewArtifact(repoRoot, taskId, reviewKey, verdict);
+}
+
+function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | default | fixture |`
+    ].join('\n'), 'utf8');
+}
+
+function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+    fs.writeFileSync(initAnswersPath, JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: sourceOfTruth,
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        CollectedVia: 'AGENT_INIT_PROMPT.md',
+        ActiveAgentFiles: 'AGENTS.md'
+    }, null, 2), 'utf8');
+}
+
+function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    let canonicalSourceOfTruth = provider;
+    if (fs.existsSync(initAnswersPath) && fs.statSync(initAnswersPath).isFile()) {
+        try {
+            const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+            const seededSourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+            if (seededSourceOfTruth) {
+                canonicalSourceOfTruth = seededSourceOfTruth;
+            }
+        } catch {
+            // Keep the lightweight test fixture tolerant of malformed init answers.
+        }
+    }
+    const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || 'AGENTS.md';
+    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
+    const providerBridgeCandidate = PROVIDER_BRIDGE_BY_SOURCE[provider] || null;
+    const providerBridgePath = providerBridgeCandidate && fs.existsSync(path.join(repoRoot, providerBridgeCandidate))
+        ? providerBridgeCandidate
+        : null;
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'handshake-diagnostics',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        provider,
+        execution_provider: provider,
+        canonical_source_of_truth: canonicalSourceOfTruth,
+        canonical_entrypoint: canonicalEntrypoint,
+        canonical_entrypoint_exists: true,
+        provider_bridge: providerBridgePath,
+        provider_bridge_exists: providerBridgePath !== null,
+        routed_to: routedTo,
+        execution_provider_source: 'explicit_provider',
+        runtime_identity_status: 'resolved',
+        start_task_router_path: '.agents/workflows/start-task.md',
+        start_task_router_exists: true,
+        execution_context: 'materialized-bundle',
+        cli_path: 'node garda-agent-orchestrator/bin/garda.js',
+        effective_cwd: repoRoot.replace(/\\/g, '/'),
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        diagnostics: [],
+        violations: []
+    }, null, 2), 'utf8');
+}
+
+function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
+    const result = childProcess.spawnSync('git', args, {
+        cwd: repoRoot,
+        windowsHide: true,
+        encoding: 'utf8'
+    });
+    if (result.error) {
+        throw result.error;
+    }
+    assert.equal(
+        result.status,
+        0,
+        `git ${args.join(' ')} failed: ${String(result.stderr || result.stdout || '').trim()}`
+    );
+    return result;
+}
+
+function initializeGitRepo(repoRoot: string): void {
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+}
+
+function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
+    const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    return fs.readFileSync(timelinePath, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = '') {
+    return runLoadRulePackCommand({
+        repoRoot,
+        taskId,
+        stage: 'TASK_ENTRY',
+        taskModePath,
+        loadedRuleFiles: [
+            '00-core.md',
+            '40-commands.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ],
+        emitMetrics: false
+    });
+}
+
+function loadPostPreflightRulePack(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    ensurePreflightClassified = true,
+    artifactPath = '',
+    taskModePath = ''
+) {
+    if (ensurePreflightClassified) {
+        appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
+    }
+    return runLoadRulePackCommand({
+        repoRoot,
+        taskId,
+        stage: 'POST_PREFLIGHT',
+        preflightPath,
+        artifactPath,
+        taskModePath,
+        loadedRuleFiles: [
+            '00-core.md',
+            '35-strict-coding-rules.md',
+            '40-commands.md',
+            '50-structure-and-docs.md',
+            '70-security.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ],
+        emitMetrics: false
+    });
+}
+
+function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex') {
+    writeHandshakeArtifact(repoRoot, taskId, provider);
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const artifactPath = path.join(orchestratorRoot, 'runtime', 'reviews', `${taskId}-handshake.json`);
+    const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+    const artifact = JSON.parse(artifactContent) as Record<string, unknown>;
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(artifactContent).digest('hex');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'PASS',
+        `Handshake diagnostics passed: provider=${provider}, context=materialized-bundle.`,
+        {
+            provider,
+            execution_provider: artifact.execution_provider ?? provider,
+            canonical_source_of_truth: artifact.canonical_source_of_truth ?? provider,
+            execution_provider_source: artifact.execution_provider_source ?? 'explicit_provider',
+            execution_context: 'materialized-bundle',
+            cli_path: 'node garda-agent-orchestrator/bin/garda.js',
+            passed: true,
+            artifact_hash: artifactHash
+        },
+        { actor: 'gate', passThru: true }
+    );
+}
+
+function writeShellSmokeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.writeFileSync(path.join(reviewsRoot, `${taskId}-shell-smoke.json`), JSON.stringify({
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'shell-smoke-preflight',
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        provider,
+        execution_context: 'materialized-bundle',
+        effective_cwd: repoRoot.replace(/\\/g, '/'),
+        workspace_root: repoRoot.replace(/\\/g, '/'),
+        probes: [],
+        violations: []
+    }, null, 2), 'utf8');
+}
+
+function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Codex') {
+    writeShellSmokeArtifact(repoRoot, taskId, provider);
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const artifactPath = path.join(orchestratorRoot, 'runtime', 'reviews', `${taskId}-shell-smoke.json`);
+    const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+    const crypto = require('node:crypto');
+    const artifactHash = crypto.createHash('sha256').update(artifactContent).digest('hex');
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        'PASS',
+        `Shell smoke preflight passed: provider=${provider}, context=materialized-bundle.`,
+        { provider, execution_context: 'materialized-bundle', passed: true, artifact_hash: artifactHash },
+        { actor: 'gate', passThru: true }
+    );
+}
+
+describe('cli/commands/gates', () => {
+    it('fails compile gate when preflight already recorded trusted protected manifest drift before task start', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-manifest-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            triggers: {
+                protected_control_plane_manifest_status: 'DRIFT',
+                protected_control_plane_manifest_changed_files: ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-manifest-drift.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject ordinary compile on trusted manifest drift'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest was already drifted before task start')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when inherited protected baseline drift expands after preflight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-manifest-drift-expanded';
+        const baselineProtectedPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md');
+        const extraProtectedPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '40-commands.md');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(baselineProtectedPath, '# baseline protected drift\n', 'utf8');
+        writeDriftedProtectedManifest(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block manifest drift that expands beyond the inherited protected baseline'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Block manifest drift that expands beyond the inherited protected baseline',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        fs.writeFileSync(extraProtectedPath, '# expanded protected drift\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-manifest-drift-expanded.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile gate')));
+        assert.ok(result.outputLines.some((line) => line.includes('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when a protected pre-existing dirty file changes outside explicit scope', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901dirty-protected';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        const unrelatedPath = path.join(repoRoot, 'src', 'unrelated.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 34;\nconst b = 55;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "before";\n', 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Protect unrelated dirty workspace edits'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(repoRoot, taskId, 'Protect unrelated dirty workspace edits', ['src/app.ts']);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+        assert.deepEqual(preflight.triggers.dirty_workspace_protected_files, ['src/unrelated.ts']);
+
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "after";\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-protected.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Protected pre-existing workspace edits changed outside task scope')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails completion gate when a protected pre-existing dirty file changes after review passed', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903dirty-completion';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        const unrelatedPath = path.join(repoRoot, 'src', 'unrelated.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(appPath, 'const a = 89;\nconst b = 144;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "baseline";\n', 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Protect unrelated dirty workspace edits through completion'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Protect unrelated dirty workspace edits through completion',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const commandsPath = path.join(repoRoot, 'commands-dirty-completion.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Internal cleanup only, no public behavior change.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        fs.writeFileSync(unrelatedPath, 'export const unrelated = "mutated";\n', 'utf8');
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'FAIL');
+        assert.ok(completionResult.violations.some((item: string) => item.includes('Protected pre-existing workspace edits changed outside task scope')));
+        assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'DRIFT_DETECTED');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('passes completion gate when protected manifest drift is inherited baseline only', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903manifest-drift-baseline-only';
+        const protectedRulePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(protectedRulePath, '# baseline protected drift\n', 'utf8');
+        writeDriftedProtectedManifest(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow inherited protected manifest drift through completion'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow inherited protected manifest drift through completion',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const commandsPath = path.join(repoRoot, 'commands-manifest-drift-completion.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0, reviewResult.outputLines.join('\n'));
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Ordinary task scope stayed non-protected; no operator-facing docs changed.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const completionResult = runCompletionGate({
+            repoRoot,
+            preflightPath,
+            taskId
+        });
+        assert.equal(completionResult.outcome, 'PASS');
+        assert.equal(completionResult.status, 'PASSED');
+        assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'PASS');
+        assert.deepEqual(completionResult.isolation_mode_warnings, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+});
