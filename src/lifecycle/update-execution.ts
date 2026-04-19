@@ -36,7 +36,10 @@ export interface MaterializationRunnerOptions {
     assistantBrevity: string;
     sourceOfTruth: string;
     enforceNoAutoCommit: boolean;
+    claudeOrchestratorFullAccess: boolean;
     tokenEconomyEnabled: boolean;
+    providerMinimalism: boolean;
+    activeAgentFilesSeed: string | null;
 }
 
 export interface VerifyRunnerOptions {
@@ -180,7 +183,10 @@ export function executeUpdatePipelineStages(options: {
                     assistantBrevity: sources.assistantBrevity,
                     sourceOfTruth: sources.sourceOfTruth,
                     enforceNoAutoCommit: sources.enforceNoAutoCommit,
-                    tokenEconomyEnabled: sources.tokenEconomyEnabled
+                    claudeOrchestratorFullAccess: sources.claudeOrchestratorFullAccess,
+                    tokenEconomyEnabled: sources.tokenEconomyEnabled,
+                    providerMinimalism: sources.providerMinimalism,
+                    activeAgentFilesSeed: sources.activeAgentFilesSeed
                 });
             } else {
                 runInit({
@@ -191,7 +197,10 @@ export function executeUpdatePipelineStages(options: {
                     assistantBrevity: sources.assistantBrevity,
                     sourceOfTruth: sources.sourceOfTruth,
                     enforceNoAutoCommit: sources.enforceNoAutoCommit,
-                    tokenEconomyEnabled: sources.tokenEconomyEnabled
+                    claudeOrchestratorFullAccess: sources.claudeOrchestratorFullAccess,
+                    tokenEconomyEnabled: sources.tokenEconomyEnabled,
+                    providerMinimalism: sources.providerMinimalism,
+                    activeAgentFilesSeed: sources.activeAgentFilesSeed
                 });
             }
             materializationStatus = 'PASS';

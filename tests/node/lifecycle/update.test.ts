@@ -11,6 +11,12 @@ import { getLifecycleOperationLockPath, removePathRecursive } from '../../../src
 import { formatManifestResult, validateManifest } from '../../../src/validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../../../src/validators/verify';
 
+type CapturedMaterializationOptions = {
+    claudeOrchestratorFullAccess?: boolean;
+    providerMinimalism?: boolean;
+    activeAgentFilesSeed?: string | null;
+};
+
 function findRepoRoot() {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
@@ -819,6 +825,46 @@ describe('runUpdate', () => {
             assert.equal(persistedState.VerificationPassed, true);
             assert.equal(persistedState.ManifestValidationPassed, true);
             assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'task-events', '.T-STALE.lock')));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('passes gitignore-scoping init fields to the update materialization runner', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(path.join(bundleRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'true',
+                TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
+                CollectedVia: 'CLI_NONINTERACTIVE',
+                ActiveAgentFiles: 'CLAUDE.md, AGENTS.md'
+            }, null, 2), 'utf8');
+            let captured: CapturedMaterializationOptions | undefined;
+            let capturedCalled = false;
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true,
+                materializationRunner: (options) => {
+                    captured = options;
+                    capturedCalled = true;
+                }
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(capturedCalled, true, 'materializationRunner should receive update-provided init options');
+            const capturedOptions = captured!;
+            assert.equal(capturedOptions.claudeOrchestratorFullAccess, true);
+            assert.equal(capturedOptions.providerMinimalism, false);
+            assert.equal(capturedOptions.activeAgentFilesSeed, 'CLAUDE.md, AGENTS.md');
         } finally {
             removePathRecursive(projectRoot);
         }

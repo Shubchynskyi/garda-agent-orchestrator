@@ -137,6 +137,94 @@ export function getDefaultInitAnswersPath(targetRoot: string, bundlePath?: strin
     return path.join(path.basename(effectiveBundlePath), 'runtime', 'init-answers.json');
 }
 
+interface CachedRuntimeModule {
+    id: string;
+    children: CachedRuntimeModule[];
+}
+
+function normalizeModuleCachePath(filePath: string): string {
+    const resolvedPath = path.resolve(filePath);
+    return process.platform === 'win32'
+        ? resolvedPath.toLowerCase()
+        : resolvedPath;
+}
+
+function getBundleRuntimeRoot(bundlePath: string): string {
+    return path.join(path.resolve(bundlePath), 'dist', 'src');
+}
+
+function isBundleRuntimeModulePath(filePath: string, runtimeRoot: string): boolean {
+    const normalizedFilePath = normalizeModuleCachePath(filePath);
+    const normalizedRuntimeRoot = normalizeModuleCachePath(runtimeRoot);
+    return normalizedFilePath === normalizedRuntimeRoot
+        || normalizedFilePath.startsWith(`${normalizedRuntimeRoot}${path.sep}`);
+}
+
+function collectReachableCachedRuntimeModules(
+    entryModulePaths: string[],
+    runtimeRoot: string
+): string[] {
+    const visited = new Set<string>();
+    const toInvalidate = new Set<string>();
+    const queue: CachedRuntimeModule[] = [];
+
+    for (const entryModulePath of entryModulePaths) {
+        try {
+            const resolvedEntryPath = require.resolve(entryModulePath);
+            const cachedModule = require.cache[resolvedEntryPath] as CachedRuntimeModule | undefined;
+            if (cachedModule) {
+                queue.push(cachedModule);
+            }
+        } catch {
+            // ignore cache miss
+        }
+    }
+
+    while (queue.length > 0) {
+        const currentModule = queue.pop();
+        if (!currentModule) {
+            continue;
+        }
+        if (visited.has(currentModule.id)) {
+            continue;
+        }
+        visited.add(currentModule.id);
+
+        if (!isBundleRuntimeModulePath(currentModule.id, runtimeRoot)) {
+            continue;
+        }
+
+        toInvalidate.add(path.resolve(currentModule.id));
+        for (const childModule of currentModule.children) {
+            if (!visited.has(childModule.id)) {
+                queue.push(childModule);
+            }
+        }
+    }
+
+    return Array.from(toInvalidate).sort();
+}
+
+export function invalidateBundleRuntimeModuleCache(bundlePath: string, entryModulePaths?: string[]): string[] {
+    const runtimeRoot = getBundleRuntimeRoot(bundlePath);
+    if (!fs.existsSync(runtimeRoot)) {
+        return [];
+    }
+
+    const invalidatedPaths = entryModulePaths && entryModulePaths.length > 0
+        ? collectReachableCachedRuntimeModules(entryModulePaths, runtimeRoot)
+        : Object.keys(require.cache)
+            .filter((cachedPath) => isBundleRuntimeModulePath(cachedPath, runtimeRoot))
+            .map((cachedPath) => path.resolve(cachedPath))
+            .sort();
+
+    for (const invalidatedPath of invalidatedPaths) {
+        delete require.cache[invalidatedPath];
+    }
+
+    return invalidatedPaths;
+}
+
 export function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: boolean | undefined) {
     return function runLifecycleFromCli(runnerOptions: CheckUpdateRunnerOptions): UpdateLifecycleResult {
         const bundleResolved = path.resolve(bundlePath);
@@ -152,16 +240,12 @@ export function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: b
 
         if (fs.existsSync(targetUpdateModulePath)) {
             try {
-                [targetUpdateModulePath, targetMigrationModulePath, targetVerifyModulePath, targetManifestModulePath].forEach((modulePath) => {
-                    try {
-                        const resolved = require.resolve(modulePath);
-                        if (require.cache[resolved]) {
-                            delete require.cache[resolved];
-                        }
-                    } catch {
-                        // ignore cache miss
-                    }
-                });
+                invalidateBundleRuntimeModuleCache(bundlePath, [
+                    targetUpdateModulePath,
+                    targetMigrationModulePath,
+                    targetVerifyModulePath,
+                    targetManifestModulePath
+                ]);
 
                 const newUpdateModule = require(targetUpdateModulePath);
                 if (typeof newUpdateModule.runUpdate === 'function') {

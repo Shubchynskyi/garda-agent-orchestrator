@@ -16,7 +16,9 @@ export interface ResolvedUpdateSources {
     assistantBrevity: string;
     sourceOfTruth: string;
     enforceNoAutoCommit: boolean;
+    claudeOrchestratorFullAccess: boolean;
     tokenEconomyEnabled: boolean;
+    providerMinimalism: boolean;
     activeAgentFilesSeed: string | null;
     previousVersion: string;
     previousVersionSource: string;
@@ -150,7 +152,9 @@ export function resolveUpdateSources(
         assistantBrevity: validated.AssistantBrevity,
         sourceOfTruth: validated.SourceOfTruth,
         enforceNoAutoCommit: validated.EnforceNoAutoCommit,
+        claudeOrchestratorFullAccess: validated.ClaudeOrchestratorFullAccess,
         tokenEconomyEnabled: validated.TokenEconomyEnabled,
+        providerMinimalism: validated.ProviderMinimalism,
         activeAgentFilesSeed,
         previousVersion,
         previousVersionSource,

@@ -57,7 +57,10 @@ interface RunInstallOptions {
         assistantBrevity: string;
         sourceOfTruth: string;
         enforceNoAutoCommit: boolean;
+        claudeOrchestratorFullAccess: boolean;
         tokenEconomyEnabled: boolean;
+        providerMinimalism: boolean;
+        activeAgentFilesSeed: string | null;
     }) => void;
 }
 
@@ -699,7 +702,10 @@ export function runInstall(options: RunInstallOptions) {
             assistantBrevity: trimmedBrevity,
             sourceOfTruth: initAnswers.SourceOfTruth,
             enforceNoAutoCommit,
-            tokenEconomyEnabled
+            claudeOrchestratorFullAccess: enableClaudeOrchestratorFullAccess,
+            tokenEconomyEnabled,
+            providerMinimalism,
+            activeAgentFilesSeed: activeEntryFilesSeed
         });
         initInvoked = true;
     }

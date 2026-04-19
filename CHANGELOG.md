@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- fixed long-lived local update and rollback flows to invalidate bundle runtime module cache comprehensively so later commands reload fresh bundle code instead of mixing stale transitive modules
 - added `garda preprompt task --json` as a read-only bootstrap surface for current task context, canonical next commands, and bounded lifecycle diagnostics
 - improved orchestration lifecycle reliability with stricter gate sequencing, safer rerun and recovery flows, and completion checks based on the latest coherent cycle
 - strengthened the review pipeline with earlier artifact validation, automated review materialization and ingestion, dependency-ordered reviews, and code-review reuse for test-only reruns

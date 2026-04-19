@@ -179,6 +179,27 @@ describe('runInit', () => {
         }
     });
 
+    it('syncs root .gitignore and includes .review-temp during standalone init', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+            assert.ok(gitignore.includes('# garda-agent-orchestrator managed ignores'));
+            assert.ok(gitignore.includes('garda-agent-orchestrator/'));
+            assert.ok(gitignore.includes('TASK.md'));
+            assert.ok(gitignore.includes('.review-temp/'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('rewrites garda.config.json from the canonical template on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

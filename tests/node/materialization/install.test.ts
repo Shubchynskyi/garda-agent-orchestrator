@@ -12,6 +12,12 @@ import {
     getUninstallBackupGitignoreEntry
 } from '../../../src/materialization/content-builders';
 
+type CapturedInitRunnerOptions = {
+    claudeOrchestratorFullAccess?: boolean;
+    providerMinimalism?: boolean;
+    activeAgentFilesSeed?: string | null;
+};
+
 function findRepoRoot() {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
@@ -1579,6 +1585,47 @@ describe('runInstall', () => {
             const settings = JSON.parse(fs.readFileSync(vscodePath, 'utf8'));
             assert.equal(settings['editor.fontSize'], 16, 'user settings should be preserved');
             assert.equal(settings['files.exclude']['**/garda-agent-orchestrator'], true);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('passes gitignore-scoping init inputs to initRunner when install invokes init', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'true',
+                TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
+                CollectedVia: 'CLI_NONINTERACTIVE',
+                ActiveAgentFiles: 'CLAUDE.md, AGENTS.md'
+            });
+            let captured: CapturedInitRunnerOptions | undefined;
+            let capturedCalled = false;
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: true,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath,
+                initRunner(options) {
+                    captured = options;
+                    capturedCalled = true;
+                }
+            });
+
+            assert.equal(capturedCalled, true, 'initRunner should receive install-provided init options');
+            const capturedOptions = captured!;
+            assert.equal(capturedOptions.claudeOrchestratorFullAccess, true);
+            assert.equal(capturedOptions.providerMinimalism, false);
+            assert.equal(capturedOptions.activeAgentFilesSeed, 'CLAUDE.md, AGENTS.md');
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

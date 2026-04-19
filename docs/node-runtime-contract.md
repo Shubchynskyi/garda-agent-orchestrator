@@ -116,6 +116,7 @@ Ordinary `update` and `check-update --apply` additionally:
 - re-run install and live materialization
 - apply built-in migrations for mandatory live rule contracts in existing workspaces
 - run verify plus manifest validation before the update is considered successful
+- invalidate cached bundle runtime modules after a successful apply so long-lived host processes reload the synced bundle on later commands
 - keep update-source trust in enforced mode unless the operator explicitly passes `--trust-override --no-prompt`
 - record trust-policy audit data (`TrustPolicy`, `TrustOverrideUsed`, `TrustOverrideSource`) in update CLI output and update reports
 

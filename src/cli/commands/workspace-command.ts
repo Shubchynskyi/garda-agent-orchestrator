@@ -99,7 +99,10 @@ export function handleInit(commandArgv: string[], packageJson: PackageJsonLike):
         assistantBrevity: answers.assistantBrevity,
         sourceOfTruth: answers.sourceOfTruth,
         enforceNoAutoCommit: answers.enforceNoAutoCommit,
+        claudeOrchestratorFullAccess: answers.claudeOrchestratorFullAccess,
         tokenEconomyEnabled: answers.tokenEconomyEnabled,
+        providerMinimalism: answers.providerMinimalism,
+        activeAgentFilesSeed: answers.activeAgentFiles,
         dryRun: options.dryRun === true
     }) as Record<string, unknown>;
     console.log('Init: PASS');
@@ -108,4 +111,3 @@ export function handleInit(commandArgv: string[], packageJson: PackageJsonLike):
         'ruleFilesMaterialized', 'projectDiscoveryPath', 'usagePath'
     ]);
 }
-

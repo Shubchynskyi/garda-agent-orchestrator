@@ -174,6 +174,7 @@ Notes:
 - `--trust-override` is an explicit bypass for non-allowlisted npm specs, git sources, or local `--source-path` testing, and the public CLI only accepts it together with `--no-prompt`.
 - Ordinary CLI/runtime flows ignore `GARDA_UPDATE_TRUST_OVERRIDE`; that environment variable is reserved for test-only harness paths, not for production or CI.
 - `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, applies built-in live-rule contract migrations for existing workspaces, runs verify plus manifest validation, enforces a hard atomic consistency invariant for the deployed bundle, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
+- Successful apply runs also invalidate cached bundle runtime modules so long-lived host processes reload the freshly synced bundle on later commands.
 
 ### `garda update`
 
@@ -191,6 +192,7 @@ Notes:
 - Use `--trust-override --no-prompt` only when you intentionally bypass the trusted-source allowlist for a local or non-standard source; the update report records that override.
 - Successful applies sync bundle files, run install, re-materialize `live/`, apply built-in live-rule contract migrations for existing workspaces, run verify plus manifest validation, and only then write the final `VERSION` marker.
 - Successful applies create rollback artifacts under `garda-agent-orchestrator/runtime/update-rollbacks/` and `garda-agent-orchestrator/runtime/bundle-backups/`.
+- Successful applies also invalidate cached bundle runtime modules so long-lived host processes do not keep stale command or validator code resident after the bundle changes.
 - Update reports now reflect actual execution status; steps with no configured runner are reported as skipped rather than pass.
 - Use `garda check-update --apply` when you want a compare-first flow with optional apply.
 
@@ -210,6 +212,7 @@ Notes:
 - `--check-only` compares the git source without applying it.
 - Trusted git sources stay in enforced mode; if you bypass git-source trust with `--trust-override --no-prompt`, that override is recorded in CLI output and the update report.
 - With no extra flags, `garda update git` targets the current directory and uses the default GitHub repository URL.
+- Successful applies invalidate cached bundle runtime modules just like npm-based `update`, so long-lived host processes reload the new bundle on later commands.
 
 ### `garda rollback`
 
@@ -230,6 +233,7 @@ Notes:
 - `--init-answers-path` is required for version-based rollback because the workspace is re-materialized for the requested version.
 - `--snapshot-path` applies to snapshot-mode rollback; with no `--snapshot-path`, `rollback` uses the latest saved rollback snapshot automatically.
 - Older updates created before rollback metadata persistence may require manual recovery.
+- Successful non-dry-run rollback also invalidates cached bundle runtime modules so later commands in the same host process reload the restored bundle instead of stale in-memory code.
 
 ### `garda cleanup`
 

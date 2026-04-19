@@ -254,6 +254,7 @@ export function readInitAnswersArtifact(targetRoot: string, initAnswersPath: str
     const enforceNoAutoCommit = parseBooleanText(getInitAnswerValue(answers, 'EnforceNoAutoCommit') ?? false, 'EnforceNoAutoCommit');
     const claudeOrchestratorFullAccess = parseBooleanText(getInitAnswerValue(answers, 'ClaudeOrchestratorFullAccess'), 'ClaudeOrchestratorFullAccess');
     const tokenEconomyEnabled = parseBooleanText(getInitAnswerValue(answers, 'TokenEconomyEnabled') ?? false, 'TokenEconomyEnabled');
+    const providerMinimalism = parseBooleanText(getInitAnswerValue(answers, 'ProviderMinimalism') ?? true, 'ProviderMinimalism');
     const collectedVia = normalizeCollectedVia(getInitAnswerValue(answers, 'CollectedVia'));
     const activeAgentFiles = parseOptionalText(getInitAnswerValue(answers, 'ActiveAgentFiles'));
 
@@ -265,6 +266,7 @@ export function readInitAnswersArtifact(targetRoot: string, initAnswersPath: str
         enforceNoAutoCommit,
         claudeOrchestratorFullAccess,
         tokenEconomyEnabled,
+        providerMinimalism,
         collectedVia,
         activeAgentFiles
     };

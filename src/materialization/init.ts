@@ -6,12 +6,17 @@ import { ALL_AGENT_ENTRYPOINT_FILES , resolveBundleName} from '../core/constants
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
+    getActiveAgentEntrypointFiles,
     getCanonicalEntrypointFile,
     getGitHubSkillBridgeProfileDefinitions,
     getLegacyManagedGitignoreEntries,
     getProviderOrchestratorProfileDefinitions,
     SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
 } from './common';
+import {
+    buildGitignoreEntries,
+    syncManagedGitignoreBlockInContent
+} from './content-builders';
 import { getProjectDiscovery, buildProjectDiscoveryLines, buildDiscoveryOverlaySection } from './project-discovery';
 import {
     RULE_FILES,
@@ -33,7 +38,10 @@ interface RunInitOptions {
     assistantBrevity?: string;
     sourceOfTruth?: string;
     enforceNoAutoCommit?: boolean;
+    claudeOrchestratorFullAccess?: boolean;
     tokenEconomyEnabled?: boolean;
+    providerMinimalism?: boolean;
+    activeAgentFilesSeed?: string | null;
 }
 
 interface RuleSourceMapEntry {
@@ -104,7 +112,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * @param {string} [options.assistantBrevity='concise']
  * @param {string} [options.sourceOfTruth='Claude']
  * @param {boolean} [options.enforceNoAutoCommit=false]
+ * @param {boolean} [options.claudeOrchestratorFullAccess=false]
  * @param {boolean} [options.tokenEconomyEnabled=true]
+ * @param {boolean} [options.providerMinimalism=true]
  * @returns {object} Init result metrics
  */
 export function runInit(options: RunInitOptions) {
@@ -116,7 +126,10 @@ export function runInit(options: RunInitOptions) {
         assistantBrevity = 'concise',
         sourceOfTruth = 'Claude',
         enforceNoAutoCommit = false,
-        tokenEconomyEnabled = true
+        claudeOrchestratorFullAccess = false,
+        tokenEconomyEnabled = true,
+        providerMinimalism = true,
+        activeAgentFilesSeed = null
     } = options;
 
     const templateRoot = path.join(bundleRoot, 'template');
@@ -140,6 +153,7 @@ export function runInit(options: RunInitOptions) {
     return withLifecycleOperationLock(normalizedTarget, 'init', () => {
     const projectName = path.basename(normalizedTarget);
     const timestampIso = new Date().toISOString();
+    let gitignoreEntriesAdded = 0;
 
     // Normalize parameters
     const lang = (assistantLanguage || 'English').trim() || 'English';
@@ -149,6 +163,11 @@ export function runInit(options: RunInitOptions) {
     }
     const trimmedSoT = (sourceOfTruth || 'Claude').trim();
     const canonicalEntrypoint = getCanonicalEntrypointFile(trimmedSoT);
+    const activeEntryFiles = getActiveAgentEntrypointFiles(activeAgentFilesSeed, trimmedSoT);
+    const resolvedActiveEntryFiles = activeEntryFiles.length > 0 ? activeEntryFiles : [canonicalEntrypoint];
+    const providerOrchestratorProfiles = getProviderOrchestratorProfileDefinitions().filter(
+        (profile) => resolvedActiveEntryFiles.includes(profile.entrypointFile)
+    );
 
     // Ensure live directories
     if (!dryRun) {
@@ -316,8 +335,36 @@ export function runInit(options: RunInitOptions) {
     const projectDiscoveryPath = path.join(liveRoot, 'project-discovery.md');
     const usagePath = path.join(liveRoot, 'USAGE.md');
     const skillsIndexPath = path.join(liveRoot, 'config', 'skills-index.json');
+    const gitignorePath = path.join(normalizedTarget, '.gitignore');
     const sourceInventory = collectSourceInventory(targetRoot);
     const reviewCapabilitiesSync = dryRun ? null : syncReviewCapabilities(bundleRoot);
+    const gitignoreEntries = buildGitignoreEntries(
+        resolvedActiveEntryFiles,
+        providerOrchestratorProfiles,
+        claudeOrchestratorFullAccess,
+        pathExists(path.join(normalizedTarget, '.qwen', 'settings.json')),
+        providerMinimalism
+    );
+
+    if (!dryRun) {
+        const existingGitignoreContent = pathExists(gitignorePath) ? readTextFile(gitignorePath) : '';
+        const gitignoreSync = syncManagedGitignoreBlockInContent(
+            existingGitignoreContent,
+            gitignoreEntries,
+            claudeOrchestratorFullAccess
+        );
+        gitignoreEntriesAdded = gitignoreSync.addedEntries;
+        if (gitignoreSync.changed) {
+            fs.writeFileSync(gitignorePath, gitignoreSync.content, 'utf8');
+        }
+    } else {
+        const existingGitignoreContent = pathExists(gitignorePath) ? readTextFile(gitignorePath) : '';
+        gitignoreEntriesAdded = syncManagedGitignoreBlockInContent(
+            existingGitignoreContent,
+            gitignoreEntries,
+            claudeOrchestratorFullAccess
+        ).addedEntries;
+    }
 
     if (!dryRun) {
         // Source inventory
@@ -359,7 +406,11 @@ export function runInit(options: RunInitOptions) {
         assistantBrevity: brevity,
         sourceOfTruth: trimmedSoT,
         enforceNoAutoCommit,
+        claudeOrchestratorFullAccess,
         tokenEconomyEnabled,
+        providerMinimalism,
+        activeAgentFiles: resolvedActiveEntryFiles,
+        gitignoreEntriesAdded,
         ruleFilesMaterialized: RULE_FILES.length,
         supportDirectoriesSynced: copiedSupportDirs,
         seedOnlyDirectoriesSeeded: seededDirs,

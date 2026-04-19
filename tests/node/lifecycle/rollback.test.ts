@@ -16,6 +16,12 @@ import { removePathRecursive } from '../../../src/lifecycle/common';
 
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
 
+type CapturedMaterializationOptions = {
+    claudeOrchestratorFullAccess?: boolean;
+    providerMinimalism?: boolean;
+    activeAgentFilesSeed?: string | null;
+};
+
 function findRepoRoot() {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
@@ -889,6 +895,55 @@ describe('rollback dry-run preview (T-013)', () => {
             const preview = (result as Record<string, unknown>).previewAffectedItems as string[];
             assert.ok(Array.isArray(preview), 'previewAffectedItems must be an array');
             assert.equal(preview.length, 0, 'non-dry-run must return empty preview');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+});
+
+describe('rollback materialization plumbing', () => {
+    const repoRoot = findRepoRoot();
+
+    it('passes gitignore-scoping init fields to the rollback materialization runner', async () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(path.join(bundleRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'true',
+                TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'false',
+                CollectedVia: 'CLI_NONINTERACTIVE',
+                ActiveAgentFiles: 'CLAUDE.md, AGENTS.md'
+            }, null, 2), 'utf8');
+            const olderSource = path.join(projectRoot, 'older-source');
+            copyDirRecursive(bundleRoot, olderSource);
+            fs.writeFileSync(path.join(olderSource, 'VERSION'), '0.9.0\n', 'utf8');
+            let captured: CapturedMaterializationOptions | undefined;
+            let capturedCalled = false;
+
+            const result = await runRollbackToVersion({
+                targetRoot: projectRoot,
+                bundleRoot,
+                targetVersion: '0.9.0',
+                sourcePath: olderSource,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true,
+                materializationRunner: (options) => {
+                    captured = options;
+                    capturedCalled = true;
+                }
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(capturedCalled, true, 'materializationRunner should receive rollback-provided init options');
+            const capturedOptions = captured!;
+            assert.equal(capturedOptions.claudeOrchestratorFullAccess, true);
+            assert.equal(capturedOptions.providerMinimalism, false);
+            assert.equal(capturedOptions.activeAgentFilesSeed, 'CLAUDE.md, AGENTS.md');
         } finally {
             removePathRecursive(projectRoot);
         }

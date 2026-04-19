@@ -13,6 +13,7 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
     assert.deepEqual(foundation.lifecycleCommands, [
         'setup',
         'agent-init',
+        'preprompt',
         'status',
         'doctor',
         'debug',

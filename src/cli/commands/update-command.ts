@@ -14,6 +14,7 @@ import {
     ensureBundleExists,
     formatKeyValueOutput,
     getDefaultInitAnswersPath,
+    invalidateBundleRuntimeModuleCache,
     mergeUpdateLifecycleOutput,
     ParsedOptionsRecord,
     toKeyValueRecord,
@@ -88,6 +89,10 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
             'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
     }
+
+    if (updateResult.updateApplied === true) {
+        invalidateBundleRuntimeModuleCache(bundlePath);
+    }
 }
 
 export async function handleUpdateGit(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
@@ -153,6 +158,10 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
+    }
+
+    if (updateResult.updateApplied === true) {
+        invalidateBundleRuntimeModuleCache(bundlePath);
     }
 }
 
@@ -220,6 +229,10 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
             'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
     }
+
+    if (checkResult.updateApplied === true) {
+        invalidateBundleRuntimeModuleCache(bundlePath);
+    }
 }
 
 export async function handleRollback(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
@@ -264,10 +277,7 @@ export async function handleRollback(commandArgv: string[], packageJson: Package
 
     if (options.json === true) {
         console.log(JSON.stringify(rollbackResult, null, 2));
-        return;
-    }
-
-    if (rollbackResult.rollbackMode === 'version') {
+    } else if (rollbackResult.rollbackMode === 'version') {
         formatKeyValueOutput(rollbackResult, [
             'targetRoot', 'rollbackMode', 'targetVersion',
             'sourceType', 'sourceReference', 'sourceVersion',
@@ -276,14 +286,17 @@ export async function handleRollback(commandArgv: string[], packageJson: Package
             'safetySnapshotPath', 'safetySnapshotRecordsPath', 'safetyRollbackStatus',
             'bundleSyncBackupPath', 'rollbackReportPath'
         ]);
-        return;
+    } else {
+        formatKeyValueOutput(rollbackResult, [
+            'targetRoot', 'rollbackMode', 'snapshotPath', 'rollbackRecordsPath', 'rollbackRecordCount',
+            'currentVersion', 'snapshotVersion', 'rollbackVersion', 'updatedVersion', 'restoreStatus',
+            'bundleBackupPath', 'bundleBackupMetadataPath', 'bundleRestoreStatus',
+            'safetySnapshotPath', 'safetySnapshotRecordsPath', 'safetyRollbackStatus',
+            'rollbackReportPath'
+        ]);
     }
 
-    formatKeyValueOutput(rollbackResult, [
-        'targetRoot', 'rollbackMode', 'snapshotPath', 'rollbackRecordsPath', 'rollbackRecordCount',
-        'currentVersion', 'snapshotVersion', 'rollbackVersion', 'updatedVersion', 'restoreStatus',
-        'bundleBackupPath', 'bundleBackupMetadataPath', 'bundleRestoreStatus',
-        'safetySnapshotPath', 'safetySnapshotRecordsPath', 'safetyRollbackStatus',
-        'rollbackReportPath'
-    ]);
+    if (options.dryRun !== true) {
+        invalidateBundleRuntimeModuleCache(bundlePath);
+    }
 }
