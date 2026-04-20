@@ -43,6 +43,19 @@ export {
     runHumanCommitCommand
 } from './gate-flows/completion-flow';
 
+export {
+    runFullSuiteValidationCommand
+} from './gate-flows/full-suite-validation-flow';
+
+export {
+    runBuildReviewContextCommand
+} from './gate-flows/review-context-flow';
+
+export {
+    runTaskEventsSummaryCommand,
+    runTaskAuditSummaryCommand
+} from './gate-flows/task-summary-flow';
+
 // ── Re-exports from gates-subprocess (unchanged) ───────────────────────────
 
 export {

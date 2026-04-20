@@ -1,25 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../core/constants';
 import {
-    emitMandatoryCompletionGateEventAsync,
-    emitMandatoryFullSuiteValidationEventAsync
+    emitMandatoryCompletionGateEventAsync
 } from '../../gate-runtime/lifecycle-events';
 import * as gateHelpers from '../../gates/helpers';
 import { formatCompletionGateResult, runCompletionGate } from '../../gates/completion';
-import {
-    buildSkippedResult,
-    buildValidationResult,
-    formatFullSuiteValidationResult,
-    loadFullSuiteValidationConfig,
-    type FullSuiteValidationCycleBinding
-} from '../../gates/full-suite-validation';
-import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../../gates/task-events-summary';
-import {
-    buildTaskAuditSummary,
-    formatTaskAuditSummaryText,
-    synchronizeFinalCloseoutArtifacts
-} from '../../gates/task-audit-summary';
 import { withCompletionGateFinalizationLockAsync } from '../../gates/finalization-lock';
 import {
     runEnterTaskModeCommand,
@@ -40,13 +25,13 @@ import {
     parseRequiredText
 } from './cli-helpers';
 import {
-    formatKeyValueOutput,
     type ParsedOptionsRecord,
     requireResolvedPath
 } from './shared-command-utils';
-import { executeCommand } from './gates-subprocess';
 import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion-finalization';
-import { EXIT_GATE_FAILURE, EXIT_GENERAL_FAILURE } from '../exit-codes';
+import { runFullSuiteValidationCommand } from './gate-flows/full-suite-validation-flow';
+import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task-summary-flow';
+import { EXIT_GATE_FAILURE } from '../exit-codes';
 
 export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
     const defs = {
@@ -255,33 +240,9 @@ export async function handleTaskEventsSummary(gateArgv: string[]): Promise<void>
         '--as-json': { key: 'asJson', type: 'boolean' },
         '--include-details': { key: 'includeDetails', type: 'boolean' }
     };
-    const { options: rawOptions } = parseOptions(gateArgv, defs);
-    const options = rawOptions as ParsedOptionsRecord;
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    ensureDirectoryExists(repoRoot, 'Repo root');
-    const eventsRoot = options.eventsRoot
-        ? requireResolvedPath(
-            gateHelpers.resolvePathInsideRepo(String(options.eventsRoot), repoRoot, { allowMissing: true }),
-            'EventsRoot'
-        )
-        : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
-    const summary = buildTaskEventsSummary({
-        taskId: parseRequiredText(options.taskId, 'TaskId'),
-        eventsRoot,
-        repoRoot
-    });
-    const rendered = options.asJson === true
-        ? `${JSON.stringify(summary, null, 2)}\n`
-        : `${formatTaskEventsSummaryText(summary, options.includeDetails === true)}\n`;
-    if (options.outputPath) {
-        const outputPath = requireResolvedPath(
-            gateHelpers.resolvePathInsideRepo(String(options.outputPath), repoRoot, { allowMissing: true }),
-            'OutputPath'
-        );
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.writeFileSync(outputPath, rendered, 'utf8');
-    }
-    process.stdout.write(rendered);
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runTaskEventsSummaryCommand(options);
+    process.stdout.write(result.rendered);
 }
 
 export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> {
@@ -293,61 +254,12 @@ export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> 
         '--output-path': { key: 'outputPath', type: 'string' },
         '--as-json': { key: 'asJson', type: 'boolean' }
     };
-    const { options: rawOptions } = parseOptions(gateArgv, defs);
-    const options = rawOptions as ParsedOptionsRecord;
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    ensureDirectoryExists(repoRoot, 'Repo root');
-    const auditSummary = buildTaskAuditSummary({
-        taskId: parseRequiredText(options.taskId, 'TaskId'),
-        repoRoot,
-        eventsRoot: options.eventsRoot ? String(options.eventsRoot) : null,
-        reviewsRoot: options.reviewsRoot ? String(options.reviewsRoot) : null
-    });
-    synchronizeFinalCloseoutArtifacts(auditSummary);
-    const rendered = options.asJson === true
-        ? `${JSON.stringify(auditSummary, null, 2)}\n`
-        : `${formatTaskAuditSummaryText(auditSummary)}\n`;
-    if (options.outputPath) {
-        const outputPath = requireResolvedPath(
-            gateHelpers.resolvePathInsideRepo(String(options.outputPath), repoRoot, { allowMissing: true }),
-            'OutputPath'
-        );
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.writeFileSync(outputPath, rendered, 'utf8');
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runTaskAuditSummaryCommand(options);
+    process.stdout.write(result.rendered);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
     }
-    process.stdout.write(rendered);
-    if (auditSummary.status !== 'PASS') {
-        process.exitCode = EXIT_GATE_FAILURE;
-    }
-}
-
-function readLatestCompileGatePassedTimestamp(repoRoot: string, taskId: string): string | null {
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
-    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
-        return null;
-    }
-
-    let latestTimestamp: string | null = null;
-    const lines = fs.readFileSync(timelinePath, 'utf8')
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-    for (const line of lines) {
-        try {
-            const parsed = JSON.parse(line) as Record<string, unknown>;
-            if (String(parsed.event_type || '').trim() !== 'COMPILE_GATE_PASSED') {
-                continue;
-            }
-            const timestamp = String(parsed.timestamp_utc || '').trim();
-            if (timestamp) {
-                latestTimestamp = timestamp;
-            }
-        } catch {
-            // Best-effort only; timeline integrity is validated elsewhere.
-        }
-    }
-
-    return latestTimestamp;
 }
 
 export async function handleFullSuiteValidation(gateArgv: string[]): Promise<void> {
@@ -356,143 +268,11 @@ export async function handleFullSuiteValidation(gateArgv: string[]): Promise<voi
         '--preflight-path': { key: 'preflightPath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
-    const { options: rawOptions } = parseOptions(gateArgv, defs);
-    const options = rawOptions as ParsedOptionsRecord;
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    ensureDirectoryExists(repoRoot, 'Repo root');
-
-    const taskId = parseRequiredText(options.taskId, 'TaskId');
-    const preflightPath = requireResolvedPath(
-        gateHelpers.resolvePathInsideRepo(String(options.preflightPath || ''), repoRoot, { allowMissing: true }),
-        'PreflightPath'
-    );
-    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
-        throw new Error(`Preflight artifact not found: ${gateHelpers.normalizePath(preflightPath)}`);
-    }
-
-    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-    const preflightTaskId = String(preflight.task_id || '').trim();
-    if (preflightTaskId && preflightTaskId !== taskId) {
-        throw new Error(
-            `Preflight task_id '${preflightTaskId}' does not match requested task '${taskId}'.`
-        );
-    }
-
-    const config = loadFullSuiteValidationConfig(repoRoot);
-    const reviewsRoot = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
-    fs.mkdirSync(reviewsRoot, { recursive: true });
-    const artifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
-    const outputArtifactPath = path.join(reviewsRoot, `${taskId}-full-suite-output.log`);
-    const changedFiles = Array.isArray(preflight.changed_files)
-        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
-        : [];
-    const cycleBinding: FullSuiteValidationCycleBinding = {
-        task_id: taskId,
-        preflight_path: gateHelpers.normalizePath(preflightPath),
-        preflight_sha256: gateHelpers.fileSha256(preflightPath) || '',
-        compile_gate_timestamp: readLatestCompileGatePassedTimestamp(repoRoot, taskId)
-    };
-
-    if (!config.enabled) {
-        const skippedResult = buildSkippedResult(config, cycleBinding);
-        fs.writeFileSync(artifactPath, `${JSON.stringify(skippedResult, null, 2)}\n`, 'utf8');
-        await emitMandatoryFullSuiteValidationEventAsync(repoRoot, taskId, skippedResult.status, {
-            status: skippedResult.status,
-            enabled: skippedResult.enabled,
-            preflight_path: cycleBinding.preflight_path,
-            artifact_path: gateHelpers.normalizePath(artifactPath),
-            cycle_binding: skippedResult.cycle_binding
-        });
-        process.stdout.write(`${formatFullSuiteValidationResult(skippedResult)}\n`);
-        return;
-    }
-
-    if (String(config.command || '').trim() === UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND) {
-        const unconfiguredResult = {
-            status: 'FAILED' as const,
-            enabled: true,
-            command: config.command,
-            exit_code: null,
-            timed_out: false,
-            output_artifact_path: null,
-            compact_summary: ['Full-suite validation command is not configured.'],
-            failure_chunks: [],
-            out_of_scope_failure_policy: config.out_of_scope_failure_policy,
-            out_of_scope_failure_detected: false,
-            out_of_scope_audit_verdict: 'NOT_APPLICABLE' as const,
-            violations: [
-                'Full-suite validation command is not configured. Run agent-init to seed a project-appropriate default or set workflow-config.full_suite_validation.command explicitly.'
-            ],
-            warnings: [],
-            cycle_binding: cycleBinding
-        };
-        fs.writeFileSync(artifactPath, `${JSON.stringify(unconfiguredResult, null, 2)}\n`, 'utf8');
-        await emitMandatoryFullSuiteValidationEventAsync(repoRoot, taskId, unconfiguredResult.status, {
-            status: unconfiguredResult.status,
-            enabled: unconfiguredResult.enabled,
-            command: unconfiguredResult.command,
-            exit_code: unconfiguredResult.exit_code,
-            timed_out: unconfiguredResult.timed_out,
-            preflight_path: cycleBinding.preflight_path,
-            artifact_path: gateHelpers.normalizePath(artifactPath),
-            cycle_binding: unconfiguredResult.cycle_binding,
-            out_of_scope_audit_verdict: unconfiguredResult.out_of_scope_audit_verdict,
-            violations: unconfiguredResult.violations,
-            warnings: unconfiguredResult.warnings
-        });
-        process.stdout.write(`${formatFullSuiteValidationResult(unconfiguredResult)}\n`);
-        process.exitCode = EXIT_GATE_FAILURE;
-        return;
-    }
-
-    let commandExitCode = EXIT_GENERAL_FAILURE;
-    let timedOut = false;
-    let outputLines: string[] = [];
-    try {
-        const execution = executeCommand(config.command, {
-            cwd: repoRoot,
-            timeoutMs: config.timeout_ms
-        });
-        commandExitCode = execution.exitCode;
-        timedOut = execution.timedOut;
-        outputLines = execution.outputLines;
-    } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        outputLines = [message];
-    }
-
-    fs.writeFileSync(
-        outputArtifactPath,
-        outputLines.length > 0 ? `${outputLines.join('\n')}\n` : '',
-        'utf8'
-    );
-    const result = buildValidationResult(
-        config,
-        commandExitCode,
-        timedOut,
-        outputLines,
-        outputArtifactPath,
-        changedFiles,
-        cycleBinding
-    );
-    fs.writeFileSync(artifactPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
-    await emitMandatoryFullSuiteValidationEventAsync(repoRoot, taskId, result.status, {
-        status: result.status,
-        enabled: result.enabled,
-        command: result.command,
-        exit_code: result.exit_code,
-        timed_out: result.timed_out,
-        preflight_path: cycleBinding.preflight_path,
-        artifact_path: gateHelpers.normalizePath(artifactPath),
-        output_artifact_path: gateHelpers.normalizePath(outputArtifactPath),
-        cycle_binding: result.cycle_binding,
-        out_of_scope_audit_verdict: result.out_of_scope_audit_verdict,
-        violations: result.violations,
-        warnings: result.warnings
-    });
-    process.stdout.write(`${formatFullSuiteValidationResult(result)}\n`);
-    if (result.status === 'FAILED') {
-        process.exitCode = EXIT_GATE_FAILURE;
+    const { options } = parseOptions(gateArgv, defs);
+    const result = await runFullSuiteValidationCommand(options);
+    process.stdout.write(result.outputText);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
     }
 }
 
