@@ -115,7 +115,10 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
 }
 
 function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    return runEnterTaskModeCommand(withDefaultTaskModeRouting(options));
+    return runEnterTaskModeCommand(withDefaultTaskModeRouting({
+        startBanner: 'Garda captures my mind',
+        ...options
+    }));
 }
 
 function seedRuleFiles(repoRoot: string): void {
@@ -793,7 +796,8 @@ describe('cli/commands/gates – review-cycle suites', () => {
         runEnterTaskMode({
             repoRoot,
             taskId,
-            taskSummary: 'Restart the latest coherent cycle after misordered recovery noise'
+            taskSummary: 'Restart the latest coherent cycle after misordered recovery noise',
+            startBanner: 'Garda rewrites my code'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -927,6 +931,100 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastPreflightIndex > lastShellSmokeIndex);
         assert.ok(lastCompileIndex > lastPreflightIndex);
+        const lastTaskModeEvent = events[lastTaskModeIndex] as Record<string, unknown>;
+        assert.equal(
+            String((lastTaskModeEvent.details as Record<string, unknown>).start_banner || ''),
+            'Garda rewrites my code'
+        );
+        const refreshedTaskModeArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(refreshedTaskModeArtifact.start_banner, 'Garda rewrites my code');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restarts a coherent cycle from a legacy task-mode artifact without forcing a new start banner', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle-legacy-task-mode';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        fs.mkdirSync(getReviewsRoot(repoRoot), { recursive: true });
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        fs.writeFileSync(taskModePath, JSON.stringify({
+            timestamp_utc: '2026-04-16T09:00:00.000Z',
+            event_source: 'enter-task-mode',
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Restart a coherent cycle from a legacy task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: 'AGENTS.md'
+        }, null, 2) + '\n', 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'TASK_MODE_ENTERED', 'PASS', 'Legacy task-mode entry before restart.', {
+            artifact_path: taskModePath.replace(/\\/g, '/'),
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Restart a coherent cycle from a legacy task-mode artifact after upgrade',
+            provider: 'Codex',
+            routed_to: 'AGENTS.md'
+        });
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-restart-coherent-cycle-legacy.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0);
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const taskModeEnteredEvents = events.filter((event) => event.event_type === 'TASK_MODE_ENTERED');
+        assert.equal(taskModeEnteredEvents.length, 1);
+
+        const refreshedTaskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        assert.equal(Object.prototype.hasOwnProperty.call(refreshedTaskModeArtifact, 'start_banner'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

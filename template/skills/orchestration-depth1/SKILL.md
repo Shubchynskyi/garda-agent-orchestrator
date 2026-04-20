@@ -38,7 +38,7 @@ Escalate back to the full orchestration skill immediately if:
 - only the rule ids/snippets directly triggered by changed scope.
 
 ## Compact Workflow
-1. Start only from `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.` and make the first execution reply explicitly state `files not modified yet`.
+1. Start only from `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.` and make the fresh main-agent execution reply emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits, then list the first mandatory gates to run.
 2. Move the task to `IN_PROGRESS` and capture requested/effective depth in `TASK.md`.
 3. Build a concise plan focused on changed files, risks, and validation.
 4. Run `enter-task-mode`, `load-rule-pack --stage TASK_ENTRY`, `handshake-diagnostics`, `shell-smoke-preflight`, and then preflight/classification; stop using this short form if escalation is required.

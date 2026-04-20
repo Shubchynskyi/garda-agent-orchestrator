@@ -42,7 +42,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Preflight Gate (Mandatory)
 - Before preflight, enter task mode explicitly:
-  `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --task-summary "<task summary>"`
+  `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>"`
 - Before preflight, record the baseline downstream rules that were actually opened:
   `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"`
 - Run before review stage:

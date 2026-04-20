@@ -81,7 +81,10 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
 }
 
 function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    return runEnterTaskModeCommand(withDefaultTaskModeRouting(options));
+    return runEnterTaskModeCommand(withDefaultTaskModeRouting({
+        startBanner: 'Garda captures my mind',
+        ...options
+    }));
 }
 
 function createTempRepo(): string {
@@ -268,6 +271,23 @@ describe('cli/commands/gates — task-start', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('requires an explicit repo-owned start banner for a fresh main-agent task run', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900fresh-start-banner-required';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const error = captureExpectedError(() => runEnterTaskModeCommand(withDefaultTaskModeRouting({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject a fresh main-agent task run that omits the explicit start banner'
+        })));
+        assert.match(error.message, /StartBanner is required for a fresh main-agent task run/i);
+        assert.match(error.message, /--start-banner "<repo-owned-banner>"/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('runs enter-task-mode through CLI main and merges mixed planned scope hints', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900planned-protected-cli-main-smoke';
@@ -299,6 +319,7 @@ describe('cli/commands/gates — task-start', () => {
                 '--repo-root', repoRoot,
                 '--task-id', taskId,
                 '--task-summary', 'Exercise the full CLI main path for mixed planned scope hints',
+                '--start-banner', 'Garda captures my mind',
                 '--provider', 'Codex',
                 '--routed-to', 'AGENTS.md',
                 '--planned-changed-file', 'src/app.ts',
@@ -330,6 +351,7 @@ describe('cli/commands/gates — task-start', () => {
             '--repo-root', repoRoot,
             '--task-id', taskId,
             '--task-summary', 'Require explicit orchestrator-work handoff through the CLI alias path',
+            '--start-banner', 'Garda captures my mind',
             '--provider', 'Codex',
             '--routed-to', 'AGENTS.md',
             '--planned-changed-files', '.github/agents/orchestrator.md'
@@ -360,6 +382,7 @@ describe('cli/commands/gates — task-start', () => {
             '--repo-root', repoRoot,
             '--task-id', taskId,
             '--task-summary', 'Deduplicate mixed planned scope aliases before suggesting orchestrator-work handoff',
+            '--start-banner', 'Garda captures my mind',
             '--provider', 'Codex',
             '--routed-to', 'AGENTS.md',
             '--planned-changed-file', '.github/agents/orchestrator.md',
@@ -391,6 +414,7 @@ describe('cli/commands/gates — task-start', () => {
             '--repo-root', repoRoot,
             '--task-id', taskId,
             '--task-summary', 'Reject planned changed files that escape repo root',
+            '--start-banner', 'Garda captures my mind',
             '--provider', 'Codex',
             '--routed-to', 'AGENTS.md',
             '--planned-changed-files', 'src/app.ts,../outside.ts'

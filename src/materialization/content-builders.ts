@@ -1,6 +1,10 @@
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolveBundleName } from '../core/constants';
 import {
+    buildFreshMainAgentStartBannerSentence,
+    START_BANNER_EXEMPTION_RULE
+} from '../core/orchestrator-start-banner';
+import {
     getProviderBridgeEntries,
     getProviderBridgeRelativePaths,
     getProviderEntries,
@@ -61,6 +65,7 @@ function buildEnterTaskModeSnippet(commandPrefix: string, runtimeIdentityFlag: s
         '--entry-mode "EXPLICIT_TASK_EXECUTION"',
         '--requested-depth "<1|2|3>"',
         '--task-summary "<task summary>"',
+        '--start-banner "<repo-owned-banner>"',
         runtimeIdentityFlag,
         '--repo-root "."'
     ].join(' ');
@@ -462,7 +467,7 @@ export function buildRedirectManagedBlock(
         `Hard stop: before any task execution, open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.`,
         'Do not implement tasks directly without orchestration preflight and required review gates.',
         'Canonical task-start command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
-        'First execution reply must explicitly state `files not modified yet` before any edits and list the first mandatory gates to run.',
+        buildFreshMainAgentStartBannerSentence(),
         'If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.',
         'Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.',
         'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
@@ -538,7 +543,7 @@ This bridge is a router, not a second workflow.
 Required:
 1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 2. Start every task with \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
-3. First execution reply must explicitly state \`files not modified yet\` before any edits and list the first gates to run.
+3. ${buildFreshMainAgentStartBannerSentence()}
 4. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
 5. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
 6. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
@@ -563,7 +568,7 @@ Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 Hard stop: first open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
 Canonical task-start command: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
-First execution reply must explicitly state \`files not modified yet\` before any edits and list the first mandatory gates to run.
+${buildFreshMainAgentStartBannerSentence()}
 If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 This provider profile is a strict bridge to Garda skills and the Node gate router.
@@ -577,7 +582,7 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 1. Read \`${canonicalFile}\` and its routing links before making changes.
 2. Read \`TASK.md\` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
-4. In the first execution reply, explicitly state \`files not modified yet\` before any edits and list the first mandatory gates to run.
+4. ${buildFreshMainAgentStartBannerSentence()}
 5. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
 6. If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 7. Enter task mode explicitly via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace; ${runtimeIdentityInstruction}.
@@ -641,7 +646,8 @@ It routes to the canonical Garda workflow and does not replace \`80-task-workflo
 Before any code changes:
 - Open \`${canonicalFile}\` and \`TASK.md\`.
 - If an active provider bridge exists, open it too before implementation.
-- First execution reply must explicitly state \`files not modified yet\` before any edits.
+- ${buildFreshMainAgentStartBannerSentence()}
+- ${START_BANNER_EXEMPTION_RULE}
 - Move the task to \`IN_PROGRESS\`.
 - Enter orchestrator mode with the canonical command: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
 - Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.

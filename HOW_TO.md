@@ -111,7 +111,7 @@ Execute task T-001 from TASK.md strictly through all mandatory orchestrator gate
 The orchestrator then runs this mandatory flow:
 `enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate`
 
-The first execution reply should explicitly confirm `files not modified yet` before any edits and list the first gates it will run.
+The first fresh main-agent execution reply should emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits and list the first gates it will run.
 
 | Built-in Profile | Default Depth | When to Use |
 |---|---|---|

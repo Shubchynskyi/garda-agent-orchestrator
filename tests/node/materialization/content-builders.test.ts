@@ -369,7 +369,7 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes('--routed-to ".github/agents/orchestrator.md"'));
         assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
         assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --routed-to ".github/agents/orchestrator.md" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --routed-to ".github/agents/orchestrator.md" --repo-root "."'));
         for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
             assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
         }
@@ -381,7 +381,7 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes('--provider "Antigravity"'));
         assert.ok(result.includes('--routed-to ".antigravity/agents/orchestrator.md"'));
         assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --routed-to ".antigravity/agents/orchestrator.md" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --routed-to ".antigravity/agents/orchestrator.md" --repo-root "."'));
         for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
             assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
         }
@@ -418,7 +418,8 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('shared start-task router'));
         assert.ok(result.includes('If an active provider bridge exists'));
         assert.ok(result.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
-        assert.ok(result.includes('files not modified yet'));
+        assert.ok(result.includes('start banner'));
+        assert.ok(result.includes('Garda captures my mind'));
     });
 
     it('includes compact-command protocol reference', () => {
@@ -443,7 +444,7 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('--routed-to "<provider-bridge-or-entrypoint>"'));
         assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
         assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."'));
         for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
             assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
         }

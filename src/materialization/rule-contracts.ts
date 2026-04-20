@@ -1,4 +1,9 @@
 import { getBundleCliCommand, resolveBundleName } from '../core/constants';
+import {
+    FRESH_MAIN_AGENT_START_BANNER_RULE,
+    START_BANNER_EXEMPTION_RULE,
+    START_BANNER_GATE_LIST_RULE
+} from '../core/orchestrator-start-banner';
 
 export interface RuleContractSectionMigration {
     liveRelativePath: string;
@@ -47,8 +52,9 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
         requiredSnippets: Object.freeze([
             'The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
             'Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.',
-            'First execution reply before any edit must explicitly state `files not modified yet`.',
-            'First execution reply must list the first mandatory gates to run before implementation.',
+            FRESH_MAIN_AGENT_START_BANNER_RULE,
+            START_BANNER_GATE_LIST_RULE,
+            START_BANNER_EXEMPTION_RULE,
             'If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.'
         ])
     }),

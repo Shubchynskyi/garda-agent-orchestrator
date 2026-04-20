@@ -2,6 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../exit-codes';
 import {
+    normalizeOrchestratorStartBanner,
+    ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE
+} from '../../../core/orchestrator-start-banner';
+import {
     getBundleCliCommand,
     getSourceCliCommand,
     resolveBundleName
@@ -94,6 +98,7 @@ export interface EnterTaskModeCommandOptions {
     requestedDepth?: unknown;
     effectiveDepth?: unknown;
     taskSummary?: unknown;
+    startBanner?: unknown;
     plannedChangedFiles?: unknown;
     orchestratorWork?: unknown;
     provider?: unknown;
@@ -208,6 +213,10 @@ function buildOrchestratorWorkHandoffCommand(
         `--task-summary ${quotePowerShellCliValue(String(options.taskSummary || '').trim())}`,
         '--orchestrator-work'
     ];
+    const startBanner = String(options.startBanner || '').trim();
+    if (startBanner) {
+        parts.push(`--start-banner ${quotePowerShellCliValue(startBanner)}`);
+    }
 
     const effectiveDepthRaw = String(options.effectiveDepth || '').trim();
     if (effectiveDepthRaw) {
@@ -269,7 +278,8 @@ function buildTaskModeIdentitySuggestionCommand(
         `${buildGateCommandPrefix(repoRoot)} gate enter-task-mode`,
         `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
         `--task-id ${quotePowerShellCliValue(taskId)}`,
-        '--task-summary "<task-summary>"'
+        '--task-summary "<task-summary>"',
+        '--start-banner "<repo-owned-banner>"'
     ];
     const safeRoutedIdentityHint = (
         routingDecision.identityStatus !== 'contradictory'
@@ -362,6 +372,36 @@ function resolvePrePreflightSequenceLockPath(repoRoot: string, taskId: string): 
     );
 }
 
+function resolveTaskModeStartBanner(
+    repoRoot: string,
+    taskId: string,
+    artifactPath: string,
+    requestedStartBanner: unknown
+): string {
+    const requestedBanner = String(requestedStartBanner || '').trim();
+    if (requestedBanner) {
+        const normalizedRequestedBanner = normalizeOrchestratorStartBanner(requestedBanner);
+        if (!normalizedRequestedBanner) {
+            throw new Error(
+                `StartBanner must be one of the repo-owned banners (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}). ` +
+                `Got '${requestedBanner}'.`
+            );
+        }
+        return normalizedRequestedBanner;
+    }
+
+    const previousTaskMode = getTaskModeEvidence(repoRoot, taskId, artifactPath);
+    if (previousTaskMode.start_banner) {
+        return previousTaskMode.start_banner;
+    }
+
+    throw new Error(
+        'StartBanner is required for a fresh main-agent task run. ' +
+        `Emit one repo-owned banner (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}) in the first reply, ` +
+        'then rerun enter-task-mode with --start-banner "<repo-owned-banner>".'
+    );
+}
+
 export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -376,6 +416,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         gateHelpers.testPathPrefix(entry, gateHelpers.getProtectedControlPlaneRoots(repoRoot))
     );
     const orchestratorWork = parseBooleanOption(options.orchestratorWork, false);
+    const startBanner = resolveTaskModeStartBanner(repoRoot, taskId, artifactPath, options.startBanner);
 
     let planMetadata: TaskModePlanMetadata | null = null;
     const rawPlanPath = String(options.planPath || '').trim();
@@ -440,6 +481,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         effectiveDepth: parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)),
         taskSummary: String(options.taskSummary || ''),
         orchestratorWork,
+        startBanner,
         provider: routingDecision.provider,
         canonicalSourceOfTruth: routingDecision.canonicalSourceOfTruth,
         executionProviderSource: routingDecision.executionProviderSource,
@@ -479,6 +521,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         entry_mode: taskModeArtifact.entry_mode,
         requested_depth: taskModeArtifact.requested_depth,
         effective_depth: taskModeArtifact.effective_depth,
+        start_banner: taskModeArtifact.start_banner,
         orchestrator_work: taskModeArtifact.orchestrator_work,
         actor: taskModeArtifact.actor,
         plan_guided: !!taskModeArtifact.plan,
@@ -504,6 +547,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 effective_depth: taskModeArtifact.effective_depth,
                 task_summary: taskModeArtifact.task_summary,
                 orchestrator_work: taskModeArtifact.orchestrator_work,
+                start_banner: taskModeArtifact.start_banner,
                 provider: taskModeArtifact.provider,
                 canonical_source_of_truth: taskModeArtifact.canonical_source_of_truth,
                 execution_provider_source: taskModeArtifact.execution_provider_source,
@@ -537,6 +581,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         requested_depth: taskModeArtifact.requested_depth,
         effective_depth: taskModeArtifact.effective_depth,
         task_summary: taskModeArtifact.task_summary,
+        start_banner: taskModeArtifact.start_banner,
         provider: taskModeArtifact.provider,
         canonical_source_of_truth: taskModeArtifact.canonical_source_of_truth,
         execution_provider_source: taskModeArtifact.execution_provider_source,
@@ -573,6 +618,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `EntryMode: ${taskModeArtifact.entry_mode}`,
             `RequestedDepth: ${taskModeArtifact.requested_depth}`,
             `EffectiveDepth: ${taskModeArtifact.effective_depth}`,
+            `StartBanner: ${taskModeArtifact.start_banner}`,
             ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),
             ...(routingDecision.canonicalSourceOfTruth ? [`CanonicalSourceOfTruth: ${routingDecision.canonicalSourceOfTruth}`] : []),
             ...(routingDecision.executionProviderSource ? [`ExecutionProviderSource: ${routingDecision.executionProviderSource}`] : []),

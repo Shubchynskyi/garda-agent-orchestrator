@@ -119,8 +119,8 @@ function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<R
         'enter-task-mode': {
             summary: 'Enter explicit task mode before any implementation, with runtime identity pinned.',
             usage: Object.freeze([
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "<runtime-provider>" --repo-root "."`,
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."`
+                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --repo-root "."`,
+                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."`
             ]),
             taskIdRemediation: true
         },

@@ -332,7 +332,8 @@ describe('runInit', () => {
                     'The command automatically runs mandatory orchestration gates in order: `enter-task-mode`, `load-rule-pack`, `handshake-diagnostics`, `shell-smoke-preflight`, `classify-change`, `load-rule-pack`, `compile-gate`, `build-review-context` (for each required review), `required-reviews-check`, `doc-impact-gate`, `completion-gate`.'
                 )
             );
-            assert.ok(usage.includes('The first execution reply must explicitly confirm `files not modified yet` before any edits and list the first gates it will run.'));
+            assert.ok(usage.includes('Require the first fresh main-agent execution reply to emit exactly one English start banner'));
+            assert.ok(usage.includes('Garda captures my mind'));
             assert.ok(
                 usage.includes(
                     'Default execution comes from the active profile. Built-in profiles: `balanced` (depth `2`), `fast` (depth `1`), `strict` (depth `3`), `docs-only` (depth `1`).'

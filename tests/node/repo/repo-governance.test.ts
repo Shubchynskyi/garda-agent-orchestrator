@@ -146,3 +146,55 @@ test('source-checkout generated router files stay synced with builder output whe
         );
     }
 });
+
+test('start-banner contract stays synced across canonical guidance files', () => {
+    const startBannerToken = '--start-banner "<repo-owned-banner>"';
+    const listGateText = 'list the first mandatory gates to run';
+    const legacyStartMarker = 'files not modified yet';
+
+    for (const relativePath of [
+        'template/skills/orchestration/SKILL.md',
+        'template/docs/agent-rules/40-commands.md',
+        'template/docs/agent-rules/90-skill-catalog.md',
+        'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md',
+        'garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md',
+        'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/40-commands.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md'
+    ]) {
+        const content = readRepoFile(relativePath);
+        assert.ok(content.includes(startBannerToken), `${relativePath} must mention the repo-owned start banner flag`);
+    }
+
+    for (const relativePath of [
+        'template/skills/orchestration/SKILL.md',
+        'template/skills/orchestration-depth1/SKILL.md',
+        'template/.agents/workflows/start-task.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
+        'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md',
+        'garda-agent-orchestrator/template/.agents/workflows/start-task.md',
+        'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md'
+    ]) {
+        const content = readRepoFile(relativePath);
+        assert.ok(content.includes(listGateText), `${relativePath} must preserve the start-banner gate-list instruction`);
+    }
+
+    for (const relativePath of [
+        'garda-agent-orchestrator/template/CLAUDE.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
+        'template/skills/orchestration/SKILL.md',
+        'template/skills/orchestration-depth1/SKILL.md',
+        'template/.agents/workflows/start-task.md',
+        'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md',
+        'garda-agent-orchestrator/template/.agents/workflows/start-task.md',
+        'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md'
+    ]) {
+        const content = readRepoFile(relativePath);
+        assert.ok(!content.includes(legacyStartMarker), `${relativePath} must not keep the legacy start marker`);
+    }
+});

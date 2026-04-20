@@ -45,6 +45,7 @@ export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
         '--requested-depth': { key: 'requestedDepth', type: 'string' },
         '--effective-depth': { key: 'effectiveDepth', type: 'string' },
         '--task-summary': { key: 'taskSummary', type: 'string' },
+        '--start-banner': { key: 'startBanner', type: 'string' },
         '--planned-changed-file': { key: 'plannedChangedFiles', type: 'string[]' },
         '--planned-changed-files': { key: 'plannedChangedFiles', type: 'string[]' },
         '--orchestrator-work': { key: 'orchestratorWork', type: 'boolean' },

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import { buildSetupStartBannerSentence } from '../../core/orchestrator-start-banner';
 import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
@@ -258,7 +259,7 @@ export function printSetupHandoff(snapshot: StatusSnapshot): void {
     console.log('     ask about specialist skills, and then run the code-level agent-init gate.');
     console.log('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
     console.log(`     ${green('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.')}`);
-    console.log('  4. Require the first execution reply to confirm `files not modified yet` before any edits and list the first gates it will run.');
+    console.log(`  4. ${buildSetupStartBannerSentence()}`);
     console.log(`  5. ${activeProfileLine}`);
     console.log('  6. Mandatory orchestrator flow:');
     console.log(`     ${green(gateFlow)}`);
@@ -285,7 +286,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push('     ask about specialist skills, and then run the code-level agent-init gate.');
     lines.push('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
     lines.push('     Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.');
-    lines.push('  4. Require the first execution reply to confirm `files not modified yet` before any edits and list the first gates it will run.');
+    lines.push(`  4. ${buildSetupStartBannerSentence()}`);
     lines.push(`  5. ${activeProfileLine}`);
     lines.push('  6. Mandatory orchestrator flow:');
     lines.push(`     ${gateFlow}`);

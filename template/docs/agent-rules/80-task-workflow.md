@@ -35,8 +35,9 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 ## Agent Start Contract
 - The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
 - Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.
-- First execution reply before any edit must explicitly state `files not modified yet`.
-- First execution reply must list the first mandatory gates to run before implementation.
+- Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.
+- That same reply must list the first mandatory gates to run before implementation.
+- Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
 ## Task Resume Protocol

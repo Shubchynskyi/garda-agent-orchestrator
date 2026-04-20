@@ -279,21 +279,24 @@ export async function runRestartCoherentCycleCommand(
     }
 
     try {
-        ensureStepPassed('enter-task-mode', runEnterTaskModeCommand({
-            repoRoot,
-            taskId: resolvedTaskId,
-            artifactPath: resolvedTaskModePath,
-            entryMode: previousTaskMode.entry_mode || 'EXPLICIT_TASK_EXECUTION',
-            requestedDepth: previousTaskMode.requested_depth || 2,
-            effectiveDepth: previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2,
-            taskSummary,
-            plannedChangedFiles: replayScope.plannedChangedFiles,
-            orchestratorWork: previousTaskMode.orchestrator_work === true,
-            provider: previousTaskMode.provider || undefined,
-            routedTo: previousTaskMode.routed_to || undefined,
-            planPath: previousTaskMode.plan?.plan_path || undefined,
-            emitMetrics: options.emitMetrics
-        }));
+        if (previousTaskMode.start_banner) {
+            ensureStepPassed('enter-task-mode', runEnterTaskModeCommand({
+                repoRoot,
+                taskId: resolvedTaskId,
+                artifactPath: resolvedTaskModePath,
+                entryMode: previousTaskMode.entry_mode || 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: previousTaskMode.requested_depth || 2,
+                effectiveDepth: previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2,
+                taskSummary,
+                startBanner: previousTaskMode.start_banner,
+                plannedChangedFiles: replayScope.plannedChangedFiles,
+                orchestratorWork: previousTaskMode.orchestrator_work === true,
+                provider: previousTaskMode.provider || undefined,
+                routedTo: previousTaskMode.routed_to || undefined,
+                planPath: previousTaskMode.plan?.plan_path || undefined,
+                emitMetrics: options.emitMetrics
+            }));
+        }
 
         ensureStepPassed('load-rule-pack (TASK_ENTRY)', runLoadRulePackCommand({
             repoRoot,

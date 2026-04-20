@@ -2,6 +2,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { SOURCE_OF_TRUTH_VALUES } from '../core/constants';
+import {
+    normalizeOrchestratorStartBanner,
+    ORCHESTRATOR_START_BANNER_CONTRACT_EFFECTIVE_AT_UTC,
+    ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE,
+    selectRandomOrchestratorStartBanner
+} from '../core/orchestrator-start-banner';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getCanonicalEntrypointFile, getProviderOrchestratorProfileDefinitions } from '../materialization/common';
 import {
@@ -60,6 +66,7 @@ export interface TaskModeArtifact {
     effective_depth: number;
     task_summary: string;
     orchestrator_work: boolean;
+    start_banner: string;
     provider: string | null;
     canonical_source_of_truth: string | null;
     execution_provider_source: string | null;
@@ -85,6 +92,7 @@ export interface BuildTaskModeArtifactOptions {
     effectiveDepth: unknown;
     taskSummary: string;
     orchestratorWork?: boolean;
+    startBanner?: string | null;
     provider?: string | null;
     canonicalSourceOfTruth?: string | null;
     executionProviderSource?: string | null;
@@ -108,6 +116,8 @@ export interface TaskModeEvidenceResult {
     evidence_path: string | null;
     timeline_artifact_path: string | null;
     timeline_declares_runtime_identity_metadata: boolean;
+    timeline_declares_start_banner: boolean;
+    timeline_start_banner: string | null;
     evidence_hash: string | null;
     declares_runtime_identity_metadata: boolean;
     identity_backfilled_from_legacy: boolean;
@@ -120,6 +130,7 @@ export interface TaskModeEvidenceResult {
     effective_depth: number | null;
     task_summary: string | null;
     orchestrator_work: boolean | null;
+    start_banner: string | null;
     provider: string | null;
     canonical_source_of_truth: string | null;
     execution_provider_source: string | null;
@@ -135,6 +146,19 @@ export interface TaskModeEvidenceResult {
     active_profile: string | null;
     profile_source: string | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
+}
+
+function isStartBannerRequiredForArtifact(artifactObject: Record<string, unknown>): boolean {
+    if (Object.prototype.hasOwnProperty.call(artifactObject, 'start_banner')) {
+        return true;
+    }
+    const timestampUtc = String(artifactObject.timestamp_utc || '').trim();
+    const artifactTimestampMs = Date.parse(timestampUtc);
+    const contractEffectiveMs = Date.parse(ORCHESTRATOR_START_BANNER_CONTRACT_EFFECTIVE_AT_UTC);
+    if (!Number.isFinite(artifactTimestampMs)) {
+        return true;
+    }
+    return artifactTimestampMs >= contractEffectiveMs;
 }
 
 export function normalizeTaskModeEntryMode(value: unknown): TaskModeEntryMode {
@@ -191,12 +215,16 @@ function getTaskTimelinePath(repoRoot: string, taskId: string): string {
 function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
     artifact_path: string | null;
     declares_runtime_identity_metadata: boolean;
+    declares_start_banner: boolean;
+    start_banner: string | null;
 } {
     const timelinePath = getTaskTimelinePath(repoRoot, taskId);
     if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
         return {
             artifact_path: null,
-            declares_runtime_identity_metadata: false
+            declares_runtime_identity_metadata: false,
+            declares_start_banner: false,
+            start_banner: null
         };
     }
 
@@ -225,9 +253,12 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
                 'runtime_identity_status',
                 'runtime_identity_violations'
             ].some((key) => Object.prototype.hasOwnProperty.call(details || {}, key));
+            const declaresStartBanner = Object.prototype.hasOwnProperty.call(details || {}, 'start_banner');
             return {
                 artifact_path: artifactPath ? normalizePath(artifactPath) : null,
-                declares_runtime_identity_metadata: declaresRuntimeIdentityMetadata
+                declares_runtime_identity_metadata: declaresRuntimeIdentityMetadata,
+                declares_start_banner: declaresStartBanner,
+                start_banner: normalizeOrchestratorStartBanner(details?.start_banner)
             };
         } catch {
             continue;
@@ -236,7 +267,9 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
 
     return {
         artifact_path: null,
-        declares_runtime_identity_metadata: false
+        declares_runtime_identity_metadata: false,
+        declares_start_banner: false,
+        start_banner: null
     };
 }
 
@@ -383,6 +416,16 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
     if (taskSummary.length < 8) {
         throw new Error('TaskSummary is required (>= 8 characters).');
     }
+    const requestedStartBanner = String(options.startBanner || '').trim();
+    const normalizedStartBanner = requestedStartBanner
+        ? normalizeOrchestratorStartBanner(requestedStartBanner)
+        : selectRandomOrchestratorStartBanner();
+    if (!normalizedStartBanner) {
+        throw new Error(
+            `StartBanner must be one of the repo-owned banners (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}). ` +
+            `Got '${requestedStartBanner}'.`
+        );
+    }
 
     const actor = String(options.actor || 'orchestrator').trim() || 'orchestrator';
     const plan = options.plan && options.plan.plan_path && options.plan.plan_sha256 && options.plan.plan_summary
@@ -407,6 +450,7 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         effective_depth: effectiveDepth,
         task_summary: taskSummary,
         orchestrator_work: !!options.orchestratorWork,
+        start_banner: normalizedStartBanner,
         provider: String(options.provider || '').trim() || null,
         canonical_source_of_truth: String(options.canonicalSourceOfTruth || '').trim() || null,
         execution_provider_source: String(options.executionProviderSource || '').trim() || null,
@@ -436,6 +480,8 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         evidence_path: null,
         timeline_artifact_path: null,
         timeline_declares_runtime_identity_metadata: false,
+        timeline_declares_start_banner: false,
+        timeline_start_banner: null,
         evidence_hash: null,
         declares_runtime_identity_metadata: false,
         identity_backfilled_from_legacy: false,
@@ -448,6 +494,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         effective_depth: null,
         task_summary: null,
         orchestrator_work: null,
+        start_banner: null,
         provider: null,
         canonical_source_of_truth: null,
         execution_provider_source: null,
@@ -505,6 +552,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.entry_mode = String(artifactObject.entry_mode || '').trim() || null;
     result.task_summary = String(artifactObject.task_summary || '').trim() || null;
     result.orchestrator_work = typeof artifactObject.orchestrator_work === 'boolean' ? artifactObject.orchestrator_work : null;
+    result.start_banner = normalizeOrchestratorStartBanner(artifactObject.start_banner);
     result.provider = String(artifactObject.provider || '').trim() || null;
     result.canonical_source_of_truth = String(artifactObject.canonical_source_of_truth || '').trim() || null;
     result.execution_provider_source = String(artifactObject.execution_provider_source || '').trim() || null;
@@ -524,6 +572,8 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     const timelineMetadata = getLatestTaskModeTimelineMetadata(repoRoot, resolvedTaskId);
     result.timeline_artifact_path = timelineMetadata.artifact_path;
     result.timeline_declares_runtime_identity_metadata = timelineMetadata.declares_runtime_identity_metadata;
+    result.timeline_declares_start_banner = timelineMetadata.declares_start_banner;
+    result.timeline_start_banner = timelineMetadata.start_banner;
     applyLegacyTaskModeIdentityBackfill(repoRoot, result);
 
     // Extract optional plan metadata
@@ -577,6 +627,27 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     }
     if (!result.task_summary || result.task_summary.length < 8) {
         result.evidence_status = 'EVIDENCE_SUMMARY_INVALID';
+        return result;
+    }
+    if (isStartBannerRequiredForArtifact(artifactObject) && !result.start_banner) {
+        result.evidence_status = 'EVIDENCE_START_BANNER_INVALID';
+        return result;
+    }
+    if (result.timeline_declares_start_banner && !result.timeline_start_banner) {
+        result.evidence_status = 'EVIDENCE_START_BANNER_INVALID';
+        return result;
+    }
+    if (result.timeline_declares_start_banner && !result.start_banner) {
+        result.evidence_status = 'EVIDENCE_START_BANNER_INVALID';
+        return result;
+    }
+    if (
+        result.timeline_declares_start_banner
+        && result.timeline_start_banner
+        && result.start_banner
+        && result.timeline_start_banner !== result.start_banner
+    ) {
+        result.evidence_status = 'EVIDENCE_START_BANNER_MISMATCH';
         return result;
     }
     if (!result.canonical_source_of_truth) {
@@ -672,6 +743,16 @@ export function getTaskModeEvidenceViolations(result: TaskModeEvidenceResult): s
             return ['Task-mode entry evidence is missing a valid effective_depth (1..3).'];
         case 'EVIDENCE_SUMMARY_INVALID':
             return ['Task-mode entry evidence is missing a usable task_summary (>= 8 chars).'];
+        case 'EVIDENCE_START_BANNER_INVALID':
+            return [
+                `Task-mode entry evidence must record one repo-owned start_banner (` +
+                `${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}), and current-cycle banner evidence cannot be missing or malformed.`
+            ];
+        case 'EVIDENCE_START_BANNER_MISMATCH':
+            return [
+                `Task-mode entry evidence start_banner '${result.start_banner || 'missing'}' does not match the ` +
+                `TASK_MODE_ENTERED timeline banner '${result.timeline_start_banner || 'missing'}'.`
+            ];
         case 'EVIDENCE_CANONICAL_SOURCE_OF_TRUTH_INVALID':
             return ['Task-mode entry evidence is missing canonical_source_of_truth. Re-run enter-task-mode.'];
         case 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_INVALID':

@@ -93,7 +93,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 ## Task Start Contract
 - The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
 - Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.
-- Before any edit, the first execution reply must explicitly state `files not modified yet` and list the first mandatory gates to run.
+- Before any edit, a fresh main-agent task run must emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) and list the first mandatory gates to run.
+- Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
 ## Canonical Workflow
@@ -101,7 +102,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 2. If no `TODO` exists, create a task from current user request, then move it to `IN_PROGRESS`.
 3. Resolve requested depth and record requested/effective depth in `TASK.md` notes.
 4. Enter task mode explicitly before preflight:
-   - Node: `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>"`
+   - Node: `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>"`
    - `enter-task-mode` writes task-scoped event `TASK_MODE_ENTERED` automatically and persists `runtime/reviews/<task-id>-task-mode.json`.
 5. Record baseline downstream rules explicitly before preflight:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"`

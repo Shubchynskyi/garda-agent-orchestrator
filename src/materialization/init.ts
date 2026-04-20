@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { readJsonFile } from '../core/json';
 import { ALL_AGENT_ENTRYPOINT_FILES , resolveBundleName} from '../core/constants';
+import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
@@ -658,7 +659,7 @@ function buildUsageLines(opts: BuildUsageOptions): string[] {
         '## Execute Tasks',
         'Start by selecting a row from root `TASK.md` and tell the agent:',
         '- `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
-        '- The first execution reply must explicitly confirm `files not modified yet` before any edits and list the first gates it will run.',
+        `- ${buildSetupStartBannerSentence()}`,
         '- The command automatically runs mandatory orchestration gates in order: `enter-task-mode`, `load-rule-pack`, `handshake-diagnostics`, `shell-smoke-preflight`, `classify-change`, `load-rule-pack`, `compile-gate`, `build-review-context` (for each required review), `required-reviews-check`, `doc-impact-gate`, `completion-gate`.',
         '- Default execution comes from the active profile. Built-in profiles: `balanced` (depth `2`), `fast` (depth `1`), `strict` (depth `3`), `docs-only` (depth `1`).',
         '- Per-task profile override in `TASK.md` `Profile` column: `default` inherits the workspace active profile; explicit profile names override it.', '',

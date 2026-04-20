@@ -169,7 +169,8 @@ describe('cross-provider-router-matrix: redirect entrypoint blocks', () => {
         assert.ok(redirect.includes('gate load-rule-pack'));
         assert.ok(redirect.includes('gate build-review-context'));
         assert.ok(redirect.includes('orchestration control-plane files'));
-        assert.ok(redirect.includes('files not modified yet'));
+        assert.ok(redirect.includes('start banner'));
+        assert.ok(redirect.includes('Garda captures my mind'));
         assert.ok(redirect.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
     });
 });
@@ -215,7 +216,8 @@ describe('cross-provider-router-matrix: provider orchestrator bridges', () => {
                     providerLabel, canonicalFile, orchestratorRelativePath
                 );
                 assert.ok(content.includes('TASK.md'));
-                assert.ok(content.includes('files not modified yet'));
+                assert.ok(content.includes('start banner'));
+                assert.ok(content.includes('Garda captures my mind'));
             });
 
             it(`${providerLabel} bridge (SoT=${sot}): references orchestration skill`, () => {

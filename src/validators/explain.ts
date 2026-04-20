@@ -188,7 +188,7 @@ function getExplainDatabase(): readonly ExplainEntry[] {
         title: 'Task mode was not explicitly entered',
         description: 'The enter-task-mode gate was not run for this task, so compile/review/completion gates will fail.',
         remediation: [
-            `Run: ${getBundleCliCommand(bn)} gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<summary>"`,
+            `Run: ${getBundleCliCommand(bn)} gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<summary>" --start-banner "<repo-owned-banner>"`,
             "Do this before any preflight or implementation work."
         ]
     },

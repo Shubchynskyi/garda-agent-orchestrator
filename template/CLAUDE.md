@@ -21,7 +21,8 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - Do not execute task work until this canonical file and `TASK.md` are both read.
 - Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.
 - Execute tasks only through orchestration workflow (`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`), with preflight and required review gates.
-- First execution reply before any edit must explicitly state `files not modified yet`.
+- Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.
+- Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - Use the active profile as the default execution mode; explicit `depth=<1|2|3>` is only a one-run override.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 - After opening downstream workflow files (`40-commands.md`, `80-task-workflow.md`, `90-skill-catalog.md`, and any risk-specific rule pack), record them via `node bin/garda.js gate load-rule-pack ...` in a self-hosted source checkout, or `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack ...` inside a materialized/deployed workspace.

@@ -8,7 +8,8 @@ This checklist routes to the canonical Garda workflow. It does not replace `80-t
 
 Before any code changes:
 - Open `AGENTS.md`, `TASK.md`, and `.antigravity/agents/orchestrator.md`.
-- First execution reply must explicitly state `files not modified yet` before any edits.
+- Fresh main-agent task runs must begin with exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits and then list the first mandatory gates to run.
+- Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - Enter orchestrator mode with the canonical command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
 - Use the active profile as the default execution mode; explicit `depth=<1|2|3>` is only a one-run override.
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.

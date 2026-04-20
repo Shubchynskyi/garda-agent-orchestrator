@@ -61,7 +61,10 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
 }
 
 function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    return runEnterTaskModeCommand(withDefaultTaskModeRouting(options));
+    return runEnterTaskModeCommand(withDefaultTaskModeRouting({
+        startBanner: 'Garda captures my mind',
+        ...options
+    }));
 }
 
 function createTempRepo(): string {

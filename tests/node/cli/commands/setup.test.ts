@@ -400,7 +400,8 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('AGENT_INIT_PROMPT.md'));
     assert.ok(text.includes('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
     assert.ok(text.includes('Use explicit depth only as a one-run override.'));
-    assert.ok(text.includes('files not modified yet'));
+    assert.ok(text.includes('start banner'));
+    assert.ok(text.includes('Garda captures my mind'));
     assert.ok(text.includes('Mandatory orchestrator flow:'));
     assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate'));
 });
