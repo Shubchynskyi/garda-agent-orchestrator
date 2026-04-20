@@ -516,6 +516,32 @@ test('acquireFilesystemLockAsync times out against live lock', async () => {
     }
 });
 
+test('acquireFilesystemLockAsync keeps waiting until timeout when retryMs is much smaller than the wait window', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-small-retry.lock');
+    let cleanupChild: (() => Promise<void>) | null = null;
+    try {
+        cleanupChild = await holdLockInChildProcess(lockPath, 700);
+        const startedAt = Date.now();
+        const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
+            timeoutMs: 2000,
+            retryMs: 1,
+            staleMs: 60000
+        });
+        const elapsedMs = Date.now() - startedAt;
+
+        assert.ok(elapsedMs >= 500, `async acquire should wait past the legacy retry cap window, got ${elapsedMs} ms`);
+        assert.ok(telemetry.retries > 0, 'telemetry should capture contention retries');
+        assert.notEqual(telemetry.contentionLevel, 'none');
+        releaseFilesystemLock(handle);
+    } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('acquireFilesystemLockAsync does not reclaim aged foreign-host lock without explicit override', async () => {
     const tmp = mkTmpDir();
     const lockPath = path.join(tmp, '.test-async-foreign-aged.lock');

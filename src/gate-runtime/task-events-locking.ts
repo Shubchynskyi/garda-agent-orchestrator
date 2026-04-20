@@ -109,6 +109,12 @@ function toPositiveInteger(value: unknown, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function resolveMaxLockRetries(timeoutMs: number, retryMs: number): number {
+    const boundedRetryMs = Math.max(1, retryMs);
+    const retriesNeededToReachTimeout = Math.ceil(timeoutMs / boundedRetryMs) + 1;
+    return Math.max(MAX_LOCK_RETRIES, retriesNeededToReachTimeout);
+}
+
 function sleepMsAsync(milliseconds: number): Promise<void> {
     if (!milliseconds || milliseconds <= 0) {
         return Promise.resolve();
@@ -490,6 +496,7 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
     const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    const maxRetries = resolveMaxLockRetries(timeoutMs, retryMs);
     const startedAt = Date.now();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
@@ -570,10 +577,10 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
             }
 
             const waitedMs = Date.now() - startedAt;
-            if (retries >= MAX_LOCK_RETRIES) {
+            if (retries >= maxRetries) {
                 throw new Error(
                     formatLockDiagnostic(lockPath, lastInspection, timeoutMs, waitedMs)
-                    + `; retries=${retries}; max_retries=${MAX_LOCK_RETRIES}; wait_strategy=sync_retry`
+                    + `; retries=${retries}; max_retries=${maxRetries}; wait_strategy=sync_retry`
                 );
             }
 
@@ -593,6 +600,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
     const timeoutMs = toPositiveInteger(options.timeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
     const retryMs = toPositiveInteger(options.retryMs, DEFAULT_LOCK_RETRY_MS);
     const staleMs = toPositiveInteger(options.staleMs, DEFAULT_LOCK_STALE_MS);
+    const maxRetries = resolveMaxLockRetries(timeoutMs, retryMs);
     const startedAt = Date.now();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let lastInspection: LockInspectionResult = inspectLock(lockPath, staleMs);
@@ -678,11 +686,11 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                 );
             }
 
-            if (retries >= MAX_LOCK_RETRIES) {
+            if (retries >= maxRetries) {
                 const elapsedMs = Date.now() - startedAt;
                 throw new Error(
                     formatLockDiagnostic(lockPath, lastInspection, timeoutMs, elapsedMs)
-                    + `; retries=${retries}; max_retries=${MAX_LOCK_RETRIES}`
+                    + `; retries=${retries}; max_retries=${maxRetries}`
                 );
             }
 
