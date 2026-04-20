@@ -7,6 +7,8 @@ import * as path from 'node:path';
 
 import { assessUpstreamReviewDependencyStatus, type ReviewDependencyTimelineEvent } from '../../../src/gates/review-dependencies';
 
+const PRE_START_BANNER_TASK_MODE_TIMESTAMP = '2026-04-17T11:29:00.000Z';
+
 function writeJson(filePath: string, value: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + '\n', 'utf8');
@@ -47,6 +49,7 @@ test('assessUpstreamReviewDependencyStatus accepts upstream PASS with split cano
         });
 
         writeJson(taskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',
@@ -201,6 +204,7 @@ test('assessUpstreamReviewDependencyStatus accepts explicit custom task-mode pat
         });
 
         writeJson(customTaskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',
@@ -217,6 +221,7 @@ test('assessUpstreamReviewDependencyStatus accepts explicit custom task-mode pat
             routed_to: '.antigravity/agents/orchestrator.md'
         });
         writeJson(defaultTaskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',
@@ -353,6 +358,7 @@ test('assessUpstreamReviewDependencyStatus rejects upstream PASS when receipt pr
         });
 
         writeJson(taskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',
@@ -490,6 +496,7 @@ test('assessUpstreamReviewDependencyStatus rejects upstream review artifacts who
         });
 
         writeJson(taskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',
@@ -626,6 +633,7 @@ test('assessUpstreamReviewDependencyStatus rejects upstream PASS when review-con
         });
 
         writeJson(taskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',
@@ -764,6 +772,7 @@ test('assessUpstreamReviewDependencyStatus rejects legacy-only routing metadata 
         });
 
         writeJson(taskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',
@@ -899,6 +908,7 @@ test('assessUpstreamReviewDependencyStatus accepts legacy-only routing metadata 
         });
 
         writeJson(taskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
             schema_version: 1,
             task_id: taskId,
             status: 'PASSED',

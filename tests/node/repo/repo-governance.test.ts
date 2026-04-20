@@ -17,6 +17,16 @@ function readRepoFile(relativePath: string): string {
     return fs.readFileSync(filePath, 'utf8');
 }
 
+function readGeneratedRepoFileIfMaterialized(relativePath: string): string | null {
+    const repoRoot = getRepoRoot();
+    const filePath = path.join(repoRoot, relativePath);
+    assertRepoFileIgnoredAndNotTracked(relativePath);
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+    return fs.readFileSync(filePath, 'utf8');
+}
+
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -152,17 +162,27 @@ test('start-banner contract stays synced across canonical guidance files', () =>
     const listGateText = 'list the first mandatory gates to run';
     const legacyStartMarker = 'files not modified yet';
 
-    for (const relativePath of [
+    const trackedCanonicalFiles = [
         'template/skills/orchestration/SKILL.md',
         'template/docs/agent-rules/40-commands.md',
-        'template/docs/agent-rules/90-skill-catalog.md',
+        'template/docs/agent-rules/90-skill-catalog.md'
+    ] as const;
+
+    const materializedGeneratedFiles = [
         'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
         'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md',
         'garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md',
+        'garda-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md',
+        'garda-agent-orchestrator/template/.agents/workflows/start-task.md',
         'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md',
         'garda-agent-orchestrator/template/docs/agent-rules/40-commands.md',
-        'garda-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md'
-    ]) {
+        'garda-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
+        'garda-agent-orchestrator/template/CLAUDE.md'
+    ] as const;
+
+    for (const relativePath of trackedCanonicalFiles) {
         const content = readRepoFile(relativePath);
         assert.ok(content.includes(startBannerToken), `${relativePath} must mention the repo-owned start banner flag`);
     }
@@ -170,31 +190,48 @@ test('start-banner contract stays synced across canonical guidance files', () =>
     for (const relativePath of [
         'template/skills/orchestration/SKILL.md',
         'template/skills/orchestration-depth1/SKILL.md',
-        'template/.agents/workflows/start-task.md',
-        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
-        'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
-        'garda-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md',
-        'garda-agent-orchestrator/template/.agents/workflows/start-task.md',
-        'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
-        'garda-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md'
+        'template/.agents/workflows/start-task.md'
     ]) {
         const content = readRepoFile(relativePath);
         assert.ok(content.includes(listGateText), `${relativePath} must preserve the start-banner gate-list instruction`);
     }
 
     for (const relativePath of [
-        'garda-agent-orchestrator/template/CLAUDE.md',
-        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
         'template/skills/orchestration/SKILL.md',
         'template/skills/orchestration-depth1/SKILL.md',
-        'template/.agents/workflows/start-task.md',
-        'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
-        'garda-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md',
-        'garda-agent-orchestrator/template/.agents/workflows/start-task.md',
-        'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
-        'garda-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md'
+        'template/.agents/workflows/start-task.md'
     ]) {
         const content = readRepoFile(relativePath);
         assert.ok(!content.includes(legacyStartMarker), `${relativePath} must not keep the legacy start marker`);
+    }
+
+    for (const relativePath of materializedGeneratedFiles) {
+        const content = readGeneratedRepoFileIfMaterialized(relativePath);
+        if (content == null) {
+            continue;
+        }
+        if (
+            relativePath.endsWith('/skills/orchestration/SKILL.md')
+            || relativePath.endsWith('/docs/agent-rules/40-commands.md')
+            || relativePath.endsWith('/docs/agent-rules/90-skill-catalog.md')
+        ) {
+            assert.ok(content.includes(startBannerToken), `${relativePath} must mention the repo-owned start banner flag`);
+        }
+        if (
+            relativePath.endsWith('/skills/orchestration/SKILL.md')
+            || relativePath.endsWith('/skills/orchestration-depth1/SKILL.md')
+            || relativePath.endsWith('/.agents/workflows/start-task.md')
+        ) {
+            assert.ok(content.includes(listGateText), `${relativePath} must preserve the start-banner gate-list instruction`);
+        }
+        if (
+            relativePath.endsWith('/template/CLAUDE.md')
+            || relativePath.endsWith('/docs/agent-rules/80-task-workflow.md')
+            || relativePath.endsWith('/skills/orchestration/SKILL.md')
+            || relativePath.endsWith('/skills/orchestration-depth1/SKILL.md')
+            || relativePath.endsWith('/.agents/workflows/start-task.md')
+        ) {
+            assert.ok(!content.includes(legacyStartMarker), `${relativePath} must not keep the legacy start marker`);
+        }
     }
 });
