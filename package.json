@@ -1,12 +1,12 @@
 {
   "name": "garda-agent-orchestrator",
   "version": "1.0.0",
-  "description": "Governed local agent orchestration for workspace deployment, governance, and audit.",
+  "description": "Governed local runtime for AI coding agents with task lifecycle, mandatory gates, reviews, and auditable completion.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Shubchynskyi/garda-agent-orchestrator.git"
   },
-  "homepage": "https://github.com/Shubchynskyi/garda-agent-orchestrator#readme",
+  "homepage": "https://garda-workflow.netlify.app/",
   "bugs": {
     "url": "https://github.com/Shubchynskyi/garda-agent-orchestrator/issues"
   },
@@ -58,11 +58,24 @@
     "node": ">=24.0.0"
   },
   "keywords": [
-    "agents",
-    "bootstrap",
-    "copilot",
     "garda",
-    "governed-runtime",
-    "orchestrator"
+    "cli",
+    "typescript",
+    "ai-agents",
+    "coding-agents",
+    "ai-coding",
+    "agent-orchestration",
+    "ai-orchestration",
+    "agentic-workflow",
+    "quality-gates",
+    "ai-governance",
+    "agent-governance",
+    "code-review",
+    "audit-trail",
+    "claude-workflow",
+    "codex-workflow",
+    "gemini-workflow",
+    "qwen-workflow",
+    "github-copilot"
   ]
 }

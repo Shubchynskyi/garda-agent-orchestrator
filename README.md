@@ -1,35 +1,54 @@
-![Garda Agent Orchestrator](https://raw.githubusercontent.com/Shubchynskyi/garda-agent-orchestrator/master/Image.png)
+![Garda Agent Orchestrator](Image.png)
 
 # Garda Agent Orchestrator
 
-Governed local agent orchestration for AI coding workflows.
+**Governed workflows for AI coding agents.**
+
+Garda turns Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravity into a controlled local development workflow with task lifecycle, mandatory gates, review artifacts, doc-impact checks, and auditable completion.
+
 `GARDA = Governed Agent Runtime, Deployment, and Audit.`
-Deploys canonical rules, mandatory quality gates, and token-usage optimization into any project; works with Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravity.
 
-Garda was not started from scratch in this repository. Earlier versions were developed privately as shell/Python prototypes before being rewritten and consolidated into the current Node/TypeScript implementation. This public repository intentionally starts from the first stable public release, `v1.0.0`, so the earlier internal incubation history is not reflected in the public commit log.
+**[Website](https://garda-workflow.netlify.app/)** · **[Quick Start](#quick-start)** · **[User Guide](HOW_TO.md)** · **[Architecture](docs/architecture.md)** · **[Work Example](docs/work-example.md)** · **[CLI Reference](docs/cli-reference.md)** · **[Configuration](docs/configuration.md)** · **[Changelog](CHANGELOG.md)**
 
-**[Quick Start](#quick-start)** · **[User Guide](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/HOW_TO.md)** · **[CLI Reference](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md)** · **[Architecture](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/architecture.md)** · **[Configuration](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/configuration.md)** · **[Work Example](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/work-example.md)** · **[Changelog](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/CHANGELOG.md)**
+```shell
+npm install -g garda-agent-orchestrator
+garda setup
+```
+
+Next: give [AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md) to your coding agent.
+
+## Why Garda?
+
+AI coding agents are powerful, but in real repositories they can skip steps, lose context, avoid reviews, and mark work as done too early.
+
+Garda adds a governance layer:
+
+- task lifecycle: `TODO → IN_PROGRESS → IN_REVIEW → DONE`
+- mandatory gates: preflight, compile, review, doc-impact, completion
+- provider-agnostic rules for Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravity
+- auditable task events and review artifacts
+- local Node/TypeScript CLI runtime
+- token-economy defaults for compact green-path execution
 
 ## Quick Start
 
 ```shell
-# 1. Install the CLI once
 npm install -g garda-agent-orchestrator
-
-# 2. Run setup through the global command
 garda setup
-
-# 3. Then give AGENT_INIT_PROMPT.md to your coding agent
-#    Agent reuses existing init answers, explicitly confirms active agent files,
-#    fills project context, offers optional skill packs, and finishes with garda agent-init
-
-# 4. After garda agent-init passes, pick a task from TASK.md and tell the agent:
-#    "Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates."
-#    the active profile (`balanced`, `fast`, `strict`, `docs-only`) provides the default execution mode;
-#    use explicit `depth=` only as a one-run override.
-#    the orchestrator then executes mandatory gates:
-#    enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate
 ```
+
+Then give [AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md) to your coding agent. The agent reuses existing init answers, confirms active agent files, fills project context, offers optional skill packs, and finishes with `garda agent-init`.
+
+After `garda agent-init` passes, pick a task from `TASK.md` and tell the agent:
+
+```text
+Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.
+```
+
+The active profile (`balanced`, `fast`, `strict`, `docs-only`) provides the default execution mode; use explicit `depth=` only as a one-run override.
+
+Mandatory gate order:
+`enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context -> required-reviews-check -> doc-impact-gate -> completion-gate`
 
 Temporary fallback without global install:
 
@@ -92,7 +111,7 @@ If you want persistent commands, install globally.
 
 Published command names: `garda`, `gao`, `garda-agent-orchestrator`
 
-Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md)**
+Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 ## Version
 
@@ -124,15 +143,19 @@ Full reference: **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-
 
 | Document | Description |
 |---|---|
-| **[HOW_TO.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/HOW_TO.md)** | Step-by-step user guide |
-| **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md)** | Complete CLI command reference |
-| **[docs/architecture.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/architecture.md)** | Design, runtime model, deployed files |
-| **[docs/configuration.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/configuration.md)** | Token economy, output filters, review capabilities |
-| **[docs/node-platform-foundation.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/node-platform-foundation.md)** | Node foundation, execution model, validators, and build/test skeleton |
-| **[docs/work-example.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/work-example.md)** | Task lifecycle walkthrough |
-| **[AGENT_INIT_PROMPT.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/AGENT_INIT_PROMPT.md)** | Setup prompt for coding agents |
-| **[CHANGELOG.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/CHANGELOG.md)** | Full changelog |
-| **[MANIFEST.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/MANIFEST.md)** | Bundle file manifest |
+| **[HOW_TO.md](HOW_TO.md)** | Step-by-step user guide |
+| **[docs/cli-reference.md](docs/cli-reference.md)** | Complete CLI command reference |
+| **[docs/architecture.md](docs/architecture.md)** | Design, runtime model, deployed files |
+| **[docs/configuration.md](docs/configuration.md)** | Token economy, output filters, review capabilities |
+| **[docs/node-platform-foundation.md](docs/node-platform-foundation.md)** | Node foundation, execution model, validators, and build/test skeleton |
+| **[docs/work-example.md](docs/work-example.md)** | Task lifecycle walkthrough |
+| **[AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md)** | Setup prompt for coding agents |
+| **[CHANGELOG.md](CHANGELOG.md)** | Full changelog |
+| **[MANIFEST.md](MANIFEST.md)** | Bundle file manifest |
+
+## Release Background
+
+Garda was not started from scratch in this repository. Earlier versions were developed privately as shell/Python prototypes before being rewritten and consolidated into the current Node/TypeScript implementation. This public repository intentionally starts from the first stable public release, `v1.0.0`, so the earlier internal incubation history is not reflected in the public commit log.
 
 ## Recent Changes
 
