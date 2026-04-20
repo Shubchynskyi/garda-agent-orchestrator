@@ -118,6 +118,58 @@ function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
 }
 
+function seedNodeBackendOptionalSkillFixture(
+    repoRoot: string,
+    policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory'
+): string {
+    const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    const configDir = path.join(orchestratorRoot, 'live', 'config');
+    const skillRoot = path.join(orchestratorRoot, 'live', 'skills', 'node-backend');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'garda.config.json'),
+        JSON.stringify({
+            version: 1,
+            configs: {
+                'optional-skill-selection-policy': 'optional-skill-selection-policy.json',
+                'skill-packs': 'skill-packs.json'
+            }
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'skill-packs.json'),
+        JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'optional-skill-selection-policy.json'),
+        JSON.stringify({ version: 1, mode: policyMode }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(skillRoot, 'skill.json'),
+        JSON.stringify({
+            id: 'node-backend',
+            pack: 'node-backend',
+            name: 'Node Backend',
+            summary: 'Node backend specialist for request validation and API work.',
+            tags: ['node', 'backend', 'api'],
+            aliases: ['node-backend', 'node'],
+            task_signals: ['request validation', 'api endpoint', 'node-backend'],
+            changed_path_signals: ['src/api/', 'orders.ts'],
+            references: [],
+            cost_hint: 'low',
+            priority: 50,
+            autoload: 'suggest'
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Node Backend\n\nUse for Node backend API work.\n', 'utf8');
+    return path.join(skillRoot, 'SKILL.md');
+}
+
 function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
@@ -532,6 +584,17 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(rulePackResult.exitCode, 0);
         runHandshakeForTask(repoRoot, 'T-900');
         runShellSmokeForTask(repoRoot, 'T-900');
+        fs.mkdirSync(path.join(getOrchestratorRoot(repoRoot), 'live', 'config'), { recursive: true });
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'garda.config.json'),
+            JSON.stringify({ version: 1, configs: { 'optional-skill-selection-policy': 'optional-skill-selection-policy.json' } }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'advisory' }, null, 2),
+            'utf8'
+        );
         const result = runClassifyChangeCommand({
             repoRoot,
             changedFiles: ['src/app.ts'],
@@ -546,6 +609,52 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(payload.changed_files[0], 'src/app.ts');
         assert.equal(payload.required_reviews.code, true);
         assert.equal(fs.existsSync(outputPath), true);
+        const persistedPayload = JSON.parse(fs.readFileSync(outputPath, 'utf8')) as Record<string, unknown>;
+        assert.ok(persistedPayload.optional_skill_selection);
+        assert.equal(
+            (persistedPayload.optional_skill_selection as Record<string, unknown>).artifact_path,
+            path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-900-optional-skill-selection.json').replace(/\\/g, '/')
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not materialize an optional-skill artifact when policy mode is off', () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-off.json');
+        seedTaskQueue(repoRoot, 'T-900-off');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId: 'T-900-off',
+            taskSummary: 'Update app flow'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, 'T-900-off');
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-900-off');
+        runShellSmokeForTask(repoRoot, 'T-900-off');
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'off');
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/api/orders.ts'],
+            taskId: 'T-900-off',
+            taskIntent: 'Implement request validation for a Node.js API endpoint.',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText) as Record<string, unknown>;
+        const persistedPayload = JSON.parse(fs.readFileSync(outputPath, 'utf8')) as Record<string, unknown>;
+        const optionalSkillSelection = persistedPayload.optional_skill_selection as Record<string, unknown>;
+        assert.equal((payload.optional_skill_selection as Record<string, unknown>).policy_mode, 'off');
+        assert.equal(optionalSkillSelection.policy_mode, 'off');
+        assert.equal(optionalSkillSelection.artifact_path, null);
+        assert.equal(optionalSkillSelection.decision, null);
+        assert.equal(
+            fs.existsSync(path.join(getReviewsRoot(repoRoot), 'T-900-off-optional-skill-selection.json')),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -915,6 +1024,232 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('not the latest PREFLIGHT_CLASSIFIED evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('skips selection of skills with missing SKILL.md during classify-change in required mode', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-149-preflight-cleanup';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Fail classify-change when optional skill selection points at a missing skill file'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        fs.mkdirSync(path.join(getOrchestratorRoot(repoRoot), 'live', 'config'), { recursive: true });
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'garda.config.json'),
+            JSON.stringify({ version: 1, configs: { 'optional-skill-selection-policy': 'optional-skill-selection-policy.json' } }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'required' }, null, 2),
+            'utf8'
+        );
+
+        const brokenSkillRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'skills', 'broken-skill');
+        fs.mkdirSync(brokenSkillRoot, { recursive: true });
+        fs.writeFileSync(
+            path.join(brokenSkillRoot, 'skill.json'),
+            JSON.stringify({
+                id: 'broken-skill',
+                pack: 'broken-pack',
+                name: 'Broken Skill',
+                summary: 'Broken skill fixture.',
+                tags: ['broken', 'api'],
+                aliases: ['broken'],
+                references: [],
+                cost_hint: 'low',
+                priority: 50,
+                autoload: 'suggest'
+            }, null, 2),
+            'utf8'
+        );
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Implement broken-skill API validation.',
+            changedFiles: ['src/app.ts'],
+            outputPath: preflightPath,
+            emitMetrics: false
+        });
+
+        // Skill without SKILL.md is silently excluded; preflight succeeds with as_is.
+        assert.match(result.outputText, /"mode": "FULL_PATH"/);
+        assert.equal(fs.existsSync(preflightPath), true);
+        const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
+        assert.equal(optionalSkillSelection.policy_mode, 'required');
+        assert.equal(optionalSkillSelection.decision, 'as_is');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps classify-change non-blocking in advisory mode when skill has no SKILL.md', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-149-preflight-advisory';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep advisory optional skill selection non-blocking during classify-change'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        fs.mkdirSync(path.join(getOrchestratorRoot(repoRoot), 'live', 'config'), { recursive: true });
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'garda.config.json'),
+            JSON.stringify({ version: 1, configs: { 'optional-skill-selection-policy': 'optional-skill-selection-policy.json' } }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'advisory' }, null, 2),
+            'utf8'
+        );
+
+        const brokenSkillRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'skills', 'broken-skill');
+        fs.mkdirSync(brokenSkillRoot, { recursive: true });
+        fs.writeFileSync(
+            path.join(brokenSkillRoot, 'skill.json'),
+            JSON.stringify({
+                id: 'broken-skill',
+                pack: 'broken-pack',
+                name: 'Broken Skill',
+                summary: 'Broken skill fixture.',
+                tags: ['broken', 'api'],
+                aliases: ['broken'],
+                task_signals: ['broken-skill'],
+                changed_path_signals: ['src/app.ts'],
+                references: [],
+                cost_hint: 'low',
+                priority: 50,
+                autoload: 'suggest'
+            }, null, 2),
+            'utf8'
+        );
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Implement broken-skill API validation.',
+            changedFiles: ['src/app.ts'],
+            outputPath: preflightPath,
+            emitMetrics: false
+        });
+
+        // Skill without SKILL.md is silently excluded; classify-change succeeds with as_is.
+        assert.match(result.outputText, /"mode": "FULL_PATH"/);
+        assert.equal(fs.existsSync(preflightPath), true);
+        const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
+        assert.equal(optionalSkillSelection.policy_mode, 'advisory');
+        assert.equal(optionalSkillSelection.decision, 'as_is');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails classify-change when garda.config.json maps a missing optional-skill-selection policy file', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-149-preflight-missing-policy';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Fail classify-change when mapped optional skill policy config is missing'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'required');
+        fs.rmSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'optional-skill-selection-policy.json'),
+            { force: true }
+        );
+
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Fail classify-change when mapped optional skill policy config is missing.',
+                changedFiles: ['src/api/orders.ts'],
+                outputPath: path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`),
+                emitMetrics: false
+            }),
+            /Managed optional skill selection policy config is missing/
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('blocks compile-gate before implementation starts when required optional-skill evidence is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-149-compile-required-optional-skill';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 1;\n', 'utf8');
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'required');
+
+        const commandsPath = path.join(repoRoot, 'commands-optional-skill-required.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block implementation start when required optional-skill evidence is missing'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Block implementation start when required optional-skill evidence is missing',
+            ['src/api/orders.ts']
+        );
+        const optionalSkillArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`);
+        assert.equal(fs.existsSync(optionalSkillArtifactPath), true);
+        fs.rmSync(optionalSkillArtifactPath, { force: true });
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Optional skill selection artifact is missing for current task cycle')));
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'IMPLEMENTATION_STARTED'),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

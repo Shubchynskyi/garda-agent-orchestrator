@@ -30,6 +30,14 @@ export class ValidationFailureError extends Error {
     }
 }
 
+export class GateFailureError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'GateFailureError';
+        Object.setPrototypeOf(this, GateFailureError.prototype);
+    }
+}
+
 export function countStoragePolicyActions(storagePolicyResult: { removed: string[]; compressed: string[] } | undefined): number {
     if (!storagePolicyResult) {
         return 0;

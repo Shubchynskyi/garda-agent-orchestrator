@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import {
     getManagedConfigValidators,
     validateManagedConfigByName,
+    validateOptionalSkillSelectionPolicyConfig,
     validateOutputFiltersConfig,
     validateTokenEconomyConfig,
     validateProfilesConfig,
@@ -137,6 +138,18 @@ test('validateProfilesConfig rejects user profile name conflicting with built-in
             }
         });
     }, /conflicts with a built-in/);
+});
+
+test('validateOptionalSkillSelectionPolicyConfig validates the tracked template', () => {
+    const normalized = validateOptionalSkillSelectionPolicyConfig(readTemplateConfig('optional-skill-selection-policy'));
+    assert.equal(normalized.version, 1);
+    assert.equal(normalized.mode, 'advisory');
+});
+
+test('validateManagedConfigByName handles optional-skill-selection-policy', () => {
+    const config = readTemplateConfig('optional-skill-selection-policy');
+    const result = validateManagedConfigByName('optional-skill-selection-policy', config);
+    assert.equal(result.mode, 'advisory');
 });
 
 test('validateProfilesConfig rejects empty built_in_profiles', () => {

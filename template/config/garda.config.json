@@ -7,6 +7,7 @@
     "paths": "paths.json",
     "output-filters": "output-filters.json",
     "skill-packs": "skill-packs.json",
+    "optional-skill-selection-policy": "optional-skill-selection-policy.json",
     "isolation-mode": "isolation-mode.json",
     "profiles": "profiles.json",
     "review-artifact-storage": "review-artifact-storage.json"

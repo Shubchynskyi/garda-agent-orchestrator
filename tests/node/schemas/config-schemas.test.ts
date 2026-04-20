@@ -18,6 +18,7 @@ import {
     pathsSchema,
     outputFiltersSchema,
     skillPacksSchema,
+    optionalSkillSelectionPolicySchema,
     isolationModeSchema,
     profilesSchema,
     reviewArtifactStorageSchema,
@@ -70,6 +71,7 @@ function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: 
         'paths.json',
         'output-filters.json',
         'skill-packs.json',
+        'optional-skill-selection-policy.json',
         'isolation-mode.json',
         'profiles.json',
         'review-artifact-storage.json',
@@ -92,15 +94,16 @@ function cleanupTempBundleRoot(tmpDir: string): void {
 // Schema registry
 // ---------------------------------------------------------------------------
 
-test('getConfigSchemas returns entries for all eight managed configs', () => {
+test('getConfigSchemas returns entries for all nine managed configs', () => {
     const schemas = getConfigSchemas();
-    assert.equal(schemas.length, 8);
+    assert.equal(schemas.length, 9);
     const names = schemas.map((s) => s.name);
     assert.ok(names.includes('review-capabilities'));
     assert.ok(names.includes('token-economy'));
     assert.ok(names.includes('paths'));
     assert.ok(names.includes('output-filters'));
     assert.ok(names.includes('skill-packs'));
+    assert.ok(names.includes('optional-skill-selection-policy'));
     assert.ok(names.includes('isolation-mode'));
     assert.ok(names.includes('profiles'));
     assert.ok(names.includes('review-artifact-storage'));
@@ -128,6 +131,7 @@ test('all schema objects have $schema, $id, title, and type', () => {
         pathsSchema,
         outputFiltersSchema,
         skillPacksSchema,
+        optionalSkillSelectionPolicySchema,
         isolationModeSchema,
         profilesSchema,
         reviewArtifactStorageSchema,
@@ -171,6 +175,20 @@ test('template output-filters.json validates against schema', () => {
 test('template skill-packs.json validates against schema', () => {
     const data = readTemplateConfig('skill-packs.json');
     const result = validateAgainstSchema(data, skillPacksSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('template optional-skill-selection-policy.json validates against schema', () => {
+    const data = readTemplateConfig('optional-skill-selection-policy.json');
+    const result = validateAgainstSchema(data, optionalSkillSelectionPolicySchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('garda.config schema allows omitting optional-skill-selection-policy for backward-compatible bundles', () => {
+    const data = readTemplateConfig('garda.config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    delete ((clone.configs as Record<string, unknown>)['optional-skill-selection-policy']);
+    const result = validateAgainstSchema(clone, gardaConfigSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
@@ -285,7 +303,7 @@ test('validateAllConfigs validates the live config directory when present', () =
     }
 
     const report = validateAllConfigs(bundleRoot);
-    assert.equal(report.configs.length, 8);
+    assert.equal(report.configs.length, 9);
     for (const cfg of report.configs) {
         assert.equal(cfg.exists, true, `${cfg.name} should exist`);
         assert.equal(cfg.parseable, true, `${cfg.name} should be parseable`);
@@ -475,6 +493,25 @@ test('formatValidationReport includes root and config errors', () => {
 test('gate validate-config succeeds against a valid bundle root', () => {
     const { tmpDir, bundleRoot } = makeTempBundleRoot();
     try {
+        const result = spawnSync(process.execPath, [
+            CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
+        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
+        assert.equal(result.status, 0, result.stderr);
+        assert.ok(result.stdout.includes('CONFIG_VALIDATION_PASSED'));
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
+test('gate validate-config succeeds when optional-skill-selection-policy is omitted from root config', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        fs.rmSync(path.join(configDir, 'optional-skill-selection-policy.json'));
+        const rootConfigPath = path.join(configDir, 'garda.config.json');
+        const rootConfig = JSON.parse(fs.readFileSync(rootConfigPath, 'utf8')) as Record<string, unknown>;
+        delete ((rootConfig.configs as Record<string, unknown>)['optional-skill-selection-policy']);
+        fs.writeFileSync(rootConfigPath, JSON.stringify(rootConfig, null, 2), 'utf8');
+
         const result = spawnSync(process.execPath, [
             CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
         ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });

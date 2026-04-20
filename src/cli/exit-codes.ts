@@ -91,6 +91,9 @@ function matchesAny(message: string, patterns: ReadonlyArray<string | RegExp>): 
  * EXIT_GENERAL_FAILURE (1) is returned so behaviour stays fail-closed.
  */
 export function classifyErrorExitCode(error: unknown): number {
+    if (error instanceof Error && error.name === 'GateFailureError') {
+        return EXIT_GATE_FAILURE;
+    }
     const message = error instanceof Error ? error.message : String(error ?? '');
 
     if (matchesAny(message, LOCK_CONTENTION_PATTERNS)) return EXIT_LOCK_CONTENTION;

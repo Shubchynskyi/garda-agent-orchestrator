@@ -1,8 +1,20 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { parseTaskMdTableRow } from '../../core/task-md-table';
 import { getWorkspaceSnapshot } from '../../gates/compile-gate';
+import { EXIT_GATE_FAILURE } from '../exit-codes';
+import {
+    buildOptionalSkillSelectionArtifact,
+    computeOptionalSkillTaskTextSha256,
+    getOptionalSkillSelectionArtifactViolations,
+    getOptionalSkillSelectionArtifactPath,
+    isOptionalSkillSelectionPolicyConfigured,
+    loadOptionalSkillSelectionHeadlinesCache,
+    readOptionalSkillSelectionPolicyConfig,
+    readOptionalSkillSelectionArtifact
+} from '../../runtime/optional-skill-selection';
 import { readActiveProfileHint } from '../../validators/task-command';
 import { formatStatusSnapshotCompact, getStatusSnapshot } from '../../validators/status';
 import { getWhyBlocked } from '../../validators/why-blocked';
@@ -63,12 +75,29 @@ function buildPrepromptHelpText(): string {
     ].join('\n');
 }
 
-function readJsonIfExists<T extends Record<string, unknown>>(filePath: string): T | null {
+interface JsonArtifactReadResult<T extends Record<string, unknown>> {
+    payload: T;
+    sha256: string;
+}
+
+function computeSha256FromText(text: string): string {
+    return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function readJsonArtifactIfExists<T extends Record<string, unknown>>(
+    filePath: string,
+    options: { includeSha?: boolean } = {}
+): JsonArtifactReadResult<T> | null {
     try {
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
             return null;
         }
-        return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
+        const fileText = fs.readFileSync(filePath, 'utf8');
+        const payload = JSON.parse(fileText) as T;
+        return {
+            payload,
+            sha256: options.includeSha === true ? computeSha256FromText(fileText) : ''
+        };
     } catch {
         return null;
     }
@@ -232,9 +261,10 @@ function buildClassifyChangeCommand(
     return explicitScopeCommand;
 }
 
-function readRulePackStageFiles(targetRoot: string, taskId: string, stageKey: 'task_entry' | 'post_preflight'): string[] {
-    const rulePackPath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-rule-pack.json`);
-    const payload = readJsonIfExists<Record<string, unknown>>(rulePackPath);
+function readRulePackStageFilesFromPayload(
+    payload: Record<string, unknown> | null,
+    stageKey: 'task_entry' | 'post_preflight'
+): string[] {
     const stages = payload?.stages;
     if (!stages || typeof stages !== 'object' || Array.isArray(stages)) {
         return [];
@@ -304,6 +334,171 @@ function buildStartupScopeBlocker(
         return null;
     }
     return 'Workspace is already dirty, but no reusable preflight scope or staged-only task diff was detected. Enter task mode first, then rerun classify-change with explicit --changed-file entries or stage only the intended task diff before using --use-staged.';
+}
+
+function readPlannedChangedFiles(taskModePayload: Record<string, unknown> | null): string[] {
+    if (!Array.isArray(taskModePayload?.planned_changed_files)) {
+        return [];
+    }
+    return taskModePayload.planned_changed_files
+        .map((entry) => String(entry || '').trim().replace(/\\/g, '/'))
+        .filter(Boolean);
+}
+
+function readOptionalSkillPolicyModeSafe(bundleRoot: string): string | null {
+    try {
+        return readOptionalSkillSelectionPolicyConfig(bundleRoot).mode;
+    } catch {
+        return null;
+    }
+}
+
+function buildOptionalSkillActivationCommand(repoRoot: string, taskId: string, skillId: string): string {
+    return getGateHelpEntry('activate-optional-skill', repoRoot).usage[0]
+        .split('<task-id>').join(taskId)
+        .split('<selected-skill-id>').join(skillId);
+}
+
+function buildOptionalSkillsDiagnostics(
+    repoRoot: string,
+    targetRoot: string,
+    bundleRoot: string,
+    taskId: string,
+    taskSummary: string,
+    preflightPath: string,
+    preflightPayload: Record<string, unknown> | null,
+    preflightSha256: string | null,
+    taskModePayload: Record<string, unknown> | null
+): Record<string, unknown> | null {
+    if (!isOptionalSkillSelectionPolicyConfigured(bundleRoot)) {
+        return null;
+    }
+    const portableArtifactPath = toPortableRepoPath(targetRoot, getOptionalSkillSelectionArtifactPath(bundleRoot, taskId));
+    try {
+        const policyConfig = readOptionalSkillSelectionPolicyConfig(bundleRoot);
+        const expectedTaskTextSha256 = computeOptionalSkillTaskTextSha256(taskSummary);
+        if (policyConfig.mode === 'off') {
+            return {
+                artifact_path: portableArtifactPath,
+                artifact_present: false,
+                current_policy_mode: policyConfig.mode,
+                policy_mode: policyConfig.mode,
+                decision: null,
+                selected_installed_skills: [],
+                selected_installed_skill_paths: [],
+                selected_installed_skill_activation_ready: false,
+                selected_installed_skill_activation_blocker: null,
+                selected_installed_skill_activation_commands: [],
+                recommended_missing_packs: [],
+                as_is_reason: 'policy_off',
+                visible_summary_line: 'Optional skills: as_is (reason: policy_off)',
+                blocker: null
+            };
+        }
+        const currentCycleArtifact = preflightPayload
+            ? readOptionalSkillSelectionArtifact(bundleRoot, taskId)
+            : null;
+        const previewChangedPaths = Array.isArray(preflightPayload?.changed_files)
+            ? preflightPayload.changed_files.map((entry) => String(entry || ''))
+            : readPlannedChangedFiles(taskModePayload);
+        let loadedHeadlinesCache: ReturnType<typeof loadOptionalSkillSelectionHeadlinesCache> = loadOptionalSkillSelectionHeadlinesCache(
+            bundleRoot,
+            policyConfig.mode,
+            {
+                preferPersistedSurface: true
+            }
+        );
+        const currentArtifactViolations = currentCycleArtifact
+            ? getOptionalSkillSelectionArtifactViolations(bundleRoot, currentCycleArtifact, {
+                requireMaterializedArtifact: true,
+                expectedPreflightPath: preflightPayload ? preflightPath : null,
+                expectedPreflightSha256: preflightPayload ? (preflightSha256 || null) : null,
+                expectedTaskTextSha256,
+                expectedPolicyMode: policyConfig.mode,
+                loadedHeadlinesCache
+            })
+            : [];
+        // Activation-ready checks reuse the same artifact contract as currentArtifactViolations.
+        // When the current artifact is stale, advisory mode should still recompute a preview
+        // instead of surfacing those stale-artifact violations as a task-start blocker.
+        const activationArtifactViolations: string[] = [];
+        const preview = currentCycleArtifact && currentArtifactViolations.length === 0
+            ? currentCycleArtifact
+            : (() => {
+                loadedHeadlinesCache = loadedHeadlinesCache || loadOptionalSkillSelectionHeadlinesCache(bundleRoot, policyConfig.mode, {
+                    preferPersistedSurface: true
+                });
+                return buildOptionalSkillSelectionArtifact(bundleRoot, taskId, {
+                    taskText: taskSummary,
+                    changedPaths: previewChangedPaths,
+                    preflightPath: preflightPayload ? preflightPath : null,
+                    preflightSha256: preflightPayload ? preflightSha256 : null,
+                    loadedHeadlinesCache
+                });
+            })();
+        const previewViolations = currentCycleArtifact && currentArtifactViolations.length === 0
+            ? []
+            : getOptionalSkillSelectionArtifactViolations(bundleRoot, preview, {
+                requireMaterializedArtifact: false,
+                expectedPreflightPath: preflightPayload ? preflightPath : null,
+                expectedPreflightSha256: preflightPayload ? (preflightSha256 || null) : null,
+                expectedTaskTextSha256,
+                expectedPolicyMode: policyConfig.mode,
+                loadedHeadlinesCache
+            });
+        const policyMode = preview.payload.policy_mode;
+        const requiresMaterializedArtifact = policyMode === 'required' || policyMode === 'strict';
+        const activationReady = (
+            preview.payload.selected_installed_skills.length > 0
+            && currentCycleArtifact !== null
+            && currentArtifactViolations.length === 0
+            && activationArtifactViolations.length === 0
+            && preflightPayload !== null
+            && preflightSha256 !== null
+        );
+        const activationBlocker = activationReady
+            ? null
+            : activationArtifactViolations.length > 0
+                ? activationArtifactViolations.join(' ')
+                : 'Optional skill activation requires a current materialized selection artifact bound to the current preflight.';
+        let blocker: string | null = null;
+        if (requiresMaterializedArtifact && currentCycleArtifact === null) {
+            blocker = 'Optional skill selection policy requires a materialized current-cycle selection artifact. Re-run classify-change for this task cycle before implementation.';
+        } else if (requiresMaterializedArtifact && currentArtifactViolations.length > 0) {
+            blocker = currentArtifactViolations.join(' ');
+        } else if (activationArtifactViolations.length > 0) {
+            blocker = activationArtifactViolations.join(' ');
+        } else if (previewViolations.length > 0) {
+            blocker = previewViolations.join(' ');
+        }
+        return {
+            artifact_path: portableArtifactPath,
+            artifact_present: currentCycleArtifact !== null,
+            current_policy_mode: policyConfig.mode,
+            policy_mode: policyMode,
+            decision: preview.payload.decision,
+            selected_installed_skills: preview.payload.selected_installed_skills.map((entry) => entry.id),
+            selected_installed_skill_paths: preview.payload.selected_installed_skills.map((entry) => entry.allowed_skill_path),
+            selected_installed_skill_activation_ready: activationReady,
+            selected_installed_skill_activation_blocker: activationBlocker,
+            selected_installed_skill_activation_commands: activationReady
+                ? preview.payload.selected_installed_skills.map((entry) => (
+                    buildOptionalSkillActivationCommand(repoRoot, taskId, entry.id)
+                ))
+                : [],
+            recommended_missing_packs: preview.payload.recommended_missing_packs.map((entry) => entry.id),
+            as_is_reason: preview.payload.as_is_reason,
+            visible_summary_line: preview.payload.visible_summary_line,
+            blocker
+        };
+    } catch (error: unknown) {
+        return {
+            artifact_path: portableArtifactPath,
+            artifact_present: false,
+            current_policy_mode: readOptionalSkillPolicyModeSafe(bundleRoot),
+            blocker: `Optional skill selection preview is unavailable: ${error instanceof Error ? error.message : String(error)}`
+        };
+    }
 }
 
 function getRequiredReviewTypes(preflightPayload: Record<string, unknown> | null): string[] {
@@ -465,12 +660,27 @@ function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: st
     const eventTypes = readTaskTimelineEvents(targetRoot, taskId);
     const taskModePath = path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-task-mode.json`);
     const preflightPath = path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-preflight.json`);
-    const taskModePayload = readJsonIfExists<Record<string, unknown>>(taskModePath);
-    const preflightPayload = readJsonIfExists<Record<string, unknown>>(preflightPath);
+    const taskModeArtifact = readJsonArtifactIfExists<Record<string, unknown>>(taskModePath);
+    const preflightArtifact = readJsonArtifactIfExists<Record<string, unknown>>(preflightPath, { includeSha: true });
+    const rulePackPath = path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-rule-pack.json`);
+    const rulePackArtifact = readJsonArtifactIfExists<Record<string, unknown>>(rulePackPath);
+    const taskModePayload = taskModeArtifact?.payload || null;
+    const preflightPayload = preflightArtifact?.payload || null;
+    const optionalSkillsDiagnostics = buildOptionalSkillsDiagnostics(
+        targetRoot,
+        targetRoot,
+        bundleRoot,
+        taskId,
+        String(taskRow.title || taskModePayload?.task_summary || ''),
+        preflightPath,
+        preflightPayload,
+        preflightArtifact?.sha256 || null,
+        taskModePayload
+    );
     const activeProfileHint = readActiveProfileHint(bundleRoot);
     const requiredReviewTypes = getRequiredReviewTypes(preflightPayload);
-    const taskEntryRuleFiles = readRulePackStageFiles(targetRoot, taskId, 'task_entry');
-    const postPreflightRuleFiles = readRulePackStageFiles(targetRoot, taskId, 'post_preflight');
+    const taskEntryRuleFiles = readRulePackStageFilesFromPayload(rulePackArtifact?.payload || null, 'task_entry');
+    const postPreflightRuleFiles = readRulePackStageFilesFromPayload(rulePackArtifact?.payload || null, 'post_preflight');
     const provider = String(
         taskModePayload?.provider
         || statusSnapshot.sourceOfTruth
@@ -485,7 +695,7 @@ function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: st
     const orchestratorWork = taskModePayload?.orchestrator_work === true;
     const existingChangedFiles = Array.isArray(preflightPayload?.changed_files)
         ? preflightPayload?.changed_files.map((entry) => String(entry)).filter(Boolean)
-        : [];
+        : readPlannedChangedFiles(taskModePayload);
     const boundedPreflightChangedFiles = boundList(existingChangedFiles, MAX_PREPROMPT_CHANGED_FILES);
     const startupScopeBlocker = buildStartupScopeBlocker(
         existingChangedFiles,
@@ -552,7 +762,8 @@ function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: st
                 effective_depth: taskModePayload.effective_depth || null,
                 orchestrator_work: taskModePayload.orchestrator_work === true,
                 dirty_workspace_baseline: taskModePayload.dirty_workspace_baseline || null
-            } : null
+            } : null,
+            ...(optionalSkillsDiagnostics ? { optional_skills: optionalSkillsDiagnostics } : {})
         },
         commands: {
             startup_pending: taskModePayload === null,
@@ -565,6 +776,33 @@ function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: st
             post_implementation_commands: preflightPayload ? postImplementationCommands : []
         }
     };
+}
+
+function getOptionalSkillTaskStartBlocker(result: Record<string, unknown>): string | null {
+    const diagnostics = result.diagnostics;
+    if (!diagnostics || typeof diagnostics !== 'object' || Array.isArray(diagnostics)) {
+        return null;
+    }
+    const optionalSkills = (diagnostics as Record<string, unknown>).optional_skills;
+    if (!optionalSkills || typeof optionalSkills !== 'object' || Array.isArray(optionalSkills)) {
+        return null;
+    }
+    const policyMode = String(
+        (optionalSkills as Record<string, unknown>).current_policy_mode
+        || (optionalSkills as Record<string, unknown>).policy_mode
+        || ''
+    ).trim().toLowerCase();
+    const blocker = String((optionalSkills as Record<string, unknown>).blocker || '').trim();
+    if (!blocker) {
+        return null;
+    }
+    if (!policyMode) {
+        return blocker;
+    }
+    if (policyMode !== 'required' && policyMode !== 'strict') {
+        return null;
+    }
+    return blocker;
 }
 
 export function handlePreprompt(commandArgv: string[], packageJson: PackageJsonLike): void {
@@ -607,9 +845,16 @@ export function handlePreprompt(commandArgv: string[], packageJson: PackageJsonL
         taskId,
         typeof options.initAnswersPath === 'string' ? options.initAnswersPath : undefined
     );
+    const optionalSkillTaskStartBlocker = getOptionalSkillTaskStartBlocker(result);
     if (options.json === true) {
         console.log(JSON.stringify(result, null, 2));
+        if (optionalSkillTaskStartBlocker) {
+            process.exitCode = EXIT_GATE_FAILURE;
+        }
         return;
     }
     console.log(JSON.stringify(result, null, 2));
+    if (optionalSkillTaskStartBlocker) {
+        process.exitCode = EXIT_GATE_FAILURE;
+    }
 }

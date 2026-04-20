@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { inferBundleNameFromPackageRoot, resolveDelegatedLauncherTarget } from '../../../src/bin/garda';
+import { getRuntimeCandidates, inferBundleNameFromPackageRoot, resolveDelegatedLauncherTarget } from '../../../src/bin/garda';
 
 function writeFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -191,6 +191,38 @@ test('inferBundleNameFromPackageRoot does not infer bundle name for source check
         writeFile(path.join(sourceRoot, 'scripts', 'node-foundation', 'placeholder.ts'), '');
 
         assert.equal(inferBundleNameFromPackageRoot(sourceRoot), null);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('getRuntimeCandidates prefers dist runtime over .node-build when both exist', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-order-'));
+    try {
+        createGardaPackageRoot(tempRoot, '2.4.0');
+        writeFile(path.join(tempRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
+        writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
+
+        const candidates = getRuntimeCandidates(tempRoot);
+        assert.deepEqual(candidates, [
+            path.join(tempRoot, 'dist', 'src'),
+            path.join(tempRoot, '.node-build', 'src')
+        ]);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('getRuntimeCandidates falls back to .node-build when dist runtime is absent', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-fallback-'));
+    try {
+        createGardaPackageRoot(tempRoot, '2.4.0');
+        writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
+
+        const candidates = getRuntimeCandidates(tempRoot);
+        assert.deepEqual(candidates, [
+            path.join(tempRoot, '.node-build', 'src')
+        ]);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }

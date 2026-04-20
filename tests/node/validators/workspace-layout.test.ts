@@ -114,6 +114,7 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'output-filters.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'skill-packs.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'optional-skill-selection-policy.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'isolation-mode.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'skills-index.json'), '{}', 'utf8');
@@ -208,6 +209,24 @@ test('validateBundleInvariants fails when skills-headlines inventory entry is mi
     }
 });
 
+test('validateBundleInvariants tolerates a missing optional-skill-selection-policy runtime config', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
+    const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+    try {
+        for (const relPath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+            const fullPath = path.join(bundlePath, relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, '{}', 'utf8');
+        }
+
+        const result = validateBundleInvariants(bundlePath);
+        assert.equal(result.isValid, true);
+        assert.ok(!result.violations.some((v) => v.includes('optional-skill-selection-policy.json')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('validateBundleInvariants fails when garda.config runtime inventory entry is missing', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
     const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
@@ -255,6 +274,7 @@ test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/src'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/skills-index.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/skills-headlines.json'));
+    assert.ok(!BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/optional-skill-selection-policy.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/isolation-mode.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/garda.config.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/template/config/garda.config.json'));

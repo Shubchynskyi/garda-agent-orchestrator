@@ -100,6 +100,8 @@ garda preprompt task --task-id "T-137" --target-root "."
 Notes:
 - `preprompt task` does not modify task state, timelines, or review artifacts.
 - `preprompt task --json` reuses the current preflight artifact when present to derive required review types and the post-implementation command sequence.
+- When the repo maps `optional-skill-selection-policy` through `garda-agent-orchestrator/live/config/garda.config.json`, `preprompt task --json` also shows `diagnostics.optional_skills`, including the policy mode, compact selection summary, selected skill ids, `selected_installed_skill_paths`, or an explicit `as_is` fallback reason. A stray policy file that is not mapped through `garda.config.json` does not activate the feature. The diagnostics reuse the current preflight scope when present and otherwise fall back to task-start context such as task summary and persisted planned scope.
+- If `diagnostics.optional_skills.blocker` is present under `required` or `strict`, `preprompt task` remains read-only but exits non-zero so the startup flow cannot proceed past that blocker silently.
 - If the workspace is dirty but no reusable staged scope or existing preflight scope is available, the output reports that blocker instead of inventing a misleading `--use-staged` classify command.
 - Output stays bounded: review-artifact and changed-file arrays include counts plus truncation metadata instead of dumping arbitrarily large lists.
 
@@ -330,6 +332,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
 | Classify change | `garda gate classify-change --use-staged --task-intent "..."` |
 | Compile gate | `garda gate compile-gate --task-id "T-001"` |
+| Optional skill activation | `garda gate activate-optional-skill --task-id "T-001" --skill-id "<selected-skill-id>"` |
 | Review gate | `garda gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |
 | Audited no-op | `garda gate record-no-op --task-id "T-001" --reason "Already implemented in current branch"` |
 | Doc impact | `garda gate doc-impact-gate --task-id "T-001" --decision "NO_DOC_UPDATES"` |

@@ -33,6 +33,7 @@ Unused entrypoints are not created by default. Extra redirect entrypoints appear
 
 Versioned bundle templates consumed during materialization:
 - template/config/garda.config.json
+- template/config/optional-skill-selection-policy.json
 
 Materialized (regenerated on every init, reinit, and update) inside `garda-agent-orchestrator/live`:
 - live/config/review-capabilities.json
@@ -40,6 +41,7 @@ Materialized (regenerated on every init, reinit, and update) inside `garda-agent
 - live/config/token-economy.json
 - live/config/output-filters.json
 - live/config/skill-packs.json
+- live/config/optional-skill-selection-policy.json
 - live/config/isolation-mode.json
 - live/config/profiles.json
 - live/config/skills-index.json

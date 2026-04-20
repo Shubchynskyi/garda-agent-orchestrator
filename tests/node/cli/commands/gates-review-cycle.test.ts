@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
 import { runBuildReviewContextCommand } from '../../../../src/cli/commands/gate-build-handlers';
 import {
     runClassifyChangeCommand,
@@ -26,6 +27,8 @@ import {
     computeReviewContextReuseHash
 } from '../../../../src/gates/review-reuse';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { ensureSkillsHeadlinesCurrent } from '../../../../src/runtime/skill-headlines';
+import { writeOptionalSkillSelectionArtifact } from '../../../../src/runtime/optional-skill-selection';
 import * as childProcess from 'node:child_process';
 
 function escapeRegExp(value: string): string {
@@ -62,6 +65,7 @@ function createTempRepo(): string {
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
+    ensureSkillsHeadlinesCurrent(path.join(root, 'garda-agent-orchestrator'));
     return root;
 }
 
@@ -160,6 +164,58 @@ function getReviewsRoot(repoRoot: string): string {
 
 function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
+}
+
+function seedNodeBackendOptionalSkillFixture(
+    repoRoot: string,
+    policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory'
+): string {
+    const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    const configDir = path.join(orchestratorRoot, 'live', 'config');
+    const skillRoot = path.join(orchestratorRoot, 'live', 'skills', 'node-backend');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'garda.config.json'),
+        JSON.stringify({
+            version: 1,
+            configs: {
+                'optional-skill-selection-policy': 'optional-skill-selection-policy.json',
+                'skill-packs': 'skill-packs.json'
+            }
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'skill-packs.json'),
+        JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'optional-skill-selection-policy.json'),
+        JSON.stringify({ version: 1, mode: policyMode }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(skillRoot, 'skill.json'),
+        JSON.stringify({
+            id: 'node-backend',
+            pack: 'node-backend',
+            name: 'Node Backend',
+            summary: 'Node backend specialist for request validation and API work.',
+            tags: ['node', 'backend', 'api'],
+            aliases: ['node-backend', 'node'],
+            task_signals: ['request validation', 'api endpoint', 'node-backend'],
+            changed_path_signals: ['src/api/', 'orders.ts'],
+            references: [],
+            cost_hint: 'low',
+            priority: 50,
+            autoload: 'suggest'
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Node Backend\n\nUse for Node backend API work.\n', 'utf8');
+    return path.join(skillRoot, 'SKILL.md');
 }
 
 function writePreflight(
@@ -1526,6 +1582,263 @@ describe('cli/commands/gates – review-cycle suites', () => {
             preflightPath
         });
         assert.ok(buildResult.outputLines.some((line) => /^TokenEconomyActive: (True|False)$/.test(line)));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects optional skill loads when policy mode is off', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-149-review-off-mode';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 1;\n', 'utf8');
+        const optionalSkillPath = seedNodeBackendOptionalSkillFixture(repoRoot, 'off');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject optional skill loads at review gate when policy mode is off'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3 },
+            changed_files: ['src/api/orders.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const crypto = require('node:crypto');
+        const preflightSha256 = crypto.createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
+        writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts'],
+            preflightPath,
+            preflightSha256
+        });
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const reviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            reviewContextPath,
+            'agent:code-reviewer'
+        );
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'SKILL_REFERENCE_LOADED',
+            'INFO',
+            'Optional skill loaded after an off-mode selection.',
+            {
+                skill_id: 'node-backend',
+                reference_path: optionalSkillPath,
+                trigger_reason: 'manual'
+            }
+        );
+
+        const reviewGateResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+
+        assert.equal(reviewGateResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewGateResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(reviewGateResult.outputLines.some((line) => line.includes("policy mode is 'off'")));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects stale strict optional-skill artifacts when the current TASK.md title changes', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-149-review-stale-task-text';
+        seedTaskQueue(repoRoot, taskId);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'landing.md'), 'hello\n', 'utf8');
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'strict');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement request validation for a Node.js API endpoint'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3 },
+            changed_files: ['docs/landing.md'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const crypto = require('node:crypto');
+        const preflightSha256 = crypto.createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
+        writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: 'Implement request validation for a Node.js API endpoint',
+            changedPaths: ['docs/landing.md'],
+            preflightPath,
+            preflightSha256
+        });
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Implement request validation for a Node.js API endpoint',
+                'Refresh landing-page copy for the marketing site'
+            ),
+            'utf8'
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const reviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            reviewContextPath,
+            'agent:code-reviewer'
+        );
+
+        const reviewGateResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+
+        assert.equal(reviewGateResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewGateResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(reviewGateResult.outputLines.some((line) => line.includes('current task summary hash')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects strict optional-skill artifacts when the task row disappears from TASK.md', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-149-review-missing-task-row';
+        seedTaskQueue(repoRoot, taskId);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'landing.md'), 'hello\n', 'utf8');
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'strict');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement request validation for a Node.js API endpoint'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3 },
+            changed_files: ['docs/landing.md'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const crypto = require('node:crypto');
+        const preflightSha256 = crypto.createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
+        writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: 'Implement request validation for a Node.js API endpoint',
+            changedPaths: ['docs/landing.md'],
+            preflightPath,
+            preflightSha256
+        });
+        fs.writeFileSync(
+            taskPath,
+            [
+                '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-999 | TODO | P2 | docs | Placeholder task | unassigned | 2026-03-28 | default | fixture |'
+            ].join('\n'),
+            'utf8'
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const reviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            reviewContextPath,
+            'agent:code-reviewer'
+        );
+
+        const reviewGateResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+
+        assert.equal(reviewGateResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewGateResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(reviewGateResult.outputLines.some((line) => line.includes('current task summary hash')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

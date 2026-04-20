@@ -10,7 +10,8 @@ import {
     handleClassifyChange,
     handleCompileGate,
     handleBuildScopedDiff,
-    handleBuildReviewContext
+    handleBuildReviewContext,
+    handleActivateOptionalSkill
 } from './gate-build-handlers';
 import {
     handleRequiredReviewsCheck,
@@ -85,6 +86,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleBuildScopedDiff(gateArgv);
         case 'build-review-context':
             return handleBuildReviewContext(gateArgv);
+        case 'activate-optional-skill':
+            return handleActivateOptionalSkill(gateArgv);
         case 'task-events-summary':
             return handleTaskEventsSummary(gateArgv);
         case 'task-audit-summary':

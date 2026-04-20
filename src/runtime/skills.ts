@@ -43,8 +43,10 @@ export {
     SKILLS_HEADLINES_VERSION,
     getSkillsHeadlinesConfigPath,
     buildSkillsHeadlines,
+    computeSkillsHeadlinesSourceStateHintSha256,
     writeSkillsHeadlines,
     readSkillsHeadlines,
+    readSkillsHeadlinesIfPresent,
     validateSkillsHeadlines
 } from './skill-headlines';
 export type {
@@ -53,6 +55,33 @@ export type {
     SkillsHeadlinesPayload,
     SkillsHeadlinesData
 } from './skill-headlines';
+
+export {
+    OPTIONAL_SKILL_SELECTION_POLICY_MODES,
+    OPTIONAL_SKILL_AS_IS_REASONS,
+    getOptionalSkillSelectionConfigPath,
+    getOptionalSkillSelectionArtifactPath,
+    isOptionalSkillSelectionPolicyConfigured,
+    readOptionalSkillSelectionPolicyConfig,
+    readOptionalSkillSelectionArtifact,
+    buildOptionalSkillSelectionArtifact,
+    writeOptionalSkillSelectionArtifact,
+    getOptionalSkillSelectionArtifactViolations,
+    getOptionalSkillSelectionGateViolations,
+    readOptionalSkillSelectionTimelineEvidence,
+    getCurrentCycleOptionalSkillReferenceLoads
+} from './optional-skill-selection';
+export type {
+    OptionalSkillSelectionPolicyMode,
+    OptionalSkillSelectionAsIsReason,
+    OptionalSkillSelectionPolicyConfig,
+    OptionalSkillSelectionArtifact,
+    OptionalSkillSelectionArtifactData,
+    OptionalSkillSelectionEntry,
+    OptionalSkillSelectionRecommendedPack,
+    OptionalSkillSelectionReferenceLoadEvidence,
+    OptionalSkillSelectionTimelineEvidence
+} from './optional-skill-selection';
 
 // Re-export skill resolution (fuzzy alias, scoring, suggestion, dedupe)
 // from the focused module so callers importing 'runtime/skills' keep working.

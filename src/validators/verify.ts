@@ -387,6 +387,21 @@ export function detectManifestContractViolations(targetRoot: string): string[] {
     return violations;
 }
 
+function isManagedConfigMapped(targetRoot: string, configName: string): boolean {
+    var rootConfigPath = path.join(targetRoot, resolveBundleName(), 'live', 'config', 'garda.config.json');
+    if (!pathExists(rootConfigPath)) return false;
+    try {
+        var raw = JSON.parse(readTextFile(rootConfigPath));
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+        var configs = (raw as Record<string, unknown>).configs;
+        if (!configs || typeof configs !== 'object' || Array.isArray(configs)) return false;
+        var mappedPath = (configs as Record<string, unknown>)[configName];
+        return typeof mappedPath === 'string' && mappedPath.trim().length > 0;
+    } catch {
+        return false;
+    }
+}
+
 export function runVerify(options: RunVerifyOptions): VerifyResult {
     var targetRoot = path.resolve(options.targetRoot);
     var sourceOfTruth = options.sourceOfTruth.trim();
@@ -400,6 +415,10 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var tev = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/token-economy.json');
     var ofv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/output-filters.json');
     var spv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skill-packs.json');
+    var ossp = resolveBundleName() + '/live/config/optional-skill-selection-policy.json';
+    var ossv = isManagedConfigMapped(targetRoot, 'optional-skill-selection-policy')
+        ? detectManagedConfigViolations(targetRoot, ossp)
+        : [];
     var imv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/isolation-mode.json');
     var prv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/profiles.json');
     var rasv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-artifact-storage.json');
@@ -434,7 +453,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
         ruleFileViolations: rfr.ruleFileViolations.concat(tmv),
         templatePlaceholderViolations: rfr.templatePlaceholderViolations,
         commandsContractViolations: cv,
-        manifestContractViolations: mv.concat(imv, prv, rasv, ocv),
+        manifestContractViolations: mv.concat(ossv, imv, prv, rasv, ocv),
         coreRuleContractViolations: crv,
         entrypointContractViolations: ev,
         taskContractViolations: tv,

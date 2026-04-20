@@ -261,6 +261,26 @@ export function validateSkillPacksConfig(input: unknown): Record<string, unknown
     return normalized;
 }
 
+const VALID_OPTIONAL_SKILL_SELECTION_POLICY_MODES = new Set(['off', 'advisory', 'required', 'strict']);
+
+export function validateOptionalSkillSelectionPolicyConfig(input: unknown): Record<string, unknown> {
+    const raw = ensurePlainObject(input, 'optional-skill-selection-policy');
+    const knownKeys = new Set(['version', 'mode']);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    normalized.version = normalizeInteger(raw.version, 'optional-skill-selection-policy.version', { minimum: 1 });
+
+    const mode = normalizeNonEmptyString(raw.mode, 'optional-skill-selection-policy.mode').toLowerCase();
+    if (!VALID_OPTIONAL_SKILL_SELECTION_POLICY_MODES.has(mode)) {
+        throw new Error(
+            `optional-skill-selection-policy.mode must be one of: ${[...VALID_OPTIONAL_SKILL_SELECTION_POLICY_MODES].join(', ')}.`
+        );
+    }
+    normalized.mode = mode;
+
+    return normalized;
+}
+
 export function validateIsolationModeConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'isolation-mode');
     const knownKeys = new Set([
@@ -459,6 +479,7 @@ const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'token-economy': validateTokenEconomyConfig,
     'output-filters': validateOutputFiltersConfig,
     'skill-packs': validateSkillPacksConfig,
+    'optional-skill-selection-policy': validateOptionalSkillSelectionPolicyConfig,
     'isolation-mode': validateIsolationModeConfig,
     profiles: validateProfilesConfig,
     'review-artifact-storage': validateReviewArtifactStorageConfig

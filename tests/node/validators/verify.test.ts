@@ -464,6 +464,56 @@ test('runVerify reports missing garda.config.json in manifest contract violation
     }
 });
 
+test('runVerify tolerates missing optional-skill-selection-policy.json for backward-compatible workspaces', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        writeInitAnswersFixture(tmpDir);
+
+        const result = runVerify({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            initAnswersPath: 'garda-agent-orchestrator/runtime/init-answers.json'
+        });
+
+        assert.ok(
+            !result.violations.manifestContractViolations.some(
+                (violation) => violation.includes('live/config/optional-skill-selection-policy.json') && violation.includes('missing')
+            )
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runVerify reports missing optional-skill-selection-policy.json when root config maps it', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        writeInitAnswersFixture(tmpDir);
+        const configDir = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(configDir, 'garda.config.json'), JSON.stringify({
+            version: 1,
+            configs: {
+                'optional-skill-selection-policy': 'optional-skill-selection-policy.json'
+            }
+        }, null, 2), 'utf8');
+
+        const result = runVerify({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            initAnswersPath: 'garda-agent-orchestrator/runtime/init-answers.json'
+        });
+
+        assert.ok(
+            result.violations.manifestContractViolations.some(
+                (violation) => violation.includes('live/config/optional-skill-selection-policy.json') && violation.includes('missing')
+            )
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('runVerify reports invalid garda.config.json content in manifest contract violations', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
     try {

@@ -182,6 +182,23 @@ export const skillPacksSchema: Record<string, unknown> = Object.freeze({
     additionalProperties: false
 });
 
+export const optionalSkillSelectionPolicySchema: Record<string, unknown> = Object.freeze({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'garda-agent-orchestrator/optional-skill-selection-policy.schema.json',
+    title: 'Optional Skill Selection Policy',
+    description: 'Repo-local policy controlling preprompt-time optional skill selection.',
+    type: 'object',
+    properties: {
+        version: { type: 'integer', minimum: 1 },
+        mode: {
+            type: 'string',
+            enum: ['off', 'advisory', 'required', 'strict']
+        }
+    },
+    required: ['version', 'mode'],
+    additionalProperties: false
+});
+
 export const isolationModeSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'garda-agent-orchestrator/isolation-mode.schema.json',
@@ -356,6 +373,7 @@ export const gardaConfigSchema: Record<string, unknown> = Object.freeze({
                 paths:                 { type: 'string', minLength: 1 },
                 'output-filters':      { type: 'string', minLength: 1 },
                 'skill-packs':         { type: 'string', minLength: 1 },
+                'optional-skill-selection-policy': { type: 'string', minLength: 1 },
                 'isolation-mode':      { type: 'string', minLength: 1 },
                 profiles:              { type: 'string', minLength: 1 },
                 'review-artifact-storage': { type: 'string', minLength: 1 }
@@ -388,9 +406,14 @@ const CONFIG_SCHEMAS: readonly ConfigSchemaEntry[] = Object.freeze([
     { name: 'paths',               schema: pathsSchema,              fileName: 'paths.json' },
     { name: 'output-filters',      schema: outputFiltersSchema,      fileName: 'output-filters.json' },
     { name: 'skill-packs',         schema: skillPacksSchema,         fileName: 'skill-packs.json' },
+    { name: 'optional-skill-selection-policy', schema: optionalSkillSelectionPolicySchema, fileName: 'optional-skill-selection-policy.json' },
     { name: 'isolation-mode',      schema: isolationModeSchema,      fileName: 'isolation-mode.json' },
     { name: 'profiles',            schema: profilesSchema,           fileName: 'profiles.json' },
     { name: 'review-artifact-storage', schema: reviewArtifactStorageSchema, fileName: 'review-artifact-storage.json' }
+]);
+
+const OPTIONAL_ROOT_CONFIG_NAMES = new Set<string>([
+    'optional-skill-selection-policy'
 ]);
 
 export function getConfigSchemas(): readonly ConfigSchemaEntry[] {
@@ -616,10 +639,14 @@ export function validateAllConfigs(
     }
 
     for (const entry of CONFIG_SCHEMAS) {
+        const configuredRelativePath = rootConfigMap[entry.name];
+        if (!configuredRelativePath) {
+            continue;
+        }
         const filePath = resolveManifestConfigPath(configDir, rootConfigMap[entry.name]);
         const report: ConfigFileReport = {
             name: entry.name,
-            filePath: filePath ?? path.join(configDir, rootConfigMap[entry.name]),
+            filePath: filePath ?? path.join(configDir, configuredRelativePath),
             exists: false,
             parseable: false,
             schemaValid: false,
@@ -629,7 +656,7 @@ export function validateAllConfigs(
 
         try {
             if (!filePath) {
-                report.errors.push(`manifest: '${rootConfigMap[entry.name]}' must resolve inside live/config.`);
+                report.errors.push(`manifest: '${configuredRelativePath}' must resolve inside live/config.`);
                 configs.push(report);
                 allPassed = false;
                 continue;
@@ -730,6 +757,9 @@ function getRootConfigMap(rootData: Record<string, unknown>): Record<string, str
     for (const entry of CONFIG_SCHEMAS) {
         const relativePath = rawConfigs[entry.name];
         if (typeof relativePath !== 'string' || relativePath.trim().length === 0) {
+            if (OPTIONAL_ROOT_CONFIG_NAMES.has(entry.name)) {
+                continue;
+            }
             throw new Error(`garda.config.json.configs.${entry.name} must be a non-empty string.`);
         }
         map[entry.name] = relativePath.trim();

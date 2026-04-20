@@ -19,6 +19,7 @@ import {
     hasDistinctSignalCoverage,
     listSkillPacks,
     readSkillsHeadlines,
+    readSkillsHeadlinesIfPresent,
     removeSkillPack,
     suggestSkills,
     textMatchesFuzzyVariant,
@@ -37,6 +38,10 @@ import {
     emitSkillReferenceLoadedEvent,
     emitSkillReferenceLoadedEventAsync
 } from '../../../src/runtime/skills';
+import {
+    computeSkillsHeadlinesSourceStateHintSha256,
+    computeSkillsHeadlinesSourceStateSha256
+} from '../../../src/runtime/skill-headlines';
 
 import {
     emitSkillTelemetryEventAsync as directEmitSkillTelemetryEventAsync,
@@ -296,6 +301,157 @@ test('skills headlines include baseline, installed optional, and custom live ski
     }
 });
 
+test('computeSkillsHeadlinesSourceStateSha256 changes when manifest content changes even if size and mtime are preserved', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-state-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+        addSkillPack(bundleRoot, 'node-backend');
+
+        const manifestPath = path.join(bundleRoot, 'live', 'skills', 'node-backend', 'skill.json');
+        const originalText = fs.readFileSync(manifestPath, 'utf8');
+        const originalStats = fs.statSync(manifestPath);
+        const before = computeSkillsHeadlinesSourceStateSha256(bundleRoot);
+
+        const mutatedText = originalText.replace('a', 'b');
+        assert.notEqual(mutatedText, originalText);
+        assert.equal(mutatedText.length, originalText.length);
+        fs.writeFileSync(manifestPath, mutatedText, 'utf8');
+        fs.utimesSync(manifestPath, originalStats.atime, originalStats.mtime);
+
+        const after = computeSkillsHeadlinesSourceStateSha256(bundleRoot);
+        assert.notEqual(after, before);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('computeSkillsHeadlinesSourceStateHintSha256 changes when manifest content changes even if size and mtime are preserved', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-hint-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+        addSkillPack(bundleRoot, 'node-backend');
+
+        const manifestPath = path.join(bundleRoot, 'live', 'skills', 'node-backend', 'skill.json');
+        const originalText = fs.readFileSync(manifestPath, 'utf8');
+        const originalStats = fs.statSync(manifestPath);
+        const before = computeSkillsHeadlinesSourceStateHintSha256(bundleRoot);
+
+        const mutatedText = originalText.replace('a', 'b');
+        assert.notEqual(mutatedText, originalText);
+        assert.equal(mutatedText.length, originalText.length);
+        fs.writeFileSync(manifestPath, mutatedText, 'utf8');
+        fs.utimesSync(manifestPath, originalStats.atime, originalStats.mtime);
+
+        const after = computeSkillsHeadlinesSourceStateHintSha256(bundleRoot);
+        assert.notEqual(after, before);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('readSkillsHeadlines refreshes persisted headlines when manifest content changes with the same size and mtime', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-refresh-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+        addSkillPack(bundleRoot, 'node-backend');
+
+        const before = readSkillsHeadlines(bundleRoot);
+        const manifestPath = path.join(bundleRoot, 'live', 'skills', 'node-backend', 'skill.json');
+        const originalText = fs.readFileSync(manifestPath, 'utf8');
+        const originalStats = fs.statSync(manifestPath);
+        const mutatedText = originalText.replace('delivery', 'shipping');
+        assert.notEqual(mutatedText, originalText);
+        assert.equal(mutatedText.length, originalText.length);
+        fs.writeFileSync(manifestPath, mutatedText, 'utf8');
+        fs.utimesSync(manifestPath, originalStats.atime, originalStats.mtime);
+
+        const after = readSkillsHeadlines(bundleRoot);
+        const beforeSummary = before.payload.skills.find((skill) => skill.id === 'node-backend')?.summary;
+        const afterSummary = after.payload.skills.find((skill) => skill.id === 'node-backend')?.summary;
+        assert.notEqual(after.payload.source_state_hint_sha256, before.payload.source_state_hint_sha256);
+        assert.notEqual(afterSummary, beforeSummary);
+        assert.match(String(afterSummary || ''), /shipping/);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('readSkillsHeadlines refreshes a forged but shape-valid persisted headlines file even when source-state hashes still match', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-forged-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+        addSkillPack(bundleRoot, 'node-backend');
+
+        const current = readSkillsHeadlines(bundleRoot);
+        const forgedPayload = {
+            ...current.payload,
+            skills: [
+                {
+                    id: 'forged-skill',
+                    directory: 'forged-skill',
+                    name: 'Forged Skill',
+                    summary: 'Forged summary that should not survive refresh.',
+                    pack: 'node-backend',
+                    source: 'installed_optional',
+                    implemented: true,
+                    review_binding: 'general_purpose',
+                    aliases: ['forged'],
+                    task_signals: ['request validation'],
+                    changed_path_signals: ['src/api/'],
+                    tags: ['node']
+                }
+            ]
+        };
+        fs.writeFileSync(
+            getSkillsHeadlinesConfigPath(bundleRoot),
+            JSON.stringify(forgedPayload, null, 2),
+            'utf8'
+        );
+
+        const refreshed = readSkillsHeadlines(bundleRoot);
+        assert.ok(refreshed.payload.skills.some((skill) => skill.id === 'node-backend'));
+        assert.ok(!refreshed.payload.skills.some((skill) => skill.id === 'forged-skill'));
+        assert.equal(
+            fs.readFileSync(getSkillsHeadlinesConfigPath(bundleRoot), 'utf8').includes('forged-skill'),
+            false
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('validateSkillPacks reports missing headlines without self-healing them', () => {
     const repoRoot = findRepoRoot();
     const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-validate-headlines-'));
@@ -419,6 +575,91 @@ test('validateSkillPacks reports invalid and stale headlines artifacts', () => {
         const staleValidation = validateSkillPacks(bundleRoot);
         assert.equal(staleValidation.passed, false);
         assert.ok(staleValidation.issues.some((issue) => issue.includes('Skills headlines are stale')));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('readSkillsHeadlinesIfPresent ignores legacy headlines artifacts that do not include directory metadata', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-legacy-headlines-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+
+        const headlinesPath = getSkillsHeadlinesConfigPath(bundleRoot);
+        fs.writeFileSync(headlinesPath, JSON.stringify({
+            version: 1,
+            installed_pack_ids: [],
+            baseline_skill_ids: [],
+            installed_optional_skill_ids: [],
+            custom_skill_ids: [],
+            skills: [
+                {
+                    id: 'legacy-skill',
+                    name: 'Legacy Skill',
+                    summary: 'Missing directory metadata.',
+                    pack: null,
+                    source: 'custom_live',
+                    implemented: true,
+                    review_binding: 'general_purpose',
+                    aliases: [],
+                    tags: []
+                }
+            ],
+            optional_packs: []
+        }, null, 2), 'utf8');
+
+        assert.equal(readSkillsHeadlinesIfPresent(bundleRoot), null);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('readSkillsHeadlinesIfPresent ignores headlines artifacts with malformed optional_packs entries', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-invalid-packs-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+
+        fs.writeFileSync(
+            getSkillsHeadlinesConfigPath(bundleRoot),
+            JSON.stringify({
+                version: 2,
+                installed_pack_ids: [],
+                baseline_skill_ids: [],
+                installed_optional_skill_ids: [],
+                custom_skill_ids: [],
+                skills: [],
+                optional_packs: [
+                    {
+                        id: 'node-backend',
+                        label: 'Node Backend',
+                        description: 'Broken pack entry',
+                        installed: false,
+                        implemented: true,
+                        collides_with_baseline: false,
+                        ready_skill_ids: 'node-backend'
+                    }
+                ]
+            }, null, 2),
+            'utf8'
+        );
+
+        assert.equal(readSkillsHeadlinesIfPresent(bundleRoot), null);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

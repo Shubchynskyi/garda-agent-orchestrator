@@ -273,7 +273,7 @@ export function runInit(options: RunInitOptions) {
     });
 
     // Handle managed config materialization (token-economy enabled flag)
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'isolation-mode', 'profiles', 'review-artifact-storage', 'garda.config'];
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'garda.config'];
     const configMergeStatuses: Record<string, string> = {};
 
     for (const configName of managedConfigNames) {
@@ -420,6 +420,7 @@ export function runInit(options: RunInitOptions) {
         tokenEconomyConfigMergeStatus: configMergeStatuses['token-economy'] || 'n/a',
         outputFiltersConfigMergeStatus: configMergeStatuses['output-filters'] || 'n/a',
         skillPacksConfigMergeStatus: configMergeStatuses['skill-packs'] || 'n/a',
+        optionalSkillSelectionPolicyConfigMergeStatus: configMergeStatuses['optional-skill-selection-policy'] || 'n/a',
         isolationModeConfigMergeStatus: configMergeStatuses['isolation-mode'] || 'n/a',
         profilesConfigMergeStatus: configMergeStatuses['profiles'] || 'n/a',
         reviewArtifactStorageConfigMergeStatus: configMergeStatuses['review-artifact-storage'] || 'n/a',
@@ -605,6 +606,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Output filters config merge status: ${configMergeStatuses['output-filters'] || 'n/a'}`,
         '- Skill packs config sync policy: preserve existing live values, normalize legacy keys/shapes, and fill missing keys from template.',
         `- Skill packs config merge status: ${configMergeStatuses['skill-packs'] || 'n/a'}`,
+        '- Optional skill selection policy config sync policy: preserve existing live values and fill missing keys from template.',
+        `- Optional skill selection policy config merge status: ${configMergeStatuses['optional-skill-selection-policy'] || 'n/a'}`,
         '- Isolation mode config sync policy: preserve existing live values, fill missing keys from template.',
         `- Isolation mode config merge status: ${configMergeStatuses['isolation-mode'] || 'n/a'}`,
         '- Profiles config sync policy: preserve existing live values and user profiles, fill missing keys from template.',

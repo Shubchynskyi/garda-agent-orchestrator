@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { parseTaskMdTableRow } from '../../../core/task-md-table';
 import {
     EXIT_GATE_FAILURE
 } from '../../exit-codes';
@@ -21,6 +22,14 @@ import {
     validatePreflightForReview,
     validateZeroDiffForReviewGate
 } from '../../../gates/required-reviews-check';
+import {
+    computeOptionalSkillTaskTextSha256,
+    getOptionalSkillSelectionGateViolations,
+    isOptionalSkillSelectionPolicyConfigured,
+    loadOptionalSkillSelectionHeadlinesCache,
+    readOptionalSkillSelectionPolicyConfig,
+    readOptionalSkillSelectionTimelineEvidence
+} from '../../../runtime/optional-skill-selection';
 import { resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
 import {
     detectProtectedDirtyWorkspaceDrift,
@@ -31,7 +40,6 @@ import {
     getRulePackEvidenceViolations
 } from '../../../gates/rule-pack';
 import {
-    collectTaskTimelineEventTypes,
     getTaskModeEvidence,
     getTaskModeEvidenceViolations
 } from '../../../gates/task-mode';
@@ -132,6 +140,19 @@ interface ReviewEvidenceContext extends Record<string, unknown> {
     zero_diff_guard?: unknown;
     selected_budget_tier?: string | null;
     output_telemetry?: OutputTelemetry;
+}
+
+function readCurrentTaskSummary(repoRoot: string, taskId: string, fallbackTaskSummary: string | null): string | null {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (fs.existsSync(taskPath) && fs.statSync(taskPath).isFile()) {
+        for (const line of fs.readFileSync(taskPath, 'utf8').split('\n')) {
+            const cells = parseTaskMdTableRow(line);
+            if (cells.length >= 5 && cells[0]?.trimmed === taskId) {
+                return cells[4]?.trimmed || fallbackTaskSummary;
+            }
+        }
+    }
+    return null;
 }
 
 export function runDocImpactGateCommand(options: DocImpactGateCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -307,7 +328,6 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         repoRoot,
         getProtectedDirtyWorkspaceScopeFromPreflight(preflight)
     );
-
     const errors = [...validatedPreflight.errors];
     for (const skipItem of skipReviewsList) {
         if (skipItem !== 'code') {
@@ -373,9 +393,34 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
     const timelinePath = resolvedTaskId
         ? gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`))
         : null;
-    if (timelinePath) {
+    if (timelinePath && resolvedTaskId) {
         const timelineErrors: string[] = [];
-        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, resolvedTaskId, timelinePath);
+        const optionalSkillPolicyMode = isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)
+            ? readOptionalSkillSelectionPolicyConfig(orchestratorRoot).mode
+            : null;
+        const loadedHeadlinesCache = optionalSkillPolicyMode
+            ? loadOptionalSkillSelectionHeadlinesCache(orchestratorRoot, optionalSkillPolicyMode, {
+                preferPersistedSurface: true
+            })
+            : null;
+        const expectedTaskTextSha256 = computeOptionalSkillTaskTextSha256(
+            String(readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary) || '')
+        );
+        const optionalSkillSelectionViolations = getOptionalSkillSelectionGateViolations(orchestratorRoot, resolvedTaskId, {
+            expectedPreflightPath: validatedPreflight.preflight_path,
+            expectedPreflightSha256: validatedPreflight.preflight_hash,
+            expectedTaskTextSha256,
+            timelineEvidence,
+            loadedHeadlinesCache
+        });
+        errors.push(...optionalSkillSelectionViolations);
+        const timelineEventTypes = timelineEvidence.eventTypes;
+        if (!timelineEvidence.exists) {
+            timelineErrors.push(`Task timeline not found: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
+        } else if (timelineEvidence.invalidJson) {
+            timelineErrors.push(`Task timeline contains invalid JSON line: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
+        }
         errors.push(...timelineErrors);
         if (timelineErrors.length === 0 && !timelineEventTypes.has('TASK_MODE_ENTERED')) {
             errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED. Run enter-task-mode before review gate.`);

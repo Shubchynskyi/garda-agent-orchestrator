@@ -14,6 +14,7 @@ export const GATE_COMMANDS = Object.freeze([
     'classify-change',
     'build-scoped-diff',
     'build-review-context',
+    'activate-optional-skill',
     'doc-impact-gate',
     'required-reviews-check',
     'record-review-result',

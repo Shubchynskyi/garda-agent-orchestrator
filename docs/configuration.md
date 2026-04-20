@@ -2,7 +2,7 @@
 
 All configuration files live in `garda-agent-orchestrator/live/config/`.
 
-The root manifest `garda.config.json` references the eight managed config files validated by the orchestrator and can be checked with:
+The root manifest `garda.config.json` references the nine managed config files validated by the orchestrator and can be checked with:
 
 ```bash
 node bin/garda.js gate validate-config
@@ -12,16 +12,18 @@ node bin/garda.js gate validate-config
 
 | File | Purpose | Editable? |
 |---|---|---|
-| `garda.config.json` | Root config manifest referencing the eight managed config files validated by `validate-config` | No, maintained by orchestrator |
+| `garda.config.json` | Root config manifest referencing the nine managed config files validated by `validate-config` | No, maintained by orchestrator |
 | `token-economy.json` | Reviewer-context compaction and token savings | Yes |
 | `output-filters.json` | Gate output compaction profiles (compile, test, lint, review) | Yes |
 | `review-capabilities.json` | Which specialist reviews are enabled | Yes |
 | `paths.json` | Preflight classification roots and trigger regexes | Yes |
 | `skill-packs.json` | Installed built-in domain packs | Yes, through `garda skills add/remove` |
+| `optional-skill-selection-policy.json` | Repo-local policy for preprompt-time optional skill selection (`off`, `advisory`, `required`, `strict`) | Yes |
 | `isolation-mode.json` | Control-plane isolation and sandbox settings | Yes |
 | `profiles.json` | Active profile selection plus built-in and user profile definitions | Yes, through `garda profile ...` |
 | `review-artifact-storage.json` | Review artifact retention and storage policy | Yes, through `garda cleanup policy ...` |
 | `skills-index.json` | Compact optional-skill discovery index; generated runtime index and not part of `garda.config.json` | No, generated from pack manifests |
+| `skills-headlines.json` | Compact task-start optional-skill selection surface with installed skill headlines and pack summaries | No, generated from live skill/pack manifests |
 
 `garda.config.json` is rewritten from the bundled template during init/reinit/update, so stale local edits do not become the long-term source of truth.
 The editable live configs above are merged forward during init/reinit/update: existing live values are preserved and missing template keys are filled in.
@@ -38,7 +40,7 @@ node bin/garda.js gate validate-config --bundle-root garda-agent-orchestrator
 node bin/garda.js gate validate-config --compact
 ```
 
-Validates the eight managed config files referenced by `garda.config.json` against portable JSON Schemas and runtime validators.
+Validates the nine managed config files referenced by `garda.config.json` against portable JSON Schemas and runtime validators.
 Exits non-zero on validation failure.
 
 ### CI Script
@@ -160,6 +162,25 @@ This file is runtime state and should normally be changed through the CLI rather
 Packs are install/discovery bundles for optional specialist skills.
 They are not a second copy of baseline skills; baseline skills stay available without any pack install.
 
+## Optional Skill Selection Policy
+
+Controls whether `preprompt` and the task-start lifecycle derive and validate a cheap optional-skill decision from `skills-headlines.json` before implementation begins.
+
+**File:** `live/config/optional-skill-selection-policy.json`
+
+```json
+{
+  "version": 1,
+  "mode": "advisory"
+}
+```
+
+Modes:
+- `off` disables task-start optional-skill selection.
+- `advisory` computes a read-mostly selection artifact and compact preview without blocking the task.
+- `required` expects a materialized, internally valid selection artifact for the current task cycle before implementation proceeds. `preprompt task` exits non-zero for that start-time blocker, and `compile-gate` or downstream review gates also refuse the current cycle when the artifact is missing or drifted.
+- `strict` keeps `required` behavior and also requires explicit canonical fallback reasons whenever no optional skill is selected.
+
 ## Skills Index
 
 Compact discovery metadata for optional skills.
@@ -171,10 +192,26 @@ Used by:
 - the agent-init specialist-skills recommendation flow
 
 Contract:
-- this index is the only file that should be read for first-pass optional-skill discovery;
+- this index is the discovery surface for pack suggestion and agent-init-time specialist recommendations;
 - after the user selects a pack, installation should only materialize files into `live/skills/**` and must not require reading the full optional `SKILL.md`;
 - full optional `SKILL.md` files must stay unopened until a selected skill is actually activated for a task or a hard activation rule requires it;
 - the index is generated from pack manifests and should not be edited manually in deployed workspaces.
+
+## Skills Headlines
+
+Compact task-start selection metadata for already installed optional skills and available pack headlines.
+
+**File:** `live/config/skills-headlines.json`
+
+Used by:
+- `garda preprompt task`
+- task-start optional-skill selection before implementation
+
+Contract:
+- this file is the cheap surface for current-task optional-skill selection once task text and planned scope are known;
+- it should be read before opening any optional `SKILL.md`;
+- full optional `SKILL.md` files are opened only for skills that were actually selected for the current task;
+- the file is generated from live skills and pack manifests and should not be edited manually in deployed workspaces.
 
 ## Paths Configuration
 

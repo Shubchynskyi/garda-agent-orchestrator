@@ -32,6 +32,7 @@ import {
     applyReviewerRoutingMetadata
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { writeOptionalSkillSelectionArtifact } from '../../../../src/runtime/optional-skill-selection';
 import * as childProcess from 'node:child_process';
 
 import {
@@ -79,6 +80,7 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'restart-coherent-cycle',
     'restart-review-cycle',
     'compile-gate',
+    'activate-optional-skill',
     'required-reviews-check',
     'doc-impact-gate',
     'record-review-result',
@@ -92,6 +94,55 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
 
 function getSourceCheckoutNestedCwd(): string {
     return path.join(path.resolve('.'), 'src', 'cli');
+}
+
+function seedNodeBackendOptionalSkillFixture(repoRoot: string, policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory') {
+    const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    const configDir = path.join(orchestratorRoot, 'live', 'config');
+    const skillRoot = path.join(orchestratorRoot, 'live', 'skills', 'node-backend');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'garda.config.json'),
+        JSON.stringify({
+            version: 1,
+            configs: {
+                'optional-skill-selection-policy': 'optional-skill-selection-policy.json',
+                'skill-packs': 'skill-packs.json'
+            }
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'skill-packs.json'),
+        JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(configDir, 'optional-skill-selection-policy.json'),
+        JSON.stringify({ version: 1, mode: policyMode }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(skillRoot, 'skill.json'),
+        JSON.stringify({
+            id: 'node-backend',
+            pack: 'node-backend',
+            name: 'Node Backend',
+            summary: 'Node backend API implementation helper.',
+            tags: ['node', 'backend', 'api'],
+            aliases: ['node-backend', 'node'],
+            task_signals: ['request validation', 'api endpoint', 'node-backend'],
+            changed_path_signals: ['src/api/', 'orders.ts'],
+            references: [],
+            cost_hint: 'low',
+            priority: 50,
+            autoload: 'suggest'
+        }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Node Backend\n', 'utf8');
+    return path.join(skillRoot, 'SKILL.md');
 }
 
 describe('cli/commands/gates', () => {
@@ -119,6 +170,10 @@ describe('cli/commands/gates', () => {
             {
                 argv: ['gate', 'build-review-context', '--help'],
                 expectedSnippets: ['Gate: build-review-context', '--review-type "<code|db|security|refactor|api|test|performance|infra|dependency>"', '--preflight-path']
+            },
+            {
+                argv: ['gate', 'activate-optional-skill', '--help'],
+                expectedSnippets: ['Gate: activate-optional-skill', '--task-id "<task-id>"', '--skill-id "<selected-skill-id>"']
             },
             {
                 argv: ['gate', 'completion-gate', '--help'],
@@ -399,6 +454,342 @@ describe('cli/commands/gates', () => {
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'IMPLEMENTATION_STARTED'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when strict optional-skill selection evidence is missing for the current task cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        fs.mkdirSync(path.join(getOrchestratorRoot(repoRoot), 'live', 'config'), { recursive: true });
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'garda.config.json'),
+            JSON.stringify({ version: 1, configs: { 'optional-skill-selection-policy': 'optional-skill-selection-policy.json' } }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'optional-skill-selection-policy.json'),
+            JSON.stringify({ version: 1, mode: 'strict' }, null, 2),
+            'utf8'
+        );
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(result.outputLines.join('\n').includes('Optional skill selection artifact is missing for current task cycle'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when strict optional-skill selection evidence no longer matches the current TASK.md title', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-stale-task-text';
+        seedTaskQueue(repoRoot, taskId);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['docs/landing.md'],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-stale-task-text.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'strict');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement request validation for a Node.js API endpoint'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: 'Implement request validation for a Node.js API endpoint',
+            changedPaths: ['docs/landing.md'],
+            preflightPath
+        });
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Implement request validation for a Node.js API endpoint',
+                'Refresh landing-page copy for the marketing site'
+            ),
+            'utf8'
+        );
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(result.outputLines.join('\n').includes('current task summary hash'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when the current task row disappears from TASK.md after optional-skill evidence was materialized', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-missing-task-row';
+        seedTaskQueue(repoRoot, taskId);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['docs/landing.md'],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        const commandsPath = path.join(repoRoot, 'commands-missing-task-row.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'strict');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Implement request validation for a Node.js API endpoint'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+            taskText: 'Implement request validation for a Node.js API endpoint',
+            changedPaths: ['docs/landing.md'],
+            preflightPath
+        });
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        fs.writeFileSync(
+            taskPath,
+            [
+                '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-999 | TODO | P2 | docs | Placeholder task | unassigned | 2026-03-28 | default | fixture |'
+            ].join('\n'),
+            'utf8'
+        );
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(result.outputLines.join('\n').includes('current task summary hash'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('activate-optional-skill records telemetry only for currently selected skills', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-activate';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            const expectedSkillPath = seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                preflightPath
+            });
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'activate-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, 0);
+            assert.equal(result.errors.length, 0);
+            const combinedOutput = result.logs.join('\n');
+            assert.ok(combinedOutput.includes('Status: ACTIVATED'));
+            assert.ok(combinedOutput.includes(`SkillPath: ${expectedSkillPath.replace(/\\/g, '/')}`));
+
+            const taskEvents = readTaskTimelineEvents(repoRoot, taskId);
+            assert.ok(taskEvents.some((event) => (
+                event.event_type === 'SKILL_SELECTED'
+                && (event.details as Record<string, unknown> | null)?.skill_id === 'node-backend'
+                && (event.details as Record<string, unknown> | null)?.trigger_reason === 'optional_skill_selection'
+            )));
+            assert.ok(taskEvents.every((event) => (
+                event.event_type !== 'SKILL_REFERENCE_LOADED'
+                || (event.details as Record<string, unknown> | null)?.trigger_reason !== 'optional_task_skill'
+            )));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('activate-optional-skill rejects a stale optional-skill artifact that no longer matches the current preflight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-activate-stale-preflight';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/api/orders.ts'],
+                required_reviews: {}
+            });
+            const artifact = writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['src/api/orders.ts'],
+                preflightPath
+            });
+            fs.writeFileSync(
+                artifact.artifactPath,
+                JSON.stringify({
+                    ...artifact.payload,
+                    preflight_sha256: 'stale-preflight-hash'
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'activate-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.errors.join('\n'), /current preflight artifact hash/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('activate-optional-skill rejects a stale optional-skill artifact that no longer matches the current TASK.md title', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-optional-skill-activate-stale-task-text';
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Update app flow',
+                    'Implement request validation for a Node.js API endpoint'
+                ),
+                'utf8'
+            );
+            seedInitAnswers(repoRoot);
+            seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['docs/landing.md'],
+                required_reviews: {}
+            });
+            writeOptionalSkillSelectionArtifact(getOrchestratorRoot(repoRoot), taskId, {
+                taskText: 'Implement request validation for a Node.js API endpoint',
+                changedPaths: ['docs/landing.md'],
+                preflightPath
+            });
+            fs.writeFileSync(
+                taskPath,
+                fs.readFileSync(taskPath, 'utf8').replace(
+                    'Implement request validation for a Node.js API endpoint',
+                    'Refresh landing-page copy for the marketing site'
+                ),
+                'utf8'
+            );
+
+            const result = await runCliWithCapturedOutput(
+                ['gate', 'activate-optional-skill', '--task-id', taskId, '--skill-id', 'node-backend'],
+                { cwd: repoRoot }
+            );
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.match(result.errors.join('\n'), /current task summary hash/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('applies budget tiers to compile gate telemetry', async () => {

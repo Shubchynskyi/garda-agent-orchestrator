@@ -72,6 +72,7 @@ export interface TaskModeArtifact {
     routed_to: string | null;
     actor: string;
     plan: TaskModePlanMetadata | null;
+    planned_changed_files: string[];
     active_profile: string | null;
     profile_source: 'built_in' | 'user' | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
@@ -96,6 +97,7 @@ export interface BuildTaskModeArtifactOptions {
     routedTo?: string | null;
     actor?: string;
     plan?: TaskModePlanMetadata | null;
+    plannedChangedFiles?: string[] | null;
     activeProfile?: string | null;
     profileSource?: 'built_in' | 'user' | null;
     dirtyWorkspaceBaseline?: DirtyWorkspaceBaseline | null;
@@ -129,6 +131,7 @@ export interface TaskModeEvidenceResult {
     runtime_identity_violations: string[];
     routed_to: string | null;
     plan: TaskModePlanMetadata | null;
+    planned_changed_files: string[];
     active_profile: string | null;
     profile_source: string | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
@@ -389,6 +392,9 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
             plan_summary: options.plan.plan_summary
         }
         : null;
+    const plannedChangedFiles = Array.isArray(options.plannedChangedFiles)
+        ? [...new Set(options.plannedChangedFiles.map((entry) => String(entry || '').trim().replace(/\\/g, '/')).filter(Boolean))].sort()
+        : [];
     const dirtyWorkspaceBaseline = normalizeDirtyWorkspaceBaseline(options.dirtyWorkspaceBaseline || null);
     return {
         timestamp_utc: new Date().toISOString(),
@@ -417,6 +423,7 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         routed_to: String(options.routedTo || '').trim() || null,
         actor,
         plan,
+        planned_changed_files: plannedChangedFiles,
         active_profile: String(options.activeProfile || '').trim() || null,
         profile_source: options.profileSource || null,
         dirty_workspace_baseline: dirtyWorkspaceBaseline
@@ -452,6 +459,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         runtime_identity_violations: [],
         routed_to: null,
         plan: null,
+        planned_changed_files: [],
         active_profile: null,
         profile_source: null,
         dirty_workspace_baseline: null
@@ -529,6 +537,9 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
             result.plan = { plan_path: planPath, plan_sha256: planSha256, plan_summary: planSummary };
         }
     }
+    result.planned_changed_files = Array.isArray(artifactObject.planned_changed_files)
+        ? artifactObject.planned_changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
 
     // Extract optional profile metadata
     result.active_profile = String(artifactObject.active_profile || '').trim() || null;

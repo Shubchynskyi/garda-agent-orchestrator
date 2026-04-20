@@ -460,6 +460,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         routedTo: routingDecision.routedTo,
         actor: String(options.actor || 'orchestrator'),
         plan: planMetadata,
+        plannedChangedFiles,
         activeProfile,
         profileSource,
         dirtyWorkspaceBaseline

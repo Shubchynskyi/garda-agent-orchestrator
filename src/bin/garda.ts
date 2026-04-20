@@ -63,16 +63,15 @@ function isRecoverableLoadError(error: unknown): boolean {
     return code === 'MODULE_NOT_FOUND' || code === 'ENOENT';
 }
 
-function getRuntimeCandidates(packageRoot: string): string[] {
+export function getRuntimeCandidates(packageRoot: string): string[] {
     const devBuildRuntimeRoot = path.join(packageRoot, '.node-build', 'src');
     const publishRuntimeRoot = path.join(packageRoot, 'dist', 'src');
     const candidates: string[] = [];
 
-    if (hasRuntimeRoot(publishRuntimeRoot)) {
-        candidates.push(publishRuntimeRoot);
-    }
-    if (hasRuntimeRoot(devBuildRuntimeRoot)) {
-        candidates.push(devBuildRuntimeRoot);
+    for (const runtimeRoot of [publishRuntimeRoot, devBuildRuntimeRoot]) {
+        if (hasRuntimeRoot(runtimeRoot)) {
+            candidates.push(runtimeRoot);
+        }
     }
 
     return candidates;

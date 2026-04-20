@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+import { parseTaskMdTableRow } from '../../../core/task-md-table';
 import {
     EXIT_GATE_FAILURE
 } from '../../exit-codes';
@@ -30,6 +32,16 @@ import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } fr
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../gates/classify-change';
 import { detectCodeChanged } from '../../../gates/preflight-code-change';
 import {
+    buildOptionalSkillSelectionArtifact,
+    computeOptionalSkillTaskTextSha256,
+    getOptionalSkillSelectionGateViolations,
+    isOptionalSkillSelectionPolicyConfigured,
+    loadOptionalSkillSelectionHeadlinesCache,
+    readOptionalSkillSelectionTimelineEvidence,
+    readOptionalSkillSelectionPolicyConfig,
+    writeOptionalSkillSelectionArtifact
+} from '../../../runtime/optional-skill-selection';
+import {
     getCompileCommandProfile,
     getCompileCommands,
     getOutputStats,
@@ -51,7 +63,6 @@ import {
     getProtectedManifestLifecycleGuard
 } from '../../../gates/protected-manifest-guard';
 import {
-    collectTaskTimelineEventTypes,
     getTaskModeEvidence,
     getTaskModeEvidenceViolations,
     parseTaskModeDepth
@@ -85,7 +96,6 @@ import {
     resolvePathForWrite,
     resolvePreflightPath,
     writeCompileEvidence,
-    writeJsonArtifact,
     writeTextArtifact
 } from '../gates-artifacts';
 import {
@@ -196,6 +206,19 @@ function getTaskModeEntryTimestampMs(taskModeEvidencePath: string | null): numbe
     }
 
     return fs.statSync(resolvedPath).mtimeMs;
+}
+
+function readCurrentTaskSummary(repoRoot: string, taskId: string, fallbackTaskSummary: string | null): string | null {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (fs.existsSync(taskPath) && fs.statSync(taskPath).isFile()) {
+        for (const line of fs.readFileSync(taskPath, 'utf8').split('\n')) {
+            const cells = parseTaskMdTableRow(line);
+            if (cells.length >= 5 && cells[0]?.trimmed === taskId) {
+                return cells[4]?.trimmed || fallbackTaskSummary;
+            }
+        }
+    }
+    return null;
 }
 
 function listChangedFilesPredatingTaskMode(
@@ -379,7 +402,13 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
 
         const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
         const timelineErrors: string[] = [];
-        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, resolvedTaskId, timelinePath);
+        const timelineEventTypes = timelineEvidence.eventTypes;
+        if (!timelineEvidence.exists) {
+            timelineErrors.push(`Task timeline not found: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
+        } else if (timelineEvidence.invalidJson) {
+            timelineErrors.push(`Task timeline contains invalid JSON line: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
+        }
         preflightErrors.push(...timelineErrors);
         if (timelineErrors.length === 0 && !timelineEventTypes.has('TASK_MODE_ENTERED')) {
             preflightErrors.push(
@@ -525,8 +554,101 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }
 
     const outputPath = options.outputPath ? resolvePathForWrite(options.outputPath, repoRoot) : null;
+    let optionalSkillSelectionArtifactPath: string | null = null;
     if (outputPath) {
-        writeJsonArtifact(outputPath, result);
+        let optionalSkillSelectionPreview: ReturnType<typeof buildOptionalSkillSelectionArtifact> | null = null;
+        const optionalSkillPolicyEnabled = resolvedTaskId
+            ? isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)
+            : false;
+        const optionalSkillPolicyMode = (resolvedTaskId && optionalSkillPolicyEnabled)
+            ? readOptionalSkillSelectionPolicyConfig(orchestratorRoot).mode
+            : null;
+        if (resolvedTaskId && optionalSkillPolicyEnabled) {
+            try {
+                (result as Record<string, unknown>).optional_skill_selection = {
+                    artifact_path: optionalSkillPolicyMode === 'off'
+                        ? null
+                        : normalizeOptionalPath(path.join(orchestratorRoot, 'runtime', 'reviews', `${resolvedTaskId}-optional-skill-selection.json`)),
+                    policy_mode: optionalSkillPolicyMode,
+                    decision: null,
+                    visible_summary_line: optionalSkillPolicyMode === 'off'
+                        ? 'Optional skills: as_is (reason: policy_off)'
+                        : null
+                };
+                if (optionalSkillPolicyMode !== 'off') {
+                    optionalSkillSelectionPreview = buildOptionalSkillSelectionArtifact(
+                        orchestratorRoot,
+                        resolvedTaskId,
+                        {
+                            taskText: String(options.taskIntent || ''),
+                            changedPaths: result.changed_files as string[]
+                        }
+                    );
+                    (result as Record<string, unknown>).optional_skill_selection = {
+                        artifact_path: normalizeOptionalPath(optionalSkillSelectionPreview.artifactPath),
+                        policy_mode: optionalSkillSelectionPreview.payload.policy_mode,
+                        decision: optionalSkillSelectionPreview.payload.decision,
+                        visible_summary_line: optionalSkillSelectionPreview.payload.visible_summary_line
+                    };
+                }
+            } catch (error: unknown) {
+                if (optionalSkillPolicyMode === 'required' || optionalSkillPolicyMode === 'strict') {
+                    throw error;
+                }
+                (result as Record<string, unknown>).optional_skill_selection = {
+                    artifact_path: normalizeOptionalPath(path.join(orchestratorRoot, 'runtime', 'reviews', `${resolvedTaskId}-optional-skill-selection.json`)),
+                    policy_mode: optionalSkillPolicyMode,
+                    decision: null,
+                    visible_summary_line: null,
+                    warning: error instanceof Error ? error.message : String(error)
+                };
+            }
+        }
+        const preflightArtifactText = `${JSON.stringify(result, null, 2)}\n`;
+        const preflightSha256 = createHash('sha256').update(preflightArtifactText, 'utf8').digest('hex');
+        writeTextArtifact(outputPath, preflightArtifactText);
+        if (resolvedTaskId && optionalSkillPolicyEnabled) {
+            let optionalSkillSelection;
+            try {
+                optionalSkillSelection = optionalSkillPolicyMode === 'off'
+                    ? null
+                    : optionalSkillSelectionPreview
+                    ? writeOptionalSkillSelectionArtifact(
+                        orchestratorRoot,
+                        resolvedTaskId,
+                        {
+                            taskText: String(options.taskIntent || ''),
+                            changedPaths: result.changed_files as string[],
+                            preflightPath: outputPath,
+                            preflightSha256,
+                            preparedArtifact: optionalSkillSelectionPreview,
+                            loadedHeadlinesCache: optionalSkillSelectionPreview.loadedHeadlinesCache || null
+                        }
+                    )
+                    : null;
+            } catch (error: unknown) {
+                if (optionalSkillPolicyMode !== 'required' && optionalSkillPolicyMode !== 'strict') {
+                    optionalSkillSelection = null;
+                    (result as Record<string, unknown>).optional_skill_selection = {
+                        artifact_path: normalizeOptionalPath(path.join(orchestratorRoot, 'runtime', 'reviews', `${resolvedTaskId}-optional-skill-selection.json`)),
+                        policy_mode: optionalSkillPolicyMode,
+                        decision: optionalSkillSelectionPreview?.payload.decision || null,
+                        visible_summary_line: optionalSkillSelectionPreview?.payload.visible_summary_line || null,
+                        warning: error instanceof Error ? error.message : String(error)
+                    };
+                    writeTextArtifact(outputPath, `${JSON.stringify(result, null, 2)}\n`);
+                } else {
+                    removeArtifactIfExists(outputPath);
+                    throw error;
+                }
+            }
+            if (optionalSkillSelection) {
+                optionalSkillSelectionArtifactPath = normalizeOptionalPath(optionalSkillSelection.artifactPath);
+            } else if (optionalSkillPolicyMode === 'required' || optionalSkillPolicyMode === 'strict') {
+                removeArtifactIfExists(outputPath);
+                throw new Error('Optional skill selection artifact is required for the current policy mode, but no current-cycle artifact could be materialized.');
+            }
+        }
     }
 
     const metricsPath = options.metricsPath
@@ -559,6 +681,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     changed_lines_total: result.metrics.changed_lines_total,
                     code_changed: codeChanged,
                     required_reviews: result.required_reviews,
+                    optional_skill_selection_artifact_path: optionalSkillSelectionArtifactPath,
                     zero_diff_guard: result.zero_diff_guard,
                     budget_forecast: (result as any).budget_forecast || null,
                     depth_escalation: (result as any).depth_escalation || null
@@ -685,8 +808,14 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         );
 
         const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
+        const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, resolvedTaskId, timelinePath);
         const timelineErrors: string[] = [];
-        const timelineEventTypes = collectTaskTimelineEventTypes(timelinePath, timelineErrors);
+        const timelineEventTypes = timelineEvidence.eventTypes;
+        if (!timelineEvidence.exists) {
+            timelineErrors.push(`Task timeline not found: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
+        } else if (timelineEvidence.invalidJson) {
+            timelineErrors.push(`Task timeline contains invalid JSON line: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
+        }
         if (!exceptionMessage && timelineErrors.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = timelineErrors.join(' ');
@@ -708,6 +837,30 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             if (handshakeViolations.length > 0 || shellSmokeViolations.length > 0) {
                 exitCode = EXIT_GATE_FAILURE;
                 exceptionMessage = [...handshakeViolations, ...shellSmokeViolations].join(' ');
+            }
+        }
+        if (!exceptionMessage) {
+            const optionalSkillPolicyMode = isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)
+                ? readOptionalSkillSelectionPolicyConfig(orchestratorRoot).mode
+                : null;
+            const loadedHeadlinesCache = optionalSkillPolicyMode
+                ? loadOptionalSkillSelectionHeadlinesCache(orchestratorRoot, optionalSkillPolicyMode, {
+                    preferPersistedSurface: true
+                })
+                : null;
+            const expectedTaskTextSha256 = computeOptionalSkillTaskTextSha256(
+                String(readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary) || '')
+            );
+            const optionalSkillSelectionViolations = getOptionalSkillSelectionGateViolations(orchestratorRoot, resolvedTaskId, {
+                expectedPreflightPath: normalizeOptionalPath(resolvedPreflightPath),
+                expectedPreflightSha256: gateHelpers.fileSha256(resolvedPreflightPath),
+                expectedTaskTextSha256,
+                timelineEvidence,
+                loadedHeadlinesCache
+            });
+            if (optionalSkillSelectionViolations.length > 0) {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = optionalSkillSelectionViolations.join(' ');
             }
         }
 

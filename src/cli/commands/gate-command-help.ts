@@ -204,6 +204,13 @@ function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<R
             ]),
             taskIdRemediation: false
         },
+        'activate-optional-skill': {
+            summary: 'Validate and record a selected optional skill activation before opening its SKILL.md for implementation work.',
+            usage: Object.freeze([
+                `${cliPrefix} gate activate-optional-skill --task-id "${TASK_ID_PLACEHOLDER}" --skill-id "<selected-skill-id>" --repo-root "."`
+            ]),
+            taskIdRemediation: true
+        },
         'required-reviews-check': {
             summary: 'Validate that every required current-cycle review artifact and receipt is present and clean.',
             usage: Object.freeze([

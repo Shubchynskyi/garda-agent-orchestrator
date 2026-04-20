@@ -4,6 +4,15 @@ import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-ev
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
 import { fileSha256, joinOrchestratorPath, resolvePathInsideRepo, toPosix } from './helpers';
 import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './task-events-summary';
+import {
+    computeOptionalSkillTaskTextSha256,
+    getActivatedCurrentCycleOptionalSkillReferenceLoads,
+    getOptionalSkillSelectionArtifactViolations,
+    isOptionalSkillSelectionPolicyConfigured,
+    readOptionalSkillSelectionPolicyConfig,
+    readOptionalSkillSelectionTimelineEvidence,
+    type OptionalSkillSelectionArtifactData
+} from '../runtime/optional-skill-selection';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,6 +79,16 @@ interface FinalCloseoutImplementationSummary {
     active_profile: string | null;
 }
 
+interface FinalCloseoutOptionalSkillsSummary {
+    policy_mode: string | null;
+    decision: string | null;
+    selected_skill_ids: string[];
+    used_skill_ids: string[];
+    recommended_missing_pack_ids: string[];
+    as_is_reason: string | null;
+    visible_summary_line: string | null;
+}
+
 export interface FinalCloseoutArtifact {
     schema_version: 1;
     event_source: 'task-audit-summary';
@@ -81,6 +100,7 @@ export interface FinalCloseoutArtifact {
     artifact_state: 'PENDING' | 'MATERIALIZED' | 'REMOVED' | 'NOT_READY';
     artifact_paths: FinalCloseoutArtifactPaths;
     implementation_summary: FinalCloseoutImplementationSummary;
+    optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
     docs: FinalCloseoutDocsSummary;
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
     commit_command_template: string;
@@ -172,6 +192,7 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'compile-output', suffix: '-compile-output.log' },
     { kind: 'review-gate', suffix: '-review-gate.json' },
     { kind: 'doc-impact', suffix: '-doc-impact.json' },
+    { kind: 'optional-skill-selection', suffix: '-optional-skill-selection.json' },
     { kind: 'final-closeout-json', suffix: '-final-closeout.json' },
     { kind: 'final-closeout-markdown', suffix: '-final-closeout.md' },
     { kind: 'no-op', suffix: '-no-op.json' },
@@ -388,6 +409,134 @@ function readDocImpactSummary(docImpact: Record<string, unknown> | null): FinalC
     };
 }
 
+function readOptionalSkillsSummary(
+    bundleRoot: string,
+    taskId: string,
+    preflightPath: string,
+    preflightSha256: string | null,
+    currentTaskText: string | null,
+    invalidateOnMissingTaskRow: boolean,
+    optionalSkillsPath: string,
+    optionalSkills: Record<string, unknown> | null,
+    taskEventsPath: string
+): FinalCloseoutOptionalSkillsSummary | null {
+    if (!optionalSkills) {
+        if (isOptionalSkillSelectionPolicyConfigured(bundleRoot)) {
+            const policyMode = readOptionalSkillSelectionPolicyConfig(bundleRoot).mode;
+            if (policyMode === 'off') {
+                return {
+                    policy_mode: policyMode,
+                    decision: 'as_is',
+                    selected_skill_ids: [],
+                    used_skill_ids: [],
+                    recommended_missing_pack_ids: [],
+                    as_is_reason: 'policy_off',
+                    visible_summary_line: 'Optional skills: as_is (reason: policy_off)'
+                };
+            }
+        }
+        return null;
+    }
+    const artifactPolicyMode = String(optionalSkills.policy_mode || '').trim() || null;
+    if (!preflightSha256) {
+        return {
+            policy_mode: artifactPolicyMode,
+            decision: 'invalidated',
+            selected_skill_ids: [],
+            used_skill_ids: [],
+            recommended_missing_pack_ids: [],
+            as_is_reason: 'artifact_drift',
+            visible_summary_line: 'Optional skills: unavailable (reason: artifact_drift)'
+        };
+    }
+    const artifact = {
+        artifactPath: optionalSkillsPath,
+        payload: optionalSkills
+    } as unknown as OptionalSkillSelectionArtifactData;
+    const validationOptions: Parameters<typeof getOptionalSkillSelectionArtifactViolations>[2] = {
+        requireMaterializedArtifact: true,
+        expectedPreflightPath: preflightPath,
+        expectedPreflightSha256: preflightSha256,
+        validateAgainstCurrentHeadlines: false,
+        validateAgainstCurrentInventory: false
+    };
+    if (currentTaskText != null) {
+        validationOptions.expectedTaskTextSha256 = computeOptionalSkillTaskTextSha256(String(currentTaskText || ''));
+    } else if (invalidateOnMissingTaskRow) {
+        validationOptions.expectedTaskTextSha256 = null;
+    }
+    const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact, validationOptions);
+    if (violations.length > 0) {
+        return {
+            policy_mode: artifactPolicyMode,
+            decision: 'invalidated',
+            selected_skill_ids: [],
+            used_skill_ids: [],
+            recommended_missing_pack_ids: [],
+            as_is_reason: 'artifact_drift',
+            visible_summary_line: 'Optional skills: unavailable (reason: artifact_drift)'
+        };
+    }
+    const selectedSkillIds = Array.isArray(optionalSkills.selected_installed_skills)
+        ? optionalSkills.selected_installed_skills
+            .map((entry) => {
+                if (!entry || typeof entry !== 'object') {
+                    return null;
+                }
+                return String((entry as Record<string, unknown>).id || '').trim() || null;
+            })
+            .filter((entry): entry is string => !!entry)
+        : [];
+    const recommendedMissingPackIds = Array.isArray(optionalSkills.recommended_missing_packs)
+        ? optionalSkills.recommended_missing_packs
+            .map((entry) => {
+                if (!entry || typeof entry !== 'object') {
+                    return null;
+                }
+                return String((entry as Record<string, unknown>).id || '').trim() || null;
+            })
+            .filter((entry): entry is string => !!entry)
+        : [];
+    const visibleSummaryLine = String(optionalSkills.visible_summary_line || '').trim() || null;
+    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, taskId, taskEventsPath);
+    if (timelineEvidence.invalidJson) {
+        return {
+            policy_mode: artifactPolicyMode,
+            decision: 'unavailable',
+            selected_skill_ids: selectedSkillIds,
+            used_skill_ids: [],
+            recommended_missing_pack_ids: recommendedMissingPackIds,
+            as_is_reason: 'task_events_integrity',
+            visible_summary_line: 'Optional skills: unavailable (reason: task_events_integrity)'
+        };
+    }
+    const currentCycleReferenceLoads = getActivatedCurrentCycleOptionalSkillReferenceLoads(artifact.payload, timelineEvidence);
+    const usedSkillIds = selectedSkillIds.filter((entry) => (
+        currentCycleReferenceLoads.some((load) => load.skillId === entry)
+    ));
+    let usageSummaryLine = visibleSummaryLine;
+    const reasonMatch = visibleSummaryLine?.match(/\(reason:\s*([^)]+)\)\s*$/i);
+    const reasonSuffix = reasonMatch?.[1]?.trim();
+    if (selectedSkillIds.length > 0 && usedSkillIds.length === 0) {
+        usageSummaryLine = reasonSuffix
+            ? `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')}, reason: ${reasonSuffix})`
+            : `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')})`;
+    } else if (usedSkillIds.length > 0 && usedSkillIds.length !== selectedSkillIds.length) {
+        usageSummaryLine = reasonSuffix
+            ? `Optional skills: ${usedSkillIds.join(', ')} (reason: ${reasonSuffix})`
+            : `Optional skills: ${usedSkillIds.join(', ')}`;
+    }
+    return {
+        policy_mode: artifactPolicyMode,
+        decision: String(optionalSkills.decision || '').trim() || null,
+        selected_skill_ids: selectedSkillIds,
+        used_skill_ids: usedSkillIds,
+        recommended_missing_pack_ids: recommendedMissingPackIds,
+        as_is_reason: String(optionalSkills.as_is_reason || '').trim() || null,
+        visible_summary_line: usageSummaryLine
+    };
+}
+
 function updateEvidenceArtifactState(
     evidence: EvidenceArtifact[],
     kind: string,
@@ -436,6 +585,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
     const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId);
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
 
     // -----------------------------------------------------------------------
     // 1. Parse task events timeline
@@ -598,6 +749,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
 
     const preflightPath = path.join(reviewsRoot, `${safeTaskId}-preflight.json`);
     const preflight = safeReadJson(preflightPath);
+    const preflightSha256 = fs.existsSync(preflightPath) ? fileSha256(preflightPath) : null;
     if (preflight) {
         if (typeof preflight.mode === 'string' && preflight.mode.trim()) {
             pathMode = preflight.mode.trim();
@@ -829,6 +981,19 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const docImpactPath = path.join(reviewsRoot, `${safeTaskId}-doc-impact.json`);
     const docImpact = safeReadJson(docImpactPath);
     const docsSummary = readDocImpactSummary(docImpact);
+    const optionalSkillsPath = path.join(reviewsRoot, `${safeTaskId}-optional-skill-selection.json`);
+    const bundleRoot = path.dirname(path.dirname(reviewsRoot));
+    const optionalSkillsSummary = readOptionalSkillsSummary(
+        bundleRoot,
+        safeTaskId,
+        preflightPath,
+        preflightSha256,
+        taskMetadata?.title || null,
+        taskFileExists && taskMetadata == null,
+        optionalSkillsPath,
+        safeReadJson(optionalSkillsPath),
+        taskEventFile
+    );
     const finalCloseoutJsonPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.json`);
     const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.md`);
     const finalReportContract: FinalReportContract = {
@@ -879,6 +1044,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                 ? taskMode.active_profile.trim()
                 : null
         },
+        optional_skills: optionalSkillsSummary,
         docs: docsSummary,
         token_economy: tokenEconomy,
         commit_command_template: commitCommand.template,
@@ -932,6 +1098,10 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         `Task \`${closeout.task_id}\` completed in \`${depthText}\`, \`path mode=${pathModeText}\`. ` +
         `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
     ];
+
+    if (closeout.optional_skills?.visible_summary_line) {
+        lines.push(closeout.optional_skills.visible_summary_line);
+    }
 
     if (closeout.token_economy?.visible_summary_line) {
         lines.push(closeout.token_economy.visible_summary_line);
@@ -1134,6 +1304,9 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     lines.push(`FinalCloseout: ${summary.final_closeout.status} (${summary.final_closeout.artifact_state})`);
     lines.push(`  JsonArtifact: ${summary.final_closeout.artifact_paths.json}`);
     lines.push(`  MarkdownArtifact: ${summary.final_closeout.artifact_paths.markdown}`);
+    if (summary.final_closeout.optional_skills?.visible_summary_line) {
+        lines.push(`  ${summary.final_closeout.optional_skills.visible_summary_line}`);
+    }
     if (summary.final_closeout.token_economy?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.token_economy.visible_summary_line}`);
     }

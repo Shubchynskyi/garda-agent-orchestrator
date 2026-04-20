@@ -224,6 +224,7 @@ export const MANAGED_CONFIG_NAMES: readonly string[] = Object.freeze([
     'token-economy',
     'output-filters',
     'skill-packs',
+    'optional-skill-selection-policy',
     'isolation-mode',
     'profiles',
     'review-artifact-storage'
