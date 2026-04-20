@@ -20,6 +20,15 @@ import {
 } from '../../../src/gates/finalization-lock';
 import { ensureSkillsHeadlinesCurrent } from '../../../src/runtime/skill-headlines';
 
+const NODE_BACKEND_SKILL_SOURCE = path.join(
+    process.cwd(),
+    'template',
+    'skill-packs',
+    'node-backend',
+    'skills',
+    'node-backend'
+);
+
 function makeTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'task-audit-test-'));
 }
@@ -1237,7 +1246,7 @@ describe('gates/task-audit-summary', () => {
                 'utf8'
             );
             fs.cpSync(
-                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                NODE_BACKEND_SKILL_SOURCE,
                 path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
                 { recursive: true }
             );
@@ -1356,7 +1365,7 @@ describe('gates/task-audit-summary', () => {
                 'utf8'
             );
             fs.cpSync(
-                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                NODE_BACKEND_SKILL_SOURCE,
                 path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
                 { recursive: true }
             );
@@ -1426,7 +1435,7 @@ describe('gates/task-audit-summary', () => {
                 'utf8'
             );
             fs.cpSync(
-                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                NODE_BACKEND_SKILL_SOURCE,
                 path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
                 { recursive: true }
             );
@@ -1504,7 +1513,7 @@ describe('gates/task-audit-summary', () => {
                 'utf8'
             );
             fs.cpSync(
-                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                NODE_BACKEND_SKILL_SOURCE,
                 path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
                 { recursive: true }
             );
@@ -1594,7 +1603,7 @@ describe('gates/task-audit-summary', () => {
                 'utf8'
             );
             fs.cpSync(
-                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                NODE_BACKEND_SKILL_SOURCE,
                 path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
                 { recursive: true }
             );
@@ -1662,7 +1671,7 @@ describe('gates/task-audit-summary', () => {
                 'utf8'
             );
             fs.cpSync(
-                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                NODE_BACKEND_SKILL_SOURCE,
                 path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
                 { recursive: true }
             );
@@ -1753,7 +1762,7 @@ describe('gates/task-audit-summary', () => {
                 'utf8'
             );
             fs.cpSync(
-                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                NODE_BACKEND_SKILL_SOURCE,
                 path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
                 { recursive: true }
             );

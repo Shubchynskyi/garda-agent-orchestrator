@@ -19,6 +19,15 @@ import {
 } from '../../../src/runtime/optional-skill-selection';
 import { readSkillsHeadlines } from '../../../src/runtime/skill-headlines';
 
+const NODE_BACKEND_SKILL_SOURCE = path.join(
+    process.cwd(),
+    'template',
+    'skill-packs',
+    'node-backend',
+    'skills',
+    'node-backend'
+);
+
 function makeBundleRoot(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'gao-optional-skills-'));
 }
@@ -39,7 +48,7 @@ function seedOptionalSkillWorkspace(bundleRoot: string): void {
         path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json')
     );
     fs.cpSync(
-        path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+        NODE_BACKEND_SKILL_SOURCE,
         path.join(bundleRoot, 'live', 'skills', 'node-backend'),
         { recursive: true }
     );
