@@ -10,6 +10,7 @@ import type { BuildResult } from '../../../scripts/node-foundation/build';
 const testModule = require('../../../scripts/node-foundation/test') as typeof import('../../../scripts/node-foundation/test');
 const mutableBuildModule = require('../../../scripts/node-foundation/build') as typeof import('../../../scripts/node-foundation/build') & {
     buildNodeFoundation: () => BuildResult;
+    buildPublishRuntime: () => BuildResult;
 };
 const mutableChildProcess = require('node:child_process') as typeof childProcess & {
     spawnSync: typeof childProcess.spawnSync;
@@ -47,12 +48,14 @@ test('runNodeFoundationTests forwards test-name-pattern args before compiled tes
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
     const originalSpawnSync = mutableChildProcess.spawnSync;
     let observedCommand = '';
     let observedArgs: string[] = [];
 
     try {
         process.argv = ['node', 'scripts/node-foundation/test.js', '--test-name-pattern', 'status sync'];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
         mutableChildProcess.spawnSync = ((command: string, args: readonly string[] = [], options?: childProcess.SpawnSyncOptions) => {
             observedCommand = command;
@@ -74,6 +77,7 @@ test('runNodeFoundationTests forwards test-name-pattern args before compiled tes
     } finally {
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
         mutableChildProcess.spawnSync = originalSpawnSync;
         cleanup();
     }
@@ -83,6 +87,7 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
     const originalSpawnSync = mutableChildProcess.spawnSync;
     let observedArgs: string[] = [];
 
@@ -94,6 +99,7 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
             'status sync',
             'tests/node/cli/commands/gates.test.ts'
         ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
         mutableChildProcess.spawnSync = ((_: string, args: readonly string[] = []) => {
             observedArgs = Array.from(args);
@@ -111,6 +117,7 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
     } finally {
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
         mutableChildProcess.spawnSync = originalSpawnSync;
         cleanup();
     }
@@ -120,9 +127,11 @@ test('runNodeFoundationTests fails fast when an explicit test target cannot be r
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
 
     try {
         process.argv = ['node', 'scripts/node-foundation/test.js', 'tests/node/missing.test.ts'];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
 
         assert.throws(
@@ -132,6 +141,7 @@ test('runNodeFoundationTests fails fast when an explicit test target cannot be r
     } finally {
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
         cleanup();
     }
 });

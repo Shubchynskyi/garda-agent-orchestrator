@@ -83,6 +83,7 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'activate-optional-skill',
     'required-reviews-check',
     'doc-impact-gate',
+    'full-suite-validation',
     'record-review-result',
     'record-review-routing',
     'record-review-receipt',
@@ -178,6 +179,10 @@ describe('cli/commands/gates', () => {
             {
                 argv: ['gate', 'completion-gate', '--help'],
                 expectedSnippets: ['Gate: completion-gate', '--task-id "<task-id>"', '--preflight-path']
+            },
+            {
+                argv: ['gate', 'full-suite-validation', '--help'],
+                expectedSnippets: ['Gate: full-suite-validation', '--task-id "<task-id>"', '--preflight-path']
             }
         ];
 

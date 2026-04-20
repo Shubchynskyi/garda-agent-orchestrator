@@ -163,17 +163,23 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 19. Run doc impact gate before completion:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
    - Doc impact gate writes task-scoped event `DOC_IMPACT_ASSESSED` or `DOC_IMPACT_ASSESSMENT_FAILED`.
-20. Run completion gate and treat result as final readiness gate before `DONE`.
+20. Run full-suite validation gate when enabled (controlled by `garda-agent-orchestrator/live/config/workflow-config.json`):
+   - Node: `node garda-agent-orchestrator/bin/garda.js gate full-suite-validation --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --repo-root "."`
+   - Full-suite validation emits `FULL_SUITE_VALIDATION_PASSED`, `FULL_SUITE_VALIDATION_WARNED`, `FULL_SUITE_VALIDATION_FAILED`, or `FULL_SUITE_VALIDATION_SKIPPED`.
+   - When enabled, completion-gate requires `PASSED` or `WARNED` status; `FAILED` and `SKIPPED` block completion.
+   - When disabled (default), the gate emits `SKIPPED` and completion-gate does not require the artifact.
+21. Run completion gate and treat result as final readiness gate before `DONE`.
    - Node: `node garda-agent-orchestrator/bin/garda.js gate completion-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
    - Completion gate writes task-scoped event `COMPLETION_GATE_PASSED` or `COMPLETION_GATE_FAILED` automatically.
    - Completion gate fails if task-mode entry evidence is missing.
    - Completion gate fails if post-preflight rule-pack evidence is missing.
    - Completion gate fails if a PASS review artifact still contains active findings or residual risks, or if any deferred entry omits `Justification:`.
-21. Update required docs and changelog when behavior changed.
+   - Completion gate validates full-suite-validation cycle binding when enabled.
+22. Update required docs and changelog when behavior changed.
    - Internal orchestration artifacts (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) may remain gitignored in deployed workspaces; update them on disk but do not `git add -f` them unless the user explicitly asks to version orchestrator internals.
-22. Record artifacts and evidence in `TASK.md`.
-23. After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json`; this materializes `runtime/reviews/<task-id>-final-closeout.json` and `runtime/reviews/<task-id>-final-closeout.md`. Use the canonical final-closeout artifact instead of reconstructing the report structure manually.
-24. Set final status:
+23. Record artifacts and evidence in `TASK.md`.
+24. After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json`; this materializes `runtime/reviews/<task-id>-final-closeout.json` and `runtime/reviews/<task-id>-final-closeout.md`. Use the canonical final-closeout artifact instead of reconstructing the report structure manually.
+25. Set final status:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed.
     - `BLOCKED` when any mandatory gate failed or cannot run.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.

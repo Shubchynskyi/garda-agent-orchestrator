@@ -274,7 +274,7 @@ export function runInit(options: RunInitOptions) {
     });
 
     // Handle managed config materialization (token-economy enabled flag)
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'garda.config'];
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'workflow-config', 'garda.config'];
     const configMergeStatuses: Record<string, string> = {};
 
     for (const configName of managedConfigNames) {

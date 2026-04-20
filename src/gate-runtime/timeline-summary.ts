@@ -2,11 +2,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     validateTimelineCompleteness,
+    isTaskBoundFullSuiteValidationRequirement,
     type TimelineCompletenessResult
 } from './lifecycle-events';
 import { inspectTaskEventFile } from './task-events';
 import { withFilesystemLock } from './task-events-locking';
 import { detectCodeChanged } from '../gates/preflight-code-change';
+import { loadFullSuiteValidationConfig } from '../gates/full-suite-validation';
 
 const SUMMARY_VERSION = 2;
 const SUMMARY_FILE_NAME = '.timeline-summary.json';
@@ -24,6 +26,7 @@ export interface TimelineSummaryEntry {
     file_size_bytes: number;
     file_mtime_ms: number;
     code_changed: boolean;
+    full_suite_validation_required?: boolean;
     completeness_status: TimelineCompletenessResult['status'];
     events_found: string[];
     events_missing: string[];
@@ -217,13 +220,20 @@ export function writeTimelineSummaryIndex(eventsRoot: string, index: TimelineSum
 
 export function isTimelineSummaryEntryCurrent(
     entry: TimelineSummaryEntry,
-    timelinePath: string
+    timelinePath: string,
+    fullSuiteValidationEnabled: boolean = false
 ): boolean {
     try {
         const stat = fs.statSync(path.resolve(timelinePath));
         if (!stat.isFile()) return false;
         if (stat.size !== entry.file_size_bytes) return false;
         if (Math.floor(stat.mtimeMs) !== entry.file_mtime_ms) return false;
+        if (
+            !isTaskBoundFullSuiteValidationRequirement(entry.events_found, entry.completeness_status)
+            && (entry.full_suite_validation_required === true) !== fullSuiteValidationEnabled
+        ) {
+            return false;
+        }
         return true;
     } catch {
         return false;
@@ -237,7 +247,8 @@ export function isTimelineSummaryEntryCurrent(
 export function buildTimelineSummaryEntry(
     timelinePath: string,
     taskId: string,
-    codeChanged: boolean
+    codeChanged: boolean,
+    fullSuiteValidationEnabled: boolean = false
 ): TimelineSummaryEntry | null {
     let preStat: fs.Stats;
     try {
@@ -247,7 +258,10 @@ export function buildTimelineSummaryEntry(
         return null;
     }
 
-    const completeness = validateTimelineCompleteness(timelinePath, taskId, codeChanged);
+    const completeness = validateTimelineCompleteness(timelinePath, taskId, {
+        codeChanged,
+        fullSuiteValidationEnabled
+    });
     const inspect = inspectTaskEventFile(timelinePath, taskId);
 
     // Re-stat after read to detect concurrent modification
@@ -267,6 +281,7 @@ export function buildTimelineSummaryEntry(
         file_size_bytes: preStat.size,
         file_mtime_ms: Math.floor(preStat.mtimeMs),
         code_changed: codeChanged,
+        full_suite_validation_required: completeness.full_suite_validation_required === true ? true : undefined,
         completeness_status: completeness.status,
         events_found: completeness.events_found.slice(),
         events_missing: completeness.events_missing.slice(),
@@ -297,14 +312,15 @@ export function updateTimelineSummaryForTask(
     // back to preflight parsing when no summary entry exists yet.
     const effectiveCodeChanged = resolveEffectiveCodeChangedForTask(eventsRoot, taskId, codeChanged);
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    const entry = buildTimelineSummaryEntry(timelinePath, taskId, effectiveCodeChanged);
+    const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(path.resolve(eventsRoot, '..', '..')).enabled;
+    const entry = buildTimelineSummaryEntry(timelinePath, taskId, effectiveCodeChanged, fullSuiteValidationEnabled);
     if (!entry) return;
 
     timelineSummaryTestHooks?.beforeMerge?.(eventsRoot, taskId, entry);
 
     try {
         withTimelineSummaryLock(eventsRoot, () => {
-            if (!isTimelineSummaryEntryCurrent(entry, timelinePath)) {
+            if (!isTimelineSummaryEntryCurrent(entry, timelinePath, fullSuiteValidationEnabled)) {
                 return;
             }
             mergeEntryWithRetry(eventsRoot, taskId, entry);
@@ -337,6 +353,7 @@ export function reconcileTimelineSummaryForTask(
 ): void {
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const summaryPath = getTimelineSummaryPath(eventsRoot);
+    const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(path.resolve(eventsRoot, '..', '..')).enabled;
     withTimelineSummaryLock(eventsRoot, () => {
         const summaryFileExists = (() => {
             try {
@@ -370,7 +387,8 @@ export function reconcileTimelineSummaryForTask(
         const entry = buildTimelineSummaryEntry(
             timelinePath,
             taskId,
-            resolveEffectiveCodeChangedForTask(eventsRoot, taskId, codeChanged)
+            resolveEffectiveCodeChangedForTask(eventsRoot, taskId, codeChanged),
+            fullSuiteValidationEnabled
         );
         if (!entry) {
             throw new Error(`Unable to rebuild timeline summary entry for '${taskId}'.`);
@@ -534,6 +552,7 @@ function detectCodeChangedFromPreflight(bundlePath: string, taskId: string): boo
 
 export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimelineSummary {
     const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+    const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
     if (!fs.existsSync(eventsRoot)) {
         return { taskCount: 0, healthy: 0, warnings: [] };
     }
@@ -552,7 +571,7 @@ export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimel
         const timelinePath = path.join(eventsRoot, fileName);
         const cached = summary?.entries[taskId] ?? null;
 
-        if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath)) {
+        if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath, fullSuiteValidationEnabled)) {
             if (cached.completeness_status === 'COMPLETE') {
                 healthy++;
             } else {
@@ -568,7 +587,10 @@ export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimel
             const stat = fs.statSync(path.resolve(timelinePath));
             if (stat.isFile() && stat.size > 0) {
                 const codeChanged = detectCodeChangedFromPreflight(bundlePath, taskId);
-                const completeness = validateTimelineCompleteness(timelinePath, taskId, codeChanged);
+                const completeness = validateTimelineCompleteness(timelinePath, taskId, {
+                    codeChanged,
+                    fullSuiteValidationEnabled
+                });
                 if (completeness.status === 'COMPLETE') {
                     healthy++;
                 } else {
@@ -594,6 +616,7 @@ export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimel
 
 export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimelineSummary {
     const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+    const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
     if (!fs.existsSync(eventsRoot)) {
         return { evidence: [], warnings: [] };
     }
@@ -612,7 +635,7 @@ export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimel
         const timelinePath = path.join(eventsRoot, fileName);
         const cached = summary?.entries[taskId] ?? null;
 
-        if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath)) {
+        if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath, fullSuiteValidationEnabled)) {
             const item: DoctorTimelineEvidence = {
                 task_id: taskId,
                 timeline_path: timelinePath.replace(/\\/g, '/'),
@@ -646,7 +669,10 @@ export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimel
         try {
             const codeChanged = detectCodeChangedFromPreflight(bundlePath, taskId);
             const inspectResult = inspectTaskEventFile(timelinePath, taskId);
-            const completeness = validateTimelineCompleteness(timelinePath, taskId, codeChanged);
+            const completeness = validateTimelineCompleteness(timelinePath, taskId, {
+                codeChanged,
+                fullSuiteValidationEnabled
+            });
 
             const item: DoctorTimelineEvidence = {
                 task_id: taskId,

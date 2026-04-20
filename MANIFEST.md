@@ -34,6 +34,7 @@ Unused entrypoints are not created by default. Extra redirect entrypoints appear
 Versioned bundle templates consumed during materialization:
 - template/config/garda.config.json
 - template/config/optional-skill-selection-policy.json
+- template/config/workflow-config.json (optional; configures post-task full-suite validation behavior when enabled via user preference)
 
 Materialized (regenerated on every init, reinit, and update) inside `garda-agent-orchestrator/live`:
 - live/config/review-capabilities.json
@@ -44,6 +45,8 @@ Materialized (regenerated on every init, reinit, and update) inside `garda-agent
 - live/config/optional-skill-selection-policy.json
 - live/config/isolation-mode.json
 - live/config/profiles.json
+- live/config/review-artifact-storage.json
+- live/config/workflow-config.json (optional; runtime configuration for post-task full-suite validation)
 - live/config/skills-index.json
 - live/config/garda.config.json
 - live/docs/agent-rules/** (template-materialized rules; `15-project-memory.md` is regenerated from `docs/project-memory/` sources)

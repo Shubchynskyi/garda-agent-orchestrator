@@ -66,6 +66,21 @@ function writeActiveCompletionLock(reviewsDir: string, taskId: string): string {
     return lockPath;
 }
 
+function writeWorkflowConfig(repoRoot: string, enabled: boolean): void {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'workflow-config.json'),
+        JSON.stringify({
+            full_suite_validation: {
+                enabled,
+                command: 'npm test'
+            }
+        }, null, 2),
+        'utf8'
+    );
+}
+
 describe('gates/task-audit-summary', () => {
     let tmpDir: string;
     let eventsDir: string;
@@ -292,6 +307,35 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.status, 'PASS');
             assert.equal(result.final_report_contract.status, 'READY');
             assert.equal(result.final_report_contract.blocker, null);
+        });
+
+        it('keeps historical completed tasks green when live full-suite validation is enabled later', () => {
+            const now = new Date().toISOString();
+            writeWorkflowConfig(tmpDir, true);
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: [],
+                metrics: { changed_lines_total: 0 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
+            assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
         });
 
         it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {

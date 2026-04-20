@@ -125,6 +125,21 @@ function writeDocsOnlyPreflight(dirPath: string, taskId: string): void {
     fs.writeFileSync(preflightPath, JSON.stringify(content), 'utf8');
 }
 
+function writeWorkflowConfig(dirPath: string, enabled: boolean): void {
+    const configDir = path.join(dirPath, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'workflow-config.json'),
+        JSON.stringify({
+            full_suite_validation: {
+                enabled,
+                command: 'npm test'
+            }
+        }, null, 2),
+        'utf8'
+    );
+}
+
 describe('gate-runtime/timeline-summary', () => {
 
     it('uses the lightweight preflight code-change helper instead of importing completion.ts', () => {
@@ -335,6 +350,28 @@ describe('gate-runtime/timeline-summary', () => {
                 integrity_violations: []
             };
             assert.equal(isTimelineSummaryEntryCurrent(entry, path.join(tempDir, 'missing.jsonl')), false);
+        });
+
+        it('keeps historical completed entries current when the live full-suite toggle changes later', () => {
+            const timelinePath = path.join(tempDir, 'test.jsonl');
+            fs.writeFileSync(timelinePath, 'hello\n', 'utf8');
+            const stat = fs.statSync(timelinePath);
+            const entry: TimelineSummaryEntry = {
+                task_id: 'T-001',
+                file_size_bytes: stat.size,
+                file_mtime_ms: Math.floor(stat.mtimeMs),
+                code_changed: false,
+                full_suite_validation_required: false,
+                completeness_status: 'COMPLETE',
+                events_found: ['COMPLETION_GATE_PASSED'],
+                events_missing: [],
+                completeness_violations: [],
+                integrity_status: 'PASSED',
+                events_scanned: 1,
+                integrity_event_count: 1,
+                integrity_violations: []
+            };
+            assert.equal(isTimelineSummaryEntryCurrent(entry, timelinePath, true), true);
         });
     });
 
@@ -883,6 +920,22 @@ describe('gate-runtime/timeline-summary', () => {
                     }
                 }
             });
+
+            const result = collectTimelineSummaryForStatus(bundlePath);
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 1);
+            assert.equal(result.warnings.length, 0);
+        });
+
+        it('keeps historical completed timelines healthy when the live full-suite toggle is enabled later', () => {
+            const bundlePath = tempDir;
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+
+            writeWorkflowConfig(bundlePath, false);
+            writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
+            updateTimelineSummaryForTask(eventsRoot, 'T-001', false);
+
+            writeWorkflowConfig(bundlePath, true);
 
             const result = collectTimelineSummaryForStatus(bundlePath);
             assert.equal(result.taskCount, 1);

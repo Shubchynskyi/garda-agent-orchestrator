@@ -4,7 +4,10 @@ import * as childProcess from 'node:child_process';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { normalizeRelativePath } from '../core/paths';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
-import { resolveBundleName } from '../core/constants';
+import {
+    UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
+    resolveBundleName
+} from '../core/constants';
 
 interface StackSignal {
     name: string;
@@ -25,6 +28,7 @@ export interface ProjectDiscovery {
     rootFiles: string[];
     runtimePathHints: string[];
     suggestedCommands: string[];
+    suggestedFullSuiteValidationCommand: string | null;
     relativeFiles: string[];
     sampleFiles: string[];
 }
@@ -61,6 +65,155 @@ export function getExcludedTopLevelDirs(): Set<string> {
 export const EXCLUDED_TOP_LEVEL_DIRS = new Set([
     resolveBundleName(), ..._STATIC_EXCLUDED_TOP_LEVEL_DIRS
 ]);
+
+function readRootPackageJsonSafe(targetRoot: string): Record<string, unknown> | null {
+    const packageJsonPath = path.join(targetRoot, 'package.json');
+    if (!pathExists(packageJsonPath)) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function detectNodePackageManager(targetRoot: string, packageJson: Record<string, unknown> | null): 'npm' | 'pnpm' | 'yarn' | 'bun' {
+    const packageManagerField = String(packageJson?.packageManager || '').trim().toLowerCase();
+    if (packageManagerField.startsWith('pnpm@')) return 'pnpm';
+    if (packageManagerField.startsWith('yarn@')) return 'yarn';
+    if (packageManagerField.startsWith('bun@')) return 'bun';
+    if (packageManagerField.startsWith('npm@')) return 'npm';
+
+    if (pathExists(path.join(targetRoot, 'pnpm-lock.yaml')) || pathExists(path.join(targetRoot, 'pnpm-workspace.yaml'))) {
+        return 'pnpm';
+    }
+    if (pathExists(path.join(targetRoot, 'yarn.lock'))) {
+        return 'yarn';
+    }
+    if (pathExists(path.join(targetRoot, 'bun.lock')) || pathExists(path.join(targetRoot, 'bun.lockb'))) {
+        return 'bun';
+    }
+    if (pathExists(path.join(targetRoot, 'package-lock.json')) || pathExists(path.join(targetRoot, 'npm-shrinkwrap.json'))) {
+        return 'npm';
+    }
+
+    return 'npm';
+}
+
+function resolveNodeFullSuiteValidationCommand(targetRoot: string): string | null {
+    if (!pathExists(path.join(targetRoot, 'package.json'))) {
+        return null;
+    }
+
+    const packageJson = readRootPackageJsonSafe(targetRoot);
+    const runner = detectNodePackageManager(targetRoot, packageJson);
+    return `${runner} test`;
+}
+
+function hasAnyRootFile(targetRoot: string, candidates: readonly string[]): boolean {
+    return candidates.some((candidate) => pathExists(path.join(targetRoot, candidate)));
+}
+
+function hasAnyRootFileByExtension(targetRoot: string, extensions: readonly string[]): boolean {
+    try {
+        const entries = fs.readdirSync(targetRoot, { withFileTypes: true });
+        return entries.some((entry) => (
+            entry.isFile()
+            && extensions.some((extension) => entry.name.toLowerCase().endsWith(extension))
+        ));
+    } catch {
+        return false;
+    }
+}
+
+function resolveJvmWrapperTestCommand(options: {
+    targetRoot: string;
+    wrapperName: string;
+    windowsWrapperName: string;
+    fallbackCommand: string;
+    runtimePlatform: NodeJS.Platform;
+}): string {
+    const { targetRoot, wrapperName, windowsWrapperName, fallbackCommand, runtimePlatform } = options;
+    const posixWrapperExists = pathExists(path.join(targetRoot, wrapperName));
+    const windowsWrapperExists = pathExists(path.join(targetRoot, windowsWrapperName));
+
+    if (runtimePlatform === 'win32') {
+        if (windowsWrapperExists) {
+            return `.\\${windowsWrapperName} test`;
+        }
+        if (posixWrapperExists) {
+            return `./${wrapperName} test`;
+        }
+        return fallbackCommand;
+    }
+
+    if (posixWrapperExists) {
+        return `./${wrapperName} test`;
+    }
+
+    return fallbackCommand;
+}
+
+export function resolveSuggestedFullSuiteValidationCommand(
+    targetRoot: string,
+    runtimePlatform: NodeJS.Platform = process.platform
+): string | null {
+    const normalizedTargetRoot = path.resolve(targetRoot);
+
+    const nodeCommand = resolveNodeFullSuiteValidationCommand(normalizedTargetRoot);
+    if (nodeCommand) {
+        return nodeCommand;
+    }
+
+    if (hasAnyRootFile(normalizedTargetRoot, ['pyproject.toml', 'requirements.txt', 'requirements-dev.txt'])) {
+        return 'pytest';
+    }
+
+    if (pathExists(path.join(normalizedTargetRoot, 'pom.xml'))) {
+        if (hasAnyRootFile(normalizedTargetRoot, ['mvnw', 'mvnw.cmd'])) {
+            return resolveJvmWrapperTestCommand({
+                targetRoot: normalizedTargetRoot,
+                wrapperName: 'mvnw',
+                windowsWrapperName: 'mvnw.cmd',
+                fallbackCommand: 'mvn test',
+                runtimePlatform
+            });
+        }
+        return 'mvn test';
+    }
+
+    if (hasAnyRootFile(normalizedTargetRoot, ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'])) {
+        if (hasAnyRootFile(normalizedTargetRoot, ['gradlew', 'gradlew.bat'])) {
+            return resolveJvmWrapperTestCommand({
+                targetRoot: normalizedTargetRoot,
+                wrapperName: 'gradlew',
+                windowsWrapperName: 'gradlew.bat',
+                fallbackCommand: 'gradle test',
+                runtimePlatform
+            });
+        }
+        return 'gradle test';
+    }
+
+    if (pathExists(path.join(normalizedTargetRoot, 'go.mod'))) {
+        return 'go test ./...';
+    }
+
+    if (pathExists(path.join(normalizedTargetRoot, 'Cargo.toml'))) {
+        return 'cargo test';
+    }
+
+    if (hasAnyRootFileByExtension(normalizedTargetRoot, ['.sln', '.csproj', '.fsproj'])) {
+        return 'dotnet test';
+    }
+
+    return null;
+}
 
 /**
  * Scans the project for stack signals, file listings, and directory structure.
@@ -157,6 +310,7 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
 
     const rootFiles = uniqueFiles.filter((filePath: string) => !filePath.includes('/')).slice(0, 20);
     const runtimePathHints = collectRuntimePathHints(uniqueFiles);
+    const suggestedFullSuiteValidationCommand = resolveSuggestedFullSuiteValidationCommand(targetRoot);
 
     return {
         source: discoverySource,
@@ -167,6 +321,7 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
         rootFiles,
         runtimePathHints,
         suggestedCommands: [...new Set(suggestedCommands)].sort(),
+        suggestedFullSuiteValidationCommand,
         relativeFiles: uniqueFiles,
         sampleFiles: uniqueFiles.slice(0, 40)
     };
@@ -295,6 +450,13 @@ export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestam
         for (const cmd of discovery.suggestedCommands) {
             lines.push(`- ${tick}${cmd}${tick}`);
         }
+    }
+
+    lines.push('', '## Suggested Full-Suite Validation Command');
+    if (!discovery.suggestedFullSuiteValidationCommand || discovery.suggestedFullSuiteValidationCommand === UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND) {
+        lines.push('- No deterministic full-suite command detected yet. `agent-init` should keep the workflow-config command unconfigured until an operator or later CLI command sets it.');
+    } else {
+        lines.push(`- ${tick}${discovery.suggestedFullSuiteValidationCommand}${tick}`);
     }
 
     lines.push('', '## Sample Files Used For Detection');

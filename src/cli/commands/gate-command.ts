@@ -32,6 +32,7 @@ import {
     handleLogTaskEvent,
     handleTaskEventsSummary,
     handleTaskAuditSummary,
+    handleFullSuiteValidation,
     handleCompletionGate,
     handleHumanCommit
 } from './gate-task-handlers';
@@ -98,6 +99,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleRequiredReviewsCheck(gateArgv);
         case 'doc-impact-gate':
             return handleDocImpactGate(gateArgv);
+        case 'full-suite-validation':
+            return handleFullSuiteValidation(gateArgv);
         case 'record-review-result':
             return handleRecordReviewResult(gateArgv);
         case 'completion-gate':

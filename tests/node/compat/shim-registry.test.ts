@@ -28,6 +28,7 @@ test('GATE_COMMANDS includes representative well-known gate names', () => {
     assert.ok(GATE_COMMANDS.includes('enter-task-mode'));
     assert.ok(GATE_COMMANDS.includes('load-rule-pack'));
     assert.ok(GATE_COMMANDS.includes('compile-gate'));
+    assert.ok(GATE_COMMANDS.includes('full-suite-validation'));
     assert.ok(GATE_COMMANDS.includes('completion-gate'));
     assert.ok(GATE_COMMANDS.includes('log-task-event'));
     assert.ok(GATE_COMMANDS.includes('human-commit'));

@@ -3,10 +3,15 @@ import * as path from 'node:path';
 import { pathExists } from '../core/fs';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, resolveBundleName } from '../core/constants';
 import { parseTaskMdTableRow } from '../core/task-md-table';
-import { getMandatoryEvents } from '../gate-runtime/lifecycle-event-types';
+import {
+    getMandatoryEvents,
+    hasSatisfiedLifecycleEvent,
+    resolveFullSuiteValidationRequirementForTaskEvents
+} from '../gate-runtime/lifecycle-event-types';
 import { scanTaskEventLocks, type TaskEventLockHealth } from '../gate-runtime/task-events';
 import { scanReviewArtifactLocks, type ReviewArtifactLockHealth } from '../gate-runtime/review-artifacts';
 import { scanCompletionGateFinalizationLocks, type FinalizationLockInspection } from '../gates/finalization-lock';
+import { loadFullSuiteValidationConfig } from '../gates/full-suite-validation';
 import { detectCodeChanged } from '../gates/preflight-code-change';
 
 export interface TaskStatus {
@@ -187,15 +192,9 @@ function readTimelineEvents(timelinePath: string): string[] {
     return eventTypes;
 }
 
-function hasEvent(events: string[], eventType: string): boolean {
-    if (eventType === 'REVIEW_GATE_PASSED') {
-        return events.includes('REVIEW_GATE_PASSED') || events.includes('REVIEW_GATE_PASSED_WITH_OVERRIDE');
-    }
-    return events.includes(eventType);
-}
-
 function getFailedGates(events: string[]): string[] {
     const failKeys = ['COMPILE_GATE_FAILED', 'REVIEW_GATE_FAILED', 'COMPLETION_GATE_FAILED',
+        'FULL_SUITE_VALIDATION_FAILED',
         'PREFLIGHT_FAILED', 'RULE_PACK_LOAD_FAILED', 'DOC_IMPACT_ASSESSMENT_FAILED'];
     return failKeys.filter(function (k) { return events.includes(k); });
 }
@@ -264,6 +263,14 @@ function detectBlockingReasons(
             reason_code: 'COMPLETION_GATE_FAILED',
             description: 'Completion gate failed — lifecycle evidence or review artifacts incomplete.',
             remediation: `Run: ${getBundleCliCommand()} gate completion-gate --task-id "${task.id}" and resolve each listed failure.`
+        });
+    }
+
+    if (failedGates.includes('FULL_SUITE_VALIDATION_FAILED')) {
+        reasons.push({
+            reason_code: 'FULL_SUITE_VALIDATION_FAILED',
+            description: 'Mandatory full-suite validation failed.',
+            remediation: `Fix the configured full-suite command failures and rerun: ${getBundleCliCommand()} gate full-suite-validation --task-id "${task.id}" ...`
         });
     }
 
@@ -337,6 +344,7 @@ function detectBlockingReasons(
 function analyseTask(
     task: TaskStatus,
     bundlePath: string,
+    fullSuiteValidationEnabled: boolean,
     lockObservations: TaskEventLockHealth[],
     reviewLockObservations: ReviewArtifactLockHealth[],
     completionFinalizationLockObservations: FinalizationLockInspection[]
@@ -364,8 +372,15 @@ function analyseTask(
         }
     }
 
-    const mandatory = getMandatoryEvents(codeChanged);
-    const missingEvents = mandatory.filter(function (ev) { return !hasEvent(events, ev); });
+    const fullSuiteValidationRequirement = resolveFullSuiteValidationRequirementForTaskEvents(
+        events,
+        fullSuiteValidationEnabled
+    );
+    const mandatory = getMandatoryEvents({
+        codeChanged,
+        fullSuiteValidationEnabled: fullSuiteValidationRequirement.required
+    });
+    const missingEvents = mandatory.filter(function (ev) { return !hasSatisfiedLifecycleEvent(events, ev); });
     const relatedLocks = lockObservations.filter(function (lock) {
         return lock.scope === 'aggregate' || lock.task_id === task.id;
     });
@@ -401,6 +416,7 @@ function analyseTask(
 export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
     const resolvedRoot = path.resolve(targetRoot);
     const bundlePath = path.join(resolvedRoot, resolveBundleName());
+    const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
     const taskMdPath = path.join(resolvedRoot, 'TASK.md');
 
     const allTasks = parseTaskMd(taskMdPath);
@@ -418,9 +434,23 @@ export function getWhyBlocked(targetRoot: string): WhyBlockedResult {
 
     for (const task of allTasks) {
         if (task.status === 'BLOCKED') {
-            blocked.push(analyseTask(task, bundlePath, lockObservations, reviewLockObservations, completionFinalizationLockObservations));
+            blocked.push(analyseTask(
+                task,
+                bundlePath,
+                fullSuiteValidationEnabled,
+                lockObservations,
+                reviewLockObservations,
+                completionFinalizationLockObservations
+            ));
         } else if (task.status === 'IN_PROGRESS' || task.status === 'IN_REVIEW') {
-            const analysed = analyseTask(task, bundlePath, lockObservations, reviewLockObservations, completionFinalizationLockObservations);
+            const analysed = analyseTask(
+                task,
+                bundlePath,
+                fullSuiteValidationEnabled,
+                lockObservations,
+                reviewLockObservations,
+                completionFinalizationLockObservations
+            );
             if (analysed.blocking_reasons.length > 0 || analysed.missing_events.length > 0 || analysed.failed_gates.length > 0) {
                 inProgress.push(analysed);
             }

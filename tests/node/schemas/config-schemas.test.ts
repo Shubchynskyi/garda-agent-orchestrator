@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { EXIT_VALIDATION_FAILURE } from '../../../src/cli/exit-codes';
+import { runCliWithCapturedOutput } from '../cli/commands/gate-test-helpers';
 
 import {
     getConfigSchemas,
@@ -75,6 +76,7 @@ function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: 
         'isolation-mode.json',
         'profiles.json',
         'review-artifact-storage.json',
+        'workflow-config.json',
         'garda.config.json'
     ]) {
         fs.copyFileSync(
@@ -94,9 +96,9 @@ function cleanupTempBundleRoot(tmpDir: string): void {
 // Schema registry
 // ---------------------------------------------------------------------------
 
-test('getConfigSchemas returns entries for all nine managed configs', () => {
+test('getConfigSchemas returns entries for all ten managed configs', () => {
     const schemas = getConfigSchemas();
-    assert.equal(schemas.length, 9);
+    assert.equal(schemas.length, 10);
     const names = schemas.map((s) => s.name);
     assert.ok(names.includes('review-capabilities'));
     assert.ok(names.includes('token-economy'));
@@ -107,6 +109,7 @@ test('getConfigSchemas returns entries for all nine managed configs', () => {
     assert.ok(names.includes('isolation-mode'));
     assert.ok(names.includes('profiles'));
     assert.ok(names.includes('review-artifact-storage'));
+    assert.ok(names.includes('workflow-config'));
 });
 
 test('getConfigSchemaByName returns correct schema entry', () => {
@@ -303,7 +306,7 @@ test('validateAllConfigs validates the live config directory when present', () =
     }
 
     const report = validateAllConfigs(bundleRoot);
-    assert.equal(report.configs.length, 9);
+    assert.equal(report.configs.length, 10);
     for (const cfg of report.configs) {
         assert.equal(cfg.exists, true, `${cfg.name} should exist`);
         assert.equal(cfg.parseable, true, `${cfg.name} should be parseable`);
@@ -490,20 +493,20 @@ test('formatValidationReport includes root and config errors', () => {
 // CLI / script integration
 // ---------------------------------------------------------------------------
 
-test('gate validate-config succeeds against a valid bundle root', () => {
+test('gate validate-config succeeds against a valid bundle root', async () => {
     const { tmpDir, bundleRoot } = makeTempBundleRoot();
     try {
-        const result = spawnSync(process.execPath, [
-            CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
-        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
-        assert.equal(result.status, 0, result.stderr);
-        assert.ok(result.stdout.includes('CONFIG_VALIDATION_PASSED'));
+        const result = await runCliWithCapturedOutput([
+            'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
+        ], { cwd: NEUTRAL_CWD });
+        assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        assert.ok(result.logs.some((line) => line.includes('CONFIG_VALIDATION_PASSED')));
     } finally {
         cleanupTempBundleRoot(tmpDir);
     }
 });
 
-test('gate validate-config succeeds when optional-skill-selection-policy is omitted from root config', () => {
+test('gate validate-config succeeds when optional-skill-selection-policy is omitted from root config', async () => {
     const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
     try {
         fs.rmSync(path.join(configDir, 'optional-skill-selection-policy.json'));
@@ -512,25 +515,27 @@ test('gate validate-config succeeds when optional-skill-selection-policy is omit
         delete ((rootConfig.configs as Record<string, unknown>)['optional-skill-selection-policy']);
         fs.writeFileSync(rootConfigPath, JSON.stringify(rootConfig, null, 2), 'utf8');
 
-        const result = spawnSync(process.execPath, [
-            CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
-        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
-        assert.equal(result.status, 0, result.stderr);
-        assert.ok(result.stdout.includes('CONFIG_VALIDATION_PASSED'));
+        const result = await runCliWithCapturedOutput([
+            'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
+        ], { cwd: NEUTRAL_CWD });
+        assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        assert.ok(result.logs.some((line) => line.includes('CONFIG_VALIDATION_PASSED')));
     } finally {
         cleanupTempBundleRoot(tmpDir);
     }
 });
 
-test('gate validate-config fails against an invalid bundle root', () => {
+test('gate validate-config fails against an invalid bundle root', async () => {
     const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
     try {
         fs.rmSync(path.join(configDir, 'garda.config.json'));
-        const result = spawnSync(process.execPath, [
-            CLI_ENTRY, 'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
-        ], { cwd: NEUTRAL_CWD, encoding: 'utf8', timeout: 30_000 });
-        assert.equal(result.status, EXIT_VALIDATION_FAILURE);
-        assert.ok((result.stdout + result.stderr).includes('CONFIG_VALIDATION_FAILED'));
+        const result = await runCliWithCapturedOutput([
+            'gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'
+        ], { cwd: NEUTRAL_CWD });
+        assert.equal(result.exitCode, EXIT_VALIDATION_FAILURE);
+        assert.ok(
+            [...result.logs, ...result.errors].some((line) => line.includes('CONFIG_VALIDATION_FAILED'))
+        );
     } finally {
         cleanupTempBundleRoot(tmpDir);
     }

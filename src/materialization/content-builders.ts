@@ -668,7 +668,8 @@ Mandatory gate order:
 9. \`gate build-review-context\` for each required review
 10. \`gate required-reviews-check\`
 11. \`gate doc-impact-gate\`
-12. \`gate completion-gate\`
+12. \`gate full-suite-validation\` (when enabled via workflow-config.json)
+13. \`gate completion-gate\`
 
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.

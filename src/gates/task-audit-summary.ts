@@ -13,6 +13,8 @@ import {
     readOptionalSkillSelectionTimelineEvidence,
     type OptionalSkillSelectionArtifactData
 } from '../runtime/optional-skill-selection';
+import { resolveFullSuiteValidationRequirementForTaskEvents } from '../gate-runtime/lifecycle-event-types';
+import { loadFullSuiteValidationConfig } from './full-suite-validation';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,7 +170,7 @@ interface ProfileReviewDecisionSummary {
 // Lifecycle gate ordering used for audit
 // ---------------------------------------------------------------------------
 
-const LIFECYCLE_GATES: ReadonlyArray<{ gate: string; pass_event: string; fail_events: string[] }> = [
+const BASE_LIFECYCLE_GATES: ReadonlyArray<{ gate: string; pass_event: string; fail_events: string[] }> = [
     { gate: 'enter-task-mode', pass_event: 'TASK_MODE_ENTERED', fail_events: [] },
     { gate: 'load-rule-pack', pass_event: 'RULE_PACK_LOADED', fail_events: ['RULE_PACK_LOAD_FAILED'] },
     { gate: 'handshake-diagnostics', pass_event: 'HANDSHAKE_DIAGNOSTICS_RECORDED', fail_events: [] },
@@ -181,6 +183,30 @@ const LIFECYCLE_GATES: ReadonlyArray<{ gate: string; pass_event: string; fail_ev
     { gate: 'completion-gate', pass_event: 'COMPLETION_GATE_PASSED', fail_events: ['COMPLETION_GATE_FAILED'] }
 ];
 
+function getLifecycleGates(fullSuiteValidationEnabled: boolean): Array<{ gate: string; pass_event: string; fail_events: string[] }> {
+    const gates = BASE_LIFECYCLE_GATES.map((entry) => ({
+        gate: entry.gate,
+        pass_event: entry.pass_event,
+        fail_events: [...entry.fail_events]
+    }));
+    if (!fullSuiteValidationEnabled) {
+        return gates;
+    }
+
+    const completionIndex = gates.findIndex((entry) => entry.gate === 'completion-gate');
+    const fullSuiteGate = {
+        gate: 'full-suite-validation',
+        pass_event: 'FULL_SUITE_VALIDATION_PASSED',
+        fail_events: ['FULL_SUITE_VALIDATION_FAILED', 'FULL_SUITE_VALIDATION_SKIPPED']
+    };
+    if (completionIndex === -1) {
+        gates.push(fullSuiteGate);
+    } else {
+        gates.splice(completionIndex, 0, fullSuiteGate);
+    }
+    return gates;
+}
+
 // Artifact name patterns relative to reviews root, keyed by kind.
 const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'task-mode', suffix: '-task-mode.json' },
@@ -192,6 +218,8 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'compile-output', suffix: '-compile-output.log' },
     { kind: 'review-gate', suffix: '-review-gate.json' },
     { kind: 'doc-impact', suffix: '-doc-impact.json' },
+    { kind: 'full-suite-validation', suffix: '-full-suite-validation.json' },
+    { kind: 'full-suite-output', suffix: '-full-suite-output.log' },
     { kind: 'optional-skill-selection', suffix: '-optional-skill-selection.json' },
     { kind: 'final-closeout-json', suffix: '-final-closeout.json' },
     { kind: 'final-closeout-markdown', suffix: '-final-closeout.md' },
@@ -584,6 +612,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const safeTaskId = assertValidTaskId(options.taskId);
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
+    const liveFullSuiteValidationEnabled = loadFullSuiteValidationConfig(repoRoot).enabled;
     const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId);
     const taskPath = path.join(repoRoot, 'TASK.md');
     const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
@@ -628,6 +657,11 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         // Keep last occurrence per type
         eventByType.set(eventType, event);
     }
+    const fullSuiteValidationEnabled = resolveFullSuiteValidationRequirementForTaskEvents(
+        eventTypesPresent,
+        liveFullSuiteValidationEnabled
+    ).required;
+    const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled);
 
     // -----------------------------------------------------------------------
     // 2. Integrity check
@@ -665,11 +699,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         acquisition_policy: null
     };
 
-    for (const { gate, pass_event, fail_events } of LIFECYCLE_GATES) {
+    for (const { gate, pass_event, fail_events } of lifecycleGates) {
         // Also accept REVIEW_GATE_PASSED_WITH_OVERRIDE as a pass
         const passEvents = [pass_event];
         if (pass_event === 'REVIEW_GATE_PASSED') {
             passEvents.push('REVIEW_GATE_PASSED_WITH_OVERRIDE');
+        } else if (pass_event === 'FULL_SUITE_VALIDATION_PASSED') {
+            passEvents.push('FULL_SUITE_VALIDATION_WARNED');
         }
 
         // Find latest pass and latest fail

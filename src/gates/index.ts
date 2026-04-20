@@ -5,6 +5,7 @@ import * as buildScopedDiff from './build-scoped-diff';
 import * as buildReviewContext from './build-review-context';
 import * as requiredReviewsCheck from './required-reviews-check';
 import * as docImpact from './doc-impact';
+import * as fullSuiteValidation from './full-suite-validation';
 import * as completion from './completion';
 import * as taskEventsSummary from './task-events-summary';
 import * as taskMode from './task-mode';
@@ -24,6 +25,7 @@ export {
     buildReviewContext,
     requiredReviewsCheck,
     docImpact,
+    fullSuiteValidation,
     completion,
     taskEventsSummary,
     taskMode,

@@ -241,6 +241,38 @@ export const reviewArtifactStorageSchema: Record<string, unknown> = Object.freez
     additionalProperties: false
 });
 
+export const OUT_OF_SCOPE_FAILURE_POLICIES = Object.freeze([
+    'AUDIT_AND_BLOCK',
+    'AUDIT_AND_WARN'
+] as const);
+
+export type OutOfScopeFailurePolicy = typeof OUT_OF_SCOPE_FAILURE_POLICIES[number];
+
+export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'garda-agent-orchestrator/workflow-config.schema.json',
+    title: 'Workflow Configuration',
+    description: 'Optional workflow settings including post-task full-suite validation.',
+    type: 'object',
+    properties: {
+        full_suite_validation: {
+            type: 'object',
+            description: 'Full-suite validation (complete test run after task review).',
+            properties: {
+                enabled:                    { type: 'boolean', description: 'Enable full-suite validation.' },
+                command:                    { type: 'string', minLength: 1, description: 'Command to run for full-suite validation.' },
+                timeout_ms:                 { type: 'integer', minimum: 1000, description: 'Timeout in milliseconds.' },
+                green_summary_max_lines:    { type: 'integer', minimum: 1, description: 'Max lines for pass summary.' },
+                red_failure_chunk_lines:    { type: 'integer', minimum: 10, description: 'Chunk size for failure output.' },
+                out_of_scope_failure_policy: { type: 'string', enum: [...OUT_OF_SCOPE_FAILURE_POLICIES], description: 'Policy for handling out-of-scope failures.' },
+                out_of_scope_failure_policies: { type: 'array', items: { type: 'string', enum: [...OUT_OF_SCOPE_FAILURE_POLICIES] }, uniqueItems: true, description: 'Available failure policies.' }
+            },
+            required: ['enabled', 'command', 'timeout_ms', 'green_summary_max_lines', 'red_failure_chunk_lines', 'out_of_scope_failure_policy']
+        }
+    },
+    additionalProperties: false
+});
+
 const REVIEW_POLICY_VALUE = {
     description: 'Review toggle: true = always, false = never, "auto" = trigger-based.',
     oneOf: [
@@ -376,7 +408,8 @@ export const gardaConfigSchema: Record<string, unknown> = Object.freeze({
                 'optional-skill-selection-policy': { type: 'string', minLength: 1 },
                 'isolation-mode':      { type: 'string', minLength: 1 },
                 profiles:              { type: 'string', minLength: 1 },
-                'review-artifact-storage': { type: 'string', minLength: 1 }
+                'review-artifact-storage': { type: 'string', minLength: 1 },
+                'workflow-config':     { type: 'string', minLength: 1 }
             },
             required: [
                 'review-capabilities', 'token-economy', 'paths',
@@ -409,11 +442,13 @@ const CONFIG_SCHEMAS: readonly ConfigSchemaEntry[] = Object.freeze([
     { name: 'optional-skill-selection-policy', schema: optionalSkillSelectionPolicySchema, fileName: 'optional-skill-selection-policy.json' },
     { name: 'isolation-mode',      schema: isolationModeSchema,      fileName: 'isolation-mode.json' },
     { name: 'profiles',            schema: profilesSchema,           fileName: 'profiles.json' },
-    { name: 'review-artifact-storage', schema: reviewArtifactStorageSchema, fileName: 'review-artifact-storage.json' }
+    { name: 'review-artifact-storage', schema: reviewArtifactStorageSchema, fileName: 'review-artifact-storage.json' },
+    { name: 'workflow-config',     schema: workflowConfigSchema,     fileName: 'workflow-config.json' }
 ]);
 
 const OPTIONAL_ROOT_CONFIG_NAMES = new Set<string>([
-    'optional-skill-selection-policy'
+    'optional-skill-selection-policy',
+    'workflow-config'
 ]);
 
 export function getConfigSchemas(): readonly ConfigSchemaEntry[] {

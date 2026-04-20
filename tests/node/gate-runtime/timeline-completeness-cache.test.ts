@@ -247,6 +247,28 @@ describe('gate-runtime/timeline-completeness-cache', () => {
                 false
             );
         });
+
+        it('keeps historical completed summaries current when the live full-suite toggle changes later', () => {
+            const filePath = path.join(tempDir, 'timeline.jsonl');
+            fs.writeFileSync(filePath, 'data\n', 'utf8');
+            const stat = fs.statSync(filePath);
+            const summary: TimelineCompletenessSummary = {
+                cache_version: CACHE_VERSION,
+                task_id: 'T-001',
+                timeline_size_bytes: stat.size,
+                timeline_mtime_ms: Math.floor(stat.mtimeMs),
+                code_changed: false,
+                full_suite_validation_required: false,
+                status: 'COMPLETE',
+                events_found: ['COMPLETION_GATE_PASSED'],
+                events_missing: [],
+                violations: []
+            };
+            assert.equal(
+                isCompletenessSummaryCurrent(summary, filePath, { codeChanged: false, fullSuiteValidationEnabled: true }),
+                true
+            );
+        });
     });
 
     describe('validateTimelineCompletenessWithCache', () => {

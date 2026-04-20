@@ -8,6 +8,7 @@ import {
     getProjectDiscovery,
     buildProjectDiscoveryLines,
     buildDiscoveryOverlaySection,
+    resolveSuggestedFullSuiteValidationCommand,
     STACK_SIGNALS,
     ProjectDiscovery
 } from '../../../src/materialization/project-discovery';
@@ -40,6 +41,7 @@ describe('getProjectDiscovery', () => {
             assert.ok(result.detectedStacks.includes('Node.js or JavaScript'));
             assert.ok(result.detectedStacks.includes('Go'));
             assert.ok(result.suggestedCommands.length > 0);
+            assert.equal(result.suggestedFullSuiteValidationCommand, 'npm test');
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
@@ -93,6 +95,59 @@ describe('getProjectDiscovery', () => {
     });
 });
 
+describe('resolveSuggestedFullSuiteValidationCommand', () => {
+    it('prefers pnpm test when pnpm signals are present', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-pnpm-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
+                packageManager: 'pnpm@9.0.0',
+                scripts: { test: 'vitest run' }
+            }), 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0');
+
+            assert.equal(resolveSuggestedFullSuiteValidationCommand(tmpDir), 'pnpm test');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('prefers Maven wrapper when pom.xml and mvnw are present', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-mvnw-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'pom.xml'), '<project />', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'mvnw'), '#!/bin/sh\n', 'utf8');
+
+            assert.equal(resolveSuggestedFullSuiteValidationCommand(tmpDir), './mvnw test');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('prefers Maven cmd wrapper on Windows when pom.xml and mvnw.cmd are present', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-mvnw-cmd-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'pom.xml'), '<project />', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'mvnw.cmd'), '@echo off\r\n', 'utf8');
+
+            assert.equal(resolveSuggestedFullSuiteValidationCommand(tmpDir, 'win32'), '.\\mvnw.cmd test');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('prefers Gradle bat wrapper on Windows when gradle files and gradlew.bat are present', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-gradlew-bat-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'build.gradle.kts'), 'plugins {}\n', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'gradlew.bat'), '@echo off\r\n', 'utf8');
+
+            assert.equal(resolveSuggestedFullSuiteValidationCommand(tmpDir, 'win32'), '.\\gradlew.bat test');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe('buildProjectDiscoveryLines', () => {
     it('produces markdown with expected sections', () => {
         const discovery = {
@@ -104,6 +159,7 @@ describe('buildProjectDiscoveryLines', () => {
             rootFiles: ['package.json', 'README.md'],
             runtimePathHints: ['src/'],
             suggestedCommands: ['npm run test'],
+            suggestedFullSuiteValidationCommand: 'pnpm test',
             sampleFiles: ['package.json', 'src/index.js']
         };
         const lines = buildProjectDiscoveryLines(discovery as unknown as ProjectDiscovery, '2025-01-01T00:00:00Z');
@@ -116,6 +172,8 @@ describe('buildProjectDiscoveryLines', () => {
         assert.ok(text.includes('## Root Files'));
         assert.ok(text.includes('## Runtime Path Hints'));
         assert.ok(text.includes('## Suggested Local Commands'));
+        assert.ok(text.includes('## Suggested Full-Suite Validation Command'));
+        assert.ok(text.includes('pnpm test'));
         assert.ok(text.includes('## Sample Files Used'));
     });
 });

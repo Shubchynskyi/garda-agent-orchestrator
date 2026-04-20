@@ -2,7 +2,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { buildNodeFoundation, getRepoRoot, BuildResult } from './build';
+import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } from './build';
 
 const NODE_TEST_OPTIONS_WITH_VALUE = new Set<string>([
     '--test-name-pattern',
@@ -178,6 +178,9 @@ function resolveSelectedTestFiles(buildResult: BuildResult, compiledTestFiles: s
 
 export function runNodeFoundationTests(): void {
     const repoRoot: string = getRepoRoot();
+    // Some lifecycle/update tests seed sync-surface fixtures from the current
+    // publish-runtime bundle, so refresh dist before compiling .node-build.
+    buildPublishRuntime();
     const buildResult: BuildResult = buildNodeFoundation();
     const compiledTestFiles: string[] = collectCompiledNodeFoundationTestFiles(buildResult);
     const forwardedArgs = process.argv.slice(2);

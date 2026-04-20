@@ -469,6 +469,125 @@ test('getWhyBlocked marks code-changing tasks stalled when handshake lifecycle e
     }
 });
 
+test('getWhyBlocked accepts terminal full-suite events as satisfying the synthetic lifecycle marker', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-full-suite-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+    const configDir = path.join(bundleDir, 'live', 'config');
+
+    try {
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(configDir, 'workflow-config.json'),
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test'
+                }
+            }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-016 | 🟨 IN_PROGRESS | P1 | area | Full suite warned task | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+
+        const events = [
+            'TASK_MODE_ENTERED',
+            'RULE_PACK_LOADED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_GATE_PASSED',
+            'FULL_SUITE_VALIDATION_WARNED'
+        ];
+        const lines = events.map(function (eventType) {
+            return JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: 'T-016',
+                event_type: eventType,
+                outcome: eventType === 'FULL_SUITE_VALIDATION_WARNED' ? 'WARN' : 'PASS',
+                actor: 'gate',
+                message: 'Test'
+            });
+        });
+        fs.writeFileSync(path.join(eventsDir, 'T-016.jsonl'), lines.join('\n') + '\n', 'utf8');
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.in_progress_tasks.length, 1);
+        assert.ok(!result.in_progress_tasks[0].missing_events.includes('FULL_SUITE_VALIDATION_COMPLETE'));
+        assert.ok(result.in_progress_tasks[0].missing_events.includes('COMPLETION_GATE_PASSED'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getWhyBlocked reports full-suite failures as failed gates instead of missing lifecycle evidence', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-full-suite-failed-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+    const configDir = path.join(bundleDir, 'live', 'config');
+
+    try {
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(configDir, 'workflow-config.json'),
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test'
+                }
+            }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-017 | 🟨 IN_PROGRESS | P1 | area | Full suite failed task | me | 2026-01-01 | default | Notes |']),
+            'utf8'
+        );
+
+        const events = [
+            'TASK_MODE_ENTERED',
+            'RULE_PACK_LOADED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_PASSED',
+            'REVIEW_PHASE_STARTED',
+            'REVIEW_GATE_PASSED',
+            'FULL_SUITE_VALIDATION_FAILED'
+        ];
+        const lines = events.map(function (eventType) {
+            return JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: 'T-017',
+                event_type: eventType,
+                outcome: eventType === 'FULL_SUITE_VALIDATION_FAILED' ? 'FAIL' : 'PASS',
+                actor: 'gate',
+                message: 'Test'
+            });
+        });
+        fs.writeFileSync(path.join(eventsDir, 'T-017.jsonl'), lines.join('\n') + '\n', 'utf8');
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.in_progress_tasks.length, 1);
+        assert.ok(result.in_progress_tasks[0].failed_gates.includes('FULL_SUITE_VALIDATION_FAILED'));
+        assert.ok(!result.in_progress_tasks[0].missing_events.includes('FULL_SUITE_VALIDATION_COMPLETE'));
+        assert.ok(result.in_progress_tasks[0].blocking_reasons.some(function (reason) {
+            return reason.reason_code === 'FULL_SUITE_VALIDATION_FAILED';
+        }));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ── formatWhyBlockedResult ────────────────────────────────────────────────────
 
 test('formatWhyBlockedResult says no blocked tasks when result is clean', () => {

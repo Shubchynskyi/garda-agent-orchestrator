@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+    isTaskBoundFullSuiteValidationRequirement,
     validateTimelineCompleteness,
     type TimelineCompletenessResult
 } from './lifecycle-events';
@@ -17,6 +18,7 @@ export interface TimelineCompletenessSummary {
     timeline_size_bytes: number;
     timeline_mtime_ms: number;
     code_changed: boolean;
+    full_suite_validation_required?: boolean;
     status: TimelineCompletenessResult['status'];
     events_found: string[];
     events_missing: string[];
@@ -79,18 +81,40 @@ export function writeCompletenessSummary(cachePath: string, summary: TimelineCom
  * Check whether a cached summary is still current for the given timeline file.
  * Staleness is determined by comparing file size and mtime.
  */
+function normalizeCompletenessOptions(
+    codeChangedOrOptions: boolean | { codeChanged: boolean; fullSuiteValidationEnabled?: boolean }
+): { codeChanged: boolean; fullSuiteValidationEnabled: boolean } {
+    if (typeof codeChangedOrOptions === 'boolean') {
+        return {
+            codeChanged: codeChangedOrOptions,
+            fullSuiteValidationEnabled: false
+        };
+    }
+    return {
+        codeChanged: codeChangedOrOptions.codeChanged,
+        fullSuiteValidationEnabled: codeChangedOrOptions.fullSuiteValidationEnabled === true
+    };
+}
+
 export function isCompletenessSummaryCurrent(
     summary: TimelineCompletenessSummary,
     timelinePath: string,
-    codeChanged: boolean
+    codeChangedOrOptions: boolean | { codeChanged: boolean; fullSuiteValidationEnabled?: boolean }
 ): boolean {
+    const options = normalizeCompletenessOptions(codeChangedOrOptions);
     try {
         const resolved = path.resolve(timelinePath);
         const stat = fs.statSync(resolved);
         if (!stat.isFile()) return false;
         if (stat.size !== summary.timeline_size_bytes) return false;
         if (Math.floor(stat.mtimeMs) !== summary.timeline_mtime_ms) return false;
-        if (codeChanged !== summary.code_changed) return false;
+        if (options.codeChanged !== summary.code_changed) return false;
+        if (
+            !isTaskBoundFullSuiteValidationRequirement(summary.events_found, summary.status)
+            && (summary.full_suite_validation_required === true) !== options.fullSuiteValidationEnabled
+        ) {
+            return false;
+        }
         return true;
     } catch {
         return false;
@@ -105,13 +129,14 @@ export function isCompletenessSummaryCurrent(
 export function validateTimelineCompletenessWithCache(
     timelinePath: string,
     taskId: string,
-    codeChanged: boolean,
+    codeChangedOrOptions: boolean | { codeChanged: boolean; fullSuiteValidationEnabled?: boolean },
     readOnly: boolean = false
 ): TimelineCompletenessResult {
+    const options = normalizeCompletenessOptions(codeChangedOrOptions);
     const cachePath = getCompletenessCachePath(timelinePath);
     const cached = readCompletenessSummary(cachePath);
 
-    if (cached && cached.task_id === taskId && isCompletenessSummaryCurrent(cached, timelinePath, codeChanged)) {
+    if (cached && cached.task_id === taskId && isCompletenessSummaryCurrent(cached, timelinePath, options)) {
         const result: TimelineCompletenessResult = {
             task_id: cached.task_id,
             timeline_path: timelinePath.replace(/\\/g, '/'),
@@ -119,7 +144,8 @@ export function validateTimelineCompletenessWithCache(
             events_found: cached.events_found.slice(),
             events_missing: cached.events_missing.slice(),
             status: cached.status,
-            violations: cached.violations.slice()
+            violations: cached.violations.slice(),
+            full_suite_validation_required: cached.full_suite_validation_required === true
         };
         return result;
     }
@@ -139,7 +165,7 @@ export function validateTimelineCompletenessWithCache(
     }
 
     // Cache miss or stale — perform full re-read
-    const result = validateTimelineCompleteness(timelinePath, taskId, codeChanged);
+    const result = validateTimelineCompleteness(timelinePath, taskId, options);
 
     // Persist cache only when allowed, the timeline was actually readable,
     // and file metadata hasn't changed between pre-read snapshot and post-read check.
@@ -155,7 +181,8 @@ export function validateTimelineCompletenessWithCache(
                     task_id: taskId,
                     timeline_size_bytes: preReadSize,
                     timeline_mtime_ms: preReadMtimeMs,
-                    code_changed: codeChanged,
+                    code_changed: options.codeChanged,
+                    full_suite_validation_required: options.fullSuiteValidationEnabled === true ? true : undefined,
                     status: result.status,
                     events_found: result.events_found.slice(),
                     events_missing: result.events_missing.slice(),

@@ -20,6 +20,10 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     DOC_IMPACT_ASSESSMENT_FAILED: 'DOC_IMPACT_ASSESSMENT_FAILED',
     REVIEW_RECORDED: 'REVIEW_RECORDED',
     REVIEWER_DELEGATION_ROUTED: 'REVIEWER_DELEGATION_ROUTED',
+    FULL_SUITE_VALIDATION_PASSED: 'FULL_SUITE_VALIDATION_PASSED',
+    FULL_SUITE_VALIDATION_WARNED: 'FULL_SUITE_VALIDATION_WARNED',
+    FULL_SUITE_VALIDATION_FAILED: 'FULL_SUITE_VALIDATION_FAILED',
+    FULL_SUITE_VALIDATION_SKIPPED: 'FULL_SUITE_VALIDATION_SKIPPED',
     COMPLETION_GATE_PASSED: 'COMPLETION_GATE_PASSED',
     COMPLETION_GATE_FAILED: 'COMPLETION_GATE_FAILED',
     STATUS_CHANGED: 'STATUS_CHANGED',
@@ -55,8 +59,101 @@ export const MANDATORY_NON_CODE_EVENTS: readonly string[] = Object.freeze([
     'COMPLETION_GATE_PASSED'
 ]);
 
-export function getMandatoryEvents(codeChanged: boolean): readonly string[] {
-    return codeChanged ? MANDATORY_CODE_CHANGE_EVENTS : MANDATORY_NON_CODE_EVENTS;
+export const FULL_SUITE_VALIDATION_EVENTS: readonly string[] = Object.freeze([
+    'FULL_SUITE_VALIDATION_PASSED',
+    'FULL_SUITE_VALIDATION_WARNED',
+    'FULL_SUITE_VALIDATION_FAILED',
+    'FULL_SUITE_VALIDATION_SKIPPED'
+] as const);
+
+function normalizeEventSet(events: Iterable<string>): Set<string> {
+    if (events instanceof Set) {
+        return events;
+    }
+    const normalized = new Set<string>();
+    for (const eventType of events) {
+        const token = String(eventType || '').trim().toUpperCase();
+        if (token) {
+            normalized.add(token);
+        }
+    }
+    return normalized;
+}
+
+export function hasSatisfiedLifecycleEvent(events: Iterable<string>, expectedEvent: string): boolean {
+    const eventTypes = normalizeEventSet(events);
+    const normalizedExpectedEvent = String(expectedEvent || '').trim().toUpperCase();
+    if (!normalizedExpectedEvent) {
+        return false;
+    }
+    if (normalizedExpectedEvent === 'REVIEW_GATE_PASSED') {
+        return eventTypes.has('REVIEW_GATE_PASSED') || eventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE');
+    }
+    if (normalizedExpectedEvent === 'FULL_SUITE_VALIDATION_COMPLETE') {
+        return FULL_SUITE_VALIDATION_EVENTS.some((eventType) => eventTypes.has(eventType));
+    }
+    return eventTypes.has(normalizedExpectedEvent);
+}
+
+export interface FullSuiteValidationRequirementResolution {
+    required: boolean;
+    task_bound: boolean;
+}
+
+export function resolveFullSuiteValidationRequirementForTaskEvents(
+    events: Iterable<string>,
+    defaultEnabled: boolean = false
+): FullSuiteValidationRequirementResolution {
+    const eventTypes = normalizeEventSet(events);
+    if (hasSatisfiedLifecycleEvent(eventTypes, 'FULL_SUITE_VALIDATION_COMPLETE')) {
+        return {
+            required: true,
+            task_bound: true
+        };
+    }
+    if (eventTypes.has('COMPLETION_GATE_PASSED')) {
+        return {
+            required: false,
+            task_bound: true
+        };
+    }
+    return {
+        required: defaultEnabled,
+        task_bound: false
+    };
+}
+
+export function isTaskBoundFullSuiteValidationRequirement(
+    eventsFound: Iterable<string>,
+    completenessStatus: string | null | undefined
+): boolean {
+    const eventTypes = normalizeEventSet(eventsFound);
+    if (hasSatisfiedLifecycleEvent(eventTypes, 'FULL_SUITE_VALIDATION_COMPLETE')) {
+        return true;
+    }
+    return String(completenessStatus || '').trim().toUpperCase() === 'COMPLETE'
+        && eventTypes.has('COMPLETION_GATE_PASSED');
+}
+
+export interface GetMandatoryEventsOptions {
+    codeChanged: boolean;
+    fullSuiteValidationEnabled?: boolean;
+}
+
+export function getMandatoryEvents(codeChangedOrOptions: boolean | GetMandatoryEventsOptions): readonly string[] {
+    const options = typeof codeChangedOrOptions === 'boolean'
+        ? { codeChanged: codeChangedOrOptions, fullSuiteValidationEnabled: false }
+        : codeChangedOrOptions;
+    const base = options.codeChanged ? MANDATORY_CODE_CHANGE_EVENTS : MANDATORY_NON_CODE_EVENTS;
+    if (!options.fullSuiteValidationEnabled) {
+        return base;
+    }
+    const events = [...base];
+    const completionIndex = events.indexOf('COMPLETION_GATE_PASSED');
+    if (completionIndex >= 0) {
+        events.splice(completionIndex, 0, 'FULL_SUITE_VALIDATION_COMPLETE');
+    }
+    return Object.freeze(events);
 }
 
 export interface TimelineCompletenessResult {
@@ -67,13 +164,17 @@ export interface TimelineCompletenessResult {
     events_missing: string[];
     status: 'COMPLETE' | 'INCOMPLETE' | 'MISSING_TIMELINE';
     violations: string[];
+    full_suite_validation_required?: boolean;
 }
 
 export function validateTimelineCompleteness(
     timelinePath: string,
     taskId: string,
-    codeChanged: boolean
+    codeChangedOrOptions: boolean | { codeChanged: boolean; fullSuiteValidationEnabled?: boolean }
 ): TimelineCompletenessResult {
+    const options = typeof codeChangedOrOptions === 'boolean'
+        ? { codeChanged: codeChangedOrOptions, fullSuiteValidationEnabled: false }
+        : codeChangedOrOptions;
     const normalizedPath = timelinePath.replace(/\\/g, '/');
     const result: TimelineCompletenessResult = {
         task_id: taskId,
@@ -82,7 +183,8 @@ export function validateTimelineCompleteness(
         events_found: [],
         events_missing: [],
         status: 'MISSING_TIMELINE',
-        violations: []
+        violations: [],
+        full_suite_validation_required: options.fullSuiteValidationEnabled
     };
 
     const resolvedPath = path.resolve(timelinePath);
@@ -113,27 +215,32 @@ export function validateTimelineCompleteness(
         return result;
     }
 
-    const mandatory = getMandatoryEvents(codeChanged);
+    const fullSuiteValidationRequirement = resolveFullSuiteValidationRequirementForTaskEvents(
+        eventTypes,
+        options.fullSuiteValidationEnabled === true
+    );
+    result.full_suite_validation_required = fullSuiteValidationRequirement.required;
+
+    const mandatory = getMandatoryEvents({
+        codeChanged: options.codeChanged,
+        fullSuiteValidationEnabled: fullSuiteValidationRequirement.required
+    });
     for (const expectedEvent of mandatory) {
-        if (expectedEvent === 'REVIEW_GATE_PASSED') {
-            if (eventTypes.has('REVIEW_GATE_PASSED') || eventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE')) {
-                result.events_found.push(expectedEvent);
+        if (hasSatisfiedLifecycleEvent(eventTypes, expectedEvent)) {
+            result.events_found.push(expectedEvent);
+        } else {
+            result.events_missing.push(expectedEvent);
+            if (expectedEvent === 'FULL_SUITE_VALIDATION_COMPLETE') {
+                result.violations.push(
+                    `Task timeline '${normalizedPath}' is missing mandatory full-suite validation event `
+                    + '(one of FULL_SUITE_VALIDATION_PASSED, FULL_SUITE_VALIDATION_WARNED, '
+                    + 'FULL_SUITE_VALIDATION_FAILED, or FULL_SUITE_VALIDATION_SKIPPED).'
+                );
             } else {
-                result.events_missing.push(expectedEvent);
                 result.violations.push(
                     `Task timeline '${normalizedPath}' is missing mandatory lifecycle event: ${expectedEvent}.`
                 );
             }
-            continue;
-        }
-
-        if (eventTypes.has(expectedEvent)) {
-            result.events_found.push(expectedEvent);
-        } else {
-            result.events_missing.push(expectedEvent);
-            result.violations.push(
-                `Task timeline '${normalizedPath}' is missing mandatory lifecycle event: ${expectedEvent}.`
-            );
         }
     }
 

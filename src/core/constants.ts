@@ -227,8 +227,12 @@ export const MANAGED_CONFIG_NAMES: readonly string[] = Object.freeze([
     'optional-skill-selection-policy',
     'isolation-mode',
     'profiles',
-    'review-artifact-storage'
+    'review-artifact-storage',
+    'workflow-config'
 ]);
+
+export const LEGACY_FULL_SUITE_VALIDATION_COMMAND = 'npm test';
+export const UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND = '__FULL_SUITE_COMMAND_UNCONFIGURED__';
 
 export const DEFAULT_METRICS_FILE_NAME = 'metrics.jsonl';
 

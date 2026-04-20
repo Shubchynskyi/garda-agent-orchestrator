@@ -61,6 +61,11 @@ import {
     buildCoherentCycleRestartCommand,
     buildReviewCycleRestartCommand
 } from './completion-reporting';
+import {
+    loadFullSuiteValidationConfig,
+    type FullSuiteValidationCycleBinding,
+    type FullSuiteValidationResult
+} from './full-suite-validation';
 
 export { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
 
@@ -156,6 +161,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         preflightPath,
         taskModePath: options.taskModePath || ''
     });
+    const fullSuiteValidationConfig = loadFullSuiteValidationConfig(repoRoot);
     const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '');
     const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
         artifactPath: options.handshakePath || '',
@@ -289,6 +295,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const timelineEventTypes = new Set(orderedEvents.map(e => e.event_type));
     const codeChanged = detectCodeChanged(validatedPreflight.preflight, repoRoot);
     const reviewRecordedRequired = preflightRequiresAnyReview(validatedPreflight.preflight);
+    const latestCompileGatePassedTimestamp = [...orderedEvents]
+        .reverse()
+        .find((entry) => entry.event_type === 'COMPILE_GATE_PASSED')
+        ?.timestamp_utc ?? null;
 
     // Propagate timeline parse errors
     errors.push(...timelineErrors);
@@ -485,6 +495,90 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         plan_summary: taskModeEvidence.plan?.plan_summary ?? null
     };
 
+    const fullSuiteValidationPath = path.join(reviewsRoot, `${resolvedTaskId}-full-suite-validation.json`);
+    const fullSuiteValidationEvidence: {
+        enabled: boolean;
+        artifact_path: string;
+        status: string | null;
+        cycle_binding: FullSuiteValidationCycleBinding | null;
+        cycle_binding_valid: boolean | null;
+        violations: string[];
+    } = {
+        enabled: fullSuiteValidationConfig.enabled,
+        artifact_path: normalizePath(fullSuiteValidationPath),
+        status: null,
+        cycle_binding: null,
+        cycle_binding_valid: null,
+        violations: []
+    };
+
+    if (fullSuiteValidationConfig.enabled) {
+        const fullSuiteArtifact = readJsonArtifact(fullSuiteValidationPath, 'Full suite validation', errors) as FullSuiteValidationResult | null;
+        const hasFullSuiteTimelineEvent =
+            timelineEventTypes.has('FULL_SUITE_VALIDATION_PASSED')
+            || timelineEventTypes.has('FULL_SUITE_VALIDATION_WARNED')
+            || timelineEventTypes.has('FULL_SUITE_VALIDATION_FAILED')
+            || timelineEventTypes.has('FULL_SUITE_VALIDATION_SKIPPED');
+        if (!hasFullSuiteTimelineEvent) {
+            const message = `Task timeline '${normalizePath(timelinePath)}' is missing full-suite validation lifecycle evidence.`;
+            errors.push(message);
+            fullSuiteValidationEvidence.violations.push(message);
+        }
+
+        if (!fullSuiteArtifact) {
+            fullSuiteValidationEvidence.status = 'MISSING';
+        } else {
+            const artifactStatus = String(fullSuiteArtifact.status || '').trim().toUpperCase();
+            fullSuiteValidationEvidence.status = artifactStatus || null;
+            const rawCycleBinding = fullSuiteArtifact.cycle_binding;
+            if (!rawCycleBinding || typeof rawCycleBinding !== 'object' || Array.isArray(rawCycleBinding)) {
+                const message = `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' is missing cycle_binding.`;
+                errors.push(message);
+                fullSuiteValidationEvidence.violations.push(message);
+            } else {
+                const cycleBindingRecord = rawCycleBinding as unknown as Record<string, unknown>;
+                const cycleBinding: FullSuiteValidationCycleBinding = {
+                    task_id: String(cycleBindingRecord.task_id || '').trim(),
+                    preflight_path: normalizePath(cycleBindingRecord.preflight_path || ''),
+                    preflight_sha256: String(cycleBindingRecord.preflight_sha256 || '').trim().toLowerCase(),
+                    compile_gate_timestamp: cycleBindingRecord.compile_gate_timestamp == null
+                        ? null
+                        : String(cycleBindingRecord.compile_gate_timestamp || '').trim() || null
+                };
+                fullSuiteValidationEvidence.cycle_binding = cycleBinding;
+                const expectedCycleBinding: FullSuiteValidationCycleBinding = {
+                    task_id: String(resolvedTaskId || '').trim(),
+                    preflight_path: normalizePath(validatedPreflight.preflight_path),
+                    preflight_sha256: String(validatedPreflight.preflight_hash || '').trim().toLowerCase(),
+                    compile_gate_timestamp: latestCompileGatePassedTimestamp
+                };
+                const cycleBindingValid =
+                    cycleBinding.task_id === expectedCycleBinding.task_id
+                    && cycleBinding.preflight_path === expectedCycleBinding.preflight_path
+                    && cycleBinding.preflight_sha256 === expectedCycleBinding.preflight_sha256
+                    && cycleBinding.compile_gate_timestamp === expectedCycleBinding.compile_gate_timestamp;
+                fullSuiteValidationEvidence.cycle_binding_valid = cycleBindingValid;
+                if (!cycleBindingValid) {
+                    const message =
+                        `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' is stale for the current task cycle. ` +
+                        `Expected task_id='${expectedCycleBinding.task_id}', preflight_path='${expectedCycleBinding.preflight_path}', ` +
+                        `preflight_sha256='${expectedCycleBinding.preflight_sha256}', compile_gate_timestamp='${expectedCycleBinding.compile_gate_timestamp || 'null'}'.`;
+                    errors.push(message);
+                    fullSuiteValidationEvidence.violations.push(message);
+                }
+            }
+
+            if (artifactStatus !== 'PASSED' && artifactStatus !== 'WARNED') {
+                const message =
+                    `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' must have status PASSED or WARNED when enabled, got '${artifactStatus || 'UNKNOWN'}'.`;
+                errors.push(message);
+                fullSuiteValidationEvidence.violations.push(message);
+            }
+        }
+    } else {
+        fullSuiteValidationEvidence.status = 'NOT_REQUIRED';
+    }
+
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
     const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
     const coherentCycleRestartCommand = stageSequence.violations.length > 0 && resolvedTaskId
@@ -545,6 +639,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         review_artifacts: reviewArtifacts,
         stage_sequence_evidence: stageSequence,
         reviewer_routing_enforcement: reviewerRoutingEnforcement,
+        full_suite_validation_evidence: fullSuiteValidationEvidence,
         zero_diff_evidence: zeroDiffEvidence,
         dirty_workspace_protection_evidence: dirtyWorkspaceProtectionEvidence,
         plan: planEvidence,

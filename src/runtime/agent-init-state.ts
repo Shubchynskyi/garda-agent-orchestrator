@@ -18,6 +18,7 @@ export interface AgentInitState {
     VerificationPassed: boolean;
     ManifestValidationPassed: boolean;
     ActiveAgentFiles: string[];
+    LastSeededFullSuiteCommand: string | null;
 }
 
 interface AgentInitStateReadResult {
@@ -113,7 +114,8 @@ export function validateAgentInitState(input: unknown): AgentInitState {
         SkillsPromptCompleted: normalizeBoolean(raw.SkillsPromptCompleted, 'SkillsPromptCompleted'),
         VerificationPassed: normalizeBoolean(raw.VerificationPassed, 'VerificationPassed'),
         ManifestValidationPassed: normalizeBoolean(raw.ManifestValidationPassed, 'ManifestValidationPassed'),
-        ActiveAgentFiles: normalizeOptionalStringArray(raw.ActiveAgentFiles, 'ActiveAgentFiles')
+        ActiveAgentFiles: normalizeOptionalStringArray(raw.ActiveAgentFiles, 'ActiveAgentFiles'),
+        LastSeededFullSuiteCommand: normalizeOptionalString(raw.LastSeededFullSuiteCommand)
     };
 }
 
@@ -131,6 +133,7 @@ export function createAgentInitState(overrides: Partial<AgentInitState> = {}): A
         VerificationPassed: false,
         ManifestValidationPassed: false,
         ActiveAgentFiles: [],
+        LastSeededFullSuiteCommand: null,
         ...overrides
     });
 }
@@ -172,7 +175,10 @@ export function buildRefreshAgentInitState(options: BuildRefreshAgentInitStateOp
         ManifestValidationPassed: canPreserve
             ? (manifestValidationPassed === null ? preservedState!.ManifestValidationPassed : manifestValidationPassed)
             : false,
-        ActiveAgentFiles: activeAgentFiles
+        ActiveAgentFiles: activeAgentFiles,
+        LastSeededFullSuiteCommand: canPreserve
+            ? preservedState!.LastSeededFullSuiteCommand
+            : null
     });
 }
 

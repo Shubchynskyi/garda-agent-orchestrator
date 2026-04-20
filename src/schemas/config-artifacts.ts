@@ -408,6 +408,7 @@ export function validateProfilesConfig(input: unknown): Record<string, unknown> 
 
 const VALID_RETENTION_MODES = new Set(['none', 'summary', 'full']);
 const VALID_COMPRESSION_FORMATS = new Set(['gzip']);
+const VALID_WORKFLOW_FULL_SUITE_FAILURE_POLICIES = new Set(['AUDIT_AND_BLOCK', 'AUDIT_AND_WARN']);
 
 export function validateReviewArtifactStorageConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'review-artifact-storage');
@@ -473,6 +474,61 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
     return normalized;
 }
 
+export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
+    const raw = ensurePlainObject(input, 'workflow-config');
+    const knownKeys = new Set(['full_suite_validation']);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    const section = ensurePlainObject(raw.full_suite_validation, 'workflow-config.full_suite_validation');
+    const sectionKnownKeys = new Set([
+        'enabled',
+        'command',
+        'timeout_ms',
+        'green_summary_max_lines',
+        'red_failure_chunk_lines',
+        'out_of_scope_failure_policy'
+    ]);
+    const normalizedSection = cloneUnknownProperties(section, sectionKnownKeys);
+
+    normalizedSection.enabled = normalizeBooleanLike(
+        section.enabled,
+        'workflow-config.full_suite_validation.enabled'
+    );
+    normalizedSection.command = normalizeNonEmptyString(
+        section.command,
+        'workflow-config.full_suite_validation.command'
+    );
+    normalizedSection.timeout_ms = normalizeInteger(
+        section.timeout_ms,
+        'workflow-config.full_suite_validation.timeout_ms',
+        { minimum: 1000 }
+    );
+    normalizedSection.green_summary_max_lines = normalizeInteger(
+        section.green_summary_max_lines,
+        'workflow-config.full_suite_validation.green_summary_max_lines',
+        { minimum: 1 }
+    );
+    normalizedSection.red_failure_chunk_lines = normalizeInteger(
+        section.red_failure_chunk_lines,
+        'workflow-config.full_suite_validation.red_failure_chunk_lines',
+        { minimum: 10 }
+    );
+    const policy = normalizeNonEmptyString(
+        section.out_of_scope_failure_policy,
+        'workflow-config.full_suite_validation.out_of_scope_failure_policy'
+    ).toUpperCase();
+    if (!VALID_WORKFLOW_FULL_SUITE_FAILURE_POLICIES.has(policy)) {
+        throw new Error(
+            'workflow-config.full_suite_validation.out_of_scope_failure_policy must be one of: '
+            + `${[...VALID_WORKFLOW_FULL_SUITE_FAILURE_POLICIES].join(', ')}.`
+        );
+    }
+    normalizedSection.out_of_scope_failure_policy = policy;
+
+    normalized.full_suite_validation = normalizedSection;
+    return normalized;
+}
+
 const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'review-capabilities': validateReviewCapabilitiesConfig,
     paths: validatePathsConfig,
@@ -482,7 +538,8 @@ const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'optional-skill-selection-policy': validateOptionalSkillSelectionPolicyConfig,
     'isolation-mode': validateIsolationModeConfig,
     profiles: validateProfilesConfig,
-    'review-artifact-storage': validateReviewArtifactStorageConfig
+    'review-artifact-storage': validateReviewArtifactStorageConfig,
+    'workflow-config': validateWorkflowConfig
 });
 
 function normalizeManagedConfigName(configName: unknown): string {

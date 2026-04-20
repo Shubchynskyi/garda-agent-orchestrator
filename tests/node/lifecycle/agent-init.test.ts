@@ -22,6 +22,12 @@ function writeText(filePath: string, value: string) {
     fs.writeFileSync(filePath, value, 'utf8');
 }
 
+function readWorkflowConfig(bundleRoot: string): Record<string, unknown> {
+    return JSON.parse(
+        fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), 'utf8')
+    ) as Record<string, unknown>;
+}
+
 function makeCompliantEntrypoint(name: string): string {
     return [
         MANAGED_START,
@@ -196,6 +202,211 @@ test('runAgentInit keeps workspace not-ready when required checkpoints are marke
 
         assert.equal(result.readyForTasks, false);
         assert.equal(result.projectRulesUpdated, false);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit seeds workflow-config full-suite command from project stack while keeping the mode disabled', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-seed-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: false,
+                command: '__FULL_SUITE_COMMAND_UNCONFIGURED__',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            }
+        });
+        writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.readyForTasks, true);
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+        assert.equal(fullSuiteValidation.enabled, false);
+        assert.equal(fullSuiteValidation.command, 'pytest');
+
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.LastSeededFullSuiteCommand, 'pytest');
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit preserves manual full-suite command overrides when they differ from the prior seeded default', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-manual-fsv-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: false,
+                command: 'python -m pytest -q',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            }
+        });
+        writeJson(path.join(bundleRoot, 'runtime', 'agent-init-state.json'), {
+            Version: 1,
+            UpdatedAt: new Date().toISOString(),
+            OrchestratorVersion: '9.9.8-test',
+            AssistantLanguage: 'English',
+            SourceOfTruth: 'Codex',
+            AssistantLanguageConfirmed: true,
+            ActiveAgentFilesConfirmed: true,
+            ProjectRulesUpdated: true,
+            SkillsPromptCompleted: true,
+            VerificationPassed: true,
+            ManifestValidationPassed: true,
+            ActiveAgentFiles: ['AGENTS.md'],
+            LastSeededFullSuiteCommand: 'pytest'
+        });
+        writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.readyForTasks, true);
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+        assert.equal(fullSuiteValidation.command, 'python -m pytest -q');
+
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.LastSeededFullSuiteCommand, 'pytest');
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit preserves manual full-suite command overrides across later detected stack changes', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-manual-fsv-stack-change-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: false,
+                command: 'python -m pytest -q',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            }
+        });
+        writeJson(path.join(bundleRoot, 'runtime', 'agent-init-state.json'), {
+            Version: 1,
+            UpdatedAt: new Date().toISOString(),
+            OrchestratorVersion: '9.9.8-test',
+            AssistantLanguage: 'English',
+            SourceOfTruth: 'Codex',
+            AssistantLanguageConfirmed: true,
+            ActiveAgentFilesConfirmed: true,
+            ProjectRulesUpdated: true,
+            SkillsPromptCompleted: true,
+            VerificationPassed: true,
+            ManifestValidationPassed: true,
+            ActiveAgentFiles: ['AGENTS.md'],
+            LastSeededFullSuiteCommand: 'pytest'
+        });
+        writeJson(path.join(workspaceRoot, 'package.json'), {
+            packageManager: 'pnpm@9.0.0',
+            scripts: {
+                test: 'vitest run'
+            }
+        });
+        writeText(path.join(workspaceRoot, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.readyForTasks, true);
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+        assert.equal(fullSuiteValidation.command, 'python -m pytest -q');
+
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.LastSeededFullSuiteCommand, 'pytest');
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

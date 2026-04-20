@@ -1,13 +1,18 @@
 import * as path from 'node:path';
-import { resolveBundleName } from '../core/constants';
+import {
+    LEGACY_FULL_SUITE_VALIDATION_COMMAND,
+    UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
+    resolveBundleName
+} from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
 import { convertActiveAgentEntrypointFilesToString, getActiveAgentEntrypointFiles } from '../materialization/common';
+import { resolveSuggestedFullSuiteValidationCommand } from '../materialization/project-discovery';
 import { runInstall } from '../materialization/install';
 import { runVerify } from '../validators/verify';
 import { validateManifest } from '../validators/validate-manifest';
-import { createAgentInitState, writeAgentInitState } from '../runtime/agent-init-state';
+import { createAgentInitState, readAgentInitStateSafe, writeAgentInitState } from '../runtime/agent-init-state';
 
 interface AgentInitState {
     OrchestratorVersion: string | null;
@@ -20,6 +25,7 @@ interface AgentInitState {
     VerificationPassed: boolean;
     ManifestValidationPassed: boolean;
     ActiveAgentFiles: string[];
+    LastSeededFullSuiteCommand: string | null;
 }
 
 interface AgentInitInstallOptions {
@@ -70,6 +76,78 @@ export interface AgentInitResult {
     state: AgentInitState;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeOptionalCommand(value: unknown): string | null {
+    const text = String(value || '').trim();
+    return text || null;
+}
+
+function getWorkflowConfigPath(bundleRoot: string): string {
+    return path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+}
+
+function seedWorkflowConfigFullSuiteCommand(
+    targetRoot: string,
+    bundleRoot: string,
+    previousState: AgentInitState | null
+): string | null {
+    const detectedCommand = resolveSuggestedFullSuiteValidationCommand(targetRoot)
+        || UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND;
+    const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
+
+    let rawConfig: Record<string, unknown> = {};
+    if (pathExists(workflowConfigPath)) {
+        try {
+            const parsed = readJsonFile(workflowConfigPath);
+            rawConfig = isPlainObject(parsed) ? parsed : {};
+        } catch {
+            rawConfig = {};
+        }
+    }
+
+    const existingSection = isPlainObject(rawConfig.full_suite_validation)
+        ? rawConfig.full_suite_validation as Record<string, unknown>
+        : {};
+    const currentCommand = normalizeOptionalCommand(existingSection.command);
+    const previousSeededCommand = normalizeOptionalCommand(previousState?.LastSeededFullSuiteCommand);
+    const shouldReplaceCommand = !currentCommand
+        || currentCommand === UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
+        || (previousSeededCommand !== null && currentCommand === previousSeededCommand)
+        || (
+            previousSeededCommand === null
+            && currentCommand === LEGACY_FULL_SUITE_VALIDATION_COMMAND
+            && detectedCommand !== LEGACY_FULL_SUITE_VALIDATION_COMMAND
+        );
+
+    const nextCommand = shouldReplaceCommand ? detectedCommand : currentCommand;
+    const nextConfig = {
+        ...rawConfig,
+        full_suite_validation: {
+            enabled: existingSection.enabled === true,
+            command: nextCommand,
+            timeout_ms: typeof existingSection.timeout_ms === 'number' && existingSection.timeout_ms > 0
+                ? existingSection.timeout_ms
+                : 600_000,
+            green_summary_max_lines: typeof existingSection.green_summary_max_lines === 'number' && existingSection.green_summary_max_lines > 0
+                ? existingSection.green_summary_max_lines
+                : 5,
+            red_failure_chunk_lines: typeof existingSection.red_failure_chunk_lines === 'number' && existingSection.red_failure_chunk_lines > 0
+                ? existingSection.red_failure_chunk_lines
+                : 50,
+            out_of_scope_failure_policy: typeof existingSection.out_of_scope_failure_policy === 'string' && existingSection.out_of_scope_failure_policy.trim()
+                ? existingSection.out_of_scope_failure_policy
+                : 'AUDIT_AND_BLOCK'
+        }
+    };
+
+    const nextSeededCommand = shouldReplaceCommand ? detectedCommand : previousSeededCommand;
+    writeJsonFile(workflowConfigPath, nextConfig);
+    return nextSeededCommand;
+}
+
 function resolvePathInsideTarget(targetRoot: string, relativeOrAbsolutePath: string): string {
     return path.isAbsolute(relativeOrAbsolutePath)
         ? relativeOrAbsolutePath
@@ -107,6 +185,7 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
     const normalizedTargetRoot = path.resolve(targetRoot);
     const normalizedBundleRoot = path.resolve(bundleRoot);
     const resolvedInitAnswersPath = resolvePathInsideTarget(normalizedTargetRoot, initAnswersPath);
+    const previousState = readAgentInitStateSafe(normalizedTargetRoot).state as AgentInitState | null;
     const bundleVersionPath = path.join(normalizedBundleRoot, 'VERSION');
     const orchestratorVersion = pathExists(bundleVersionPath)
         ? (readTextFile(bundleVersionPath).trim() || null)
@@ -146,6 +225,12 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         initAnswersPath: resolvedInitAnswersPath
     });
 
+    const seededFullSuiteCommand = seedWorkflowConfigFullSuiteCommand(
+        normalizedTargetRoot,
+        normalizedBundleRoot,
+        previousState
+    );
+
     const verifyResult = verifyRunner({
         targetRoot: normalizedTargetRoot,
         sourceOfTruth: serializedAnswers.SourceOfTruth,
@@ -163,7 +248,8 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         SkillsPromptCompleted: parseBooleanYesNo(skillsPrompted, 'SkillsPrompted'),
         VerificationPassed: verifyResult.passed,
         ManifestValidationPassed: manifestResult.passed,
-        ActiveAgentFiles: normalizedActiveFiles
+        ActiveAgentFiles: normalizedActiveFiles,
+        LastSeededFullSuiteCommand: seededFullSuiteCommand
     }) as AgentInitState;
     const statePath = writeAgentInitState(normalizedTargetRoot, state);
 

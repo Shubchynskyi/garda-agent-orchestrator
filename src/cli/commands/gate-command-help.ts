@@ -253,6 +253,13 @@ function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<R
             ]),
             taskIdRemediation: true
         },
+        'full-suite-validation': {
+            summary: 'Run repository-wide test suite as part of mandatory closeout (when enabled). Configuration: edit garda-agent-orchestrator/live/config/workflow-config.json to set full_suite_validation.enabled=true. Integrated into completion-gate when enabled.',
+            usage: Object.freeze([
+                `${cliPrefix} gate full-suite-validation --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
+            ]),
+            taskIdRemediation: true
+        },
         'log-task-event': {
             summary: 'Append a structured lifecycle event to the current task timeline.',
             usage: Object.freeze([

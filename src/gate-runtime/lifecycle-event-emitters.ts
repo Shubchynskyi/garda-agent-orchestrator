@@ -76,6 +76,56 @@ export async function emitMandatoryReviewPhaseStartedEventAsync(repoRoot: string
     return emitMandatoryLifecycleEventAsync(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED, 'INFO', 'Review phase started.', details, options);
 }
 
+export function emitFullSuiteValidationEvent(
+    repoRoot: string,
+    taskId: string,
+    status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED',
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    const eventType = {
+        PASSED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_PASSED,
+        FAILED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_FAILED,
+        WARNED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_WARNED,
+        SKIPPED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_SKIPPED
+    }[status];
+    const outcome = status === 'FAILED' ? 'FAIL' : status === 'WARNED' ? 'WARN' : status === 'SKIPPED' ? 'INFO' : 'PASS';
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        eventType,
+        outcome,
+        `Full-suite validation ${status.toLowerCase()}.`,
+        details,
+        options
+    );
+}
+
+export async function emitMandatoryFullSuiteValidationEventAsync(
+    repoRoot: string,
+    taskId: string,
+    status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED',
+    details: unknown,
+    options: AutoEmitOptions = {}
+) {
+    const eventType = {
+        PASSED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_PASSED,
+        FAILED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_FAILED,
+        WARNED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_WARNED,
+        SKIPPED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_SKIPPED
+    }[status];
+    const outcome = status === 'FAILED' ? 'FAIL' : status === 'WARNED' ? 'WARN' : status === 'SKIPPED' ? 'INFO' : 'PASS';
+    return emitMandatoryLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        eventType,
+        outcome,
+        `Full-suite validation ${status.toLowerCase()}.`,
+        details,
+        options
+    );
+}
+
 export function emitCompletionGateEvent(repoRoot: string, taskId: string, passed: boolean, details: unknown, options: AutoEmitOptions = {}): ReturnType<typeof appendTaskEvent> {
     if (!repoRoot || !taskId) return null;
     try {

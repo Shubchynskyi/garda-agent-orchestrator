@@ -10,6 +10,7 @@ export const GATE_COMMANDS = Object.freeze([
     'load-rule-pack',
     'record-no-op',
     'compile-gate',
+    'full-suite-validation',
     'completion-gate',
     'classify-change',
     'build-scoped-diff',

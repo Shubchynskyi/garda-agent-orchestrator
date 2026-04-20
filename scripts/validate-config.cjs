@@ -11,7 +11,6 @@
 
 'use strict';
 
-const { execSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -31,19 +30,59 @@ const executionCwd = fs.existsSync(bundleRoot) && fs.statSync(bundleRoot).isDire
     ? bundleRoot
     : repoRoot;
 
-try {
-    const output = execSync(
-        `node ${JSON.stringify(cliPath)} gate validate-config --bundle-root ${JSON.stringify(bundleRoot)} --compact`,
-        { cwd: executionCwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-    process.stdout.write(output);
-    process.exit(0);
-} catch (err) {
-    if (err.stdout) {
-        process.stdout.write(err.stdout);
-    }
-    if (err.stderr) {
-        process.stderr.write(err.stderr);
-    }
-    process.exit(1);
+function resolveCliRuntimeMainPath() {
+    const candidates = [
+        path.join(repoRoot, '.node-build', 'src', 'cli', 'main.js'),
+        path.join(repoRoot, 'dist', 'src', 'cli', 'main.js')
+    ];
+    return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
+
+async function main() {
+    const runtimeMainPath = resolveCliRuntimeMainPath();
+    if (runtimeMainPath) {
+        const previousCwd = process.cwd();
+        const previousExitCode = process.exitCode;
+        try {
+            process.chdir(executionCwd);
+            process.exitCode = 0;
+            const runtimeMain = require(runtimeMainPath);
+            await runtimeMain.runCliMainWithHandling(
+                ['gate', 'validate-config', '--bundle-root', bundleRoot, '--compact'],
+                repoRoot
+            );
+            return (process.exitCode || 0) === 0 ? 0 : 1;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+    }
+
+    const { execSync } = require('node:child_process');
+    try {
+        const output = execSync(
+            `node ${JSON.stringify(cliPath)} gate validate-config --bundle-root ${JSON.stringify(bundleRoot)} --compact`,
+            { cwd: executionCwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+        );
+        process.stdout.write(output);
+        return 0;
+    } catch (err) {
+        if (err.stdout) {
+            process.stdout.write(err.stdout);
+        }
+        if (err.stderr) {
+            process.stderr.write(err.stderr);
+        }
+        return 1;
+    }
+}
+
+main().catch((err) => {
+    process.stderr.write(String(err && err.stack ? err.stack : err));
+    process.stderr.write('\n');
+    process.exit(1);
+}).then((exitCode) => {
+    if (typeof exitCode === 'number') {
+        process.exit(exitCode);
+    }
+});
