@@ -1325,6 +1325,76 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: recommended_missing_packs (packs: node-backend, reason: task_text)');
         });
 
+        it('preserves as_is optional-skill summaries when the artifact still matches the current TASK.md title', () => {
+            fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/api/orders.ts'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: {}
+            });
+
+            fs.writeFileSync(
+                path.join(tmpDir, 'TASK.md'),
+                [
+                    '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+                    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                    `| ${TASK_ID} | 🟨 IN_PROGRESS | P1 | api | Implement request validation for a Node.js API endpoint | unassigned | 2026-04-20 | default | fixture |`
+                ].join('\n'),
+                'utf8'
+            );
+
+            const bundleConfigDir = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config');
+            fs.mkdirSync(bundleConfigDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'optional-skill-selection-policy.json'),
+                JSON.stringify({ version: 1, mode: 'advisory' }, null, 2),
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'skill-packs.json'),
+                JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+                'utf8'
+            );
+            fs.cpSync(
+                path.join(process.cwd(), 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                { recursive: true }
+            );
+            const currentHeadlines = ensureSkillsHeadlinesCurrent(path.join(tmpDir, 'garda-agent-orchestrator'));
+
+            writeArtifact(reviewsDir, TASK_ID, '-optional-skill-selection.json', {
+                schema_version: 1,
+                event_source: 'optional-skill-selection',
+                task_id: TASK_ID,
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                policy_mode: 'advisory',
+                decision: 'as_is',
+                selected_installed_skills: [],
+                recommended_missing_packs: [],
+                as_is_reason: 'generic_context_sufficient',
+                task_text_present: true,
+                task_text_sha256: computeTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+                changed_paths: ['src/api/orders.ts'],
+                preflight_path: path.join(reviewsDir, `${TASK_ID}-preflight.json`).replace(/\\/g, '/'),
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+                headlines_sha256: currentHeadlines.sha256,
+                visible_summary_line: 'Optional skills: as_is (reason: generic_context_sufficient)'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.optional_skills?.decision, 'as_is');
+            assert.deepEqual(result.final_closeout.optional_skills?.selected_skill_ids, []);
+            assert.equal(result.final_closeout.optional_skills?.as_is_reason, 'generic_context_sufficient');
+            assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: as_is (reason: generic_context_sufficient)');
+        });
+
         it('invalidates optional-skill summaries when the current TASK.md title no longer matches the artifact task summary hash', () => {
             fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
             writePreflight(reviewsDir, TASK_ID, {

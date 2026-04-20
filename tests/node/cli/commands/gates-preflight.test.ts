@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import {
     EXIT_GATE_FAILURE
@@ -116,6 +117,10 @@ function getReviewsRoot(repoRoot: string): string {
 
 function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
+}
+
+function computeTaskTextSha256(taskText: string): string {
+    return createHash('sha256').update(taskText.trim(), 'utf8').digest('hex');
 }
 
 function seedNodeBackendOptionalSkillFixture(
@@ -1158,6 +1163,53 @@ describe('cli/commands/gates — preflight', () => {
         const optionalSkillSelection = preflightPayload.optional_skill_selection as Record<string, unknown>;
         assert.equal(optionalSkillSelection.policy_mode, 'advisory');
         assert.equal(optionalSkillSelection.decision, 'as_is');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('binds optional-skill artifacts to the canonical TASK.md title when classify-change runs without task-intent', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-158-preflight-task-title-fallback';
+        const taskTitle = 'Implement request validation for a Node.js API endpoint';
+        const staleTaskModeSummary = 'Stale task-mode summary that should not override TASK.md';
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 1;\n', 'utf8');
+        fs.writeFileSync(
+            path.join(repoRoot, 'TASK.md'),
+            [
+                '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                `| ${taskId} | TODO | P1 | api | ${taskTitle} | unassigned | 2026-04-20 | default | fixture |`
+            ].join('\n'),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot);
+        seedNodeBackendOptionalSkillFixture(repoRoot, 'advisory');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: staleTaskModeSummary
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            changedFiles: ['src/api/orders.ts'],
+            outputPath: preflightPath,
+            emitMetrics: false
+        });
+
+        assert.match(result.outputText, /"mode": "FULL_PATH"/);
+        const optionalSkillArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(optionalSkillArtifact.task_text_present, true);
+        assert.equal(optionalSkillArtifact.task_text_sha256, computeTaskTextSha256(taskTitle));
+        assert.equal(optionalSkillArtifact.visible_summary_line, 'Optional skills: node-backend (reason: task_text+paths)');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

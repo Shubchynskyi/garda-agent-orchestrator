@@ -1,6 +1,8 @@
-![Garda Agent Orchestrator](Image.png)
-
 # Garda Agent Orchestrator
+
+<p align="center">
+  <img src="docs/assets/garda-github-social-preview.png" alt="Garda - Governed workflows for AI coding agents" />
+</p>
 
 **Governed workflows for AI coding agents.**
 
@@ -10,12 +12,24 @@ Garda turns Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravi
 
 **[Website](https://garda-workflow.netlify.app/)** · **[Quick Start](#quick-start)** · **[User Guide](HOW_TO.md)** · **[Architecture](docs/architecture.md)** · **[Work Example](docs/work-example.md)** · **[CLI Reference](docs/cli-reference.md)** · **[Configuration](docs/configuration.md)** · **[Changelog](CHANGELOG.md)**
 
-```shell
-npm install -g garda-agent-orchestrator
-garda setup
+## Without Garda / With Garda
+
+| Without Garda | With Garda |
+|---|---|
+| Agent jumps straight into edits | Agent enters a controlled task workflow |
+| Tests, reviews, and docs checks depend on discipline | Gates run in a defined order |
+| Completion means whatever the agent claims | Completion is checked before being accepted |
+| Review context can drift | Review artifacts are required |
+| No shared audit trail | Task-event history records the workflow |
+| Each provider needs separate habits | One workflow surface across agents |
+
+## Workflow
+
+```text
+Task -> enter-task-mode -> load-rule-pack -> preflight -> compile -> review-context -> required reviews -> doc-impact -> completion
 ```
 
-Next: give [AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md) to your coding agent.
+Garda does not replace your coding agent. It gives every agent the same controlled path to done.
 
 ## Why Garda?
 

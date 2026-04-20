@@ -1,6 +1,6 @@
 # Garda Agent Orchestrator: User How-To
 
-Step-by-step guide for project owners. For CLI command details see **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md)**.
+Step-by-step guide for project owners. For CLI command details see **[docs/cli-reference.md](docs/cli-reference.md)**.
 
 ## 1. Recommended Setup
 
@@ -98,7 +98,7 @@ After successful setup:
 - ✅ `garda verify` and `garda gate validate-manifest` pass.
 - ✅ `TASK.md` exists with task queue.
 
-See **[docs/architecture.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/architecture.md)** for full list of deployed files.
+See **[docs/architecture.md](docs/architecture.md)** for full list of deployed files.
 
 ## 5. Start Working On Tasks
 
@@ -137,7 +137,7 @@ Execute task T-001 depth=3
 | `depth=3` | Force a strict one-run execution |
 
 Required gates apply at any depth.
-See **[docs/work-example.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/work-example.md)** for a full task lifecycle walkthrough.
+See **[docs/work-example.md](docs/work-example.md)** for a full task lifecycle walkthrough.
 
 ## 6. Existing Project With Existing Docs
 
@@ -191,7 +191,7 @@ For day-to-day validation, prefer `garda doctor`, `garda verify`, and `garda gat
 Use `garda doctor explain <FAILURE_ID>` when a doctor/gate failure code is known and you want remediation steps, `garda status why-blocked` when a task is stalled and you need the missing-gate or missing-timeline explanation, and `garda doctor --cleanup-stale-locks --dry-run` when task-event locks may be blocking gate writes.
 Only `runtime/task-events/*.lock` belongs to this lock subsystem; `runtime/reviews/` is not cleaned by the lock-health workflow.
 
-See **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md)** for the full low-level script reference.
+See **[docs/cli-reference.md](docs/cli-reference.md)** for the full low-level script reference.
 
 ## 9. Change Init Answers (Reinit)
 
@@ -201,7 +201,7 @@ Change language, brevity, source-of-truth, or other init answers without reinsta
 garda reinit --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
 ```
 
-See **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md#garda-reinit)** for details.
+See **[docs/cli-reference.md](docs/cli-reference.md#garda-reinit)** for details.
 
 ## 10. Update Existing Deployment
 
@@ -237,7 +237,7 @@ garda rollback --target-root "." --to-version "<target-version>" --init-answers-
 By default `check-update` compares against the deployed package name using the npm `latest` tag. When an update is applied (`check-update --apply` or `update`), the workflow reuses and validates init answers, syncs bundle files, re-materializes `live/`, and only updates `VERSION` after the lifecycle succeeds. For local testing you can point `check-update/update` to `--source-path "."` or to a local tarball via `--package-spec`.
 Trusted mode is the default. If you intentionally bypass the trusted-source allowlist for a local path, non-standard npm spec, or non-allowlisted git source, pass both `--trust-override` and `--no-prompt`; the update report will record that override explicitly. Do not rely on `GARDA_UPDATE_TRUST_OVERRIDE` in CI or production-style flows; ordinary CLI updates ignore it.
 
-See **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md#garda-update)** for full options.
+See **[docs/cli-reference.md](docs/cli-reference.md#garda-update)** for full options.
 
 ## 11. Uninstall
 
@@ -250,7 +250,7 @@ garda uninstall --target-root "." --no-prompt --keep-primary-entrypoint no --kee
 ```
 
 Uninstall removes managed blocks, bridge files, and the bundle directory while preserving user content outside managed sections. It also creates an internal uninstall journal snapshot and attempts automatic restore on failure. Avoid `--skip-backups` unless you explicitly accept losing the user-facing recovery backup copies.
-See **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md#garda-uninstall)** for full options.
+See **[docs/cli-reference.md](docs/cli-reference.md#garda-uninstall)** for full options.
 
 ## 12. Adding Specialist Skills After Init
 
@@ -296,8 +296,8 @@ If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `
 
 ## Further Reading
 
-- **[docs/architecture.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/architecture.md)** — Design, runtime model, what gets deployed
-- **[docs/configuration.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/configuration.md)** — Token economy, output filters, review capabilities
-- **[docs/cli-reference.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/cli-reference.md)** — Complete CLI command reference
-- **[docs/work-example.md](https://github.com/Shubchynskyi/garda-agent-orchestrator/blob/master/docs/work-example.md)** — Task lifecycle walkthrough
+- **[docs/architecture.md](docs/architecture.md)** — Design, runtime model, what gets deployed
+- **[docs/configuration.md](docs/configuration.md)** — Token economy, output filters, review capabilities
+- **[docs/cli-reference.md](docs/cli-reference.md)** — Complete CLI command reference
+- **[docs/work-example.md](docs/work-example.md)** — Task lifecycle walkthrough
 - **[CHANGELOG.md](CHANGELOG.md)** — Full changelog

@@ -221,6 +221,19 @@ function readCurrentTaskSummary(repoRoot: string, taskId: string, fallbackTaskSu
     return null;
 }
 
+function resolveOptionalSkillTaskText(
+    repoRoot: string,
+    taskId: string,
+    taskIntent: unknown,
+    fallbackTaskSummary: string | null
+): string {
+    const explicitTaskIntent = String(taskIntent || '').trim();
+    if (explicitTaskIntent) {
+        return explicitTaskIntent;
+    }
+    return String(readCurrentTaskSummary(repoRoot, taskId, fallbackTaskSummary) || '').trim();
+}
+
 function listChangedFilesPredatingTaskMode(
     repoRoot: string,
     changedFiles: string[],
@@ -354,6 +367,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         (result as any).isolation_mode_violation = isolationViolationMessage;
     }
 
+    let currentTaskSummary: string | null = null;
     if (resolvedTaskId) {
         prePreflightSequenceLockHandle = acquireFilesystemLock(
             resolvePrePreflightSequenceLockPath(repoRoot, resolvedTaskId),
@@ -363,6 +377,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
 
         const preflightErrors: string[] = [];
         const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath);
+        currentTaskSummary = readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary);
         const dirtyWorkspaceBaseline = taskModeEvidence.dirty_workspace_baseline;
         const dirtyWorkspaceProtectedScope = deriveProtectedDirtyWorkspaceScope(
             dirtyWorkspaceBaseline,
@@ -563,6 +578,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         const optionalSkillPolicyMode = (resolvedTaskId && optionalSkillPolicyEnabled)
             ? readOptionalSkillSelectionPolicyConfig(orchestratorRoot).mode
             : null;
+        const optionalSkillTaskText = resolvedTaskId
+            ? resolveOptionalSkillTaskText(repoRoot, resolvedTaskId, options.taskIntent, currentTaskSummary)
+            : '';
         if (resolvedTaskId && optionalSkillPolicyEnabled) {
             try {
                 (result as Record<string, unknown>).optional_skill_selection = {
@@ -580,7 +598,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         orchestratorRoot,
                         resolvedTaskId,
                         {
-                            taskText: String(options.taskIntent || ''),
+                            taskText: optionalSkillTaskText,
                             changedPaths: result.changed_files as string[]
                         }
                     );
@@ -617,7 +635,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         orchestratorRoot,
                         resolvedTaskId,
                         {
-                            taskText: String(options.taskIntent || ''),
+                            taskText: optionalSkillTaskText,
                             changedPaths: result.changed_files as string[],
                             preflightPath: outputPath,
                             preflightSha256,
