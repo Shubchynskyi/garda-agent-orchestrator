@@ -1,19 +1,12 @@
-import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnStreamed } from '../../core/subprocess';
 import { registerTempRoot } from '../signal-handler';
 import { DEFAULT_REPO_URL } from './cli-constants';
 import { readBundleVersion } from './cli-bundle-helpers';
 
-function createMissingExecutableError(executableName: string): Error {
-    return new Error(
-        `'${executableName}' is not available on this system. ` +
-        `Please install ${executableName} and ensure it is on your PATH.`
-    );
-}
-
-export function runProcess(
+export async function runProcess(
     executableName: string,
     args: string[],
     options?: { cwd?: string; description?: string; interactive?: boolean }
@@ -21,51 +14,27 @@ export function runProcess(
     const cwd = (options && options.cwd) || process.cwd();
     const description = (options && options.description) || executableName;
     const interactive = (options && options.interactive) || false;
-    return new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const child = childProcess.spawn(executableName, args, {
+
+    try {
+        const result = await spawnStreamed(executableName, args, {
             cwd,
-            windowsHide: true,
-            stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe']
+            inheritStdio: interactive,
+            onStdout: interactive ? undefined : (chunk) => process.stdout.write(chunk),
+            onStderr: interactive ? undefined : (chunk) => process.stderr.write(chunk)
         });
-        const rejectOnce = (error: Error): void => {
-            if (!settled) {
-                settled = true;
-                reject(error);
-            }
-        };
-        const resolveOnce = (): void => {
-            if (!settled) {
-                settled = true;
-                resolve();
-            }
-        };
-        child.once('error', (error: Error): void => {
-            const errno = error as NodeJS.ErrnoException;
-            if (errno.code === 'ENOENT') {
-                rejectOnce(createMissingExecutableError(executableName));
-                return;
-            }
-            rejectOnce(error);
-        });
-        if (!interactive) {
-            if (child.stdout) {
-                child.stdout.setEncoding('utf8');
-                child.stdout.on('data', (chunk: string): void => { process.stdout.write(chunk); });
-            }
-            if (child.stderr) {
-                child.stderr.setEncoding('utf8');
-                child.stderr.on('data', (chunk: string): void => { process.stderr.write(chunk); });
-            }
+
+        if (result.exitCode !== 0) {
+            throw new Error(`${description} failed with exit code ${result.exitCode}.`);
         }
-        child.once('close', (code: number | null): void => {
-            if (code !== 0) {
-                rejectOnce(new Error(`${description} failed with exit code ${code}.`));
-                return;
-            }
-            resolveOnce();
-        });
-    });
+    } catch (error) {
+        if (error instanceof Error && error.message.includes('was not found in PATH')) {
+            throw new Error(
+                `'${executableName}' is not available on this system. ` +
+                `Please install ${executableName} and ensure it is on your PATH.`
+            );
+        }
+        throw error;
+    }
 }
 
 export async function acquireSourceRoot(

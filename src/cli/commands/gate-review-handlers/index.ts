@@ -6,85 +6,48 @@ import {
     extractReviewVerdictToken,
     normalizeReviewerExecutionMode,
     restoreReviewerRoutingMetadata
-} from '../../gate-runtime/review-context';
-import { assertValidTaskId } from '../../gate-runtime/task-events';
-import { fileSha256 } from '../../gate-runtime/hash';
+} from '../../../gate-runtime/review-context';
+import { assertValidTaskId } from '../../../gate-runtime/task-events';
+import { fileSha256 } from '../../../gate-runtime/hash';
 import {
     emitReviewerDelegationRoutedEventAsync,
     emitReviewRecordedEventAsync
-} from '../../gate-runtime/lifecycle-events';
-import { writeReviewArtifactJson, writeReviewArtifactText } from '../../gate-runtime/review-artifacts';
-import * as gateHelpers from '../../gates/helpers';
-import { normalizePath } from '../../gates/helpers';
-import { REVIEW_CONTRACTS } from '../../gates/required-reviews-check';
+} from '../../../gate-runtime/lifecycle-events';
+import { writeReviewArtifactJson, writeReviewArtifactText } from '../../../gate-runtime/review-artifacts';
+import * as gateHelpers from '../../../gates/helpers';
+import { normalizePath } from '../../../gates/helpers';
+import { REVIEW_CONTRACTS } from '../../../gates/required-reviews-check';
 import {
     assertRequiredUpstreamReviewDependencies,
     type ReviewDependencyTimelineEvent
-} from '../../gates/review-dependencies';
+} from '../../../gates/review-dependencies';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash
-} from '../../gates/review-reuse';
-import { resolveCanonicalReviewContextPath } from '../../gates/review-context-paths';
-import { getReviewContextContractViolations } from '../../gates/review-context-contract';
-import { resolveReviewContextRoutingIdentity } from '../../gates/review-context-routing';
-import { assertReviewLifecycleGuard } from '../../gates/review-lifecycle-guard';
-import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '../../gates/reviewer-routing';
+} from '../../../gates/review-reuse';
+import { resolveCanonicalReviewContextPath } from '../../../gates/review-context-paths';
+import { getReviewContextContractViolations } from '../../../gates/review-context-contract';
+import { resolveReviewContextRoutingIdentity } from '../../../gates/review-context-routing';
+import { assertReviewLifecycleGuard } from '../../../gates/review-lifecycle-guard';
+import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
 import {
     extractMarkdownSectionLines,
     getReviewArtifactFindingsEvidence,
     isTrivialReview
-} from '../../gates/completion';
-import {
-    runDocImpactGateCommand,
-    runRequiredReviewsCheckCommand
-} from './gates';
+} from '../../../gates/completion';
 import {
     cleanupReviewTempSourceArtifact
-} from './gates-artifacts';
+} from '../gates-artifacts';
 import {
     parseOptions,
     normalizePathValue
-} from './cli-helpers';
+} from '../cli-helpers';
 import {
     type ParsedOptionsRecord,
     removeArtifactIfExists
-} from './shared-command-utils';
+} from '../shared-command-utils';
 
-export async function handleRequiredReviewsCheck(gateArgv: string[]): Promise<void> {
-    const defs = {
-        '--preflight-path': { key: 'preflightPath', type: 'string' },
-        '--task-id': { key: 'taskId', type: 'string' },
-        '--task-mode-path': { key: 'taskModePath', type: 'string' },
-        '--rule-pack-path': { key: 'rulePackPath', type: 'string' },
-        '--code-review-verdict': { key: 'codeReviewVerdict', type: 'string' },
-        '--db-review-verdict': { key: 'dbReviewVerdict', type: 'string' },
-        '--security-review-verdict': { key: 'securityReviewVerdict', type: 'string' },
-        '--refactor-review-verdict': { key: 'refactorReviewVerdict', type: 'string' },
-        '--api-review-verdict': { key: 'apiReviewVerdict', type: 'string' },
-        '--test-review-verdict': { key: 'testReviewVerdict', type: 'string' },
-        '--performance-review-verdict': { key: 'performanceReviewVerdict', type: 'string' },
-        '--infra-review-verdict': { key: 'infraReviewVerdict', type: 'string' },
-        '--dependency-review-verdict': { key: 'dependencyReviewVerdict', type: 'string' },
-        '--skip-reviews': { key: 'skipReviews', type: 'string' },
-        '--skip-reason': { key: 'skipReason', type: 'string' },
-        '--override-artifact-path': { key: 'overrideArtifactPath', type: 'string' },
-        '--compile-evidence-path': { key: 'compileEvidencePath', type: 'string' },
-        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
-        '--review-evidence-path': { key: 'reviewEvidencePath', type: 'string' },
-        '--no-op-artifact-path': { key: 'noOpArtifactPath', type: 'string' },
-        '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
-        '--metrics-path': { key: 'metricsPath', type: 'string' },
-        '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
-        '--repo-root': { key: 'repoRoot', type: 'string' }
-    };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runRequiredReviewsCheckCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
-}
+
 
 interface ResolvedCanonicalReviewPaths {
     preflightPath: string;
@@ -203,6 +166,8 @@ function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequiredMessage
 function getCanonicalReviewOutputArtifactPath(reviewsRoot: string, taskId: string, reviewType: string): string {
     return path.join(reviewsRoot, `${taskId}-${reviewType}-review-output.md`);
 }
+
+export { handleRequiredReviewsCheck, handleDocImpactGate } from './simple-handlers';
 
 export let readReviewOutputFromStdin = async (): Promise<string> => {
     if (!process.stdin || process.stdin.isTTY) {
@@ -874,29 +839,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     return receiptPath;
 }
 
-export async function handleDocImpactGate(gateArgv: string[]): Promise<void> {
-    const defs = {
-        '--preflight-path': { key: 'preflightPath', type: 'string' },
-        '--task-id': { key: 'taskId', type: 'string' },
-        '--decision': { key: 'decision', type: 'string' },
-        '--behavior-changed': { key: 'behaviorChanged', type: 'boolean' },
-        '--docs-updated': { key: 'docsUpdated', type: 'string[]' },
-        '--changelog-updated': { key: 'changelogUpdated', type: 'boolean' },
-        '--sensitive-scope-reviewed': { key: 'sensitiveScopeReviewed', type: 'boolean' },
-        '--sensitive-reviewed': { key: 'sensitiveReviewed', type: 'boolean' },
-        '--rationale': { key: 'rationale', type: 'string' },
-        '--artifact-path': { key: 'artifactPath', type: 'string' },
-        '--metrics-path': { key: 'metricsPath', type: 'string' },
-        '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
-        '--repo-root': { key: 'repoRoot', type: 'string' }
-    };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = runDocImpactGateCommand(options);
-    process.stdout.write(`${result.outputLines.join('\n')}\n`);
-    if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-    }
-}
+
 
 export async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
     const defs = {
