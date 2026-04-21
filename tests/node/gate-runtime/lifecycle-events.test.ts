@@ -341,6 +341,41 @@ describe('gate-runtime/lifecycle-events', () => {
             assert.ok(!result.events_missing.includes('FULL_SUITE_VALIDATION_COMPLETE'));
             assert.ok(result.events_missing.includes('COMPLETION_GATE_PASSED'));
         });
+
+        it('prefers the latest full-suite terminal event over older skipped evidence when resolving completeness requirements', () => {
+            const eventsDir = path.join(tempDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            const timelinePath = path.join(eventsDir, 'T-TEST.jsonl');
+
+            const events = [
+                'TASK_MODE_ENTERED',
+                'RULE_PACK_LOADED',
+                'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                'PREFLIGHT_CLASSIFIED',
+                'IMPLEMENTATION_STARTED',
+                'COMPILE_GATE_PASSED',
+                'REVIEW_PHASE_STARTED',
+                'REVIEW_GATE_PASSED',
+                'FULL_SUITE_VALIDATION_SKIPPED',
+                'FULL_SUITE_VALIDATION_PASSED'
+            ];
+            const lines = events.map((et) => JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: 'T-TEST',
+                event_type: et,
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'test',
+                details: {}
+            }));
+            fs.writeFileSync(timelinePath, lines.join('\n') + '\n', 'utf8');
+
+            const result = validateTimelineCompleteness(timelinePath, 'T-TEST', false);
+            assert.equal(result.full_suite_validation_required, true);
+            assert.ok(result.events_found.includes('FULL_SUITE_VALIDATION_COMPLETE'));
+            assert.ok(!result.events_missing.includes('FULL_SUITE_VALIDATION_COMPLETE'));
+        });
     });
 
     describe('stage emit helpers', () => {

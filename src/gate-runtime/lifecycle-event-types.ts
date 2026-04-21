@@ -105,6 +105,22 @@ export function resolveFullSuiteValidationRequirementForTaskEvents(
     defaultEnabled: boolean = false
 ): FullSuiteValidationRequirementResolution {
     const eventTypes = normalizeEventSet(events);
+    if (eventTypes.has('FULL_SUITE_VALIDATION_SKIPPED')) {
+        return {
+            required: false,
+            task_bound: true
+        };
+    }
+    if (
+        eventTypes.has('FULL_SUITE_VALIDATION_PASSED')
+        || eventTypes.has('FULL_SUITE_VALIDATION_WARNED')
+        || eventTypes.has('FULL_SUITE_VALIDATION_FAILED')
+    ) {
+        return {
+            required: true,
+            task_bound: true
+        };
+    }
     if (hasSatisfiedLifecycleEvent(eventTypes, 'FULL_SUITE_VALIDATION_COMPLETE')) {
         return {
             required: true,
@@ -121,6 +137,28 @@ export function resolveFullSuiteValidationRequirementForTaskEvents(
         required: defaultEnabled,
         task_bound: false
     };
+}
+
+export function resolveFullSuiteValidationRequirementForOrderedTaskEvents(
+    events: Iterable<string>,
+    defaultEnabled: boolean = false
+): FullSuiteValidationRequirementResolution {
+    const orderedEvents: string[] = [];
+    for (const eventType of events) {
+        const token = String(eventType || '').trim().toUpperCase();
+        if (token) {
+            orderedEvents.push(token);
+        }
+    }
+
+    for (let index = orderedEvents.length - 1; index >= 0; index--) {
+        const eventType = orderedEvents[index];
+        if (FULL_SUITE_VALIDATION_EVENTS.includes(eventType)) {
+            return resolveFullSuiteValidationRequirementForTaskEvents([eventType], defaultEnabled);
+        }
+    }
+
+    return resolveFullSuiteValidationRequirementForTaskEvents(orderedEvents, defaultEnabled);
 }
 
 export function isTaskBoundFullSuiteValidationRequirement(
@@ -195,6 +233,7 @@ export function validateTimelineCompleteness(
 
     result.timeline_exists = true;
     const eventTypes = new Set<string>();
+    const orderedEventTypes: string[] = [];
 
     try {
         const content = fs.readFileSync(resolvedPath, 'utf8');
@@ -204,6 +243,7 @@ export function validateTimelineCompleteness(
                 const parsed = JSON.parse(rawLine) as Record<string, unknown>;
                 const eventType = String(parsed.event_type || '').trim().toUpperCase();
                 if (eventType) {
+                    orderedEventTypes.push(eventType);
                     eventTypes.add(eventType);
                 }
             } catch {
@@ -215,8 +255,8 @@ export function validateTimelineCompleteness(
         return result;
     }
 
-    const fullSuiteValidationRequirement = resolveFullSuiteValidationRequirementForTaskEvents(
-        eventTypes,
+    const fullSuiteValidationRequirement = resolveFullSuiteValidationRequirementForOrderedTaskEvents(
+        orderedEventTypes,
         options.fullSuiteValidationEnabled === true
     );
     result.full_suite_validation_required = fullSuiteValidationRequirement.required;

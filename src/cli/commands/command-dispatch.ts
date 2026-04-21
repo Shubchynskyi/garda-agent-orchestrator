@@ -4,6 +4,7 @@ import { assertOfflinePolicy } from '../../policy/offline-mode';
 import { EXIT_VALIDATION_FAILURE } from '../exit-codes';
 import { isFailedValidationResult } from './shared-command-utils';
 import { PackageJsonLike, printHelp } from './cli-helpers';
+import * as path from 'node:path';
 
 export interface DispatchCliCommandOptions {
     commandName: string;
@@ -16,6 +17,31 @@ export interface DispatchCliCommandOptions {
     };
 }
 
+function readPathFlag(commandArgv: string[], flag: string): string | null {
+    for (let index = 0; index < commandArgv.length; index++) {
+        const arg = commandArgv[index];
+        if (arg === flag) {
+            return typeof commandArgv[index + 1] === 'string' ? commandArgv[index + 1] : null;
+        }
+        if (arg.startsWith(`${flag}=`)) {
+            return arg.slice(flag.length + 1);
+        }
+    }
+    return null;
+}
+
+function resolveParityRoot(commandName: string, commandArgv: string[]): string {
+    if (commandName !== 'workflow') {
+        return '.';
+    }
+    const explicitBundleRoot = readPathFlag(commandArgv, '--bundle-root');
+    if (explicitBundleRoot) {
+        return path.dirname(path.resolve(explicitBundleRoot));
+    }
+    const explicitTargetRoot = readPathFlag(commandArgv, '--target-root');
+    return explicitTargetRoot ? path.resolve(explicitTargetRoot) : '.';
+}
+
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
     const { commandName, commandArgv, packageJson, packageRoot, globalFlags } = options;
 
@@ -24,8 +50,8 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'agent-init', 'skills', 'profile'].includes(commandName)) {
-        const parityResult = detectSourceBundleParity('.');
+    if (['gate', 'agent-init', 'skills', 'profile', 'workflow'].includes(commandName)) {
+        const parityResult = detectSourceBundleParity(resolveParityRoot(commandName, commandArgv));
         if (parityResult.isStale) {
             throw new Error(
                 'Source Parity Violation: The deployed bundle is stale compared to the source checkout.\n'
@@ -152,6 +178,14 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
             const { handleProfile } = await import('./profile');
             const profileResult = await Promise.resolve(handleProfile(commandArgv, packageJson));
             if (isFailedValidationResult(profileResult)) {
+                process.exitCode = EXIT_VALIDATION_FAILURE;
+            }
+            return;
+        }
+        case 'workflow': {
+            const { handleWorkflow } = await import('./workflow-command');
+            const workflowResult = handleWorkflow(commandArgv, packageJson);
+            if (isFailedValidationResult(workflowResult)) {
                 process.exitCode = EXIT_VALIDATION_FAILURE;
             }
             return;

@@ -5,7 +5,7 @@ import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationL
 import { fileSha256, toPosix } from './helpers';
 import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './task-events-summary';
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
-import { resolveFullSuiteValidationRequirementForTaskEvents } from '../gate-runtime/lifecycle-event-types';
+import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
 import {
     type BlockerEntry,
@@ -54,6 +54,10 @@ export interface FinalCloseoutArtifact {
     artifact_paths: FinalCloseoutArtifactPaths;
     implementation_summary: FinalCloseoutImplementationSummary;
     optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
+    workflow?: {
+        mandatory_full_suite_enabled: boolean;
+        visible_summary_line: string;
+    } | null;
     docs: FinalCloseoutDocsSummary;
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
     commit_command_template: string;
@@ -240,8 +244,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         // Keep last occurrence per type
         eventByType.set(eventType, event);
     }
-    const fullSuiteValidationEnabled = resolveFullSuiteValidationRequirementForTaskEvents(
-        eventTypesPresent,
+    const fullSuiteValidationEnabled = resolveFullSuiteValidationRequirementForOrderedTaskEvents(
+        events.map((event) => String(event.event_type || '')),
         liveFullSuiteValidationEnabled
     ).required;
     const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled);
@@ -664,6 +668,10 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                 : null
         },
         optional_skills: optionalSkillsSummary,
+        workflow: {
+            mandatory_full_suite_enabled: fullSuiteValidationEnabled,
+            visible_summary_line: `Mandatory full-suite: ${fullSuiteValidationEnabled ? 'true' : 'false'}`
+        },
         docs: docsSummary,
         token_economy: tokenEconomy,
         commit_command_template: commitCommand.template,

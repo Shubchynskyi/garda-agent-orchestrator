@@ -81,3 +81,40 @@ test('CLI blocks task execution commands when bundle is stale', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('workflow command resolves parity against --target-root instead of the caller cwd', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-target-'));
+    try {
+        fs.mkdirSync(path.join(callerDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(callerDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(callerDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(callerDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'workflow', 'show', '--target-root', targetDir],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, 0, 'workflow show should succeed when the target root itself is not stale');
+        assert.ok(!combined.includes('Source Parity Violation: The deployed bundle is stale'));
+        assert.ok(combined.includes('Mandatory full-suite: false'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});

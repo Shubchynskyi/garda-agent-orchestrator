@@ -338,6 +338,88 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
         });
 
+        it('keeps skipped full-suite evidence non-blocking when the task-bound cycle disabled the mode', () => {
+            const now = new Date().toISOString();
+            writeWorkflowConfig(tmpDir, false);
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'FULL_SUITE_VALIDATION_SKIPPED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Full-suite validation skipped because the mode is disabled.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 1000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: [],
+                metrics: { changed_lines_total: 0 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
+            assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
+            assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: false');
+        });
+
+        it('prefers the latest full-suite terminal event over older skipped evidence from a previous cycle', () => {
+            writeWorkflowConfig(tmpDir, false);
+            const laterTerminalEvents = [
+                { taskId: 'T-201', eventType: 'FULL_SUITE_VALIDATION_PASSED', outcome: 'PASS' },
+                { taskId: 'T-202', eventType: 'FULL_SUITE_VALIDATION_WARNED', outcome: 'PASS' },
+                { taskId: 'T-203', eventType: 'FULL_SUITE_VALIDATION_FAILED', outcome: 'FAIL' }
+            ] as const;
+
+            for (const [index, laterTerminalEvent] of laterTerminalEvents.entries()) {
+                const now = Date.parse('2026-01-01T00:00:00.000Z') + (index * 1000);
+                writeEvent(eventsDir, laterTerminalEvent.taskId, {
+                    timestamp_utc: new Date(now).toISOString(),
+                    task_id: laterTerminalEvent.taskId,
+                    event_type: 'FULL_SUITE_VALIDATION_SKIPPED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full-suite validation skipped because the mode is disabled.'
+                });
+                writeEvent(eventsDir, laterTerminalEvent.taskId, {
+                    timestamp_utc: new Date(now + 1).toISOString(),
+                    task_id: laterTerminalEvent.taskId,
+                    event_type: laterTerminalEvent.eventType,
+                    outcome: laterTerminalEvent.outcome,
+                    actor: 'gate',
+                    message: `Later cycle emitted ${laterTerminalEvent.eventType}.`
+                });
+                writePreflight(reviewsDir, laterTerminalEvent.taskId, {
+                    changed_files: [],
+                    metrics: { changed_lines_total: 0 },
+                    required_reviews: {}
+                });
+
+                const result = buildTaskAuditSummary({
+                    taskId: laterTerminalEvent.taskId,
+                    repoRoot: tmpDir,
+                    eventsRoot: eventsDir,
+                    reviewsRoot: reviewsDir
+                });
+
+                assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: true');
+                assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), true);
+            }
+        });
+
         it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {
             const now = new Date().toISOString();
             writeEvent(eventsDir, TASK_ID, {
@@ -1166,9 +1248,56 @@ describe('gates/task-audit-summary', () => {
             assert.equal(fs.existsSync(markdownPath), true);
             assert.equal(result.final_closeout.artifact_state, 'MATERIALIZED');
             assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, true);
-            assert.ok(JSON.parse(fs.readFileSync(jsonPath, 'utf8')).artifact_state === 'MATERIALIZED');
+            const closeoutJson = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+            assert.equal(closeoutJson.artifact_state, 'MATERIALIZED');
+            assert.equal(closeoutJson.workflow.visible_summary_line, 'Mandatory full-suite: false');
             assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Suggested commit command:'));
+            assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Mandatory full-suite: false'));
             assert.ok(renderedMarkdown.includes('Do you want me to commit now? (yes/no)'));
+        });
+
+        it('renders the mandatory full-suite summary line when present', () => {
+            const renderedMarkdown = formatFinalCloseoutMarkdown({
+                schema_version: 1,
+                event_source: 'task-audit-summary',
+                task_id: TASK_ID,
+                generated_utc: '2026-01-01T00:00:00.000Z',
+                audit_status: 'PASS',
+                status: 'READY',
+                blocker: null,
+                artifact_state: 'MATERIALIZED',
+                artifact_paths: {
+                    json: 'runtime/reviews/T-149-final-closeout.json',
+                    markdown: 'runtime/reviews/T-149-final-closeout.md'
+                },
+                implementation_summary: {
+                    requested_depth: 2,
+                    effective_depth: 2,
+                    path_mode: 'FULL_PATH',
+                    review_verdicts: { code: 'REVIEW PASSED' },
+                    docs_updated: false,
+                    changed_files_count: 1,
+                    changed_lines_total: 5,
+                    scope_category: 'code',
+                    active_profile: 'balanced'
+                },
+                workflow: {
+                    mandatory_full_suite_enabled: true,
+                    visible_summary_line: 'Mandatory full-suite: true'
+                },
+                docs: {
+                    decision: 'NO_DOC_UPDATES',
+                    behavior_changed: false,
+                    changelog_updated: false,
+                    docs_updated: []
+                },
+                token_economy: null,
+                commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_command_suggestion: 'git commit -m "feat(workflow): full-suite toggle"',
+                commit_question: 'Do you want me to commit now? (yes/no)'
+            });
+
+            assert.ok(renderedMarkdown.includes('Mandatory full-suite: true'));
         });
 
         it('renders the compact optional skill summary line when present', () => {
