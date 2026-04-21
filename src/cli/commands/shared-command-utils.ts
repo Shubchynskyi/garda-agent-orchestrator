@@ -7,6 +7,7 @@ import {
 import { formatManifestResult, validateManifest } from '../../validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../../validators/verify';
 import { runContractMigrations } from '../../lifecycle/contract-migrations';
+import { collectUpdateAnnouncements } from '../../lifecycle/update-announcements';
 import { runUpdate } from '../../lifecycle/update';
 import { type CheckUpdateRunnerOptions } from '../../lifecycle/check-update';
 import { getBundlePath } from './cli-helpers';
@@ -20,6 +21,9 @@ export interface UpdateLifecycleResult extends Record<string, unknown> {
     rollbackSnapshotPath?: unknown;
     rollbackStatus?: unknown;
     updateReportPath?: unknown;
+    updateMessages?: unknown;
+    releaseNotes?: unknown;
+    updateAnnouncementWarnings?: unknown;
 }
 
 export class ValidationFailureError extends Error {
@@ -95,6 +99,68 @@ export function formatKeyValueOutput(obj: Record<string, unknown> | null | undef
     for (const line of buildKeyValueOutputLines(obj, keys)) {
         console.log(line);
     }
+}
+
+function toPrintableLines(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value
+        .map((entry) => String(entry ?? '').trim())
+        .filter((entry) => entry.length > 0);
+}
+
+function printAnnouncementSection(title: string, lines: string[]): void {
+    if (lines.length === 0) {
+        return;
+    }
+    console.log('');
+    console.log(`${title}:`);
+    for (const line of lines) {
+        console.log(line);
+    }
+}
+
+export function printUpdateAnnouncementSections(result: Record<string, unknown> | null | undefined): void {
+    if (!result) {
+        return;
+    }
+
+    const updateMessages = Array.isArray(result.updateMessages)
+        ? result.updateMessages as Array<Record<string, unknown>>
+        : [];
+    const releaseNotes = Array.isArray(result.releaseNotes)
+        ? result.releaseNotes as Array<Record<string, unknown>>
+        : [];
+    const warnings = toPrintableLines(result.updateAnnouncementWarnings);
+
+    const updateMessageLines = updateMessages.flatMap((entry) => {
+        const version = String(entry.version ?? '').trim();
+        const title = String(entry.title ?? '').trim();
+        const body = toPrintableLines(entry.body);
+        if (!version || !title) {
+            return [];
+        }
+        return [
+            `- ${version}: ${title}`,
+            ...body.map((line) => `  ${line}`)
+        ];
+    });
+    const releaseNoteLines = releaseNotes.flatMap((entry) => {
+        const version = String(entry.version ?? '').trim();
+        const lines = toPrintableLines(entry.lines);
+        if (!version || lines.length === 0) {
+            return [];
+        }
+        return [
+            `- ${version}`,
+            ...lines.map((line) => `  ${line}`)
+        ];
+    });
+
+    printAnnouncementSection('UpdateMessages', updateMessageLines);
+    printAnnouncementSection('ReleaseNotes', releaseNoteLines);
+    printAnnouncementSection('UpdateAnnouncementWarnings', warnings.map((line) => `- ${line}`));
 }
 
 export function normalizeYesNo(value: unknown, label: string): string {
@@ -329,7 +395,33 @@ export function mergeUpdateLifecycleOutput(
         updatedVersion: lifecycleResult.updatedVersion,
         rollbackSnapshotPath: lifecycleResult.rollbackSnapshotPath,
         rollbackStatus: lifecycleResult.rollbackStatus,
-        updateReportPath: lifecycleResult.updateReportPath
+        updateReportPath: lifecycleResult.updateReportPath,
+        updateMessages: lifecycleResult.updateMessages,
+        releaseNotes: lifecycleResult.releaseNotes,
+        updateAnnouncementWarnings: lifecycleResult.updateAnnouncementWarnings
+    };
+}
+
+export function enrichUpdateOutputWithCurrentBundleAnnouncements(
+    baseResult: Record<string, unknown>,
+    bundlePath: string
+): Record<string, unknown> {
+    if (baseResult.updateApplied !== true) {
+        return baseResult;
+    }
+
+    const previousVersion = String(baseResult.previousVersion || '').trim();
+    const updatedVersion = String(baseResult.updatedVersion || baseResult.latestVersion || '').trim();
+    if (!previousVersion || !updatedVersion) {
+        return baseResult;
+    }
+
+    const announcements = collectUpdateAnnouncements(bundlePath, previousVersion, updatedVersion);
+    return {
+        ...baseResult,
+        updateMessages: announcements.updateMessages,
+        releaseNotes: announcements.releaseNotes,
+        updateAnnouncementWarnings: announcements.warnings
     };
 }
 

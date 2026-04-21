@@ -180,6 +180,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'clean',
     'skills',
     'profile',
+    'workflow',
     'diff-managed'
 ]);
 

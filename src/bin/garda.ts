@@ -67,8 +67,11 @@ export function getRuntimeCandidates(packageRoot: string): string[] {
     const devBuildRuntimeRoot = path.join(packageRoot, '.node-build', 'src');
     const publishRuntimeRoot = path.join(packageRoot, 'dist', 'src');
     const candidates: string[] = [];
+    const runtimeRoots = looksLikeSourceCheckout(packageRoot)
+        ? [devBuildRuntimeRoot, publishRuntimeRoot]
+        : [publishRuntimeRoot, devBuildRuntimeRoot];
 
-    for (const runtimeRoot of [publishRuntimeRoot, devBuildRuntimeRoot]) {
+    for (const runtimeRoot of runtimeRoots) {
         if (hasRuntimeRoot(runtimeRoot)) {
             candidates.push(runtimeRoot);
         }

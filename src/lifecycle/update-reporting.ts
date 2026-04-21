@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { UpdatePipelineStageResult } from './update-execution';
 import type { ResolvedUpdateSources } from './update-source';
+import type { UpdateAnnouncements } from './update-announcements';
 
 interface UpdateTrustContext {
     policy: string;
@@ -23,6 +24,7 @@ export interface UpdateReportData {
     previousVersionSource: string;
     bundleVersion: string;
     stageResult: UpdatePipelineStageResult & { rollbackStatus: string };
+    announcements?: UpdateAnnouncements;
 }
 
 /**
@@ -31,8 +33,13 @@ export interface UpdateReportData {
  */
 export function buildUpdateReportLines(data: UpdateReportData): string[] {
     const { trustContext, stageResult } = data;
+    const announcements = data.announcements || {
+        updateMessages: [],
+        releaseNotes: [],
+        warnings: []
+    };
 
-    return [
+    const lines = [
         '# Update Report',
         '',
         `GeneratedAt: ${new Date().toISOString()}`,
@@ -70,6 +77,35 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
             ? `AppliedFiles: ${stageResult.contractMigrationFiles.join(', ')}`
             : 'AppliedFiles: none'
     ];
+
+    if (announcements.updateMessages.length > 0) {
+        lines.push('', '## UpdateMessages');
+        for (const entry of announcements.updateMessages) {
+            lines.push(`### ${entry.version} - ${entry.title}`);
+            for (const bodyLine of entry.body) {
+                lines.push(`- ${bodyLine}`);
+            }
+        }
+    }
+
+    if (announcements.releaseNotes.length > 0) {
+        lines.push('', '## ReleaseNotes');
+        for (const entry of announcements.releaseNotes) {
+            lines.push(`### ${entry.version}`);
+            for (const noteLine of entry.lines) {
+                lines.push(noteLine);
+            }
+        }
+    }
+
+    if (announcements.warnings.length > 0) {
+        lines.push('', '## AnnouncementWarnings');
+        for (const warning of announcements.warnings) {
+            lines.push(`- ${warning}`);
+        }
+    }
+
+    return lines;
 }
 
 /**
@@ -92,6 +128,7 @@ export interface UpdateResultInput {
     stageResult: UpdatePipelineStageResult & { rollbackStatus: string };
     dryRun: boolean;
     updateReportRelativePath: string;
+    announcements?: UpdateAnnouncements;
 }
 
 /**
@@ -100,6 +137,11 @@ export interface UpdateResultInput {
  */
 export function buildUpdateResult(input: UpdateResultInput) {
     const { sources, trustContext, stageResult } = input;
+    const announcements = input.announcements || {
+        updateMessages: [],
+        releaseNotes: [],
+        warnings: []
+    };
 
     return {
         targetRoot: input.normalizedTarget,
@@ -126,6 +168,9 @@ export function buildUpdateResult(input: UpdateResultInput) {
         contractMigrationFiles: stageResult.contractMigrationFiles,
         verifyStatus: stageResult.verifyStatus,
         manifestValidationStatus: stageResult.manifestStatus,
-        updateReportPath: input.dryRun ? 'not-generated-in-dry-run' : input.updateReportRelativePath
+        updateReportPath: input.dryRun ? 'not-generated-in-dry-run' : input.updateReportRelativePath,
+        updateMessages: announcements.updateMessages,
+        releaseNotes: announcements.releaseNotes,
+        updateAnnouncementWarnings: announcements.warnings
     };
 }

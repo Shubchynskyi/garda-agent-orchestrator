@@ -11,11 +11,13 @@ import {
 } from './cli-helpers';
 import {
     buildUpdateLifecycleRunner,
+    enrichUpdateOutputWithCurrentBundleAnnouncements,
     ensureBundleExists,
     formatKeyValueOutput,
     getDefaultInitAnswersPath,
     invalidateBundleRuntimeModuleCache,
     mergeUpdateLifecycleOutput,
+    printUpdateAnnouncementSections,
     ParsedOptionsRecord,
     toKeyValueRecord,
     UpdateLifecycleResult
@@ -78,7 +80,16 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
             lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun === true)(runnerOptions);
         }
     });
-    const mergedUpdateResult = mergeUpdateLifecycleOutput(toKeyValueRecord(updateResult), lifecycleResult);
+    const mergedUpdateResultBase = mergeUpdateLifecycleOutput(toKeyValueRecord(updateResult), lifecycleResult);
+    const mergedUpdateResult = updateResult.updateApplied === true
+        ? enrichUpdateOutputWithCurrentBundleAnnouncements(
+            (() => {
+                invalidateBundleRuntimeModuleCache(bundlePath);
+                return mergedUpdateResultBase;
+            })(),
+            bundlePath
+        )
+        : mergedUpdateResultBase;
     if (options.json === true) {
         console.log(JSON.stringify(mergedUpdateResult, null, 2));
     } else {
@@ -88,10 +99,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
-    }
-
-    if (updateResult.updateApplied === true) {
-        invalidateBundleRuntimeModuleCache(bundlePath);
+        printUpdateAnnouncementSections(mergedUpdateResult);
     }
 }
 
@@ -148,7 +156,16 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
             lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun === true)(runnerOptions);
         }
     }) as Record<string, unknown>;
-    const mergedUpdateGitResult = mergeUpdateLifecycleOutput(updateResult, lifecycleResult);
+    const mergedUpdateGitResultBase = mergeUpdateLifecycleOutput(updateResult, lifecycleResult);
+    const mergedUpdateGitResult = updateResult.updateApplied === true
+        ? enrichUpdateOutputWithCurrentBundleAnnouncements(
+            (() => {
+                invalidateBundleRuntimeModuleCache(bundlePath);
+                return mergedUpdateGitResultBase;
+            })(),
+            bundlePath
+        )
+        : mergedUpdateGitResultBase;
     if (options.json === true) {
         console.log(JSON.stringify(mergedUpdateGitResult, null, 2));
     } else {
@@ -158,10 +175,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
-    }
-
-    if (updateResult.updateApplied === true) {
-        invalidateBundleRuntimeModuleCache(bundlePath);
+        printUpdateAnnouncementSections(mergedUpdateGitResult);
     }
 }
 
@@ -218,20 +232,26 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
             lifecycleResult = buildUpdateLifecycleRunner(bundlePath, options.dryRun === true)(runnerOptions);
         }
     });
-    const mergedCheckResult = mergeUpdateLifecycleOutput(toKeyValueRecord(checkResult), lifecycleResult);
+    const mergedCheckResultBase = mergeUpdateLifecycleOutput(toKeyValueRecord(checkResult), lifecycleResult);
+    const mergedCheckResult = checkResult.updateApplied === true
+        ? enrichUpdateOutputWithCurrentBundleAnnouncements(
+            (() => {
+                invalidateBundleRuntimeModuleCache(bundlePath);
+                return mergedCheckResultBase;
+            })(),
+            bundlePath
+        )
+        : mergedCheckResultBase;
     if (options.json === true) {
         console.log(JSON.stringify(mergedCheckResult, null, 2));
     } else {
         formatKeyValueOutput(mergedCheckResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
-            'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
+            'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
             'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
-    }
-
-    if (checkResult.updateApplied === true) {
-        invalidateBundleRuntimeModuleCache(bundlePath);
+        printUpdateAnnouncementSections(mergedCheckResult);
     }
 }
 

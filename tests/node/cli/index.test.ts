@@ -32,6 +32,7 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
         'clean',
         'skills',
         'profile',
+        'workflow',
         'diff-managed'
     ]);
 });

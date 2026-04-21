@@ -19,6 +19,7 @@ import {
     type ManifestRunnerOptions,
     type ContractMigrationResult
 } from './update-execution';
+import { collectUpdateAnnouncements } from './update-announcements';
 import { writeUpdateReport, buildUpdateResult } from './update-reporting';
 
 interface RollbackRecord {
@@ -177,6 +178,13 @@ export function runUpdate(options: RunUpdateOptions) {
         rollbackSnapshotPath,
         rollbackRecords
     });
+    const announcements = !dryRun
+        ? collectUpdateAnnouncements(bundleRoot, sources.previousVersion, stageResult.updatedVersion)
+        : {
+            updateMessages: [],
+            releaseNotes: [],
+            warnings: []
+        };
 
     // Generate update report
     if (!dryRun) {
@@ -191,7 +199,8 @@ export function runUpdate(options: RunUpdateOptions) {
             previousVersion: sources.previousVersion,
             previousVersionSource: sources.previousVersionSource,
             bundleVersion: sources.bundleVersion,
-            stageResult
+            stageResult,
+            announcements
         });
     }
 
@@ -205,7 +214,8 @@ export function runUpdate(options: RunUpdateOptions) {
         rollbackRecordCount,
         stageResult,
         dryRun,
-        updateReportRelativePath
+        updateReportRelativePath,
+        announcements
     });
     });
 }

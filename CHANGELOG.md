@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added a version-bound update-message registry so successful updates can print unseen release notes and curated operator notes immediately
 - fixed long-lived local update and rollback flows to invalidate bundle runtime module cache comprehensively so later commands reload fresh bundle code instead of mixing stale transitive modules
 - added `garda preprompt task --json` as a read-only bootstrap surface for current task context, canonical next commands, and bounded lifecycle diagnostics
 - added repo-local `optional-skill-selection-policy.json` plus preflight-time optional skill selection artifacts, task-mode planned-scope reuse, and compact final closeout selection summaries

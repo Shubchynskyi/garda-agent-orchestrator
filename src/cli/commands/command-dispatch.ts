@@ -31,6 +31,10 @@ function readPathFlag(commandArgv: string[], flag: string): string | null {
 }
 
 function resolveParityRoot(commandName: string, commandArgv: string[]): string {
+    if (commandName === 'gate') {
+        const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
+        return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
+    }
     if (commandName !== 'workflow') {
         return '.';
     }
