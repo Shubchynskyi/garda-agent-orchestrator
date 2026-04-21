@@ -854,6 +854,7 @@ test('buildHelpText includes all command descriptions', () => {
     assert.ok(text.includes('bootstrap'));
     assert.ok(text.includes('doctor'));
     assert.ok(text.includes('skills'));
+    assert.ok(text.includes('workflow'));
     assert.ok(text.includes('suggest'));
     assert.ok(text.includes('--help'));
     assert.ok(text.includes('--version'));
@@ -874,8 +875,10 @@ test('COMMAND_SUMMARY has expected commands', () => {
     assert.ok(names.includes('status'));
     assert.ok(names.includes('rollback'));
     assert.ok(names.includes('skills'));
+    assert.ok(names.includes('workflow'));
     assert.ok(names.includes('gate'));
     assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'skills'; })![1], 'List, suggest, and manage optional skill packs');
+    assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'workflow'; })![1], 'Show and set repo-local workflow config');
 });
 
 // ---------------------------------------------------------------------------

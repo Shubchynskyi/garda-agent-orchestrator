@@ -263,6 +263,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
+            '  workflow      Show and set repo-local workflow config.',
             '  profile       List, use, create, delete, and validate workspace profiles.',
             '  diff-managed  Show managed vs user-owned block ownership across workspace files.',
             '  gate          Run an agent gate or helper command.'
