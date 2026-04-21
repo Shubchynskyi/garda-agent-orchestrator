@@ -269,6 +269,34 @@ function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: strin
     ].join(' ');
 }
 
+function buildLoadRulePackPostPreflightRemediationCommand(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string | null,
+    requiredRuleFiles: string[]
+): string {
+    const absoluteRepoRoot = path.resolve(repoRoot);
+    const parts: string[] = [
+        `${buildGateCommandPrefix(repoRoot)} gate load-rule-pack`,
+        `--repo-root ${quotePowerShellCliValue(absoluteRepoRoot)}`,
+        `--task-id ${quotePowerShellCliValue(taskId)}`,
+        `--stage ${quotePowerShellCliValue('POST_PREFLIGHT')}`
+    ];
+    if (preflightPath) {
+        const relativePreflightPath = gateHelpers.normalizePath(
+            path.relative(absoluteRepoRoot, path.resolve(preflightPath))
+        );
+        parts.push(`--preflight-path ${quotePowerShellCliValue(relativePreflightPath)}`);
+    }
+    for (const ruleFile of requiredRuleFiles) {
+        const relativeRuleFile = gateHelpers.normalizePath(
+            path.relative(absoluteRepoRoot, path.resolve(ruleFile))
+        );
+        parts.push(`--loaded-rule-file ${quotePowerShellCliValue(relativeRuleFile)}`);
+    }
+    return parts.join(' ');
+}
+
 function buildTaskModeIdentitySuggestionCommand(
     repoRoot: string,
     taskId: string,
@@ -705,16 +733,22 @@ export function runLoadRulePackCommand(options: LoadRulePackCommandOptions): { o
     }
 
     if (stageArtifact.status !== 'PASSED') {
-        return {
-            outputLines: [
-                'RULE_PACK_LOAD_FAILED',
-                `Stage: ${stage}`,
-                `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
-                'Violations:',
-                ...stageArtifact.violations.map(function (item) { return `- ${item}`; })
-            ],
-            exitCode: EXIT_GATE_FAILURE
-        };
+        const failureLines: string[] = [
+            'RULE_PACK_LOAD_FAILED',
+            `Stage: ${stage}`,
+            `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+            'Violations:',
+            ...stageArtifact.violations.map(function (item) { return `- ${item}`; })
+        ];
+        if (stage === 'POST_PREFLIGHT' && stageArtifact.missing_rule_files.length > 0) {
+            failureLines.push(
+                'Remediation:',
+                `  ${buildLoadRulePackPostPreflightRemediationCommand(
+                    repoRoot, taskId, stageArtifact.preflight_path, stageArtifact.required_rule_files
+                )}`
+            );
+        }
+        return { outputLines: failureLines, exitCode: EXIT_GATE_FAILURE };
     }
 
     return {

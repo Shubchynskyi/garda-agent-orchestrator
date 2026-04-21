@@ -14,6 +14,12 @@ import {
     runLoadRulePackCommand
 } from '../../../../src/cli/commands/gates';
 import {
+    EXIT_GATE_FAILURE
+} from '../../../../src/cli/exit-codes';
+import {
+    appendPreflightClassifiedEvent
+} from './gate-test-seed-helpers';
+import {
     runCliMain
 } from '../../../../src/cli/main';
 import * as childProcess from 'node:child_process';
@@ -838,6 +844,61 @@ describe('cli/commands/gates — task-start', () => {
             /Timed out acquiring file lock/
         );
         assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prints remediation command on POST_PREFLIGHT failure with missing rule files', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900post-preflight-remediation';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({ repoRoot, taskId, taskSummary: 'Test POST_PREFLIGHT remediation output' });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        fs.writeFileSync(preflightPath, JSON.stringify({
+            task_id: taskId,
+            detection_source: 'explicit_changed_files',
+            mode: 'FULL_PATH',
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true, db: false, security: false, refactor: false,
+                api: false, test: false, performance: false, infra: false, dependency: false
+            },
+            triggers: {},
+            changed_files: ['src/app.ts']
+        }, null, 2), 'utf8');
+        appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath);
+
+        // Deliberately omit code-review-required files (35-strict-coding-rules.md, 50-structure-and-docs.md, 70-security.md)
+        const result = runLoadRulePackCommand({
+            repoRoot,
+            taskId,
+            stage: 'POST_PREFLIGHT',
+            preflightPath,
+            loadedRuleFiles: ['00-core.md', '40-commands.md', '80-task-workflow.md', '90-skill-catalog.md'],
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
+        const remediationIdx = result.outputLines.indexOf('Remediation:');
+        assert.notEqual(remediationIdx, -1, 'Expected a Remediation: line in the output');
+        const remediationCommand = result.outputLines[remediationIdx + 1] ?? '';
+        assert.match(remediationCommand, /gate load-rule-pack/);
+        assert.match(remediationCommand, /--repo-root/);
+        assert.match(remediationCommand, new RegExp(`--task-id.*${taskId}`));
+        assert.match(remediationCommand, /--stage.*POST_PREFLIGHT/);
+        assert.match(remediationCommand, /--preflight-path/);
+        // 7 required files total: Set union of 4 entry files and 5 code-review-depth-2 files
+        // (2 overlap: 00-core.md, 80-task-workflow.md), net result = 7 unique files
+        const loadedRuleFileMatches = remediationCommand.match(/--loaded-rule-file/g);
+        assert.equal(loadedRuleFileMatches?.length ?? 0, 7, 'Expected 7 --loaded-rule-file flags (union of entry + code-review-specific sets)');
+        // The 3 files that were deliberately omitted must appear in the remediation command
+        assert.match(remediationCommand, /35-strict-coding-rules\.md/);
+        assert.match(remediationCommand, /50-structure-and-docs\.md/);
+        assert.match(remediationCommand, /70-security\.md/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

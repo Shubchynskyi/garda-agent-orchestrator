@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- improved `load-rule-pack --stage POST_PREFLIGHT` failure UX by printing a ready-to-rerun remediation command with `--repo-root`, `--task-id`, `--preflight-path`, and all `--loaded-rule-file` flags
 - added a version-bound update-message registry so successful updates can print unseen release notes and curated operator notes immediately
 - fixed long-lived local update and rollback flows to invalidate bundle runtime module cache comprehensively so later commands reload fresh bundle code instead of mixing stale transitive modules
 - added `garda preprompt task --json` as a read-only bootstrap surface for current task context, canonical next commands, and bounded lifecycle diagnostics
