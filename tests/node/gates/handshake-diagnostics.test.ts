@@ -733,6 +733,7 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(evidence.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
             assert.ok(evidence.violations.some((violation) => violation.includes('predates the latest TASK_MODE_ENTERED')));
         });
+
     });
 
     describe('getHandshakeEvidenceViolations', () => {

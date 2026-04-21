@@ -194,6 +194,10 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'SKIPPED');
             assert.equal(artifact.cycle_binding.task_id, 'T-SKIP');
+            const timelinePath = path.join(eventsDir, 'T-SKIP.jsonl');
+            assert.ok(fs.existsSync(timelinePath));
+            const timeline = fs.readFileSync(timelinePath, 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_SKIPPED"/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -244,7 +248,138 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.status, 'WARNED');
             assert.equal(artifact.out_of_scope_audit_verdict, 'WARNED');
             assert.equal(artifact.cycle_binding.task_id, 'T-WARN');
+            const timelinePath = path.join(eventsDir, 'T-WARN.jsonl');
+            assert.ok(fs.existsSync(timelinePath));
+            const timeline = fs.readFileSync(timelinePath, 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_WARNED"/);
             fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation records FULL_SUITE_VALIDATION_PASSED for an enabled successful run', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-pass-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'pass.js');
+            fs.writeFileSync(
+                helperScript,
+                'process.stdout.write(\"all good\\\\n\"); process.exit(0);',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-PASS-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-PASS',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-PASS',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-PASS-full-suite-validation.json');
+            assert.ok(fs.existsSync(artifactPath));
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
+            const timelinePath = path.join(eventsDir, 'T-PASS.jsonl');
+            assert.ok(fs.existsSync(timelinePath));
+            const timeline = fs.readFileSync(timelinePath, 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('keeps the canonical artifact and task timeline when only aggregate append warns after FULL_SUITE_VALIDATION_PASSED', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-pass-aggregate-warning-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            const aggregatePath = path.join(eventsDir, 'all-tasks.jsonl');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'pass-aggregate-warning.js');
+            fs.writeFileSync(
+                helperScript,
+                'process.stdout.write(\"all good\\\\n\"); process.exit(0);',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-PASS-AGGREGATE-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-PASS-AGGREGATE',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const fsModule = require('node:fs') as typeof import('node:fs');
+            const originalAppendFileSync = fsModule.appendFileSync;
+            let injectedAggregateFailure = false;
+            try {
+                fsModule.appendFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | Uint8Array, options?: fs.WriteFileOptions) => {
+                    const normalizedPath = typeof filePath === 'string' ? path.resolve(filePath) : '';
+                    const payload = typeof data === 'string' ? data : '';
+                    if (
+                        !injectedAggregateFailure
+                        && normalizedPath === path.resolve(aggregatePath)
+                        && payload.includes('"event_type":"FULL_SUITE_VALIDATION_PASSED"')
+                    ) {
+                        injectedAggregateFailure = true;
+                        throw new Error('Injected aggregate append failure');
+                    }
+                    return originalAppendFileSync(filePath, data, options);
+                }) as typeof fsModule.appendFileSync;
+
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-PASS-AGGREGATE',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+                assert.equal(injectedAggregateFailure, true);
+                const artifactPath = path.join(reviewsDir, 'T-PASS-AGGREGATE-full-suite-validation.json');
+                assert.ok(fs.existsSync(artifactPath));
+                const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+                assert.equal(artifact.status, 'PASSED');
+                const timelinePath = path.join(eventsDir, 'T-PASS-AGGREGATE.jsonl');
+                assert.ok(fs.existsSync(timelinePath));
+                const timeline = fs.readFileSync(timelinePath, 'utf8');
+                assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
+            } finally {
+                fsModule.appendFileSync = originalAppendFileSync;
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
         });
 
         it('gate full-suite-validation fails clearly when enabled but the command is still unconfigured', async () => {
@@ -286,6 +421,245 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'FAILED');
             assert.ok(artifact.violations.some((line: string) => line.includes('not configured')));
+            const timelinePath = path.join(eventsDir, 'T-UNCONFIGURED.jsonl');
+            assert.ok(fs.existsSync(timelinePath));
+            const timeline = fs.readFileSync(timelinePath, 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('fails loudly and removes the canonical artifact when lifecycle event emission fails', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-emit-fail-'));
+            const runtimeDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime');
+            const reviewsDir = path.join(runtimeDir, 'reviews');
+            const blockedEventsPath = path.join(runtimeDir, 'task-events');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.writeFileSync(blockedEventsPath, 'blocked', 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-EMIT-FAIL-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-EMIT-FAIL',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-EMIT-FAIL',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.notEqual(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            assert.ok(result.errors.some((line) => line.includes('Mandatory lifecycle event')));
+            const artifactPath = path.join(reviewsDir, 'T-EMIT-FAIL-full-suite-validation.json');
+            const pendingArtifactPath = `${artifactPath}.pending`;
+            const pendingMetaPath = `${artifactPath}.pending.meta.json`;
+            assert.equal(fs.existsSync(artifactPath), false);
+            assert.equal(fs.existsSync(pendingArtifactPath), false);
+            assert.equal(fs.existsSync(pendingMetaPath), false);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('recovers a pending canonical artifact when lifecycle event append succeeded before artifact promotion failed', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-promote-recover-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'pass-promote-recover.js');
+            fs.writeFileSync(
+                helperScript,
+                'process.stdout.write(\"all good\\\\n\"); process.exit(0);',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-PROMOTE-RECOVER-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-PROMOTE-RECOVER',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const artifactPath = path.join(reviewsDir, 'T-PROMOTE-RECOVER-full-suite-validation.json');
+            const pendingArtifactPath = `${artifactPath}.pending`;
+            const pendingMetaPath = `${artifactPath}.pending.meta.json`;
+            const timelinePath = path.join(eventsDir, 'T-PROMOTE-RECOVER.jsonl');
+
+            const fsModule = require('node:fs') as typeof import('node:fs');
+            const originalCopyFileSync = fsModule.copyFileSync;
+            let injectedPromotionFailure = false;
+            try {
+                fsModule.copyFileSync = ((src: fs.PathLike, dest: fs.PathLike, mode?: number) => {
+                    const normalizedSrc = path.resolve(String(src));
+                    const normalizedDest = path.resolve(String(dest));
+                    if (
+                        !injectedPromotionFailure
+                        && normalizedSrc === path.resolve(pendingArtifactPath)
+                        && normalizedDest === path.resolve(artifactPath)
+                    ) {
+                        injectedPromotionFailure = true;
+                        throw new Error('Injected artifact promotion failure');
+                    }
+                    return originalCopyFileSync(src, dest, mode);
+                }) as typeof fsModule.copyFileSync;
+
+                const firstRun = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-PROMOTE-RECOVER',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.notEqual(firstRun.exitCode, 0, `stdout=${firstRun.logs.join('\n')}\nstderr=${firstRun.errors.join('\n')}`);
+                assert.equal(injectedPromotionFailure, true);
+                assert.ok(firstRun.errors.some((line) => line.includes('canonical artifact promotion failed')));
+                assert.equal(fs.existsSync(artifactPath), false);
+                assert.equal(fs.existsSync(pendingArtifactPath), true);
+                assert.equal(fs.existsSync(pendingMetaPath), true);
+                const pendingMeta = JSON.parse(fs.readFileSync(pendingMetaPath, 'utf8'));
+                assert.ok(fs.existsSync(timelinePath));
+                const timeline = fs.readFileSync(timelinePath, 'utf8');
+                assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
+                assert.match(timeline, new RegExp(String(pendingMeta.transaction_id)));
+            } finally {
+                fsModule.copyFileSync = originalCopyFileSync;
+            }
+
+            let recoveryPromotionCount = 0;
+            try {
+                fsModule.copyFileSync = ((src: fs.PathLike, dest: fs.PathLike, mode?: number) => {
+                    const normalizedSrc = path.resolve(String(src));
+                    const normalizedDest = path.resolve(String(dest));
+                    if (
+                        normalizedSrc === path.resolve(pendingArtifactPath)
+                        && normalizedDest === path.resolve(artifactPath)
+                    ) {
+                        recoveryPromotionCount += 1;
+                    }
+                    return originalCopyFileSync(src, dest, mode);
+                }) as typeof fsModule.copyFileSync;
+
+                const secondRun = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-PROMOTE-RECOVER',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.equal(secondRun.exitCode, 0, `stdout=${secondRun.logs.join('\n')}\nstderr=${secondRun.errors.join('\n')}`);
+            } finally {
+                fsModule.copyFileSync = originalCopyFileSync;
+            }
+
+            assert.equal(recoveryPromotionCount, 2);
+            assert.ok(fs.existsSync(artifactPath));
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
+            assert.equal(fs.existsSync(pendingArtifactPath), false);
+            assert.equal(fs.existsSync(pendingMetaPath), false);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('drops stale pending full-suite artifacts when the transaction id does not match the latest lifecycle event', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-stale-pending-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'pass-stale-pending.js');
+            fs.writeFileSync(
+                helperScript,
+                'process.stdout.write(\"all good\\\\n\"); process.exit(0);',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-STALE-PENDING-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-STALE-PENDING',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const artifactPath = path.join(reviewsDir, 'T-STALE-PENDING-full-suite-validation.json');
+            const pendingArtifactPath = `${artifactPath}.pending`;
+            const pendingMetaPath = `${artifactPath}.pending.meta.json`;
+            const timelinePath = path.join(eventsDir, 'T-STALE-PENDING.jsonl');
+
+            fs.writeFileSync(pendingArtifactPath, `${JSON.stringify({ status: 'FAILED', marker: 'stale-pending' }, null, 2)}\n`, 'utf8');
+            fs.writeFileSync(pendingMetaPath, `${JSON.stringify({ transaction_id: 'stale-transaction-id' }, null, 2)}\n`, 'utf8');
+            fs.writeFileSync(
+                timelinePath,
+                `${JSON.stringify({
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    details: {
+                        artifact_transaction_id: 'different-transaction-id'
+                    }
+                })}\n`,
+                'utf8'
+            );
+
+            const fsModule = require('node:fs') as typeof import('node:fs');
+            const originalCopyFileSync = fsModule.copyFileSync;
+            let promotionCount = 0;
+            try {
+                fsModule.copyFileSync = ((src: fs.PathLike, dest: fs.PathLike, mode?: number) => {
+                    const normalizedSrc = path.resolve(String(src));
+                    const normalizedDest = path.resolve(String(dest));
+                    if (
+                        normalizedSrc === path.resolve(pendingArtifactPath)
+                        && normalizedDest === path.resolve(artifactPath)
+                    ) {
+                        promotionCount += 1;
+                    }
+                    return originalCopyFileSync(src, dest, mode);
+                }) as typeof fsModule.copyFileSync;
+
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-STALE-PENDING',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            } finally {
+                fsModule.copyFileSync = originalCopyFileSync;
+            }
+
+            assert.equal(promotionCount, 1);
+            assert.ok(fs.existsSync(artifactPath));
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
+            assert.equal((artifact as Record<string, unknown>).marker, undefined);
+            assert.equal(fs.existsSync(pendingArtifactPath), false);
+            assert.equal(fs.existsSync(pendingMetaPath), false);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
     });

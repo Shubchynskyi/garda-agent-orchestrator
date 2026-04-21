@@ -6,6 +6,10 @@ import { CLI_ENTRYPOINT_CANDIDATES } from '../core/constants';
 import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
+    describePrePreflightCycleAnchor,
+    getLatestPrePreflightCycleAnchor
+} from './pre-preflight-cycle-anchor';
+import {
     fileSha256,
     isOrchestratorSourceCheckout,
     joinOrchestratorPath,
@@ -399,11 +403,11 @@ function verifyShellSmokeTimelineBinding(
     }
 
     const events = readTimelineEvents(resolvedTimeline);
-    const latestTaskMode = findLatestTimelineEvent(events, 'TASK_MODE_ENTERED');
+    const latestCycleAnchor = getLatestPrePreflightCycleAnchor(events);
     const latestHandshake = findLatestTimelineEvent(events, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
     const latestShellSmoke = findLatestTimelineEvent(events, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 
-    if (!latestTaskMode) {
+    if (!latestCycleAnchor) {
         return [
             `Shell smoke preflight evidence is not bound to an active task cycle for '${taskId}'. ` +
             `Task timeline '${normalizePath(resolvedTimeline)}' is missing TASK_MODE_ENTERED. ` +
@@ -427,19 +431,21 @@ function verifyShellSmokeTimelineBinding(
         ];
     }
 
-    if (latestHandshake.sequence < latestTaskMode.sequence) {
+    if (latestHandshake.sequence < latestCycleAnchor.sequence) {
         return [
-            `Latest HANDSHAKE_DIAGNOSTICS_RECORDED evidence in '${normalizePath(resolvedTimeline)}' predates the latest TASK_MODE_ENTERED ` +
-            `(handshake seq ${latestHandshake.sequence}, task-mode seq ${latestTaskMode.sequence}). ` +
+            `Latest HANDSHAKE_DIAGNOSTICS_RECORDED evidence in '${normalizePath(resolvedTimeline)}' predates the ` +
+            `${describePrePreflightCycleAnchor(latestCycleAnchor)} ` +
+            `(handshake seq ${latestHandshake.sequence}). ` +
             'Re-run handshake-diagnostics for the current task cycle before shell-smoke-preflight. ' +
             'Do not parallelize enter-task-mode, handshake-diagnostics, and shell-smoke-preflight for the same task cycle.'
         ];
     }
 
-    if (latestShellSmoke.sequence < latestTaskMode.sequence) {
+    if (latestShellSmoke.sequence < latestCycleAnchor.sequence) {
         return [
-            `Latest SHELL_SMOKE_PREFLIGHT_RECORDED evidence in '${normalizePath(resolvedTimeline)}' predates the latest TASK_MODE_ENTERED ` +
-            `(shell-smoke seq ${latestShellSmoke.sequence}, task-mode seq ${latestTaskMode.sequence}). ` +
+            `Latest SHELL_SMOKE_PREFLIGHT_RECORDED evidence in '${normalizePath(resolvedTimeline)}' predates the ` +
+            `${describePrePreflightCycleAnchor(latestCycleAnchor)} ` +
+            `(shell-smoke seq ${latestShellSmoke.sequence}). ` +
             'Re-run handshake-diagnostics and shell-smoke-preflight for the current task cycle before classify-change or compile-gate.'
         ];
     }

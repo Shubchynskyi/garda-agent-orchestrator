@@ -2,7 +2,12 @@ import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../exit-codes';
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
 import { selectRulePackFiles } from '../../../gates/build-review-context';
+import { collectOrderedTimelineEvents, findLatestTimelineEvent } from '../../../gates/completion-evidence';
 import { getPreflightContext } from '../../../gates/compile-gate';
+import {
+    getLatestPrePreflightCycleAnchor,
+    isTaskEntryRulePackLoadedEvent
+} from '../../../gates/pre-preflight-cycle-anchor';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../gates/task-mode';
 import * as gateHelpers from '../../../gates/helpers';
 import { expandValueList, parseBooleanOption } from '../gates-parser';
@@ -39,6 +44,12 @@ const REVIEW_PREPARATION_ORDER = Object.freeze([
     'infra',
     'dependency',
     'test'
+]);
+
+const REVIEW_CYCLE_BOUNDARY_EVENTS = new Set([
+    'REVIEW_GATE_PASSED',
+    'REVIEW_GATE_PASSED_WITH_OVERRIDE',
+    'COMPLETION_GATE_PASSED'
 ]);
 
 export interface RestartCoherentCycleCommandOptions {
@@ -255,6 +266,89 @@ function ensureStepPassed(stepName: string, result: { outputLines: string[]; exi
     }
 }
 
+function getReviewCyclePrePreflightRefreshPlan(
+    repoRoot: string,
+    taskId: string
+): { rerunHandshakeDiagnostics: boolean; rerunShellSmokePreflight: boolean } {
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    const timelineErrors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    if (timelineErrors.length > 0 || events.length === 0) {
+        return {
+            rerunHandshakeDiagnostics: true,
+            rerunShellSmokePreflight: true
+        };
+    }
+
+    const latestTaskModeEntered = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'TASK_MODE_ENTERED'
+    );
+    if (latestTaskModeEntered) {
+        const latestTaskEntryRulePack = findLatestTimelineEvent(
+            events,
+            (entry) => entry.sequence > latestTaskModeEntered.sequence && isTaskEntryRulePackLoadedEvent(entry)
+        );
+        if (!latestTaskEntryRulePack) {
+            throw new Error(
+                `restart-review-cycle detected TASK_MODE_ENTERED without matching RULE_PACK_LOADED for TASK_ENTRY ` +
+                `inside the current task-mode cycle in '${gateHelpers.normalizePath(timelinePath)}'. ` +
+                'Run restart-coherent-cycle to rebuild the cycle from task entry before rerunning review preparation.'
+            );
+        }
+    }
+
+    const latestCycleAnchor = getLatestPrePreflightCycleAnchor(events);
+    const lowerBoundExclusive = latestCycleAnchor?.sequence ?? Number.NEGATIVE_INFINITY;
+    const latestCycleBoundary = findLatestTimelineEvent(
+        events,
+        (entry) => entry.sequence > lowerBoundExclusive && REVIEW_CYCLE_BOUNDARY_EVENTS.has(entry.event_type)
+    );
+    if (latestCycleBoundary) {
+        throw new Error(
+            `restart-review-cycle cannot continue after the current task-mode cycle already reached '${latestCycleBoundary.event_type}' ` +
+            `in '${gateHelpers.normalizePath(timelinePath)}'. Run restart-coherent-cycle to begin a fresh coherent cycle ` +
+            'from task entry before rebuilding review contexts.'
+        );
+    }
+
+    const latestHandshake = findLatestTimelineEvent(
+        events,
+        (entry) => entry.sequence > lowerBoundExclusive && entry.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED'
+    );
+    const latestShellSmoke = findLatestTimelineEvent(
+        events,
+        (entry) => entry.sequence > lowerBoundExclusive && entry.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+    );
+
+    if (!latestHandshake && !latestShellSmoke) {
+        return {
+            rerunHandshakeDiagnostics: true,
+            rerunShellSmokePreflight: true
+        };
+    }
+
+    if (!latestHandshake && latestShellSmoke) {
+        throw new Error(
+            `restart-review-cycle detected SHELL_SMOKE_PREFLIGHT_RECORDED without matching HANDSHAKE_DIAGNOSTICS_RECORDED ` +
+            `inside the current task-mode cycle in '${gateHelpers.normalizePath(timelinePath)}'. ` +
+            'Run restart-coherent-cycle to rebuild the cycle from task entry.'
+        );
+    }
+
+    if (latestHandshake && (!latestShellSmoke || latestShellSmoke.sequence < latestHandshake.sequence)) {
+        return {
+            rerunHandshakeDiagnostics: false,
+            rerunShellSmokePreflight: true
+        };
+    }
+
+    return {
+        rerunHandshakeDiagnostics: false,
+        rerunShellSmokePreflight: false
+    };
+}
+
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
@@ -396,6 +490,7 @@ export async function runRestartReviewCycleCommand(
         throw new Error(taskModeViolations.join(' '));
     }
 
+    const resolvedTaskModePath = String(options.taskModePath || previousTaskMode.evidence_path || '').trim();
     const resolvedPreflightPath = path.resolve(String(
         options.preflightPath
         || gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${resolvedTaskId}-preflight.json`))
@@ -409,10 +504,30 @@ export async function runRestartReviewCycleCommand(
 
     try {
         const refreshedPreflightPath = String(options.preflightOutputPath || resolvedPreflightPath).trim() || resolvedPreflightPath;
+        const prePreflightRefreshPlan = getReviewCyclePrePreflightRefreshPlan(repoRoot, resolvedTaskId);
+
+        if (prePreflightRefreshPlan.rerunHandshakeDiagnostics) {
+            ensureStepPassed('handshake-diagnostics', runHandshakeDiagnosticsCommand({
+                repoRoot,
+                taskId: resolvedTaskId,
+                provider: previousTaskMode.provider || undefined,
+                emitMetrics: options.emitMetrics
+            }));
+        }
+
+        if (prePreflightRefreshPlan.rerunShellSmokePreflight) {
+            ensureStepPassed('shell-smoke-preflight', runShellSmokePreflightCommand({
+                repoRoot,
+                taskId: resolvedTaskId,
+                provider: previousTaskMode.provider || undefined,
+                emitMetrics: options.emitMetrics
+            }));
+        }
+
         const classifyResult = runClassifyChangeCommand({
             repoRoot,
             taskId: resolvedTaskId,
-            taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+            taskModePath: resolvedTaskModePath || undefined,
             outputPath: refreshedPreflightPath,
             taskIntent: taskSummary,
             changedFiles: replayScope.changedFiles,
@@ -427,7 +542,7 @@ export async function runRestartReviewCycleCommand(
         ensureStepPassed('load-rule-pack (POST_PREFLIGHT)', runLoadRulePackCommand({
             repoRoot,
             taskId: resolvedTaskId,
-            taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+            taskModePath: resolvedTaskModePath || undefined,
             stage: 'POST_PREFLIGHT',
             preflightPath: refreshedPreflightPath,
             loadedRuleFiles: normalizeRuleFileList(refreshedRequiredReviews, effectiveDepth),
@@ -437,7 +552,7 @@ export async function runRestartReviewCycleCommand(
         const compileResult = await runCompileGateCommand({
             repoRoot,
             taskId: resolvedTaskId,
-            taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+            taskModePath: resolvedTaskModePath || undefined,
             preflightPath: refreshedPreflightPath,
             commandsPath: options.commandsPath,
             outputFiltersPath: options.outputFiltersPath,

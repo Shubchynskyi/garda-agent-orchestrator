@@ -416,6 +416,7 @@ describe('gates/shell-smoke-preflight', () => {
             assert.equal(result.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
             assert.ok(result.violations.some((violation) => violation.includes('Unsafe same-task overlap detected')));
         });
+
     });
 
     describe('getShellSmokeEvidenceViolations', () => {
