@@ -3,11 +3,15 @@ import { type CheckUpdateRunnerOptions, runCheckUpdate } from '../../lifecycle/c
 import { runUpdateFromGit } from '../../lifecycle/update-git';
 import { runRollback } from '../../lifecycle/rollback';
 import {
+    bold,
+    dim,
+    green,
     ensureDirectoryExists,
     normalizePathValue,
     PackageJsonLike,
     parseOptions,
-    printHelp
+    printHelp,
+    yellow
 } from './cli-helpers';
 import {
     buildUpdateLifecycleRunner,
@@ -22,6 +26,60 @@ import {
     toKeyValueRecord,
     UpdateLifecycleResult
 } from './shared-command-utils';
+
+type UpdateStatusTone = 'success' | 'attention' | 'failure';
+
+function resolveUpdateStatusBanner(result: Record<string, unknown>): {
+    title: string;
+    detail: string;
+    tone: UpdateStatusTone;
+} | null {
+    const rawResult = String(result.checkUpdateResult || '').trim().toUpperCase();
+
+    if (rawResult === 'UPDATED' || result.updateApplied === true) {
+        return {
+            title: 'Updated successfully',
+            detail: 'The available update was applied to this workspace.',
+            tone: 'success'
+        };
+    }
+    if (rawResult === 'UP_TO_DATE' || (result.updateAvailable === false && result.updateApplied !== true)) {
+        return {
+            title: 'Already up to date',
+            detail: 'No update was needed for this workspace.',
+            tone: 'success'
+        };
+    }
+    if (rawResult === 'DRY_RUN_UPDATE_AVAILABLE') {
+        return {
+            title: 'Dry run: update available',
+            detail: 'A newer version is available, but dry-run did not apply it.',
+            tone: 'attention'
+        };
+    }
+    if (rawResult === 'UPDATE_AVAILABLE' || result.updateAvailable === true) {
+        return {
+            title: 'Update available',
+            detail: 'A newer version is available for this workspace.',
+            tone: 'attention'
+        };
+    }
+    return null;
+}
+
+function printUpdateStatusBanner(result: Record<string, unknown>): void {
+    const banner = resolveUpdateStatusBanner(result);
+    if (!banner) {
+        return;
+    }
+    const statusColor = banner.tone === 'success'
+        ? green
+        : yellow;
+    console.log(bold('UPDATE STATUS'));
+    console.log(statusColor(banner.title));
+    console.log(dim(banner.detail));
+    console.log('');
+}
 
 export async function handleUpdate(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
     if (commandArgv.length > 0 && String(commandArgv[0] || '').trim().toLowerCase() === 'git') {
@@ -93,6 +151,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
     if (options.json === true) {
         console.log(JSON.stringify(mergedUpdateResult, null, 2));
     } else {
+        printUpdateStatusBanner(mergedUpdateResult);
         formatKeyValueOutput(mergedUpdateResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
@@ -169,6 +228,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
     if (options.json === true) {
         console.log(JSON.stringify(mergedUpdateGitResult, null, 2));
     } else {
+        printUpdateStatusBanner(mergedUpdateGitResult);
         formatKeyValueOutput(mergedUpdateGitResult, [
             'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
@@ -245,6 +305,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
     if (options.json === true) {
         console.log(JSON.stringify(mergedCheckResult, null, 2));
     } else {
+        printUpdateStatusBanner(mergedCheckResult);
         formatKeyValueOutput(mergedCheckResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
