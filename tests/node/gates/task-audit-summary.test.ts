@@ -1244,6 +1244,7 @@ describe('gates/task-audit-summary', () => {
             const jsonPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.json`);
             const markdownPath = path.join(reviewsDir, `${TASK_ID}-final-closeout.md`);
             const renderedMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+            const renderedSummaryText = formatTaskAuditSummaryText(result);
             assert.equal(fs.existsSync(jsonPath), true);
             assert.equal(fs.existsSync(markdownPath), true);
             assert.equal(result.final_closeout.artifact_state, 'MATERIALIZED');
@@ -1253,6 +1254,7 @@ describe('gates/task-audit-summary', () => {
             assert.equal(closeoutJson.workflow.visible_summary_line, 'Mandatory full-suite: false');
             assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Suggested commit command:'));
             assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Mandatory full-suite: false'));
+            assert.ok(renderedSummaryText.includes('Mandatory full-suite: false'));
             assert.ok(renderedMarkdown.includes('Do you want me to commit now? (yes/no)'));
         });
 

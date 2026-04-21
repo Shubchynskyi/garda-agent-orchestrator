@@ -62,6 +62,19 @@ test('workflow show prints repo-local full-suite settings', () => {
     }
 });
 
+test('workflow defaults to show when the subcommand is omitted', () => {
+    const bundleRoot = createBundleRoot({ enabled: true });
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow(['--bundle-root', bundleRoot], PACKAGE_JSON));
+        assert.ok(result && result.action === 'show');
+        assert.ok(output.includes('Action: show'));
+        assert.ok(output.includes('Mandatory full-suite: true'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow show --json returns valid JSON with compact full-suite line', () => {
     const bundleRoot = createBundleRoot({ enabled: true });
 
@@ -72,6 +85,31 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.scope, 'repo-local');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set --json returns valid JSON for machine-readable automation', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--full-suite-enabled', 'true',
+            '--json'
+        ], PACKAGE_JSON));
+        const parsed = JSON.parse(output);
+        assert.equal(parsed.action, 'set');
+        assert.equal(parsed.status, 'CHANGED');
+        assert.equal(parsed.full_suite_validation.enabled, true);
+        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
+        assert.ok(parsed.changed_fields.includes('full_suite_validation.enabled'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.full_suite_validation.enabled, true);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
