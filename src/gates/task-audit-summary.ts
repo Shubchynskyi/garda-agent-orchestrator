@@ -2,22 +2,37 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
-import { fileSha256, joinOrchestratorPath, resolvePathInsideRepo, toPosix } from './helpers';
+import { fileSha256, toPosix } from './helpers';
 import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './task-events-summary';
-import {
-    computeOptionalSkillTaskTextSha256,
-    getActivatedCurrentCycleOptionalSkillReferenceLoads,
-    getOptionalSkillSelectionArtifactViolations,
-    isOptionalSkillSelectionPolicyConfigured,
-    readOptionalSkillSelectionPolicyConfig,
-    readOptionalSkillSelectionTimelineEvidence,
-    type OptionalSkillSelectionArtifactData
-} from '../runtime/optional-skill-selection';
+import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
 import { resolveFullSuiteValidationRequirementForTaskEvents } from '../gate-runtime/lifecycle-event-types';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
+import {
+    type BlockerEntry,
+    type EvidenceArtifact,
+    type FinalCloseoutArtifactPaths,
+    type FinalCloseoutDocsSummary,
+    type FinalCloseoutImplementationSummary,
+    type FinalCloseoutOptionalSkillsSummary,
+    type FinalReportContract,
+    type GateOutcome,
+    type ProfileReviewDecisionSummary,
+    type TaskQueueMetadata,
+    parseOptionalNumber,
+    readDocImpactSummary,
+    readOptionalSkillsSummary,
+    readReviewVerdicts,
+    readTaskQueueMetadata,
+    resolveEventsRoot,
+    resolveReviewsRoot,
+    safeReadJson,
+    updateEvidenceArtifactState
+} from './task-audit-summary-collectors';
+import { buildCommitCommandSuggestion, formatFinalCloseoutMarkdown } from './task-audit-summary-renderers';
+export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
 
 // ---------------------------------------------------------------------------
-// Types
+// Types — public composite shapes used by external consumers
 // ---------------------------------------------------------------------------
 
 export interface TaskAuditSummaryOptions {
@@ -25,70 +40,6 @@ export interface TaskAuditSummaryOptions {
     repoRoot: string;
     eventsRoot?: string | null;
     reviewsRoot?: string | null;
-}
-
-interface GateOutcome {
-    gate: string;
-    status: 'PASS' | 'FAIL' | 'MISSING';
-    event_type?: string;
-    timestamp_utc?: string | null;
-    artifact_path?: string | null;
-}
-
-interface EvidenceArtifact {
-    kind: string;
-    path: string;
-    exists: boolean;
-    sha256: string | null;
-}
-
-interface BlockerEntry {
-    gate: string;
-    reason: string;
-}
-
-interface FinalReportContract {
-    status: 'READY' | 'NOT_READY';
-    blocker: string | null;
-    required_order: string[];
-    implementation_summary_requirements: string[];
-    commit_command_template: string;
-    commit_command_suggestion: string;
-    commit_question: string;
-}
-
-interface FinalCloseoutArtifactPaths {
-    json: string;
-    markdown: string;
-}
-
-interface FinalCloseoutDocsSummary {
-    decision: string | null;
-    behavior_changed: boolean;
-    changelog_updated: boolean;
-    docs_updated: string[];
-}
-
-interface FinalCloseoutImplementationSummary {
-    requested_depth: number | null;
-    effective_depth: number | null;
-    path_mode: string | null;
-    review_verdicts: Record<string, string>;
-    docs_updated: boolean;
-    changed_files_count: number;
-    changed_lines_total: number;
-    scope_category: string | null;
-    active_profile: string | null;
-}
-
-interface FinalCloseoutOptionalSkillsSummary {
-    policy_mode: string | null;
-    decision: string | null;
-    selected_skill_ids: string[];
-    used_skill_ids: string[];
-    recommended_missing_pack_ids: string[];
-    as_is_reason: string | null;
-    visible_summary_line: string | null;
 }
 
 export interface FinalCloseoutArtifact {
@@ -108,11 +59,6 @@ export interface FinalCloseoutArtifact {
     commit_command_template: string;
     commit_command_suggestion: string;
     commit_question: string;
-}
-
-interface TaskQueueMetadata {
-    area: string | null;
-    title: string | null;
 }
 
 export interface TaskAuditSummaryResult {
@@ -151,19 +97,6 @@ export interface PointInTimeSnapshot {
     stale_reason?: string | null;
     subsystem_scope_note?: string | null;
     acquisition_policy?: CompletionGateFinalizationLockPolicy | null;
-}
-
-interface ProfileReviewDecisionSummary {
-    profile_name: string | null;
-    scope_category: string | null;
-    guardrails_active: boolean;
-    lightening_eligible: boolean;
-    safety_floors_applied: string[];
-    decisions: Array<{
-        review_type: string;
-        effective_value: boolean;
-        decision: string;
-    }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,356 +185,6 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'dependency-review-context', suffix: '-dependency-review-context.json' },
     { kind: 'dependency-receipt', suffix: '-dependency-receipt.json' }
 ];
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function safeReadJson(filePath: string): Record<string, unknown> | null {
-    try {
-        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
-        return JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
-    } catch {
-        return null;
-    }
-}
-
-function resolveReviewsRoot(repoRoot: string, explicit?: string | null): string {
-    if (explicit) {
-        const resolved = resolvePathInsideRepo(explicit, repoRoot, { allowMissing: true });
-        if (resolved) return resolved;
-    }
-    return joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
-}
-
-function resolveEventsRoot(repoRoot: string, explicit?: string | null): string {
-    if (explicit) {
-        const resolved = resolvePathInsideRepo(explicit, repoRoot, { allowMissing: true });
-        if (resolved) return resolved;
-    }
-    return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
-}
-
-function readTaskQueueMetadata(repoRoot: string, taskId: string): TaskQueueMetadata | null {
-    const taskPath = path.join(repoRoot, 'TASK.md');
-    if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
-        return null;
-    }
-
-    const lines = fs.readFileSync(taskPath, 'utf8').split('\n');
-    for (const rawLine of lines) {
-        const trimmed = rawLine.trim();
-        if (!trimmed.startsWith('|')) {
-            continue;
-        }
-        const cells = trimmed
-            .split('|')
-            .slice(1, -1)
-            .map((cell) => cell.trim());
-        if (cells.length < 9 || cells[0] !== taskId) {
-            continue;
-        }
-        if (cells[0].toLowerCase() === 'id' || cells[0].startsWith('-') || cells[0].startsWith('=')) {
-            continue;
-        }
-        return {
-            area: cells[3] || null,
-            title: cells[4] || null
-        };
-    }
-
-    return null;
-}
-
-function normalizeCommitToken(value: string): string {
-    return String(value || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-}
-
-function normalizeCommitSubject(value: string): string {
-    const normalized = String(value || '')
-        .trim()
-        .replace(/[_-]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .replace(/[.]+$/g, '')
-        .replace(/"/g, '\'');
-    if (!normalized) {
-        return '<summary>';
-    }
-    return normalized.charAt(0).toLowerCase() + normalized.slice(1);
-}
-
-function inferCommitType(taskMetadata: TaskQueueMetadata | null): 'feat' | 'fix' {
-    const text = `${taskMetadata?.area || ''} ${taskMetadata?.title || ''}`.toLowerCase();
-    const featureKeywords = ['add', 'introduce', 'support', 'enable', 'create', 'implement', 'allow', 'reuse', 'automate', 'generate', 'install'];
-    return featureKeywords.some((keyword) => new RegExp(`\\b${keyword}\\b`, 'i').test(text)) ? 'feat' : 'fix';
-}
-
-function inferCommitScope(changedFiles: string[], taskMetadata: TaskQueueMetadata | null): string {
-    const scopeMatchers: Array<{ scope: string; patterns: RegExp[] }> = [
-        {
-            scope: 'orchestration',
-            patterns: [
-                /^src\/gates\//,
-                /^src\/cli\/commands\/gate-/,
-                /^template\/docs\/agent-rules\//,
-                /^template\/skills\/orchestration\//,
-                /^tests\/node\/gates\/task-audit-summary\.test\.ts$/,
-                /^tests\/node\/validators\/verify\.test\.ts$/
-            ]
-        },
-        { scope: 'runtime', patterns: [/^src\/gate-runtime\//] },
-        { scope: 'validators', patterns: [/^src\/validators\//] },
-        { scope: 'materialization', patterns: [/^src\/materialization\//] },
-        { scope: 'setup', patterns: [/^src\/cli\/commands\/setup\.ts$/, /^src\/lifecycle\/setup/i] },
-        { scope: 'update', patterns: [/^src\/lifecycle\/update\.ts$/, /^src\/lifecycle\/check-update/i] }
-    ];
-    const scopeScores = new Map<string, number>();
-    const normalizedChangedFiles = [...new Set(changedFiles.map((changedFile) => toPosix(String(changedFile || ''))))]
-        .sort((left, right) => left.localeCompare(right));
-    for (const normalizedPath of normalizedChangedFiles) {
-        for (const matcher of scopeMatchers) {
-            if (matcher.patterns.some((pattern) => pattern.test(normalizedPath))) {
-                scopeScores.set(matcher.scope, (scopeScores.get(matcher.scope) || 0) + 1);
-            }
-        }
-    }
-
-    let bestScope: string | null = null;
-    let bestScore = -1;
-    for (const [scope, score] of [...scopeScores.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
-        if (score > bestScore || (score === bestScore && bestScope != null && scope.localeCompare(bestScope) < 0)) {
-            bestScope = scope;
-            bestScore = score;
-        }
-    }
-    if (bestScope) {
-        return bestScope;
-    }
-
-    const rawArea = String(taskMetadata?.area || '').trim();
-    const [areaPrefix = ''] = rawArea.split('/');
-    const normalizedAreaPrefix = normalizeCommitToken(areaPrefix);
-    if (normalizedAreaPrefix && !['ux', 'reliability', 'performance', 'security', 'docs', 'feature', 'feat'].includes(normalizedAreaPrefix)) {
-        return normalizedAreaPrefix;
-    }
-
-    return 'orchestration';
-}
-
-function inferCommitSubject(taskMetadata: TaskQueueMetadata | null): string {
-    const rawArea = String(taskMetadata?.area || '').trim();
-    const areaSuffix = rawArea.includes('/') ? rawArea.split('/').pop() || '' : rawArea;
-    const normalizedAreaSubject = normalizeCommitSubject(areaSuffix);
-    if (normalizedAreaSubject !== '<summary>' && normalizedAreaSubject.length >= 6) {
-        return normalizedAreaSubject;
-    }
-
-    return normalizeCommitSubject(String(taskMetadata?.title || ''));
-}
-
-function parseOptionalNumber(value: unknown): number | null {
-    if (value == null || value === '') {
-        return null;
-    }
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function readReviewVerdicts(requiredReviews: Record<string, boolean>, reviewGate: Record<string, unknown> | null): Record<string, string> {
-    const verdictsSource = reviewGate && reviewGate.verdicts && typeof reviewGate.verdicts === 'object'
-        ? reviewGate.verdicts as Record<string, unknown>
-        : {};
-    const reviewVerdicts: Record<string, string> = {};
-    for (const reviewType of Object.keys(requiredReviews).filter((key) => requiredReviews[key]).sort()) {
-        const verdict = verdictsSource[reviewType];
-        reviewVerdicts[reviewType] = typeof verdict === 'string' && verdict.trim()
-            ? verdict.trim()
-            : 'MISSING';
-    }
-    return reviewVerdicts;
-}
-
-function readDocImpactSummary(docImpact: Record<string, unknown> | null): FinalCloseoutDocsSummary {
-    const docsUpdated = docImpact && Array.isArray(docImpact.docs_updated)
-        ? docImpact.docs_updated.map((entry) => String(entry || '').trim()).filter(Boolean)
-        : [];
-    return {
-        decision: docImpact && typeof docImpact.decision === 'string' ? docImpact.decision : null,
-        behavior_changed: docImpact?.behavior_changed === true,
-        changelog_updated: docImpact?.changelog_updated === true,
-        docs_updated: docsUpdated
-    };
-}
-
-function readOptionalSkillsSummary(
-    bundleRoot: string,
-    taskId: string,
-    preflightPath: string,
-    preflightSha256: string | null,
-    currentTaskText: string | null,
-    invalidateOnMissingTaskRow: boolean,
-    optionalSkillsPath: string,
-    optionalSkills: Record<string, unknown> | null,
-    taskEventsPath: string
-): FinalCloseoutOptionalSkillsSummary | null {
-    if (!optionalSkills) {
-        if (isOptionalSkillSelectionPolicyConfigured(bundleRoot)) {
-            const policyMode = readOptionalSkillSelectionPolicyConfig(bundleRoot).mode;
-            if (policyMode === 'off') {
-                return {
-                    policy_mode: policyMode,
-                    decision: 'as_is',
-                    selected_skill_ids: [],
-                    used_skill_ids: [],
-                    recommended_missing_pack_ids: [],
-                    as_is_reason: 'policy_off',
-                    visible_summary_line: 'Optional skills: as_is (reason: policy_off)'
-                };
-            }
-        }
-        return null;
-    }
-    const artifactPolicyMode = String(optionalSkills.policy_mode || '').trim() || null;
-    if (!preflightSha256) {
-        return {
-            policy_mode: artifactPolicyMode,
-            decision: 'invalidated',
-            selected_skill_ids: [],
-            used_skill_ids: [],
-            recommended_missing_pack_ids: [],
-            as_is_reason: 'artifact_drift',
-            visible_summary_line: 'Optional skills: unavailable (reason: artifact_drift)'
-        };
-    }
-    const artifact = {
-        artifactPath: optionalSkillsPath,
-        payload: optionalSkills
-    } as unknown as OptionalSkillSelectionArtifactData;
-    const validationOptions: Parameters<typeof getOptionalSkillSelectionArtifactViolations>[2] = {
-        requireMaterializedArtifact: true,
-        expectedPreflightPath: preflightPath,
-        expectedPreflightSha256: preflightSha256,
-        validateAgainstCurrentHeadlines: false,
-        validateAgainstCurrentInventory: false
-    };
-    if (currentTaskText != null) {
-        validationOptions.expectedTaskTextSha256 = computeOptionalSkillTaskTextSha256(String(currentTaskText || ''));
-    } else if (invalidateOnMissingTaskRow) {
-        validationOptions.expectedTaskTextSha256 = null;
-    }
-    const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact, validationOptions);
-    if (violations.length > 0) {
-        return {
-            policy_mode: artifactPolicyMode,
-            decision: 'invalidated',
-            selected_skill_ids: [],
-            used_skill_ids: [],
-            recommended_missing_pack_ids: [],
-            as_is_reason: 'artifact_drift',
-            visible_summary_line: 'Optional skills: unavailable (reason: artifact_drift)'
-        };
-    }
-    const selectedSkillIds = Array.isArray(optionalSkills.selected_installed_skills)
-        ? optionalSkills.selected_installed_skills
-            .map((entry) => {
-                if (!entry || typeof entry !== 'object') {
-                    return null;
-                }
-                return String((entry as Record<string, unknown>).id || '').trim() || null;
-            })
-            .filter((entry): entry is string => !!entry)
-        : [];
-    const recommendedMissingPackIds = Array.isArray(optionalSkills.recommended_missing_packs)
-        ? optionalSkills.recommended_missing_packs
-            .map((entry) => {
-                if (!entry || typeof entry !== 'object') {
-                    return null;
-                }
-                return String((entry as Record<string, unknown>).id || '').trim() || null;
-            })
-            .filter((entry): entry is string => !!entry)
-        : [];
-    const visibleSummaryLine = String(optionalSkills.visible_summary_line || '').trim() || null;
-    const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, taskId, taskEventsPath);
-    if (timelineEvidence.invalidJson) {
-        return {
-            policy_mode: artifactPolicyMode,
-            decision: 'unavailable',
-            selected_skill_ids: selectedSkillIds,
-            used_skill_ids: [],
-            recommended_missing_pack_ids: recommendedMissingPackIds,
-            as_is_reason: 'task_events_integrity',
-            visible_summary_line: 'Optional skills: unavailable (reason: task_events_integrity)'
-        };
-    }
-    const currentCycleReferenceLoads = getActivatedCurrentCycleOptionalSkillReferenceLoads(artifact.payload, timelineEvidence);
-    const usedSkillIds = selectedSkillIds.filter((entry) => (
-        currentCycleReferenceLoads.some((load) => load.skillId === entry)
-    ));
-    let usageSummaryLine = visibleSummaryLine;
-    const reasonMatch = visibleSummaryLine?.match(/\(reason:\s*([^)]+)\)\s*$/i);
-    const reasonSuffix = reasonMatch?.[1]?.trim();
-    if (selectedSkillIds.length > 0 && usedSkillIds.length === 0) {
-        usageSummaryLine = reasonSuffix
-            ? `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')}, reason: ${reasonSuffix})`
-            : `Optional skills: none_used (selected: ${selectedSkillIds.join(', ')})`;
-    } else if (usedSkillIds.length > 0 && usedSkillIds.length !== selectedSkillIds.length) {
-        usageSummaryLine = reasonSuffix
-            ? `Optional skills: ${usedSkillIds.join(', ')} (reason: ${reasonSuffix})`
-            : `Optional skills: ${usedSkillIds.join(', ')}`;
-    }
-    return {
-        policy_mode: artifactPolicyMode,
-        decision: String(optionalSkills.decision || '').trim() || null,
-        selected_skill_ids: selectedSkillIds,
-        used_skill_ids: usedSkillIds,
-        recommended_missing_pack_ids: recommendedMissingPackIds,
-        as_is_reason: String(optionalSkills.as_is_reason || '').trim() || null,
-        visible_summary_line: usageSummaryLine
-    };
-}
-
-function updateEvidenceArtifactState(
-    evidence: EvidenceArtifact[],
-    kind: string,
-    artifactPath: string,
-    exists: boolean
-): void {
-    const normalizedPath = toPosix(path.resolve(artifactPath));
-    const entry = evidence.find((candidate) => candidate.kind === kind);
-    const sha256 = exists ? fileSha256(artifactPath) : null;
-    if (entry) {
-        entry.path = normalizedPath;
-        entry.exists = exists;
-        entry.sha256 = sha256;
-        return;
-    }
-    evidence.push({
-        kind,
-        path: normalizedPath,
-        exists,
-        sha256
-    });
-}
-
-function buildCommitCommandSuggestion(changedFiles: string[], taskMetadata: TaskQueueMetadata | null): { template: string; suggestion: string } {
-    const template = 'git commit -m "<type>(<scope>): <summary>"';
-    const subject = inferCommitSubject(taskMetadata);
-    if (subject === '<summary>') {
-        return { template, suggestion: template };
-    }
-
-    const type = inferCommitType(taskMetadata);
-    const scope = inferCommitScope(changedFiles, taskMetadata);
-    return {
-        template,
-        suggestion: `git commit -m "${type}(${scope}): ${subject}"`
-    };
-}
 
 // ---------------------------------------------------------------------------
 // Core builder
@@ -1019,16 +602,16 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const docsSummary = readDocImpactSummary(docImpact);
     const optionalSkillsPath = path.join(reviewsRoot, `${safeTaskId}-optional-skill-selection.json`);
     const bundleRoot = path.dirname(path.dirname(reviewsRoot));
+    const taskEventsTimelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, safeTaskId, taskEventFile);
     const optionalSkillsSummary = readOptionalSkillsSummary(
         bundleRoot,
-        safeTaskId,
         preflightPath,
         preflightSha256,
         taskMetadata?.title || null,
         taskFileExists && taskMetadata == null,
         optionalSkillsPath,
         safeReadJson(optionalSkillsPath),
-        taskEventFile
+        taskEventsTimelineEvidence
     );
     const finalCloseoutJsonPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.json`);
     const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.md`);
@@ -1115,45 +698,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
 // Final closeout artifact
 // ---------------------------------------------------------------------------
 
-export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
-    const depthParts: string[] = [];
-    if (closeout.implementation_summary.requested_depth != null) {
-        depthParts.push(`requested depth=${closeout.implementation_summary.requested_depth}`);
-    }
-    if (closeout.implementation_summary.effective_depth != null) {
-        depthParts.push(`effective depth=${closeout.implementation_summary.effective_depth}`);
-    }
-    const depthText = depthParts.length > 0 ? depthParts.join(', ') : 'depth=unknown';
-    const pathModeText = closeout.implementation_summary.path_mode || 'unknown';
-    const reviewVerdicts = Object.entries(closeout.implementation_summary.review_verdicts)
-        .map(([reviewType, verdict]) => `\`${reviewType}: ${verdict}\``);
-    const reviewVerdictText = reviewVerdicts.length > 0 ? reviewVerdicts.join(', ') : '`none required`';
-    const docsUpdatedText = closeout.implementation_summary.docs_updated ? '`yes`' : '`no`';
-
-    const lines: string[] = [
-        `Task \`${closeout.task_id}\` completed in \`${depthText}\`, \`path mode=${pathModeText}\`. ` +
-        `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
-    ];
-
-    if (closeout.optional_skills?.visible_summary_line) {
-        lines.push(closeout.optional_skills.visible_summary_line);
-    }
-
-    if (closeout.token_economy?.visible_summary_line) {
-        lines.push(closeout.token_economy.visible_summary_line);
-    }
-
-    lines.push('');
-    lines.push('Suggested commit command:');
-    lines.push('```bash');
-    lines.push(closeout.commit_command_suggestion);
-    lines.push('```');
-    lines.push('');
-    lines.push(closeout.commit_question);
-
-    return lines.join('\n');
-}
-
 export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResult): TaskAuditSummaryResult {
     const jsonPath = summary.final_closeout.artifact_paths.json;
     const markdownPath = summary.final_closeout.artifact_paths.markdown;
@@ -1198,161 +742,4 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
     updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, false);
     updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, false);
     return summary;
-}
-
-// ---------------------------------------------------------------------------
-// Text formatter
-// ---------------------------------------------------------------------------
-
-export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): string {
-    const lines: string[] = [];
-
-    lines.push(`Task: ${summary.task_id}`);
-    lines.push(`Status: ${summary.status}`);
-    lines.push(`Events: ${summary.events_count}`);
-    lines.push(`Integrity: ${summary.integrity_status}`);
-    if (summary.first_event_utc) lines.push(`FirstEvent: ${summary.first_event_utc}`);
-    if (summary.last_event_utc) lines.push(`LastEvent: ${summary.last_event_utc}`);
-
-    // Gates
-    lines.push('');
-    lines.push('Gates:');
-    for (const gate of summary.gates) {
-        const marker = gate.status === 'PASS' ? '[+]' : gate.status === 'FAIL' ? '[X]' : '[ ]';
-        const ts = gate.timestamp_utc ? ` (${gate.timestamp_utc})` : '';
-        lines.push(`  ${marker} ${gate.gate}${ts}`);
-    }
-
-    // Changed files
-    lines.push('');
-    lines.push(`ChangedFiles: ${summary.changed_files_count} (${summary.changed_lines_total} lines)`);
-    for (const file of summary.changed_files) {
-        lines.push(`  - ${file}`);
-    }
-
-    // Required reviews
-    const activeReviews = Object.entries(summary.required_reviews)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-    if (activeReviews.length > 0) {
-        lines.push('');
-        lines.push(`RequiredReviews: ${activeReviews.join(', ')}`);
-    }
-
-    // Scope category
-    if (summary.scope_category) {
-        lines.push(`ScopeCategory: ${summary.scope_category}`);
-    }
-
-    // Profile review decisions
-    if (summary.profile_review_decisions) {
-        const prd = summary.profile_review_decisions;
-        lines.push('');
-        lines.push('ProfileReviewDecisions:');
-        if (prd.profile_name) lines.push(`  Profile: ${prd.profile_name}`);
-        if (prd.scope_category) lines.push(`  ScopeCategory: ${prd.scope_category}`);
-        lines.push(`  GuardrailsActive: ${prd.guardrails_active}`);
-        lines.push(`  LighteningEligible: ${prd.lightening_eligible}`);
-        if (prd.decisions.length > 0) {
-            for (const d of prd.decisions) {
-                const marker = d.decision === 'safety_floor_enforced' ? '[!]'
-                    : d.decision === 'lightened_by_profile' ? '[-]'
-                        : '[=]';
-                lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision})`);
-            }
-        }
-        if (prd.safety_floors_applied.length > 0) {
-            lines.push('  SafetyFloors:');
-            for (const f of prd.safety_floors_applied) {
-                lines.push(`    - ${f}`);
-            }
-        }
-    }
-
-    // Evidence (always shown to expose expected artifact paths)
-    const presentEvidence = summary.evidence.filter((e) => e.exists);
-    const missingEvidence = summary.evidence.filter((e) => !e.exists);
-    lines.push('');
-    lines.push(`Evidence (${presentEvidence.length} present, ${missingEvidence.length} absent):`);
-    for (const e of presentEvidence) {
-        lines.push(`  [+] ${e.kind}: ${e.path}`);
-    }
-    for (const e of missingEvidence) {
-        lines.push(`  [ ] ${e.kind}: ${e.path}`);
-    }
-
-    // Blockers
-    if (summary.blockers.length > 0) {
-        lines.push('');
-        lines.push('Blockers:');
-        for (const b of summary.blockers) {
-            lines.push(`  [!] ${b.gate}: ${b.reason}`);
-        }
-    }
-
-    if (summary.point_in_time_snapshot.status !== 'STABLE') {
-        lines.push('');
-        lines.push(`PointInTimeSnapshot: ${summary.point_in_time_snapshot.status}`);
-        if (summary.point_in_time_snapshot.message) {
-            lines.push(`  Reason: ${summary.point_in_time_snapshot.message}`);
-        }
-        if (summary.point_in_time_snapshot.recommended_action) {
-            lines.push(`  RecommendedAction: ${summary.point_in_time_snapshot.recommended_action}`);
-        }
-        if (summary.point_in_time_snapshot.lock_path) {
-            lines.push(`  LockPath: ${summary.point_in_time_snapshot.lock_path}`);
-        }
-        if (summary.point_in_time_snapshot.owner_pid !== undefined) {
-            lines.push(`  OwnerPid: ${summary.point_in_time_snapshot.owner_pid === null ? 'unknown' : summary.point_in_time_snapshot.owner_pid}`);
-        }
-        if (summary.point_in_time_snapshot.owner_hostname !== undefined) {
-            lines.push(`  OwnerHost: ${summary.point_in_time_snapshot.owner_hostname || 'unknown'}`);
-        }
-        if (summary.point_in_time_snapshot.owner_created_at_utc !== undefined) {
-            lines.push(`  OwnerCreatedAtUtc: ${summary.point_in_time_snapshot.owner_created_at_utc || 'unknown'}`);
-        }
-        if (summary.point_in_time_snapshot.owner_alive !== undefined) {
-            lines.push(`  OwnerAlive: ${summary.point_in_time_snapshot.owner_alive === null ? 'unknown' : summary.point_in_time_snapshot.owner_alive}`);
-        }
-        if (summary.point_in_time_snapshot.owner_metadata_status !== undefined) {
-            lines.push(`  OwnerMetadataStatus: ${summary.point_in_time_snapshot.owner_metadata_status || 'unknown'}`);
-        }
-        if (summary.point_in_time_snapshot.stale_reason !== undefined) {
-            lines.push(`  StaleReason: ${summary.point_in_time_snapshot.stale_reason || 'none'}`);
-        }
-        if (summary.point_in_time_snapshot.subsystem_scope_note) {
-            lines.push(`  Scope: ${summary.point_in_time_snapshot.subsystem_scope_note}`);
-        }
-        if (summary.point_in_time_snapshot.acquisition_policy) {
-            lines.push(
-                `  AcquisitionPolicy: timeout=${summary.point_in_time_snapshot.acquisition_policy.timeout_ms}ms ` +
-                `retry=${summary.point_in_time_snapshot.acquisition_policy.retry_ms}ms ` +
-                `stale_after=${summary.point_in_time_snapshot.acquisition_policy.stale_after_ms}ms`
-            );
-        }
-    }
-
-    lines.push('');
-    lines.push(`FinalReportContract: ${summary.final_report_contract.status}`);
-    if (summary.final_report_contract.blocker) {
-        lines.push(`  Reason: ${summary.final_report_contract.blocker}`);
-    }
-    lines.push(`FinalCloseout: ${summary.final_closeout.status} (${summary.final_closeout.artifact_state})`);
-    lines.push(`  JsonArtifact: ${summary.final_closeout.artifact_paths.json}`);
-    lines.push(`  MarkdownArtifact: ${summary.final_closeout.artifact_paths.markdown}`);
-    if (summary.final_closeout.optional_skills?.visible_summary_line) {
-        lines.push(`  ${summary.final_closeout.optional_skills.visible_summary_line}`);
-    }
-    if (summary.final_closeout.token_economy?.visible_summary_line) {
-        lines.push(`  ${summary.final_closeout.token_economy.visible_summary_line}`);
-    }
-    lines.push('FinalReportOrder:');
-    lines.push(
-        `  1. ${summary.final_report_contract.required_order[0]} ` +
-        `(include ${summary.final_report_contract.implementation_summary_requirements.join(', ')})`
-    );
-    lines.push(`  2. ${summary.final_report_contract.required_order[1]}`);
-    lines.push(`  3. ${summary.final_report_contract.required_order[2]}`);
-
-    return lines.join('\n');
 }
