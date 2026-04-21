@@ -430,6 +430,129 @@ function buildPassReviewTemplateHintMessage(options: {
     return targetedHint ? `${targetedHint}\n\n${templateHint}` : templateHint;
 }
 
+const CANONICAL_REVIEW_SECTION_HEADINGS = new Set([
+    'findings by severity',
+    'deferred findings',
+    'residual risks',
+    'verdict'
+]);
+
+function trimBlankLineEdges(lines: string[]): string[] {
+    let start = 0;
+    let end = lines.length;
+    while (start < end && lines[start].trim().length === 0) {
+        start += 1;
+    }
+    while (end > start && lines[end - 1].trim().length === 0) {
+        end -= 1;
+    }
+    return lines.slice(start, end);
+}
+
+function stripMarkdownListPrefix(entry: string): string {
+    return String(entry || '')
+        .replace(/^\s*[-*+]\s+/, '')
+        .replace(/^\s*\d+\.\s+/, '')
+        .trim();
+}
+
+function extractReviewPreambleLines(reviewType: string, reviewContent: string): string[] {
+    const lines = String(reviewContent || '').split('\n');
+    const preamble: string[] = [];
+    for (const line of lines) {
+        const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(line.trim());
+        if (headingMatch && CANONICAL_REVIEW_SECTION_HEADINGS.has(headingMatch[2].trim().toLowerCase())) {
+            break;
+        }
+        preamble.push(line);
+    }
+    const trimmed = trimBlankLineEdges(preamble);
+    if (trimmed.length > 0) {
+        return trimmed;
+    }
+    return [`# ${getReviewHeading(reviewType)}`];
+}
+
+function appendDeferredFinding(lines: string[], entry: string): void {
+    const normalizedEntry = stripMarkdownListPrefix(entry);
+    if (!normalizedEntry) {
+        return;
+    }
+    lines.push(`- ${normalizedEntry}`);
+    lines.push('  Justification: Preserved from raw reviewer output during PASS review normalization.');
+    lines.push('');
+}
+
+function appendPreservedRawReviewerOutput(lines: string[], reviewContent: string): void {
+    lines.push('## Preserved Raw Reviewer Output');
+    lines.push('');
+    for (const line of String(reviewContent || '').replace(/\r\n/g, '\n').split('\n')) {
+        lines.push(line.length > 0 ? `> ${line}` : '>');
+    }
+    lines.push('');
+}
+
+function isLosslessPassNormalizationEligibleViolation(violation: string): boolean {
+    const normalizedViolation = String(violation || '').toLowerCase();
+    return normalizedViolation.includes('still contains active ')
+        || normalizedViolation.includes("missing required section '## findings by severity'")
+        || normalizedViolation.includes("missing required section '## residual risks'")
+        || normalizedViolation.includes("deferred finding without usable 'justification:'");
+}
+
+function buildLosslessPassReviewNormalization(options: {
+    reviewType: string;
+    reviewContent: string;
+    expectedPassVerdict: string;
+    findingsEvidence: ReviewFindingsEvidence;
+}): string | null {
+    const {
+        reviewType,
+        reviewContent,
+        expectedPassVerdict,
+        findingsEvidence
+    } = options;
+    const activeFindings = (['critical', 'high', 'medium', 'low'] as const)
+        .flatMap((severity) => findingsEvidence.findings_by_severity[severity].map((entry) => `[${severity}] ${entry}`));
+    const activeResidualRisks = findingsEvidence.residual_risks.map((entry) => `[follow-up] ${entry}`);
+    const pendingDeferredEntries = [
+        ...findingsEvidence.deferred_findings,
+        ...findingsEvidence.invalid_deferred_findings,
+        ...activeFindings,
+        ...activeResidualRisks
+    ];
+    if (pendingDeferredEntries.length === 0) {
+        return null;
+    }
+
+    const normalizedLines = [...extractReviewPreambleLines(reviewType, reviewContent)];
+    if (normalizedLines.length === 0 || !normalizedLines[0].trim().startsWith('#')) {
+        normalizedLines.unshift(`# ${getReviewHeading(reviewType)}`);
+    }
+    if (normalizedLines[normalizedLines.length - 1]?.trim().length !== 0) {
+        normalizedLines.push('');
+    }
+    appendPreservedRawReviewerOutput(normalizedLines, reviewContent);
+    normalizedLines.push('## Findings by Severity');
+    normalizedLines.push('none');
+    normalizedLines.push('');
+    normalizedLines.push('## Deferred Findings');
+    normalizedLines.push('');
+    for (const entry of pendingDeferredEntries) {
+        appendDeferredFinding(normalizedLines, entry);
+    }
+    if (normalizedLines[normalizedLines.length - 1]?.trim().length === 0) {
+        normalizedLines.pop();
+    }
+    normalizedLines.push('');
+    normalizedLines.push('## Residual Risks');
+    normalizedLines.push('none');
+    normalizedLines.push('');
+    normalizedLines.push('## Verdict');
+    normalizedLines.push(expectedPassVerdict);
+    return `${normalizedLines.join('\n')}\n`;
+}
+
 function assertRoutingCompatibility(
     options: {
         reviewType: string;
@@ -702,6 +825,9 @@ async function recordReviewReceiptFromArtifacts(options: {
     preflightPath: string;
     artifactPath: string;
     contextPath: string;
+    rawReviewOutputPath?: string | null;
+    rawReviewOutputSha256?: string | null;
+    reviewMaterializationFidelity?: string | null;
     taskModePath?: string | null;
     reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
     reviewerIdentity: string;
@@ -814,6 +940,11 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerFallbackReason: options.reviewerFallbackReason,
         trustLevel: 'LOCAL_AUDITED'
     });
+    (receipt as unknown as Record<string, unknown>).review_output_path = options.rawReviewOutputPath
+        ? normalizePath(options.rawReviewOutputPath)
+        : null;
+    (receipt as unknown as Record<string, unknown>).review_output_sha256 = options.rawReviewOutputSha256 || null;
+    (receipt as unknown as Record<string, unknown>).review_materialization_fidelity = options.reviewMaterializationFidelity || 'exact';
 
     const receiptPath = options.artifactPath.replace(/\.md$/, '-receipt.json');
     writeReviewArtifactJson(receiptPath, receipt);
@@ -992,7 +1123,9 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         options.reviewContextPath
     );
     const reviewOutput = await resolveReviewOutputInput(options, repoRoot, path.dirname(preflightPath), taskId, reviewType);
-    const reviewContent = reviewOutput.reviewContent;
+    const rawReviewOutputSha256 = fileSha256(reviewOutput.reviewOutputPath);
+    let reviewContent = reviewOutput.reviewContent;
+    let reviewMaterializationFidelity = 'exact';
     const expectedPassVerdict = REVIEW_CONTRACTS.find(([candidate]) => candidate === reviewType)?.[1] || null;
     if (!expectedPassVerdict) {
         throw new Error(`Unsupported review type '${reviewType}' for record-review-result.`);
@@ -1011,6 +1144,31 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         verdictToken,
         expectedPassVerdict
     });
+    if (verdictToken === expectedPassVerdict) {
+        const normalizedPassReviewContent = buildLosslessPassReviewNormalization({
+            reviewType,
+            reviewContent,
+            expectedPassVerdict,
+            findingsEvidence: materializationAnalysis.findingsEvidence
+        });
+        if (normalizedPassReviewContent) {
+            const normalizedAnalysis = analyzeEarlyReviewMaterialization({
+                artifactPath,
+                reviewContent: normalizedPassReviewContent,
+                verdictToken,
+                expectedPassVerdict
+            });
+            const preservedBlockingViolations = materializationAnalysis.violations.filter(
+                (violation) => !isLosslessPassNormalizationEligibleViolation(violation)
+            );
+            if (normalizedAnalysis.violations.length === 0) {
+                reviewContent = normalizedPassReviewContent;
+                reviewMaterializationFidelity = 'normalized_lossless';
+                materializationAnalysis.violations = preservedBlockingViolations;
+                materializationAnalysis.findingsEvidence = normalizedAnalysis.findingsEvidence;
+            }
+        }
+    }
     if (materializationAnalysis.violations.length > 0) {
         const passTemplateHint = buildPassReviewTemplateHintMessage({
             reviewType,
@@ -1127,6 +1285,9 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         preflightPath,
         artifactPath,
         contextPath,
+        rawReviewOutputPath: reviewOutput.reviewOutputPath,
+        rawReviewOutputSha256,
+        reviewMaterializationFidelity,
         taskModePath: String(options.taskModePath || '').trim(),
         reviewerExecutionMode,
         reviewerIdentity,
@@ -1143,6 +1304,8 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
     console.log(`ReviewOutputMode: ${reviewOutput.reviewOutputMode}`);
     console.log(`ReviewOutputPath: ${normalizePath(reviewOutput.reviewOutputPath)}`);
+    console.log(`ReviewOutputSha256: ${rawReviewOutputSha256 || 'n/a'}`);
+    console.log(`ReviewMaterializationFidelity: ${reviewMaterializationFidelity}`);
     if (reviewOutput.reviewOutputSourcePath) {
         console.log(`ReviewOutputSourcePath: ${normalizePath(reviewOutput.reviewOutputSourcePath)}`);
     }

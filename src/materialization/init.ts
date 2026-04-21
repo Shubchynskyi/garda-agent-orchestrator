@@ -241,6 +241,9 @@ export function runInit(options: RunInitOptions) {
         });
     }
 
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'workflow-config', 'garda.config'];
+    const managedConfigFileNames = new Set(managedConfigNames.map((configName) => `${configName}.json`.toLowerCase()));
+
     // Copy support directories from template to live
     const supportDirectories = [
         'config', 'skills', 'docs/changes', 'docs/reviews', 'docs/tasks'
@@ -254,7 +257,18 @@ export function runInit(options: RunInitOptions) {
         const destDir = path.join(liveRoot, relDir);
         if (!dryRun) {
             ensureDirectory(destDir);
-            copyDirectoryRecursive(srcDir, destDir);
+            copyDirectoryRecursive(
+                srcDir,
+                destDir,
+                relDir === 'config'
+                    ? {
+                        shouldCopyFile: (_srcPath, destPath) => !(
+                            managedConfigFileNames.has(path.basename(destPath).toLowerCase())
+                            && pathExists(destPath)
+                        )
+                    }
+                    : undefined
+            );
         }
         copiedSupportDirs++;
     }
@@ -274,7 +288,6 @@ export function runInit(options: RunInitOptions) {
     });
 
     // Handle managed config materialization (token-economy enabled flag)
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'workflow-config', 'garda.config'];
     const configMergeStatuses: Record<string, string> = {};
 
     for (const configName of managedConfigNames) {
@@ -474,15 +487,22 @@ export function mergeConfig(template: Record<string, unknown>, existing: Record<
     return result;
 }
 
-function copyDirectoryRecursive(srcDir: string, destDir: string): void {
+interface CopyDirectoryOptions {
+    shouldCopyFile?: (srcPath: string, destPath: string) => boolean;
+}
+
+function copyDirectoryRecursive(srcDir: string, destDir: string, options?: CopyDirectoryOptions): void {
     ensureDirectory(destDir);
     const entries = fs.readdirSync(srcDir, { withFileTypes: true });
     for (const entry of entries) {
         const srcPath = path.join(srcDir, entry.name);
         const destPath = path.join(destDir, entry.name);
         if (entry.isDirectory()) {
-            copyDirectoryRecursive(srcPath, destPath);
+            copyDirectoryRecursive(srcPath, destPath, options);
         } else {
+            if (options?.shouldCopyFile && !options.shouldCopyFile(srcPath, destPath)) {
+                continue;
+            }
             fs.copyFileSync(srcPath, destPath);
         }
     }

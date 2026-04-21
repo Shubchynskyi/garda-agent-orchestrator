@@ -383,6 +383,54 @@ test('handleSetup runs contract migrations before verify so stale live task work
     }
 });
 
+test('handleSetup preserves explicit workflow-config full-suite settings across repeated refreshes', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-workflow-config-preserve-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+            packageJson,
+            repoRoot
+        );
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.deepEqual(workflowConfig.full_suite_validation, {
+            enabled: true,
+            command: 'npm run test:full',
+            timeout_ms: 123456,
+            green_summary_max_lines: 7,
+            red_failure_chunk_lines: 42,
+            out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+        });
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // buildSetupHandoffText
 // ---------------------------------------------------------------------------
