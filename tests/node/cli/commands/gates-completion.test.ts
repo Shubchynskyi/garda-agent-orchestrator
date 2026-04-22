@@ -28,6 +28,7 @@ import {
     buildReviewReceipt
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import * as childProcess from 'node:child_process';
 
 function escapeRegExp(value: string): string {
@@ -36,25 +37,48 @@ function escapeRegExp(value: string): string {
 
 function createReviewerRoutingFixture(
     sourceOfTruth: string,
+    executionProviderSource: 'provider_entrypoint' | 'provider_bridge' = 'provider_entrypoint',
     overrides: Record<string, unknown> = {}
 ): Record<string, unknown> {
     const normalizedSourceOfTruth = String(sourceOfTruth).trim() || 'Codex';
-    const conditionalFallbackProvider = normalizedSourceOfTruth === 'Antigravity';
+    const routingPolicy = resolveReviewerRoutingPolicy(normalizedSourceOfTruth, executionProviderSource);
     return {
         source_of_truth: normalizedSourceOfTruth,
         canonical_source_of_truth: normalizedSourceOfTruth,
         execution_provider: normalizedSourceOfTruth,
-        execution_provider_source: 'provider_entrypoint',
+        execution_provider_source: executionProviderSource,
         identity_status: 'resolved',
-        capability_level: conditionalFallbackProvider ? 'delegation_conditional' : 'delegation_capable',
-        expected_execution_mode: conditionalFallbackProvider ? 'delegated_subagent' : 'delegated_subagent',
-        fallback_allowed: conditionalFallbackProvider,
-        fallback_reason_required: conditionalFallbackProvider,
+        capability_level: routingPolicy.capability_level,
+        expected_execution_mode: routingPolicy.expected_execution_mode,
+        fallback_allowed: routingPolicy.fallback_allowed,
+        fallback_reason_required: routingPolicy.fallback_reason_required,
         actual_execution_mode: null,
         reviewer_session_id: null,
         fallback_reason: null,
         ...overrides
     };
+}
+
+function resolveReviewerExecutionFixture(
+    taskId: string,
+    sourceOfTruth = 'Codex',
+    executionProviderSource: 'provider_entrypoint' | 'provider_bridge' = 'provider_entrypoint',
+    delegatedIdentity = 'agent:test-reviewer'
+) {
+    const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth, executionProviderSource);
+    const reviewerExecutionMode = routingPolicy.expected_execution_mode;
+    const reviewerIdentity = reviewerExecutionMode === 'delegated_subagent'
+        ? delegatedIdentity
+        : `self:${taskId}`;
+    const reviewerFallbackReason = reviewerExecutionMode === 'same_agent_fallback'
+        ? `direct ${sourceOfTruth} ${executionProviderSource} execution cannot supply attested reviewer launch evidence`
+        : null;
+    return {
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewerFallbackReason,
+        trustLevel: 'LOCAL_ASSERTED'
+    } as const;
 }
 
 async function captureExpectedAsyncError(callback: () => Promise<void>): Promise<Error> {
@@ -275,6 +299,7 @@ function writeReceiptBackedReviewArtifact(
     contentLines?: string[]
 ): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
+    const execution = resolveReviewerExecutionFixture(taskId, 'Codex');
     fs.mkdirSync(reviewsRoot, { recursive: true });
     const content = (contentLines || [
         '# Review',
@@ -297,9 +322,10 @@ function writeReceiptBackedReviewArtifact(
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     const reviewContext = {
         review_type: reviewKey,
-        reviewer_routing: createReviewerRoutingFixture('Codex', {
-            actual_execution_mode: 'delegated_subagent',
-            reviewer_session_id: 'agent:test-reviewer'
+        reviewer_routing: createReviewerRoutingFixture('Codex', 'provider_entrypoint', {
+            actual_execution_mode: execution.reviewerExecutionMode,
+            reviewer_session_id: execution.reviewerIdentity,
+            fallback_reason: execution.reviewerFallbackReason
         })
     };
     const reviewContextText = JSON.stringify(reviewContext, null, 2);
@@ -316,8 +342,10 @@ function writeReceiptBackedReviewArtifact(
         review_type: reviewKey,
         review_artifact_sha256: artifactHash,
         review_context_sha256: reviewContextHash,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_identity: 'agent:test-reviewer'
+        reviewer_execution_mode: execution.reviewerExecutionMode,
+        reviewer_identity: execution.reviewerIdentity,
+        reviewer_fallback_reason: execution.reviewerFallbackReason,
+        trust_level: execution.trustLevel
     }));
 
     // Emit mandatory telemetry for authenticity
@@ -331,9 +359,10 @@ function writeReceiptBackedReviewArtifact(
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
             review_type: reviewKey,
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_session_id: 'agent:test-reviewer',
-            delegation_used: true
+            reviewer_execution_mode: execution.reviewerExecutionMode,
+            reviewer_session_id: execution.reviewerIdentity,
+            delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
+            reviewer_fallback_reason: execution.reviewerFallbackReason
         });
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
@@ -355,6 +384,8 @@ function seedReusableReviewEvidence(
         legacyReviewContextIdentity?: boolean;
         legacyReviewContextSourceOfTruth?: string;
         taskModePath?: string | null;
+        sourceOfTruth?: string;
+        executionProviderSource?: 'provider_entrypoint' | 'provider_bridge';
     } = {}
 ): string {
     const crypto = require('node:crypto');
@@ -386,10 +417,16 @@ function seedReusableReviewEvidence(
         outputPath: reviewContextPath,
         repoRoot
     });
+    const execution = resolveReviewerExecutionFixture(
+        taskId,
+        options.sourceOfTruth || 'Codex',
+        options.executionProviderSource || 'provider_entrypoint',
+        reviewerIdentity
+    );
     applyReviewerRoutingMetadata(reviewContextPath, {
-        actualExecutionMode: 'delegated_subagent',
-        reviewerSessionId: reviewerIdentity,
-        fallbackReason: null
+        actualExecutionMode: execution.reviewerExecutionMode,
+        reviewerSessionId: execution.reviewerIdentity,
+        fallbackReason: execution.reviewerFallbackReason
     });
     if (options.legacyReviewContextIdentity) {
         const legacyReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
@@ -426,10 +463,10 @@ function seedReusableReviewEvidence(
         reviewContextSha256: reviewContextHash,
         reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
         reviewArtifactSha256: artifactHash,
-        reviewerExecutionMode: 'delegated_subagent',
-        reviewerIdentity,
-        reviewerFallbackReason: null,
-        trustLevel: 'LOCAL_AUDITED'
+        reviewerExecutionMode: execution.reviewerExecutionMode,
+        reviewerIdentity: execution.reviewerIdentity,
+        reviewerFallbackReason: execution.reviewerFallbackReason,
+        trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
     return reviewContextPath;

@@ -14,6 +14,7 @@ import {
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
+    buildReviewReceiptReviewerProvenance,
     normalizeReviewerExecutionMode,
     restoreReviewerRoutingMetadata,
     type ReviewReceipt
@@ -78,10 +79,35 @@ function readTimelineEventsSummary(timelinePath: string): TimelineEventsSummaryR
             const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
                 ? parsed.details as Record<string, unknown>
                 : null;
+            const rawIntegrity = parsed.integrity && typeof parsed.integrity === 'object' && !Array.isArray(parsed.integrity)
+                ? parsed.integrity as Record<string, unknown>
+                : null;
+            const taskSequence = typeof rawIntegrity?.task_sequence === 'number'
+                ? rawIntegrity.task_sequence
+                : Number(rawIntegrity?.task_sequence);
+            const eventSha256 = String(rawIntegrity?.event_sha256 || '').trim().toLowerCase();
+            const prevEventSha256Raw = rawIntegrity?.prev_event_sha256;
+            const prevEventSha256 = prevEventSha256Raw == null
+                ? null
+                : String(prevEventSha256Raw).trim().toLowerCase() || null;
             events.push({
                 event_type: String(parsed.event_type || '').trim().toUpperCase(),
                 sequence: index,
-                details
+                details,
+                integrity: rawIntegrity
+                    && Number.isInteger(taskSequence)
+                    && taskSequence > 0
+                    && /^[0-9a-f]{64}$/.test(eventSha256)
+                    && (prevEventSha256 == null || /^[0-9a-f]{64}$/.test(prevEventSha256))
+                    ? {
+                        schema_version: typeof rawIntegrity.schema_version === 'number'
+                            ? rawIntegrity.schema_version
+                            : Number(rawIntegrity.schema_version) || 1,
+                        task_sequence: taskSequence,
+                        prev_event_sha256: prevEventSha256,
+                        event_sha256: eventSha256
+                    }
+                    : null
             });
         } catch {
             hasInvalidLines = true;
@@ -236,6 +262,9 @@ async function tryReuseCodeReviewEvidence(options: {
     if (!contextHashMatches && !contextReuseHashMatches) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
+    if (reviewerExecutionMode === 'delegated_subagent') {
+        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+    }
     const routingUpdate = applyReviewerRoutingMetadata(
         options.reviewContextPath,
         {
@@ -267,25 +296,9 @@ async function tryReuseCodeReviewEvidence(options: {
             existed: false,
             content: null as string | null
         };
-    const refreshedReceipt = buildReviewReceipt({
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        preflightSha256: currentPreflightHash,
-        scopeSha256: String((options.preflightPayload.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
-        codeScopeSha256: String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null,
-        reviewContextSha256: routingUpdate.contextSha256,
-        reviewContextReuseSha256: String(computeReviewContextReuseHash(JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as Record<string, unknown>) || '').trim().toLowerCase() || null,
-        reviewArtifactSha256: String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase() || null,
-        reviewerExecutionMode,
-        reviewerIdentity,
-        reviewerFallbackReason,
-        trustLevel: String(receipt.trust_level || '').trim() || 'LOCAL_AUDITED'
-    });
-    writeReviewArtifactJson(receiptPath, refreshedReceipt);
-
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
     try {
-        const routedEvent = await emitReviewerDelegationRoutedEventAsync(
+        const routingEvent = await emitReviewerDelegationRoutedEventAsync(
             orchestratorRoot,
             options.taskId,
             options.reviewType,
@@ -293,9 +306,25 @@ async function tryReuseCodeReviewEvidence(options: {
             reviewerIdentity,
             reviewerFallbackReason
         );
-        if (!routedEvent || (Array.isArray(routedEvent.warnings) && routedEvent.warnings.length > 0)) {
+        if (!routingEvent || (Array.isArray(routingEvent.warnings) && routingEvent.warnings.length > 0)) {
             throw new Error('REVIEWER_DELEGATION_ROUTED telemetry could not be persisted for review reuse.');
         }
+        const refreshedReceipt = buildReviewReceipt({
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            preflightSha256: currentPreflightHash,
+            scopeSha256: String((options.preflightPayload.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
+            codeScopeSha256: String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null,
+            reviewContextSha256: routingUpdate.contextSha256,
+            reviewContextReuseSha256: String(computeReviewContextReuseHash(JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as Record<string, unknown>) || '').trim().toLowerCase() || null,
+            reviewArtifactSha256: String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase() || null,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            reviewerFallbackReason,
+            reviewerProvenance: null,
+            trustLevel: 'LOCAL_ASSERTED'
+        });
+        writeReviewArtifactJson(receiptPath, refreshedReceipt);
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
             ...refreshedReceipt,
             reused_existing_review: true,

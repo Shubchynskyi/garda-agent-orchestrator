@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    checkRequiredReviews,
     parseSkipReviews,
     testExpectedVerdict,
     REVIEW_CONTRACTS,
@@ -27,6 +28,86 @@ describe('gates/required-reviews-check', () => {
         });
         it('lowercases', () => {
             assert.deepEqual(parseSkipReviews('CODE,DB'), ['code', 'db']);
+        });
+    });
+
+    describe('checkRequiredReviews', () => {
+        it('fails closed when the task timeline is missing or unreadable', () => {
+            const result = checkRequiredReviews({
+                validatedPreflight: {
+                    errors: [],
+                    resolved_task_id: 'T-105',
+                    required_reviews: { code: true },
+                    preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                    preflight_hash: 'abc123'
+                },
+                verdicts: { code: 'REVIEW PASSED' },
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint',
+                reviewArtifacts: {
+                    code: {
+                        path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
+                        content: [
+                            '# Review',
+                            '',
+                            'Validated required review evidence with concrete implementation detail and a non-trivial receipt fixture.',
+                            '',
+                            '## Findings by Severity',
+                            'none',
+                            '',
+                            '## Residual Risks',
+                            'none',
+                            '',
+                            '## Verdict',
+                            'REVIEW PASSED'
+                        ].join('\n'),
+                        reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code-review-context.json',
+                        reviewContext: {
+                            schema_version: 2,
+                            task_id: 'T-105',
+                            review_type: 'code',
+                            preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                            preflight_sha256: 'abc123',
+                            reviewer_routing: {
+                                source_of_truth: 'Codex',
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                execution_provider_source: 'provider_entrypoint',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:T-105'
+                            }
+                        },
+                        reviewContextSha256: 'ctx',
+                        artifactSha256: 'artifact',
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-105',
+                            review_type: 'code',
+                            preflight_sha256: 'abc123',
+                            scope_sha256: null,
+                            review_context_sha256: 'ctx',
+                            review_artifact_sha256: 'artifact',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:T-105',
+                            reviewer_fallback_reason: null,
+                            trust_level: 'LOCAL_AUDITED',
+                            reviewer_provenance: {
+                                schema_version: 1,
+                                attestation_type: 'controller_event_integrity',
+                                controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+                                task_sequence: 5,
+                                prev_event_sha256: 'a'.repeat(64),
+                                event_sha256: 'b'.repeat(64)
+                            },
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('Task timeline missing or unreadable')));
         });
     });
 
@@ -581,7 +662,7 @@ describe('gates/required-reviews-check', () => {
             assert.equal(result.reviewerRoutingPolicy?.legacy_identity_compatibility_applied, true);
         });
 
-        it('rejects same_agent_fallback receipts for delegation-required providers', () => {
+        it('rejects same_agent_fallback receipts for delegation-required providers when execution runs through a provider bridge', () => {
             const result = validateReviewArtifactGateEligibility({
                 resolvedTaskId: 'T-105',
                 reviewKey: 'code',
@@ -590,8 +671,8 @@ describe('gates/required-reviews-check', () => {
                 preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
                 preflightSha256: 'abc123',
                 canonicalSourceOfTruth: 'Codex',
-                executionProvider: 'Codex',
-                executionProviderSource: 'provider_entrypoint',
+                executionProvider: 'GitHubCopilot',
+                executionProviderSource: 'provider_bridge',
                 reviewArtifact: {
                     path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
                     content: [
@@ -616,10 +697,10 @@ describe('gates/required-reviews-check', () => {
                         preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
                         preflight_sha256: 'abc123',
                         reviewer_routing: {
-                            source_of_truth: 'Codex',
+                            source_of_truth: 'GitHubCopilot',
                             canonical_source_of_truth: 'Codex',
-                            execution_provider: 'Codex',
-                            execution_provider_source: 'provider_entrypoint',
+                            execution_provider: 'GitHubCopilot',
+                            execution_provider_source: 'provider_bridge',
                             identity_status: 'resolved',
                             actual_execution_mode: 'same_agent_fallback',
                             reviewer_session_id: 'self:T-105',
@@ -644,8 +725,11 @@ describe('gates/required-reviews-check', () => {
                 }
             });
 
-            assert.ok(result.violations.some((violation) => violation.includes('must use delegated_subagent')));
-            assert.ok(result.violations.some((violation) => violation.includes('fallback is not allowed')));
+            assert.ok(result.violations.length > 0);
+            assert.ok(result.violations.some((violation) => (
+                violation.includes('same_agent_fallback')
+                || violation.includes('delegated_subagent')
+            )));
         });
 
         it('rejects delegated_subagent review-context artifacts with self-scoped reviewer identities', () => {
@@ -712,6 +796,397 @@ describe('gates/required-reviews-check', () => {
 
             assert.ok(result.violations.some((violation) => violation.includes('reviewer_identity is self-scoped')));
             assert.ok(result.violations.some((violation) => violation.includes('reviewer_session_id is self-scoped')));
+        });
+
+        it('rejects LOCAL_AUDITED delegated_subagent receipts without reviewer_provenance', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-105',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint',
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated provenance enforcement with concrete file references and non-trivial detail.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:T-105'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact',
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: 'ctx',
+                        review_artifact_sha256: 'artifact',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:T-105',
+                        reviewer_fallback_reason: null,
+                        trust_level: 'LOCAL_AUDITED',
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('missing reviewer_provenance')));
+        });
+
+        it('normalizes non-canonical delegated LOCAL_AUDITED trust strings before enforcement', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-105',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint',
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated trust normalization through the delegated review receipt path with concrete implementation detail.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:T-105'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact',
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: 'ctx',
+                        review_artifact_sha256: 'artifact',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:T-105',
+                        reviewer_fallback_reason: null,
+                        trust_level: ' local_audited ',
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('missing reviewer_provenance')));
+        });
+
+        it('rejects same_agent_fallback receipts that claim LOCAL_AUDITED trust', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-105',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Qwen',
+                executionProvider: 'Qwen',
+                executionProviderSource: 'provider_entrypoint',
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated trust downgrade enforcement for same-agent fallback receipts with concrete implementation detail.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Qwen',
+                            canonical_source_of_truth: 'Qwen',
+                            execution_provider: 'Qwen',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'same_agent_fallback',
+                            reviewer_session_id: 'self:T-105',
+                            fallback_reason: 'provider limitation'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact',
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: 'ctx',
+                        review_artifact_sha256: 'artifact',
+                        reviewer_execution_mode: 'same_agent_fallback',
+                        reviewer_identity: 'self:T-105',
+                        reviewer_fallback_reason: 'provider limitation',
+                        trust_level: 'LOCAL_AUDITED',
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('cannot claim LOCAL_AUDITED')));
+        });
+
+        it('rejects delegated LOCAL_AUDITED claims even when routing telemetry carries provider-like launch markers', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-105',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint',
+                timelineEvents: [{
+                    event_type: 'COMPILE_GATE_PASSED',
+                    sequence: 0,
+                    details: null,
+                    integrity: null
+                }, {
+                    event_type: 'REVIEW_PHASE_STARTED',
+                    sequence: 1,
+                    details: { review_type: 'code' },
+                    integrity: null
+                }, {
+                    event_type: 'REVIEWER_DELEGATION_ROUTED',
+                    sequence: 2,
+                    details: {
+                        review_type: 'code',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_session_id: 'agent:T-105',
+                        reviewer_launch_attestation_type: 'provider_artifact',
+                        reviewer_launch_artifact_path: '/tmp/provider-artifact.json'
+                    },
+                    integrity: {
+                        schema_version: 1,
+                        task_sequence: 3,
+                        prev_event_sha256: 'a'.repeat(64),
+                        event_sha256: 'b'.repeat(64)
+                    }
+                }],
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated that current T-134 contract keeps delegated trust asserted-only even when provider-like routing markers are present in local telemetry.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:T-105'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact',
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: 'ctx',
+                        review_artifact_sha256: 'artifact',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:T-105',
+                        reviewer_fallback_reason: null,
+                        reviewer_provenance: {
+                            schema_version: 1,
+                            attestation_type: 'controller_event_integrity',
+                            controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+                            task_sequence: 3,
+                            prev_event_sha256: 'a'.repeat(64),
+                            event_sha256: 'b'.repeat(64)
+                        },
+                        trust_level: 'LOCAL_AUDITED',
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('cannot claim LOCAL_AUDITED trust')));
+        });
+
+        it('rejects delegated_subagent receipts that omit reviewer_provenance even when asserted trust is used', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-105',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint',
+                timelineEvents: [{
+                    event_type: 'COMPILE_GATE_PASSED',
+                    sequence: 0,
+                    details: null,
+                    integrity: null
+                }, {
+                    event_type: 'REVIEW_PHASE_STARTED',
+                    sequence: 1,
+                    details: { review_type: 'code' },
+                    integrity: null
+                }, {
+                    event_type: 'REVIEWER_DELEGATION_ROUTED',
+                    sequence: 2,
+                    details: {
+                        review_type: 'code',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_session_id: 'agent:T-105'
+                    },
+                    integrity: {
+                        schema_version: 1,
+                        task_sequence: 3,
+                        prev_event_sha256: 'a'.repeat(64),
+                        event_sha256: 'b'.repeat(64)
+                    }
+                }],
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated delegated provenance enforcement with integrity-backed routing telemetry and concrete implementation detail.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:T-105'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact',
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: 'ctx',
+                        review_artifact_sha256: 'artifact',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:T-105',
+                        reviewer_fallback_reason: null,
+                        trust_level: 'LOCAL_ASSERTED',
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('missing reviewer_provenance')));
         });
 
         it('rejects receipts whose fallback reason diverges from review-context routing metadata', () => {

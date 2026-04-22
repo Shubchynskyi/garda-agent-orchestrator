@@ -106,13 +106,21 @@ function readJsonObjectIfExists(filePath: string): Record<string, unknown> | nul
     return null;
 }
 
-export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRoutingPolicy {
+export function resolveReviewerRoutingPolicy(
+    sourceOfTruth: unknown,
+    executionProviderSource?: unknown
+): ReviewerRoutingPolicy {
     const normalized = normalizeSourceOfTruthValue(sourceOfTruth);
     const tier = normalized ? getReviewerCapabilityTier(normalized) : null;
+    const normalizedExecutionProviderSource = executionProviderSource === undefined
+        ? undefined
+        : normalizeRuntimeIdentitySource(executionProviderSource);
+
+    let policy: ReviewerRoutingPolicy;
 
     switch (tier) {
         case 'delegation_required':
-            return {
+            policy = {
                 source_of_truth: normalized,
                 capability_level: 'delegation_required',
                 delegation_required: true,
@@ -121,8 +129,9 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
                 expected_execution_mode: 'delegated_subagent',
                 note: `${normalized} is treated as delegation-capable. Same-agent fallback is invalid for required reviews.`
             };
+            break;
         case 'delegation_conditional':
-            return {
+            policy = {
                 source_of_truth: normalized,
                 capability_level: 'delegation_conditional',
                 delegation_required: false,
@@ -131,8 +140,9 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
                 expected_execution_mode: 'delegated_subagent',
                 note: `${normalized} should delegate when provider sub-agent support is available; fallback requires an explicit reason.`
             };
+            break;
         case 'single_agent_only':
-            return {
+            policy = {
                 source_of_truth: normalized,
                 capability_level: 'single_agent_only',
                 delegation_required: false,
@@ -141,8 +151,9 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
                 expected_execution_mode: 'same_agent_fallback',
                 note: `${normalized} is treated as single-agent for review routing. Fallback receipts must still include reviewer_fallback_reason.`
             };
+            break;
         default:
-            return {
+            policy = {
                 source_of_truth: normalized,
                 capability_level: 'unknown',
                 delegation_required: false,
@@ -151,7 +162,27 @@ export function resolveReviewerRoutingPolicy(sourceOfTruth: unknown): ReviewerRo
                 expected_execution_mode: 'same_agent_fallback',
                 note: 'Provider delegation capability is unknown. Fallback is allowed only with an explicit reason.'
             };
+            break;
     }
+
+    if (
+        normalizedExecutionProviderSource !== undefined
+        && policy.delegation_required
+        && normalizedExecutionProviderSource !== 'provider_bridge'
+    ) {
+        return {
+            ...policy,
+            delegation_required: false,
+            fallback_allowed: true,
+            fallback_reason_required: true,
+            expected_execution_mode: 'same_agent_fallback',
+            note: `${normalized || 'This provider'} normally supports delegated review, but the current execution source ` +
+                `('${normalizedExecutionProviderSource || 'unknown'}') cannot supply attested reviewer launch evidence. ` +
+                'Use same_agent_fallback with an explicit reason until a provider bridge or other attested reviewer launch path is available.'
+        };
+    }
+
+    return policy;
 }
 
 export function readCanonicalSourceOfTruth(repoRoot: string): string | null {
@@ -399,7 +430,7 @@ export function resolveRuntimeReviewerIdentity(options: {
         );
     }
 
-    const policy = resolveReviewerRoutingPolicy(executionProvider);
+    const policy = resolveReviewerRoutingPolicy(executionProvider, executionProviderSource);
     let identityStatus: RuntimeProviderIdentityStatus = 'resolved';
     if (violations.length > 0) {
         identityStatus = 'contradictory';

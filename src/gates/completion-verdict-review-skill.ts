@@ -6,7 +6,11 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { normalizeReviewerExecutionMode, type ReviewReceipt } from '../gate-runtime/review-context';
+import {
+    normalizeReviewReceiptReviewerProvenance,
+    normalizeReviewerExecutionMode,
+    type ReviewReceipt
+} from '../gate-runtime/review-context';
 import { getReviewSkillCandidates } from './build-review-context';
 import { normalizePath } from './helpers';
 import {
@@ -113,7 +117,7 @@ export function validateReviewSkillEvidence(
         );
     }
 
-    const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth);
+    const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth, executionProviderSource);
 
     for (const key of requiredKeys) {
         const candidateSkillIds = getReviewSkillCandidates(key);
@@ -214,6 +218,12 @@ export function validateReviewSkillEvidence(
             if (executionMode && !result.reviewer_execution_modes.includes(executionMode)) {
                 result.reviewer_execution_modes.push(executionMode);
             }
+            if (executionMode === 'delegated_subagent' && !routingEvent.integrity) {
+                result.violations.push(
+                    `Reviewer routing telemetry for '${key}' is missing integrity in '${normalizedTimelinePath}'. ` +
+                    'Delegated review provenance must bind to controller-attested routing telemetry.'
+                );
+            }
             if (reviewPhaseSequenceForKey != null && routingEvent.sequence < reviewPhaseSequenceForKey) {
                 result.violations.push(
                     `Reviewer routing telemetry for '${key}' was emitted before REVIEW_PHASE_STARTED in '${normalizedTimelinePath}'.`
@@ -283,12 +293,18 @@ export function validateReviewSkillEvidence(
             const reviewContext = artifact.reviewContext && typeof artifact.reviewContext === 'object' && !Array.isArray(artifact.reviewContext)
                 ? artifact.reviewContext as Record<string, unknown>
                 : null;
-            const reviewerRouting = reviewContext?.reviewer_routing && typeof reviewContext.reviewer_routing === 'object' && !Array.isArray(reviewContext.reviewer_routing)
-                ? reviewContext.reviewer_routing as Record<string, unknown>
-                : null;
-            const routingEvent = findLatestTimelineEvent(events, (entry) => (
-                entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
-                String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
+                const reviewerRouting = reviewContext?.reviewer_routing && typeof reviewContext.reviewer_routing === 'object' && !Array.isArray(reviewContext.reviewer_routing)
+                    ? reviewContext.reviewer_routing as Record<string, unknown>
+                    : null;
+                const reviewPhaseSequenceForKey = reviewPhaseSequenceByKey.get(key) ?? null;
+                const provenanceCycleFloorSequence = compilePassSequence == null
+                    ? reviewPhaseSequenceForKey
+                    : reviewPhaseSequenceForKey == null
+                        ? compilePassSequence
+                        : Math.max(compilePassSequence, reviewPhaseSequenceForKey);
+                const routingEvent = findLatestTimelineEvent(events, (entry) => (
+                    entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
+                    String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
             ));
             if (!reviewContext || !reviewerRouting) {
                 result.violations.push(
@@ -381,6 +397,13 @@ export function validateReviewSkillEvidence(
                             'Explicit same_agent_fallback evidence is required on single-agent providers.'
                         );
                     }
+                    if (routingPolicy.expected_execution_mode === 'same_agent_fallback' && actualExecutionMode === 'delegated_subagent') {
+                        result.violations.push(
+                            `Required review '${key}' cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}' ` +
+                            `when execution_provider_source is '${executionProviderSource || 'unknown'}'. ` +
+                            'Direct or non-bridge sessions must use same_agent_fallback until reviewer launch attestation is available.'
+                        );
+                    }
                     if (!routingPolicy.fallback_allowed && actualExecutionMode === 'same_agent_fallback') {
                         result.violations.push(
                             `Required review '${key}' used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}', but fallback is not allowed.`
@@ -412,6 +435,25 @@ export function validateReviewSkillEvidence(
                     const receiptExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
                     const receiptReviewerIdentity = normalizeTimelineDetailString(receipt.reviewer_identity);
                     const receiptFallbackReason = normalizeTimelineDetailString(receipt.reviewer_fallback_reason);
+                    const receiptTrustLevel = normalizeTimelineDetailString(receipt.trust_level)?.toUpperCase() ?? null;
+                    const receiptReviewerProvenance = receipt.reviewer_provenance == null
+                        ? null
+                        : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+                    const attestedRoutingEvent = receiptReviewerProvenance
+                        ? findLatestTimelineEvent(events, (entry) => (
+                            (provenanceCycleFloorSequence == null || entry.sequence > provenanceCycleFloorSequence)
+                            &&
+                            entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
+                            && String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
+                            && normalizeReviewerExecutionMode(entry.details?.reviewer_execution_mode ?? entry.details?.reviewerExecutionMode) === receiptExecutionMode
+                            && normalizeTimelineDetailString(entry.details?.reviewer_session_id ?? entry.details?.reviewerSessionId) === receiptReviewerIdentity
+                            && (receiptExecutionMode !== 'same_agent_fallback'
+                                || normalizeTimelineDetailString(entry.details?.reviewer_fallback_reason ?? entry.details?.reviewerFallbackReason) === receiptFallbackReason)
+                            && entry.integrity?.task_sequence === receiptReviewerProvenance.task_sequence
+                            && normalizeTimelineDetailString(entry.integrity?.event_sha256) === receiptReviewerProvenance.event_sha256
+                            && normalizeTimelineDetailString(entry.integrity?.prev_event_sha256) === receiptReviewerProvenance.prev_event_sha256
+                        ))
+                        : null;
                     if (receipt.reviewer_execution_mode && !receiptExecutionMode) {
                         result.violations.push(
                             `Required review '${key}' has invalid receipt reviewer_execution_mode ` +
@@ -437,6 +479,51 @@ export function validateReviewSkillEvidence(
                             'Fallback receipts must include reviewer_fallback_reason.'
                         );
                     }
+                    if (receipt.reviewer_provenance != null && !receiptReviewerProvenance) {
+                        result.violations.push(
+                            `Required review '${key}' receipt has invalid reviewer_provenance.`
+                        );
+                    }
+                    if (receiptTrustLevel === 'LOCAL_AUDITED' && receiptExecutionMode === 'same_agent_fallback') {
+                        result.violations.push(
+                            `Required review '${key}' receipt cannot claim LOCAL_AUDITED trust for same_agent_fallback execution.`
+                        );
+                    }
+                    if (receiptExecutionMode === 'delegated_subagent' && routingEvent) {
+                        const provenanceRoutingEvent = attestedRoutingEvent || routingEvent;
+                        if (!provenanceRoutingEvent.integrity) {
+                            result.violations.push(
+                                `Required review '${key}' cannot validate delegated reviewer provenance because matching REVIEWER_DELEGATION_ROUTED telemetry is missing integrity.`
+                            );
+                        }
+                        if (receiptTrustLevel === 'LOCAL_AUDITED') {
+                            result.violations.push(
+                                `Required review '${key}' receipt cannot claim LOCAL_AUDITED trust for delegated_subagent execution. ` +
+                                'Current local routing telemetry is asserted-only until a separate launch-attestation contract exists.'
+                            );
+                        }
+                        if (!receiptReviewerProvenance) {
+                            result.violations.push(
+                                `Required review '${key}' receipt is missing reviewer_provenance for delegated_subagent execution.`
+                            );
+                        } else if (!attestedRoutingEvent) {
+                            result.violations.push(
+                                `Required review '${key}' receipt reviewer_provenance does not match any REVIEWER_DELEGATION_ROUTED telemetry event in the current cycle.`
+                            );
+                        } else if (provenanceRoutingEvent.integrity) {
+                            const routingEventSha256 = normalizeTimelineDetailString(provenanceRoutingEvent.integrity.event_sha256);
+                            const routingPrevEventSha256 = normalizeTimelineDetailString(provenanceRoutingEvent.integrity.prev_event_sha256);
+                            if (
+                                receiptReviewerProvenance.task_sequence !== provenanceRoutingEvent.integrity.task_sequence
+                                || receiptReviewerProvenance.event_sha256 !== routingEventSha256
+                                || receiptReviewerProvenance.prev_event_sha256 !== routingPrevEventSha256
+                            ) {
+                                result.violations.push(
+                                    `Required review '${key}' receipt reviewer_provenance does not match REVIEWER_DELEGATION_ROUTED telemetry integrity.`
+                                );
+                            }
+                        }
+                    }
                     // T-1005: Provider policy enforcement against receipt fields
                     if (receiptExecutionMode) {
                         if (routingPolicy.delegation_required && receiptExecutionMode !== 'delegated_subagent') {
@@ -449,6 +536,13 @@ export function validateReviewSkillEvidence(
                             result.violations.push(
                                 `Required review '${key}' receipt cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
                                 'Explicit same_agent_fallback evidence is required on single-agent providers.'
+                            );
+                        }
+                        if (routingPolicy.expected_execution_mode === 'same_agent_fallback' && receiptExecutionMode === 'delegated_subagent') {
+                            result.violations.push(
+                                `Required review '${key}' receipt cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}' ` +
+                                `when execution_provider_source is '${executionProviderSource || 'unknown'}'. ` +
+                                'Direct or non-bridge sessions must use same_agent_fallback until reviewer launch attestation is available.'
                             );
                         }
                         if (!routingPolicy.fallback_allowed && receiptExecutionMode === 'same_agent_fallback') {

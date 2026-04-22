@@ -20,9 +20,11 @@ import {
 } from '../../../../src/gates/review-reuse';
 import {
     applyReviewerRoutingMetadata,
-    buildReviewReceipt
+    buildReviewReceipt,
+    buildReviewReceiptReviewerProvenance
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import * as childProcess from 'node:child_process';
 
 function createTempRepo(): string {
@@ -111,6 +113,28 @@ function getReviewsRoot(repoRoot: string): string {
 
 function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
+}
+
+function resolveReviewerExecutionFixture(
+    taskId: string,
+    sourceOfTruth = 'Codex',
+    executionProviderSource: 'provider_entrypoint' | 'provider_bridge' = 'provider_entrypoint',
+    delegatedIdentity = 'agent:test-reviewer'
+) {
+    const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth, executionProviderSource);
+    const reviewerExecutionMode = routingPolicy.expected_execution_mode;
+    const reviewerIdentity = reviewerExecutionMode === 'delegated_subagent'
+        ? delegatedIdentity
+        : `self:${taskId}`;
+    const reviewerFallbackReason = reviewerExecutionMode === 'same_agent_fallback'
+        ? `direct ${sourceOfTruth} ${executionProviderSource} execution cannot supply attested reviewer launch evidence`
+        : null;
+    return {
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewerFallbackReason,
+        trustLevel: 'LOCAL_ASSERTED'
+    } as const;
 }
 
 function writePreflight(
@@ -237,6 +261,8 @@ function seedReusableReviewEvidence(
         legacyReviewContextIdentity?: boolean;
         legacyReviewContextSourceOfTruth?: string;
         taskModePath?: string | null;
+        sourceOfTruth?: string;
+        executionProviderSource?: 'provider_entrypoint' | 'provider_bridge';
     } = {}
 ): string {
     const crypto = require('node:crypto');
@@ -268,10 +294,16 @@ function seedReusableReviewEvidence(
         outputPath: reviewContextPath,
         repoRoot
     });
+    const execution = resolveReviewerExecutionFixture(
+        taskId,
+        options.sourceOfTruth || 'Codex',
+        options.executionProviderSource || 'provider_entrypoint',
+        reviewerIdentity
+    );
     applyReviewerRoutingMetadata(reviewContextPath, {
-        actualExecutionMode: 'delegated_subagent',
-        reviewerSessionId: reviewerIdentity,
-        fallbackReason: null
+        actualExecutionMode: execution.reviewerExecutionMode,
+        reviewerSessionId: execution.reviewerIdentity,
+        fallbackReason: execution.reviewerFallbackReason
     });
     if (options.legacyReviewContextIdentity) {
         const legacyReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
@@ -308,10 +340,10 @@ function seedReusableReviewEvidence(
         reviewContextSha256: reviewContextHash,
         reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
         reviewArtifactSha256: artifactHash,
-        reviewerExecutionMode: 'delegated_subagent',
-        reviewerIdentity,
-        reviewerFallbackReason: null,
-        trustLevel: 'LOCAL_AUDITED'
+        reviewerExecutionMode: execution.reviewerExecutionMode,
+        reviewerIdentity: execution.reviewerIdentity,
+        reviewerFallbackReason: execution.reviewerFallbackReason,
+        trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
     return reviewContextPath;
@@ -422,6 +454,43 @@ function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<
         .split('\n')
         .filter(Boolean)
         .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function refreshReviewReceiptProvenance(
+    repoRoot: string,
+    taskId: string,
+    reviewKey: string,
+    reviewerExecutionMode: 'delegated_subagent' | 'same_agent_fallback',
+    reviewerIdentity: string
+): void {
+    if (reviewerExecutionMode !== 'delegated_subagent') {
+        return;
+    }
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-receipt.json`);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    const routedEvent = [...readTaskTimelineEvents(repoRoot, taskId)].reverse().find((event) => {
+        if (String(event.event_type || '').trim() !== 'REVIEWER_DELEGATION_ROUTED') {
+            return false;
+        }
+        const details = event.details && typeof event.details === 'object'
+            ? event.details as Record<string, unknown>
+            : {};
+        return String(details.review_type || '').trim() === reviewKey
+            && String(details.reviewer_execution_mode || '').trim() === reviewerExecutionMode
+            && String(details.reviewer_session_id || '').trim() === reviewerIdentity;
+    });
+    assert.ok(routedEvent, `Expected routed event for ${taskId}/${reviewKey}.`);
+    const provenance = buildReviewReceiptReviewerProvenance(
+        String(routedEvent.event_type || ''),
+        (routedEvent.integrity && typeof routedEvent.integrity === 'object')
+            ? routedEvent.integrity as any
+            : null
+    );
+    assert.ok(provenance, `Expected reviewer provenance for ${taskId}/${reviewKey}.`);
+    receipt.reviewer_provenance = provenance;
+    receipt.trust_level = 'LOCAL_ASSERTED';
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
 }
 
 function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = '') {
@@ -605,6 +674,7 @@ describe('cli/commands/gates', () => {
             {}
         );
         writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        const codeExecution = resolveReviewerExecutionFixture(taskId, 'Codex', 'provider_entrypoint', 'agent:code-reviewer');
 
         seedReusableReviewEvidence(
             repoRoot,
@@ -616,7 +686,9 @@ describe('cli/commands/gates', () => {
             'agent:code-reviewer',
             {
                 legacyReviewContextIdentity: true,
-                legacyReviewContextSourceOfTruth: 'Codex'
+                legacyReviewContextSourceOfTruth: 'Codex',
+                sourceOfTruth: 'Codex',
+                executionProviderSource: 'provider_entrypoint'
             }
         );
         appendTaskEvent(
@@ -655,9 +727,10 @@ describe('cli/commands/gates', () => {
             'Delegated code review routed for resumed legacy task-mode fixture.',
             {
                 review_type: 'code',
-                reviewer_execution_mode: 'delegated_subagent',
-                reviewer_session_id: 'agent:code-reviewer',
-                delegation_used: true
+                reviewer_execution_mode: codeExecution.reviewerExecutionMode,
+                reviewer_session_id: codeExecution.reviewerIdentity,
+                delegation_used: codeExecution.reviewerExecutionMode === 'delegated_subagent',
+                reviewer_fallback_reason: codeExecution.reviewerFallbackReason
             }
         );
         appendTaskEvent(
@@ -772,6 +845,7 @@ describe('cli/commands/gates', () => {
             {}
         );
         writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        const codeExecution = resolveReviewerExecutionFixture(taskId, 'Antigravity', 'provider_bridge', 'agent:code-reviewer');
 
         seedReusableReviewEvidence(
             repoRoot,
@@ -781,7 +855,11 @@ describe('cli/commands/gates', () => {
             preflightPath,
             path.join(reviewsRoot, `${taskId}-code-review-context.json`),
             'agent:code-reviewer',
-            { legacyReviewContextIdentity: true }
+            {
+                legacyReviewContextIdentity: true,
+                sourceOfTruth: 'Antigravity',
+                executionProviderSource: 'provider_bridge'
+            }
         );
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
@@ -819,10 +897,18 @@ describe('cli/commands/gates', () => {
             'Delegated code review routed for resumed legacy provider-bridge task-mode fixture.',
             {
                 review_type: 'code',
-                reviewer_execution_mode: 'delegated_subagent',
-                reviewer_session_id: 'agent:code-reviewer',
-                delegation_used: true
+                reviewer_execution_mode: codeExecution.reviewerExecutionMode,
+                reviewer_session_id: codeExecution.reviewerIdentity,
+                delegation_used: codeExecution.reviewerExecutionMode === 'delegated_subagent',
+                reviewer_fallback_reason: codeExecution.reviewerFallbackReason
             }
+        );
+        refreshReviewReceiptProvenance(
+            repoRoot,
+            taskId,
+            'code',
+            codeExecution.reviewerExecutionMode,
+            codeExecution.reviewerIdentity
         );
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
@@ -967,9 +1053,12 @@ describe('cli/commands/gates', () => {
             'agent:code-reviewer',
             {
                 legacyReviewContextIdentity: true,
-                taskModePath: customTaskModePath
+                taskModePath: customTaskModePath,
+                sourceOfTruth: 'Antigravity',
+                executionProviderSource: 'provider_bridge'
             }
         );
+        const codeExecution = resolveReviewerExecutionFixture(taskId, 'Antigravity', 'provider_bridge', 'agent:code-reviewer');
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
             taskId,
@@ -1006,10 +1095,18 @@ describe('cli/commands/gates', () => {
             'Delegated code review routed for resumed legacy provider-bridge custom task-mode fixture.',
             {
                 review_type: 'code',
-                reviewer_execution_mode: 'delegated_subagent',
-                reviewer_session_id: 'agent:code-reviewer',
-                delegation_used: true
+                reviewer_execution_mode: codeExecution.reviewerExecutionMode,
+                reviewer_session_id: codeExecution.reviewerIdentity,
+                delegation_used: codeExecution.reviewerExecutionMode === 'delegated_subagent',
+                reviewer_fallback_reason: codeExecution.reviewerFallbackReason
             }
+        );
+        refreshReviewReceiptProvenance(
+            repoRoot,
+            taskId,
+            'code',
+            codeExecution.reviewerExecutionMode,
+            codeExecution.reviewerIdentity
         );
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),

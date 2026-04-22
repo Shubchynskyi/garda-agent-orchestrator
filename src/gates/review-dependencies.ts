@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { TaskEventIntegrity } from '../gate-runtime/task-events';
 import { extractReviewVerdictToken, type ReviewReceipt } from '../gate-runtime/review-context';
 import * as gateHelpers from './helpers';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from './required-reviews-check';
@@ -15,6 +16,7 @@ export interface ReviewDependencyTimelineEvent {
     event_type: string;
     sequence: number;
     details: Record<string, unknown> | null;
+    integrity?: TaskEventIntegrity | null;
 }
 
 export interface ReviewDependencyStatus {
@@ -126,6 +128,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
     preflightHashSha256: string | null;
     latestRecordedReviewByType: ReadonlyMap<string, ReviewDependencyTimelineEvent>;
     upstreamReviewType: string;
+    timelineEvents?: readonly ReviewDependencyTimelineEvent[];
     taskModePath?: string | null;
 }): ReviewDependencyStatus {
     const recordedEvent = options.latestRecordedReviewByType.get(options.upstreamReviewType) ?? null;
@@ -248,7 +251,8 @@ export function assessUpstreamReviewDependencyStatus(options: {
             artifactSha256: artifactHash,
             receipt
         },
-        allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled
+        allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled,
+        timelineEvents: options.timelineEvents
     });
     if (validation.violations.length > 0) {
         return {
@@ -290,6 +294,7 @@ export function assertRequiredUpstreamReviewDependencies(options: {
         preflightHashSha256: currentPreflightHashSha256,
         latestRecordedReviewByType,
         upstreamReviewType,
+        timelineEvents: options.timelineEvents,
         taskModePath: String(options.taskModePath || '').trim()
     }));
     const blockedDependencies = dependencyStatuses.filter((status) => !status.ready);

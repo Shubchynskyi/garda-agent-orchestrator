@@ -467,7 +467,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     stageSequence.reviewer_execution_modes = reviewSkillEvidence.reviewer_execution_modes;
 
     // T-1005: Build reviewer routing enforcement summary
-    const routingPolicy = resolveReviewerRoutingPolicy(executionProvider);
+    const routingPolicy = resolveReviewerRoutingPolicy(executionProvider, runtimeIdentity.execution_provider_source);
     const reviewerRoutingEnforcement = {
         canonical_source_of_truth: runtimeIdentity.canonical_source_of_truth,
         canonical_entrypoint: runtimeIdentity.canonical_entrypoint,

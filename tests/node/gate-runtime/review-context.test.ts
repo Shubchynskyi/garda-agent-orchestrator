@@ -7,11 +7,13 @@ import * as path from 'node:path';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
+    buildReviewReceiptReviewerProvenance,
     extractReviewVerdictToken,
     compactMarkdownContent,
     getCompactReviewBudget,
     auditReviewArtifactCompaction,
-    buildReviewContextSections
+    buildReviewContextSections,
+    normalizeReviewReceiptReviewerProvenance
 } from '../../../src/gate-runtime/review-context';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
@@ -359,6 +361,60 @@ test('buildReviewReceipt preserves explicit trust_level', () => {
     });
 
     assert.equal(receipt.trust_level, 'LOCAL_AUDITED');
+});
+
+test('buildReviewReceipt preserves explicit non-canonical trust_level for downstream validator normalization', () => {
+    const receipt = buildReviewReceipt({
+        taskId: 'T-1001',
+        reviewType: 'code',
+        preflightSha256: 'preflight',
+        scopeSha256: 'scope',
+        reviewContextSha256: 'context',
+        reviewArtifactSha256: 'artifact',
+        trustLevel: ' local_audited '
+    });
+
+    assert.equal(receipt.trust_level, ' local_audited ');
+});
+
+test('buildReviewReceipt preserves explicit reviewer_provenance', () => {
+    const provenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', {
+        schema_version: 1,
+        task_sequence: 7,
+        prev_event_sha256: 'a'.repeat(64),
+        event_sha256: 'b'.repeat(64)
+    });
+    const receipt = buildReviewReceipt({
+        taskId: 'T-1001',
+        reviewType: 'code',
+        preflightSha256: 'preflight',
+        scopeSha256: 'scope',
+        reviewContextSha256: 'context',
+        reviewArtifactSha256: 'artifact',
+        reviewerProvenance: provenance
+    });
+
+    assert.deepEqual(receipt.reviewer_provenance, provenance);
+});
+
+test('normalizeReviewReceiptReviewerProvenance accepts controller event integrity evidence', () => {
+    const normalized = normalizeReviewReceiptReviewerProvenance({
+        schema_version: 1,
+        attestation_type: 'controller_event_integrity',
+        controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+        task_sequence: 9,
+        prev_event_sha256: 'c'.repeat(64),
+        event_sha256: 'd'.repeat(64)
+    });
+
+    assert.deepEqual(normalized, {
+        schema_version: 1,
+        attestation_type: 'controller_event_integrity',
+        controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+        task_sequence: 9,
+        prev_event_sha256: 'c'.repeat(64),
+        event_sha256: 'd'.repeat(64)
+    });
 });
 
 test('extractReviewVerdictToken prefers verdict section tokens', () => {

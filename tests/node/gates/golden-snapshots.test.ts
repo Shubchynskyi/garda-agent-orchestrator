@@ -92,7 +92,7 @@ describe('golden: collectOrderedTimelineEvents', () => {
             // Entry shape contract
             for (const entry of events) {
                 assert.deepEqual(Object.keys(entry).sort(), [
-                    'details', 'event_type', 'sequence', 'timestamp_utc'
+                    'details', 'event_type', 'integrity', 'sequence', 'timestamp_utc'
                 ]);
             }
         } finally {

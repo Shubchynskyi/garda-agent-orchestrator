@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import {
     auditReviewArtifactCompaction,
     buildReviewReceipt,
+    normalizeReviewReceiptReviewerProvenance,
     normalizeReviewerExecutionMode,
     type ReviewReceipt
 } from '../gate-runtime/review-context';
@@ -12,6 +13,7 @@ import { fileSha256, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
 import { getReviewContextContractViolations } from './review-context-contract';
 import { resolveReviewContextRoutingIdentity } from './review-context-routing';
+import { type ReviewDependencyTimelineEvent } from './review-dependencies';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { resolveBundleName } from '../core/constants';
 
@@ -175,6 +177,140 @@ export interface ReviewArtifactGateEligibilityResult {
     violations: string[];
 }
 
+function readReviewDependencyTimelineEvents(timelinePath: string): ReviewDependencyTimelineEvent[] {
+    if (!timelinePath || !fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
+        return [];
+    }
+    return fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .flatMap((line, sequence) => {
+            try {
+                const parsed = JSON.parse(line) as Record<string, unknown>;
+                const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
+                    ? parsed.details as Record<string, unknown>
+                    : null;
+                const rawIntegrity = parsed.integrity && typeof parsed.integrity === 'object' && !Array.isArray(parsed.integrity)
+                    ? parsed.integrity as Record<string, unknown>
+                    : null;
+                const taskSequence = typeof rawIntegrity?.task_sequence === 'number'
+                    ? rawIntegrity.task_sequence
+                    : Number(rawIntegrity?.task_sequence);
+                const eventSha256 = String(rawIntegrity?.event_sha256 || '').trim().toLowerCase();
+                const prevEventSha256Raw = rawIntegrity?.prev_event_sha256;
+                const prevEventSha256 = prevEventSha256Raw == null
+                    ? null
+                    : String(prevEventSha256Raw).trim().toLowerCase() || null;
+                return [{
+                    event_type: String(parsed.event_type || '').trim().toUpperCase(),
+                    sequence,
+                    details,
+                    integrity: rawIntegrity
+                        && Number.isInteger(taskSequence)
+                        && taskSequence > 0
+                        && /^[0-9a-f]{64}$/.test(eventSha256)
+                        && (prevEventSha256 == null || /^[0-9a-f]{64}$/.test(prevEventSha256))
+                        ? {
+                            schema_version: typeof rawIntegrity.schema_version === 'number'
+                                ? rawIntegrity.schema_version
+                                : Number(rawIntegrity.schema_version) || 1,
+                            task_sequence: taskSequence,
+                            prev_event_sha256: prevEventSha256,
+                            event_sha256: eventSha256
+                        }
+                        : null
+                }];
+            } catch {
+                return [];
+            }
+        });
+}
+
+function findLatestTimelineSequence(
+    events: readonly ReviewDependencyTimelineEvent[],
+    predicate: (entry: ReviewDependencyTimelineEvent) => boolean
+): number | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        if (predicate(events[index])) {
+            return events[index].sequence;
+        }
+    }
+    return null;
+}
+
+function findMatchingRoutingEvent(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    reviewType: string,
+    reviewerExecutionMode: string,
+    reviewerIdentity: string,
+    reviewerFallbackReason: string | null,
+    reviewerProvenance?: ReturnType<typeof normalizeReviewReceiptReviewerProvenance>
+): ReviewDependencyTimelineEvent | null {
+    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
+    const latestCompilePassSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
+    );
+    const latestReviewPhaseSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => (
+            entry.event_type === 'REVIEW_PHASE_STARTED'
+            && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+        )
+    );
+    const cycleFloorSequence = latestCompilePassSequence == null
+        ? latestReviewPhaseSequence
+        : latestReviewPhaseSequence == null
+            ? latestCompilePassSequence
+            : Math.max(latestCompilePassSequence, latestReviewPhaseSequence);
+    if (cycleFloorSequence == null) {
+        return null;
+    }
+    if (reviewerProvenance) {
+        for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+            const entry = timelineEvents[index];
+            const details = entry.details;
+            const eventFallbackReason = String((details?.reviewer_fallback_reason ?? details?.reviewerFallbackReason) || '').trim();
+            if (entry.sequence <= cycleFloorSequence) {
+                break;
+            }
+            if (
+                entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
+                && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+                && normalizeReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
+                && String((details?.reviewer_session_id ?? details?.reviewerSessionId) || '').trim() === reviewerIdentity
+                && (reviewerExecutionMode !== 'same_agent_fallback' || eventFallbackReason === (reviewerFallbackReason || ''))
+                && entry.integrity
+                && entry.integrity.task_sequence === reviewerProvenance.task_sequence
+                && String(entry.integrity.event_sha256 || '').trim().toLowerCase() === reviewerProvenance.event_sha256
+                && (entry.integrity.prev_event_sha256 == null
+                    ? null
+                    : String(entry.integrity.prev_event_sha256).trim().toLowerCase() || null) === reviewerProvenance.prev_event_sha256
+            ) {
+                return entry;
+            }
+        }
+    }
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+        const entry = timelineEvents[index];
+        if (entry.sequence <= cycleFloorSequence) {
+            break;
+        }
+        const details = entry.details;
+        const eventFallbackReason = String((details?.reviewer_fallback_reason ?? details?.reviewerFallbackReason) || '').trim();
+        if (
+            entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
+            && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+            && normalizeReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
+            && String((details?.reviewer_session_id ?? details?.reviewerSessionId) || '').trim() === reviewerIdentity
+            && (reviewerExecutionMode !== 'same_agent_fallback' || eventFallbackReason === (reviewerFallbackReason || ''))
+        ) {
+            return entry;
+        }
+    }
+    return null;
+}
+
 export function validateReviewArtifactGateEligibility(options: {
     resolvedTaskId: string | null;
     reviewKey: string;
@@ -188,6 +324,7 @@ export function validateReviewArtifactGateEligibility(options: {
     executionProvider?: string | null;
     executionProviderSource?: string | null;
     allowLegacyReviewContextIdentityFallback?: boolean;
+    timelineEvents?: readonly ReviewDependencyTimelineEvent[];
 }): ReviewArtifactGateEligibilityResult {
     const { resolvedTaskId, reviewKey, required, skippedByOverride, reviewArtifact } = options;
     const errors: string[] = [];
@@ -216,7 +353,10 @@ export function validateReviewArtifactGateEligibility(options: {
     const routingExecutionProviderSource = normalizeRuntimeIdentitySource(routingMetadata?.execution_provider_source);
     const routingIdentityStatus = resolvedRoutingIdentity.identity_status;
     const currentExecutionProviderSource = normalizeRuntimeIdentitySource(options.executionProviderSource);
-    const routingPolicy = resolveReviewerRoutingPolicy(routingExecutionProvider ?? legacySourceOfTruth);
+    const routingPolicy = resolveReviewerRoutingPolicy(
+        routingExecutionProvider ?? legacySourceOfTruth,
+        routingExecutionProviderSource
+    );
     const routingPolicySummary = {
         source_of_truth: legacySourceOfTruth,
         canonical_source_of_truth: routingCanonicalSourceOfTruth,
@@ -239,6 +379,7 @@ export function validateReviewArtifactGateEligibility(options: {
     let reviewerExecutionMode: string | null = null;
     let reviewerIdentity: string | null = null;
     let reviewerFallbackReason: string | null = null;
+    let reviewerProvenance: ReturnType<typeof normalizeReviewReceiptReviewerProvenance> = null;
     let trustLevel: string | null = null;
     let trivialReview = false;
     let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
@@ -366,8 +507,14 @@ export function validateReviewArtifactGateEligibility(options: {
                 if (receipt.reviewer_fallback_reason) {
                     reviewerFallbackReason = String(receipt.reviewer_fallback_reason);
                 }
+                if (receipt.reviewer_provenance != null) {
+                    reviewerProvenance = normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+                    if (!reviewerProvenance) {
+                        errors.push(`Review receipt for '${reviewKey}' has invalid reviewer_provenance.`);
+                    }
+                }
                 if (receipt.trust_level) {
-                    trustLevel = String(receipt.trust_level);
+                    trustLevel = String(receipt.trust_level).trim().toUpperCase();
                 }
             } catch {
                 errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
@@ -429,12 +576,70 @@ export function validateReviewArtifactGateEligibility(options: {
                     'Explicit same_agent_fallback evidence is required on single-agent providers.'
                 );
             }
+            if (routingPolicy.expected_execution_mode === 'same_agent_fallback' && reviewerExecutionMode === 'delegated_subagent') {
+                errors.push(
+                    `Review '${reviewKey}' cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}' ` +
+                    `when execution_provider_source is '${routingExecutionProviderSource || 'unknown'}'. ` +
+                    'Direct or non-bridge sessions must use same_agent_fallback until reviewer launch attestation is available.'
+                );
+            }
             if (reviewerExecutionMode === 'same_agent_fallback') {
                 if (!routingPolicy.fallback_allowed) {
                     errors.push(`Review '${reviewKey}' used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}', but fallback is not allowed.`);
                 }
                 if (routingPolicy.fallback_reason_required && !String(reviewerFallbackReason || '').trim()) {
                     errors.push(`Review '${reviewKey}' used same_agent_fallback without reviewer_fallback_reason.`);
+                }
+            }
+            if (trustLevel === 'LOCAL_AUDITED' && reviewerExecutionMode === 'delegated_subagent' && !reviewerProvenance) {
+                errors.push(
+                    `Review receipt for '${reviewKey}' is missing reviewer_provenance for LOCAL_AUDITED delegated_subagent execution.`
+                );
+            }
+            if (trustLevel === 'LOCAL_AUDITED' && reviewerExecutionMode === 'same_agent_fallback') {
+                errors.push(
+                    `Review receipt for '${reviewKey}' cannot claim LOCAL_AUDITED trust for same_agent_fallback execution.`
+                );
+            }
+            if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && options.timelineEvents && options.timelineEvents.length > 0) {
+                const routingEvent = findMatchingRoutingEvent(
+                    options.timelineEvents,
+                    reviewKey,
+                    reviewerExecutionMode,
+                    reviewerIdentity,
+                    reviewerFallbackReason,
+                    reviewerProvenance
+                );
+                if (!routingEvent) {
+                    errors.push(
+                        `Review '${reviewKey}' is missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle for reviewer '${reviewerIdentity}'.`
+                    );
+                } else if (!routingEvent.integrity) {
+                    errors.push(
+                        `Review '${reviewKey}' cannot validate reviewer_provenance because matching REVIEWER_DELEGATION_ROUTED telemetry is missing integrity.`
+                    );
+                } else {
+                    if (trustLevel === 'LOCAL_AUDITED') {
+                        errors.push(
+                            `Review receipt for '${reviewKey}' cannot claim LOCAL_AUDITED trust for delegated_subagent execution. ` +
+                            'Current local routing telemetry is asserted-only until a separate launch-attestation contract exists.'
+                        );
+                    }
+                    if (!reviewerProvenance) {
+                        errors.push(
+                            `Review receipt for '${reviewKey}' is missing reviewer_provenance for delegated_subagent execution.`
+                        );
+                    } else if (
+                        reviewerProvenance.task_sequence !== routingEvent.integrity.task_sequence
+                        || reviewerProvenance.event_sha256 !== String(routingEvent.integrity.event_sha256 || '').trim().toLowerCase()
+                        || reviewerProvenance.prev_event_sha256 !== (routingEvent.integrity.prev_event_sha256 == null
+                            ? null
+                            : String(routingEvent.integrity.prev_event_sha256).trim().toLowerCase() || null)
+                    ) {
+                        errors.push(
+                            `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_DELEGATION_ROUTED telemetry integrity.`
+                        );
+                    }
                 }
             }
         }
@@ -496,6 +701,21 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const requiredReviews = validatedPreflight.required_reviews;
     const verdicts = resolveExpectedReviewVerdicts(requiredReviews, options.verdicts, skipReviews);
+    const timelinePath = resolvedTaskId
+        ? path.join(
+            path.dirname(path.dirname(validatedPreflight.preflight_path)),
+            'task-events',
+            `${resolvedTaskId}.jsonl`
+        )
+        : null;
+    const timelineEvents = resolvedTaskId
+        ? readReviewDependencyTimelineEvents(String(timelinePath || ''))
+        : [];
+    if (resolvedTaskId && timelineEvents.length === 0) {
+        errors.push(
+            `Task timeline missing or unreadable for '${resolvedTaskId}': ${normalizePath(String(timelinePath || ''))}.`
+        );
+    }
 
     // Validate compile gate
     if (compileGateEvidence) {
@@ -534,7 +754,8 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 canonicalSourceOfTruth,
                 executionProvider,
                 executionProviderSource: options.executionProviderSource,
-                allowLegacyReviewContextIdentityFallback
+                allowLegacyReviewContextIdentityFallback,
+                timelineEvents
             });
             compactionAudit = validation.compactionAudit;
             receiptValid = validation.receiptValid;

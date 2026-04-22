@@ -97,6 +97,29 @@ function getSourceCheckoutNestedCwd(): string {
     return path.join(path.resolve('.'), 'src', 'cli');
 }
 
+async function recordReviewRoutingViaCli(options: {
+    taskId: string;
+    reviewType: string;
+    repoRoot: string;
+    reviewerExecutionMode: 'delegated_subagent' | 'same_agent_fallback';
+    reviewerIdentity: string;
+    reviewerFallbackReason?: string;
+}) {
+    const args = [
+        'gate',
+        'record-review-routing',
+        '--task-id', options.taskId,
+        '--review-type', options.reviewType,
+        '--repo-root', options.repoRoot,
+        '--reviewer-execution-mode', options.reviewerExecutionMode,
+        '--reviewer-identity', options.reviewerIdentity
+    ];
+    if (options.reviewerFallbackReason) {
+        args.push('--reviewer-fallback-reason', options.reviewerFallbackReason);
+    }
+    await runCliMainWithHandling(args);
+}
+
 function seedNodeBackendOptionalSkillFixture(repoRoot: string, policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory') {
     const orchestratorRoot = getOrchestratorRoot(repoRoot);
     const configDir = path.join(orchestratorRoot, 'live', 'config');
@@ -2140,15 +2163,15 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex')
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -2183,20 +2206,77 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result materializes delegated reviewer output into canonical artifact and receipt', async () => {
+    it('record-review-routing rolls back review-context routing metadata when delegated telemetry cannot be recorded', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-routing-lock';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex')
+        }, null, 2) + '\n', 'utf8');
+
+        const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
+        fs.mkdirSync(taskEventsRoot, { recursive: true });
+        const lockPath = path.join(taskEventsRoot, `.${taskId}.lock`);
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        const timelinePath = path.join(taskEventsRoot, `${taskId}.jsonl`);
+        const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result materializes delegated reviewer output into canonical artifact and receipt when controller routing telemetry already exists', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -2218,6 +2298,12 @@ describe('cli/commands/gates', () => {
             '## Verdict',
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Delegated review routed by controller.', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:code-reviewer',
+            delegation_used: true
+        });
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -2268,6 +2354,9 @@ describe('cli/commands/gates', () => {
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
         assert.equal(receipt.reviewer_identity, 'agent:code-reviewer');
+        assert.equal(receipt.trust_level, 'LOCAL_ASSERTED');
+        assert.equal(receipt.reviewer_provenance?.attestation_type, 'controller_event_integrity');
+        assert.equal(receipt.reviewer_provenance?.controller_event_type, 'REVIEWER_DELEGATION_ROUTED');
         assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
         assert.equal(receipt.review_materialization_fidelity, 'exact');
         assert.equal(typeof receipt.review_output_sha256, 'string');
@@ -2278,6 +2367,11 @@ describe('cli/commands/gates', () => {
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
         assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 1);
+        const routedEvent = events.find((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED') as Record<string, unknown> | undefined;
+        const routedIntegrity = routedEvent?.integrity as Record<string, unknown> | undefined;
+        assert.equal(receipt.reviewer_provenance?.task_sequence, routedIntegrity?.task_sequence);
+        assert.equal(receipt.reviewer_provenance?.event_sha256, routedIntegrity?.event_sha256);
+        assert.equal(receipt.reviewer_provenance?.prev_event_sha256 ?? null, routedIntegrity?.prev_event_sha256 ?? null);
         assert.ok(capturedLogs.some((line) => line.includes('ReviewOutputMode: path')));
         assert.ok(capturedLogs.some((line) => line.includes('VerdictToken: REVIEW PASSED')));
         assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: exact')));
@@ -2388,6 +2482,13 @@ describe('cli/commands/gates', () => {
         let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -2424,16 +2525,16 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-stdin';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -2469,6 +2570,13 @@ describe('cli/commands/gates', () => {
         mutableGateReviewHandlers.readReviewOutputFromStdin = async () => stdinReviewOutput;
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -2515,7 +2623,7 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -2531,6 +2639,13 @@ describe('cli/commands/gates', () => {
         let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -2561,15 +2676,15 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-failed';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -2603,6 +2718,13 @@ describe('cli/commands/gates', () => {
         };
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -2649,15 +2771,15 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-failed-risks';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -2686,6 +2808,13 @@ describe('cli/commands/gates', () => {
         let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -2967,9 +3096,9 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-pass-findings';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -2978,7 +3107,7 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -3015,6 +3144,13 @@ describe('cli/commands/gates', () => {
         };
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -3075,9 +3211,9 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-pass-no-findings-recovery';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -3086,7 +3222,7 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -3120,6 +3256,13 @@ describe('cli/commands/gates', () => {
         };
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -3251,7 +3394,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result records same_agent_fallback routing and receipt through the public CLI path', async () => {
+    it('record-review-result records same_agent_fallback receipt through the public CLI path when controller routing telemetry already exists', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-fallback';
         seedTaskQueue(repoRoot, taskId);
@@ -3286,6 +3429,13 @@ describe('cli/commands/gates', () => {
             '## Verdict',
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Fallback review routed by controller.', {
+            review_type: 'code',
+            reviewer_execution_mode: 'same_agent_fallback',
+            reviewer_session_id: `self:${taskId}`,
+            reviewer_fallback_reason: 'provider bridge does not expose subagent routing',
+            delegation_used: false
+        });
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -3320,6 +3470,7 @@ describe('cli/commands/gates', () => {
         assert.equal(receipt.reviewer_execution_mode, 'same_agent_fallback');
         assert.equal(receipt.reviewer_identity, `self:${taskId}`);
         assert.equal(receipt.reviewer_fallback_reason, 'provider bridge does not expose subagent routing');
+        assert.equal(receipt.trust_level, 'LOCAL_ASSERTED');
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'same_agent_fallback');
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, `self:${taskId}`);
         assert.equal(reviewContext.reviewer_routing.fallback_reason, 'provider bridge does not expose subagent routing');
@@ -3329,7 +3480,89 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result rolls back artifact and routing metadata when delegation telemetry cannot be recorded', async () => {
+    it('record-review-result rejects delegated reviewer receipts when controller routing telemetry is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-missing-route';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated that delegated review materialization must bind to controller-routed telemetry rather than self-minting it during receipt persistence.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            console.error = (...args: unknown[]) => {
+                capturedErrors.push(args.map((value) => String(value)).join(' '));
+            };
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(fs.existsSync(reviewOutputPath), true);
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        assert.ok(capturedErrors.length > 0);
+        const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+        const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rolls back artifact and routing metadata when review-recorded telemetry cannot be persisted', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-routing-lock';
         seedTaskQueue(repoRoot, taskId);
@@ -3364,6 +3597,12 @@ describe('cli/commands/gates', () => {
             '## Verdict',
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Delegated review routed by controller before materialization.', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:code-reviewer',
+            delegation_used: true
+        });
 
         const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
         fs.mkdirSync(taskEventsRoot, { recursive: true });
@@ -3407,7 +3646,7 @@ describe('cli/commands/gates', () => {
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
         const timelinePath = path.join(taskEventsRoot, `${taskId}.jsonl`);
         const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
-        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3477,9 +3716,9 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-lock';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
-        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -3487,7 +3726,7 @@ describe('cli/commands/gates', () => {
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
         }, null, 2) + '\n', 'utf8');
@@ -3516,6 +3755,13 @@ describe('cli/commands/gates', () => {
         let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             const lockPath = `${receiptPath}.lock`;
             fs.mkdirSync(lockPath, { recursive: true });
             fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
@@ -3542,8 +3788,7 @@ describe('cli/commands/gates', () => {
         }
 
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.equal(fs.existsSync(artifactPath), true);
-        assert.ok(fs.readFileSync(artifactPath, 'utf8').includes('Validated the receipt-lock failure path'));
+        assert.equal(fs.existsSync(artifactPath), false);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:code-reviewer');
@@ -3560,7 +3805,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904x';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
         prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
         const reviewsRoot = getReviewsRoot(repoRoot);
@@ -3614,7 +3859,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
         const reviewsRoot = getReviewsRoot(repoRoot);
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
@@ -4064,7 +4309,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-receipt rejects tampered fallback policy fields when active runtime provider forbids fallback', async () => {
+    it('record-review-receipt accepts same-agent fallback when direct Codex runtime downgrades delegation-required policy', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-receipt-policy-tamper';
         seedTaskQueue(repoRoot, taskId);
@@ -4078,7 +4323,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(artifactPath, [
             '# Code Review T-904y-receipt-policy-tamper',
             '',
-            'Validated `src/cli/commands/gate-review-handlers.ts` and the receipt-side routing enforcement path with enough implementation detail to prove that forged review-context policy fields cannot force same-agent fallback on Codex.',
+            'Validated `src/cli/commands/gate-review-handlers.ts` and the receipt-side routing enforcement path with enough implementation detail to prove that direct Codex sessions now degrade to explicit same-agent fallback instead of self-minting delegated provenance.',
             '',
             '## Findings by Severity',
             'none',
@@ -4094,10 +4339,7 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
-                fallback_allowed: true,
-                fallback_reason_required: true
-            })
+            reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
             actualExecutionMode: 'same_agent_fallback',
@@ -4135,14 +4377,17 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
-        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+        assert.equal(observedExitCode, 0);
+        const receipt = JSON.parse(fs.readFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), 'utf8'));
+        assert.equal(receipt.reviewer_execution_mode, 'same_agent_fallback');
+        assert.equal(receipt.reviewer_identity, `self:${taskId}`);
+        assert.equal(receipt.reviewer_fallback_reason, 'tampered review-context policy');
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-routing rejects tampered fallback policy fields when active runtime provider forbids fallback', async () => {
+    it('record-review-routing records same-agent fallback when direct Codex runtime downgrades delegation-required policy', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-routing-policy-tamper';
         seedTaskQueue(repoRoot, taskId);
@@ -4154,10 +4399,7 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Codex', {
-                fallback_allowed: true,
-                fallback_reason_required: true
-            })
+            reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -4182,8 +4424,12 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+        assert.equal(observedExitCode, 0);
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'same_agent_fallback');
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, `self:${taskId}`);
+        assert.equal(reviewContext.reviewer_routing.fallback_reason, 'tampered review-context policy');
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -4192,7 +4438,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-routing-self-identity';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
         prepareCurrentReviewPhase(repoRoot, taskId, preflightPath);
 
@@ -4675,7 +4921,9 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904b';
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Antigravity');
+        fs.mkdirSync(path.join(repoRoot, '.antigravity', 'agents'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
         const preflightPath = writePreflight(repoRoot, taskId, {
             required_reviews: {
                 code: false,
@@ -4702,11 +4950,12 @@ describe('cli/commands/gates', () => {
             repoRoot,
             taskId,
             taskSummary: 'Validate delegated test review flow',
-            routedTo: 'AGENTS.md'
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId, 'Antigravity');
+        runShellSmokeForTask(repoRoot, taskId, 'Antigravity');
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         const compileResult = await runCompileGateCommand({
@@ -4742,7 +4991,11 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'test',
-            reviewer_routing: createReviewerRoutingFixture('Codex')
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                execution_provider_source: 'provider_bridge',
+                routed_to: '.antigravity/agents/orchestrator.md',
+                provider_bridge: '.antigravity/agents/orchestrator.md'
+            })
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: 'testing-strategy' });
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', {
@@ -4788,7 +5041,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(reviewResult.exitCode, 0);
         assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
-        assert.ok(reviewResult.outputLines.includes('TrustStatus: LOCAL_AUDITED'));
+        assert.ok(reviewResult.outputLines.includes('TrustStatus: LOCAL_ASSERTED'));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -4809,7 +5062,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
-        assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'LOCAL_AUDITED');
+        assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'LOCAL_ASSERTED');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -4936,14 +5189,26 @@ describe('cli/commands/gates', () => {
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--review-context-path', codeReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+            ]);
+            await runCliMainWithHandling([
+                'gate',
                 'record-review-result',
                 '--task-id', taskId,
                 '--review-type', 'code',
                 '--preflight-path', preflightPath,
                 '--review-output-path', codeReviewOutputPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:code-reviewer'
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
             ]);
             codeReviewRecordExitCode = Number(process.exitCode ?? 0);
 
@@ -5101,6 +5366,13 @@ describe('cli/commands/gates', () => {
             ].join('\n'), 'utf8');
 
             process.exitCode = 0;
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -5376,6 +5648,17 @@ describe('cli/commands/gates', () => {
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--review-context-path', customCodeReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+            ]);
+            await runCliMainWithHandling([
+                'gate',
                 'record-review-result',
                 '--task-id', taskId,
                 '--review-type', 'code',
@@ -5383,8 +5666,9 @@ describe('cli/commands/gates', () => {
                 '--review-output-path', codeReviewOutputPath,
                 '--review-context-path', customCodeReviewContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:code-reviewer'
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
             ]);
             codeReviewRecordExitCode = Number(process.exitCode ?? 0);
 
@@ -5418,6 +5702,17 @@ describe('cli/commands/gates', () => {
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--review-context-path', testReviewContextPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+            ]);
+            await runCliMainWithHandling([
+                'gate',
                 'record-review-result',
                 '--task-id', taskId,
                 '--review-type', 'test',
@@ -5425,8 +5720,9 @@ describe('cli/commands/gates', () => {
                 '--review-output-path', testReviewOutputPath,
                 '--review-context-path', testReviewContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:test-reviewer'
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
             ]);
             testReviewRecordExitCode = Number(process.exitCode ?? 0);
         } finally {
@@ -5561,6 +5857,14 @@ describe('cli/commands/gates', () => {
             ].join('\n'), 'utf8');
 
             process.exitCode = 0;
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'same_agent_fallback',
+                reviewerIdentity: `self:${taskId}`,
+                reviewerFallbackReason: 'attested reviewer launch unavailable in direct provider session'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -5570,8 +5874,9 @@ describe('cli/commands/gates', () => {
                 '--review-output-path', reviewOutputPath,
                 '--review-context-path', canonicalContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:code-reviewer'
+                '--reviewer-execution-mode', 'same_agent_fallback',
+                '--reviewer-identity', `self:${taskId}`,
+                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
             ]);
             recordExitCode = Number(process.exitCode ?? 0);
         } finally {
@@ -5734,6 +6039,17 @@ describe('cli/commands/gates', () => {
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--review-context-path', customCodeReviewContextPath,
+                '--task-mode-path', customTaskModePath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            await runCliMainWithHandling([
+                'gate',
                 'record-review-result',
                 '--task-id', taskId,
                 '--review-type', 'code',
@@ -5893,6 +6209,17 @@ describe('cli/commands/gates', () => {
             process.exitCode = 0;
             await runCliMainWithHandling([
                 'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--review-context-path', customCodeReviewContextPath,
+                '--task-mode-path', customTaskModePath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            await runCliMainWithHandling([
+                'gate',
                 'record-review-result',
                 '--task-id', taskId,
                 '--review-type', 'code',
@@ -5940,6 +6267,17 @@ describe('cli/commands/gates', () => {
             ].join('\n'), 'utf8');
 
             process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--review-context-path', customTestReviewContextPath,
+                '--task-mode-path', customTaskModePath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',

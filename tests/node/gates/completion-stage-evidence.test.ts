@@ -306,17 +306,31 @@ describe('gates/completion — stage and evidence validation', () => {
         function makeEvent(
             eventType: string,
             sequence: number,
-            details: Record<string, unknown> | null = null
+            details: Record<string, unknown> | null = null,
+            integrity: Record<string, unknown> | null = null
         ): TimelineEventEntry {
             return {
                 event_type: eventType,
                 timestamp_utc: `2026-01-01T00:0${sequence}:00.000Z`,
                 sequence,
-                details
+                details,
+                integrity: integrity as TimelineEventEntry['integrity']
             };
         }
 
         it('returns no violations when code changed and review telemetry plus artifacts are present', () => {
+            const codeRoutingIntegrity = {
+                schema_version: 1,
+                task_sequence: 5,
+                prev_event_sha256: 'a'.repeat(64),
+                event_sha256: 'b'.repeat(64)
+            } satisfies TimelineEventEntry['integrity'];
+            const testRoutingIntegrity = {
+                schema_version: 1,
+                task_sequence: 10,
+                prev_event_sha256: 'c'.repeat(64),
+                event_sha256: 'd'.repeat(64)
+            } satisfies TimelineEventEntry['integrity'];
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
@@ -327,8 +341,9 @@ describe('gates/completion — stage and evidence validation', () => {
                 }),
                 makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
-                    reviewer_execution_mode: 'delegated_subagent'
-                }),
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }, codeRoutingIntegrity),
                 makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
                 makeEvent('REVIEW_PHASE_STARTED', 6, { review_type: 'test' }),
                 makeEvent('SKILL_SELECTED', 7, { skill_id: 'testing-strategy' }),
@@ -338,8 +353,9 @@ describe('gates/completion — stage and evidence validation', () => {
                 }),
                 makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
                     review_type: 'test',
-                    reviewer_execution_mode: 'delegated_subagent'
-                }),
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:test-reviewer'
+                }, testRoutingIntegrity),
                 makeEvent('REVIEW_RECORDED', 10, { review_type: 'test' }),
                 makeEvent('REVIEW_GATE_PASSED', 11)
             ];
@@ -347,14 +363,15 @@ describe('gates/completion — stage and evidence validation', () => {
             const reviewArtifacts = {
                 code: {
                     path: '/reviews/T-123-code.md',
-                    reviewContext: {
-                        reviewer_routing: {
-                            canonical_source_of_truth: 'Codex',
-                            execution_provider: 'Codex',
-                            execution_provider_source: 'provider_entrypoint',
-                            identity_status: 'resolved',
-                            actual_execution_mode: 'delegated_subagent',
-                            reviewer_session_id: 'agent:code-reviewer'
+                        reviewContext: {
+                            reviewer_routing: {
+                                canonical_source_of_truth: 'Codex',
+                                source_of_truth: 'Antigravity',
+                                execution_provider: 'Antigravity',
+                                execution_provider_source: 'provider_bridge',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
                         }
                     },
                     receipt: {
@@ -368,19 +385,29 @@ describe('gates/completion — stage and evidence validation', () => {
                         reviewer_execution_mode: 'delegated_subagent',
                         reviewer_identity: 'agent:code-reviewer',
                         reviewer_fallback_reason: null,
+                        reviewer_provenance: {
+                            schema_version: 1,
+                            attestation_type: 'controller_event_integrity' as const,
+                            controller_event_type: 'REVIEWER_DELEGATION_ROUTED' as const,
+                            task_sequence: codeRoutingIntegrity.task_sequence,
+                            prev_event_sha256: codeRoutingIntegrity.prev_event_sha256,
+                            event_sha256: codeRoutingIntegrity.event_sha256
+                        },
+                        trust_level: 'LOCAL_ASSERTED',
                         recorded_at_utc: '2026-01-01T00:00:00.000Z'
                     }
                 },
                 test: {
                     path: '/reviews/T-123-test.md',
-                    reviewContext: {
-                        reviewer_routing: {
-                            canonical_source_of_truth: 'Codex',
-                            execution_provider: 'Codex',
-                            execution_provider_source: 'provider_entrypoint',
-                            identity_status: 'resolved',
-                            actual_execution_mode: 'delegated_subagent',
-                            reviewer_session_id: 'agent:test-reviewer'
+                        reviewContext: {
+                            reviewer_routing: {
+                                canonical_source_of_truth: 'Codex',
+                                source_of_truth: 'Antigravity',
+                                execution_provider: 'Antigravity',
+                                execution_provider_source: 'provider_bridge',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:test-reviewer'
                         }
                     },
                     receipt: {
@@ -394,6 +421,15 @@ describe('gates/completion — stage and evidence validation', () => {
                         reviewer_execution_mode: 'delegated_subagent',
                         reviewer_identity: 'agent:test-reviewer',
                         reviewer_fallback_reason: null,
+                        reviewer_provenance: {
+                            schema_version: 1,
+                            attestation_type: 'controller_event_integrity' as const,
+                            controller_event_type: 'REVIEWER_DELEGATION_ROUTED' as const,
+                            task_sequence: testRoutingIntegrity.task_sequence,
+                            prev_event_sha256: testRoutingIntegrity.prev_event_sha256,
+                            event_sha256: testRoutingIntegrity.event_sha256
+                        },
+                        trust_level: 'LOCAL_ASSERTED',
                         recorded_at_utc: '2026-01-01T00:00:00.000Z'
                     }
                 }
@@ -422,8 +458,10 @@ describe('gates/completion — stage and evidence validation', () => {
                     reviewArtifacts,
                     true,
                     '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                    'Antigravity',
                     'Codex',
-                    'Codex'
+                    false,
+                    'provider_bridge'
                 );
                 if (result.violations.length > 0) {
                     console.log('VIOLATIONS:', result.violations);
@@ -700,6 +738,11 @@ describe('gates/completion — stage and evidence validation', () => {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:stale-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
                 }),
                 makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
                 makeEvent('REVIEW_PHASE_STARTED', 6),
@@ -712,6 +755,11 @@ describe('gates/completion — stage and evidence validation', () => {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:fresh-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 10,
+                    prev_event_sha256: 'c'.repeat(64),
+                    event_sha256: 'd'.repeat(64)
                 }),
                 makeEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
                 makeEvent('REVIEW_GATE_PASSED', 11)
@@ -725,8 +773,9 @@ describe('gates/completion — stage and evidence validation', () => {
                         reviewContext: {
                             reviewer_routing: {
                                 canonical_source_of_truth: 'Codex',
-                                execution_provider: 'Codex',
-                                execution_provider_source: 'provider_entrypoint',
+                                source_of_truth: 'Antigravity',
+                                execution_provider: 'Antigravity',
+                                execution_provider_source: 'provider_bridge',
                                 identity_status: 'resolved',
                                 actual_execution_mode: 'delegated_subagent',
                                 reviewer_session_id: 'agent:fresh-reviewer'
@@ -740,19 +789,28 @@ describe('gates/completion — stage and evidence validation', () => {
                             scope_sha256: null,
                             review_context_sha256: null,
                             review_artifact_sha256: null,
-                            reviewer_execution_mode: 'delegated_subagent',
-                            reviewer_identity: 'agent:fresh-reviewer',
-                            reviewer_fallback_reason: null,
-                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
-                        }
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:fresh-reviewer',
+                        reviewer_fallback_reason: null,
+                        reviewer_provenance: {
+                            schema_version: 1,
+                            attestation_type: 'controller_event_integrity' as const,
+                            controller_event_type: 'REVIEWER_DELEGATION_ROUTED' as const,
+                            task_sequence: 10,
+                            prev_event_sha256: 'c'.repeat(64),
+                            event_sha256: 'd'.repeat(64)
+                        },
+                        trust_level: 'LOCAL_ASSERTED',
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
                     }
+                }
                 },
                 true,
                 '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
-                'Codex',
+                'Antigravity',
                 'Codex',
                 false,
-                'provider_entrypoint'
+                'provider_bridge'
             );
 
             assert.equal(result.violations.length, 0, JSON.stringify(result, null, 2));
@@ -850,6 +908,10 @@ describe('gates/completion — stage and evidence validation', () => {
                         path: '/reviews/T-123-test.md',
                         reviewContext: {
                             reviewer_routing: {
+                                source_of_truth: 'GitHubCopilot',
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'GitHubCopilot',
+                                execution_provider_source: 'provider_bridge',
                                 actual_execution_mode: 'same_agent_fallback',
                                 reviewer_session_id: 'self:T-123'
                             }
@@ -858,7 +920,10 @@ describe('gates/completion — stage and evidence validation', () => {
                 },
                 true,
                 '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
-                'Codex'
+                'GitHubCopilot',
+                'Codex',
+                false,
+                'provider_bridge'
             );
 
             assert.ok(result.violations.some((entry) => entry.includes('delegated_subagent')));
@@ -1062,6 +1127,10 @@ describe('gates/completion — stage and evidence validation', () => {
                         path: '/reviews/T-123-code.md',
                         reviewContext: {
                             reviewer_routing: {
+                                source_of_truth: 'Antigravity',
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Antigravity',
+                                execution_provider_source: 'provider_bridge',
                                 actual_execution_mode: 'delegated_subagent',
                                 reviewer_session_id: 'agent:code-reviewer'
                             }
@@ -1178,6 +1247,521 @@ describe('gates/completion — stage and evidence validation', () => {
             );
 
             assert.ok(result.violations.some((entry) => entry.includes('inconsistent reviewer identity')));
+        });
+
+        it('fails when LOCAL_AUDITED delegated receipts omit reviewer_provenance', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            trust_level: 'LOCAL_ASSERTED',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('missing reviewer_provenance')));
+        });
+
+        it('normalizes non-canonical delegated LOCAL_AUDITED trust strings before enforcement', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            trust_level: ' local_audited ',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('missing reviewer_provenance')));
+        });
+
+        it('fails when reviewer_provenance does not match REVIEWER_DELEGATION_ROUTED telemetry integrity', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            reviewer_provenance: {
+                                schema_version: 1,
+                                attestation_type: 'controller_event_integrity' as const,
+                                controller_event_type: 'REVIEWER_DELEGATION_ROUTED' as const,
+                                task_sequence: 6,
+                                prev_event_sha256: 'c'.repeat(64),
+                                event_sha256: 'd'.repeat(64)
+                            },
+                            trust_level: 'LOCAL_ASSERTED',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Antigravity',
+                'Codex',
+                false,
+                'provider_bridge'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('reviewer_provenance does not match')));
+        });
+
+        it('fails when same_agent_fallback receipts claim LOCAL_AUDITED trust', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: 'self:T-123'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'same_agent_fallback',
+                                reviewer_session_id: 'self:T-123',
+                                fallback_reason: 'provider limitation'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'same_agent_fallback',
+                            reviewer_identity: 'self:T-123',
+                            reviewer_fallback_reason: 'provider limitation',
+                            trust_level: 'LOCAL_AUDITED',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Qwen'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('cannot claim LOCAL_AUDITED')));
+        });
+
+        it('fails when delegated LOCAL_AUDITED receipts rely on provider-like launch markers that are out of scope for the current contract', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer',
+                    reviewer_launch_attestation_type: 'provider_artifact',
+                    reviewer_launch_artifact_path: '/tmp/provider-artifact.json'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            reviewer_provenance: {
+                                schema_version: 1,
+                                attestation_type: 'controller_event_integrity' as const,
+                                controller_event_type: 'REVIEWER_DELEGATION_ROUTED' as const,
+                                task_sequence: 5,
+                                prev_event_sha256: 'a'.repeat(64),
+                                event_sha256: 'b'.repeat(64)
+                            },
+                            trust_level: 'LOCAL_AUDITED',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('cannot claim LOCAL_AUDITED')));
+        });
+
+        it('fails when delegated_subagent receipts omit reviewer_provenance even with asserted trust', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            trust_level: 'LOCAL_ASSERTED',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('missing reviewer_provenance')));
+        });
+
+        it('fails when delegated reviewer telemetry exists but its integrity payload is missing', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            reviewer_provenance: {
+                                schema_version: 1,
+                                attestation_type: 'controller_event_integrity' as const,
+                                controller_event_type: 'REVIEWER_DELEGATION_ROUTED' as const,
+                                task_sequence: 5,
+                                prev_event_sha256: 'a'.repeat(64),
+                                event_sha256: 'b'.repeat(64)
+                            },
+                            trust_level: 'LOCAL_AUDITED',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex'
+            );
+
+            assert.ok(result.violations.some(v => v.includes('missing integrity')));
+        });
+
+        it('matches reviewer_provenance against the attested routing event instead of a newer stale routed residue', () => {
+            const events = [
+                makeEvent('COMPILE_GATE_PASSED', 0),
+                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 5,
+                    prev_event_sha256: 'a'.repeat(64),
+                    event_sha256: 'b'.repeat(64)
+                }),
+                makeEvent('REVIEWER_DELEGATION_ROUTED', 6, {
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer'
+                }, {
+                    schema_version: 1,
+                    task_sequence: 7,
+                    prev_event_sha256: 'c'.repeat(64),
+                    event_sha256: 'd'.repeat(64)
+                }),
+                makeEvent('REVIEW_RECORDED', 7, { review_type: 'code' }),
+                makeEvent('REVIEW_GATE_PASSED', 8)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                canonical_source_of_truth: 'Codex',
+                                source_of_truth: 'Antigravity',
+                                execution_provider: 'Antigravity',
+                                execution_provider_source: 'provider_bridge',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:code-reviewer'
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: null,
+                            review_artifact_sha256: null,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            reviewer_provenance: {
+                                schema_version: 1,
+                                attestation_type: 'controller_event_integrity' as const,
+                                controller_event_type: 'REVIEWER_DELEGATION_ROUTED' as const,
+                                task_sequence: 5,
+                                prev_event_sha256: 'a'.repeat(64),
+                                event_sha256: 'b'.repeat(64)
+                            },
+                            trust_level: 'LOCAL_ASSERTED',
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Antigravity',
+                'Codex',
+                false,
+                'provider_bridge'
+            );
+
+            assert.equal(result.violations.length, 0);
         });
 
         it('fails when receipt execution mode disagrees with review-context execution mode', () => {
@@ -1506,6 +2090,10 @@ describe('gates/completion — stage and evidence validation', () => {
                         path: '/reviews/T-123-code.md',
                         reviewContext: {
                             reviewer_routing: {
+                                source_of_truth: 'GitHubCopilot',
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'GitHubCopilot',
+                                execution_provider_source: 'provider_bridge',
                                 actual_execution_mode: 'same_agent_fallback',
                                 reviewer_session_id: 'self:T-123',
                                 fallback_reason: 'provider does not support delegation'
@@ -1528,11 +2116,14 @@ describe('gates/completion — stage and evidence validation', () => {
                 },
                 true,
                 '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
-                'Codex'
+                'GitHubCopilot',
+                'Codex',
+                false,
+                'provider_bridge'
             );
 
             assert.ok(result.violations.some(v =>
-                v.includes('receipt must use delegated_subagent') && v.includes('Codex')
+                v.includes('receipt must use delegated_subagent') && v.includes('GitHubCopilot')
             ));
             assert.ok(result.violations.some(v =>
                 v.includes('same_agent_fallback') && v.includes('fallback is not allowed')

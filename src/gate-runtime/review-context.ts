@@ -339,6 +339,8 @@ export interface ReviewContextSourceFile {
     content_sha256: string | null;
 }
 
+import type { TaskEventIntegrity } from './task-events';
+
 export interface ReviewContextSectionsResult {
     artifact_text: string;
     artifact_sha256: string | null;
@@ -360,8 +362,18 @@ export interface ReviewReceipt {
     reviewer_execution_mode: string | null;
     reviewer_identity: string | null;
     reviewer_fallback_reason: string | null;
+    reviewer_provenance?: ReviewReceiptReviewerProvenance | null;
     trust_level?: string;
     recorded_at_utc: string;
+}
+
+export interface ReviewReceiptReviewerProvenance {
+    schema_version: number;
+    attestation_type: 'controller_event_integrity';
+    controller_event_type: 'REVIEWER_DELEGATION_ROUTED';
+    task_sequence: number;
+    prev_event_sha256: string | null;
+    event_sha256: string;
 }
 
 export interface ReviewContextRoutingMetadataUpdate {
@@ -391,6 +403,66 @@ export function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutio
     return REVIEWER_EXECUTION_MODES.includes(text as ReviewerExecutionMode)
         ? text as ReviewerExecutionMode
         : null;
+}
+
+function normalizeProvenanceSha256(value: unknown): string | null {
+    const text = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(text) ? text : null;
+}
+
+export function normalizeReviewReceiptReviewerProvenance(value: unknown): ReviewReceiptReviewerProvenance | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+    }
+    const record = value as Record<string, unknown>;
+    const schemaVersion = typeof record.schema_version === 'number'
+        ? record.schema_version
+        : Number(record.schema_version);
+    const attestationType = String(record.attestation_type || '').trim();
+    const controllerEventType = String(record.controller_event_type || '').trim().toUpperCase();
+    const taskSequence = typeof record.task_sequence === 'number'
+        ? record.task_sequence
+        : Number(record.task_sequence);
+    const eventSha256 = normalizeProvenanceSha256(record.event_sha256);
+    const prevEventSha256 = record.prev_event_sha256 == null
+        ? null
+        : normalizeProvenanceSha256(record.prev_event_sha256);
+    if (
+        schemaVersion !== 1
+        || attestationType !== 'controller_event_integrity'
+        || controllerEventType !== 'REVIEWER_DELEGATION_ROUTED'
+        || !Number.isInteger(taskSequence)
+        || taskSequence <= 0
+        || !eventSha256
+        || (record.prev_event_sha256 != null && prevEventSha256 == null)
+    ) {
+        return null;
+    }
+    return {
+        schema_version: 1,
+        attestation_type: 'controller_event_integrity',
+        controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+        task_sequence: taskSequence,
+        prev_event_sha256: prevEventSha256,
+        event_sha256: eventSha256
+    };
+}
+
+export function buildReviewReceiptReviewerProvenance(
+    eventType: string,
+    integrity: TaskEventIntegrity | null | undefined
+): ReviewReceiptReviewerProvenance | null {
+    if (String(eventType || '').trim().toUpperCase() !== 'REVIEWER_DELEGATION_ROUTED' || !integrity) {
+        return null;
+    }
+    return normalizeReviewReceiptReviewerProvenance({
+        schema_version: 1,
+        attestation_type: 'controller_event_integrity',
+        controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+        task_sequence: integrity.task_sequence,
+        prev_event_sha256: integrity.prev_event_sha256 ?? null,
+        event_sha256: integrity.event_sha256 ?? null
+    });
 }
 
 export function extractReviewVerdictToken(
@@ -458,6 +530,7 @@ export function buildReviewReceipt(options: {
     reviewerExecutionMode?: string | null;
     reviewerIdentity?: string | null;
     reviewerFallbackReason?: string | null;
+    reviewerProvenance?: ReviewReceiptReviewerProvenance | null;
     trustLevel?: string;
 }): ReviewReceipt {
     return {
@@ -473,6 +546,7 @@ export function buildReviewReceipt(options: {
         reviewer_execution_mode: options.reviewerExecutionMode ?? null,
         reviewer_identity: options.reviewerIdentity ?? null,
         reviewer_fallback_reason: options.reviewerFallbackReason ?? null,
+        reviewer_provenance: options.reviewerProvenance ?? null,
         trust_level: options.trustLevel || 'LOCAL_ASSERTED',
         recorded_at_utc: new Date().toISOString()
     };

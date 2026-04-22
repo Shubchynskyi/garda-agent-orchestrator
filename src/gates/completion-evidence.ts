@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { TaskEventIntegrity } from '../gate-runtime/task-events';
 import { normalizePath } from './helpers';
 
 /**
@@ -10,6 +11,7 @@ export interface TimelineEventEntry {
     timestamp_utc: string;
     sequence: number;
     details: Record<string, unknown> | null;
+    integrity?: TaskEventIntegrity | null;
 }
 
 /**
@@ -34,8 +36,33 @@ export function collectOrderedTimelineEvents(timelinePath: string, errors: strin
             const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
                 ? parsed.details as Record<string, unknown>
                 : null;
+            const rawIntegrity = parsed.integrity && typeof parsed.integrity === 'object' && !Array.isArray(parsed.integrity)
+                ? parsed.integrity as Record<string, unknown>
+                : null;
+            const taskSequence = typeof rawIntegrity?.task_sequence === 'number'
+                ? rawIntegrity.task_sequence
+                : Number(rawIntegrity?.task_sequence);
+            const eventSha256 = String(rawIntegrity?.event_sha256 || '').trim().toLowerCase();
+            const prevEventSha256Raw = rawIntegrity?.prev_event_sha256;
+            const prevEventSha256 = prevEventSha256Raw == null
+                ? null
+                : String(prevEventSha256Raw).trim().toLowerCase() || null;
+            const integrity = rawIntegrity
+                && Number.isInteger(taskSequence)
+                && taskSequence > 0
+                && /^[0-9a-f]{64}$/.test(eventSha256)
+                && (prevEventSha256 == null || /^[0-9a-f]{64}$/.test(prevEventSha256))
+                ? {
+                    schema_version: typeof rawIntegrity.schema_version === 'number'
+                        ? rawIntegrity.schema_version
+                        : Number(rawIntegrity.schema_version) || 1,
+                    task_sequence: taskSequence,
+                    prev_event_sha256: prevEventSha256,
+                    event_sha256: eventSha256
+                } as TaskEventIntegrity
+                : null;
             if (eventType) {
-                entries.push({ event_type: eventType, timestamp_utc: timestampUtc, sequence: seq, details });
+                entries.push({ event_type: eventType, timestamp_utc: timestampUtc, sequence: seq, details, integrity });
             }
             seq++;
         } catch {

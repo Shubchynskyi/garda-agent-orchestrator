@@ -235,7 +235,7 @@ function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<R
         'record-review-routing': {
             summary: 'Record reviewer routing metadata for a prepared review context.',
             usage: Object.freeze([
-                `${cliPrefix} gate record-review-routing --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --reviewer-execution-mode "<delegated_subagent|same_agent_fallback>" --reviewer-identity "<agent:...|self:...>" --repo-root "."`
+                `${cliPrefix} gate record-review-routing --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "<delegated_subagent|same_agent_fallback>" --reviewer-identity "<agent:...|self:...>" --repo-root "."`
             ]),
             taskIdRemediation: true
         },

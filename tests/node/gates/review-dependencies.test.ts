@@ -324,6 +324,187 @@ test('assessUpstreamReviewDependencyStatus accepts explicit custom task-mode pat
     }
 });
 
+test('assessUpstreamReviewDependencyStatus rejects delegated upstream PASS without attested provenance when timeline integrity is available', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-dependencies-'));
+    try {
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        const reviewsRoot = path.join(bundleRoot, 'runtime', 'reviews');
+        const runtimeRoot = path.join(bundleRoot, 'runtime');
+        const taskId = 'T-105';
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const reviewArtifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+        const taskEventsPath = path.join(runtimeRoot, 'task-events', `${taskId}.jsonl`);
+
+        writeJson(path.join(runtimeRoot, 'init-answers.json'), {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'AGENT_INIT_PROMPT.md',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+
+        writeJson(preflightPath, {
+            schema_version: 1,
+            task_id: taskId,
+            required_reviews: {
+                code: true,
+                test: true
+            }
+        });
+
+        writeJson(taskModePath, {
+            timestamp_utc: PRE_START_BANNER_TASK_MODE_TIMESTAMP,
+            schema_version: 1,
+            task_id: taskId,
+            status: 'PASSED',
+            outcome: 'PASS',
+            event_source: 'enter-task-mode',
+            entry_mode: 'EXPLICIT_TASK_EXECUTION',
+            requested_depth: 2,
+            effective_depth: 2,
+            task_summary: 'Reject delegated upstream review receipts that lack attested provenance',
+            provider: 'Codex',
+            canonical_source_of_truth: 'Codex',
+            execution_provider: 'Codex',
+            execution_provider_source: 'explicit_provider',
+            runtime_identity_status: 'resolved'
+        });
+        fs.mkdirSync(path.dirname(taskEventsPath), { recursive: true });
+        fs.writeFileSync(taskEventsPath, JSON.stringify({
+            timestamp_utc: '2026-04-17T11:30:00.000Z',
+            event_type: 'TASK_MODE_ENTERED',
+            status: 'PASS',
+            sequence: 1,
+            task_id: taskId,
+            details: {
+                artifact_path: taskModePath.replace(/\\/g, '/'),
+                provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                execution_provider: 'Codex',
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved'
+            }
+        }) + '\n', 'utf8');
+
+        const reviewContent = [
+            '# Review',
+            'Validated delegated review dependency evidence across the upstream code artifact, receipt, and routing contract with concrete implementation detail.',
+            '## Findings by Severity',
+            'none',
+            '## Residual Risks',
+            'none',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n');
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        fs.writeFileSync(reviewArtifactPath, reviewContent, 'utf8');
+
+        writeJson(reviewContextPath, {
+            schema_version: 2,
+            task_id: taskId,
+            review_type: 'code',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: '',
+            reviewer_routing: {
+                source_of_truth: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                execution_provider: 'Codex',
+                execution_provider_source: 'explicit_provider',
+                identity_status: 'resolved',
+                actual_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer'
+            }
+        });
+
+        const preflightSha256 = createHash('sha256')
+            .update(fs.readFileSync(preflightPath))
+            .digest('hex')
+            .trim()
+            .toLowerCase();
+        const reviewContextSha256 = createHash('sha256')
+            .update(fs.readFileSync(reviewContextPath))
+            .digest('hex')
+            .trim()
+            .toLowerCase();
+        const reviewArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(reviewArtifactPath))
+            .digest('hex')
+            .trim()
+            .toLowerCase();
+
+        writeJson(receiptPath, {
+            schema_version: 2,
+            task_id: taskId,
+            review_type: 'code',
+            preflight_sha256: preflightSha256,
+            scope_sha256: null,
+            review_context_sha256: reviewContextSha256,
+            review_artifact_sha256: reviewArtifactSha256,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: 'agent:code-reviewer',
+            reviewer_fallback_reason: null,
+            trust_level: 'LOCAL_ASSERTED',
+            recorded_at_utc: '2026-04-17T11:31:00.000Z'
+        });
+
+        const timelineEvent: ReviewDependencyTimelineEvent = {
+            event_type: 'REVIEW_RECORDED',
+            sequence: 12,
+            details: {
+                review_type: 'code',
+                review_context_path: reviewContextPath.replace(/\\/g, '/')
+            }
+        };
+        const timelineEvents: ReviewDependencyTimelineEvent[] = [{
+            event_type: 'COMPILE_GATE_PASSED',
+            sequence: 8,
+            details: null,
+            integrity: null
+        }, {
+            event_type: 'REVIEW_PHASE_STARTED',
+            sequence: 9,
+            details: { review_type: 'code' },
+            integrity: null
+        }, {
+            event_type: 'REVIEWER_DELEGATION_ROUTED',
+            sequence: 10,
+            details: {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer'
+            },
+            integrity: {
+                schema_version: 1,
+                task_sequence: 11,
+                prev_event_sha256: 'a'.repeat(64),
+                event_sha256: 'b'.repeat(64)
+            }
+        }];
+
+        const result = assessUpstreamReviewDependencyStatus({
+            taskId,
+            preflightPath,
+            preflightPayload: {},
+            preflightHashSha256: preflightSha256,
+            latestRecordedReviewByType: new Map([['code', timelineEvent]]),
+            upstreamReviewType: 'code',
+            timelineEvents,
+            taskModePath
+        });
+
+        assert.equal(result.ready, false);
+        assert.match(result.reason, /reviewer_provenance/i);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('assessUpstreamReviewDependencyStatus rejects upstream PASS when receipt preflight binding drifts', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-dependencies-'));
     try {

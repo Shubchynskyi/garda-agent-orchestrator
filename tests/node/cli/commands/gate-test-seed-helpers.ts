@@ -22,6 +22,9 @@ import {
     computeReviewContextReuseHash
 } from '../../../../src/gates/review-reuse';
 import {
+    resolveReviewerRoutingPolicy
+} from '../../../../src/gates/reviewer-routing';
+import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt
 } from '../../../../src/gate-runtime/review-context';
@@ -191,17 +194,17 @@ export function createReviewerRoutingFixture(
     overrides: Record<string, unknown> = {}
 ): Record<string, unknown> {
     const normalizedSourceOfTruth = String(sourceOfTruth).trim() || 'Codex';
-    const conditionalFallbackProvider = normalizedSourceOfTruth === 'Antigravity';
+    const policy = resolveReviewerRoutingPolicy(normalizedSourceOfTruth, 'provider_entrypoint');
     return {
         source_of_truth: normalizedSourceOfTruth,
         canonical_source_of_truth: normalizedSourceOfTruth,
         execution_provider: normalizedSourceOfTruth,
         execution_provider_source: 'provider_entrypoint',
         identity_status: 'resolved',
-        capability_level: conditionalFallbackProvider ? 'delegation_conditional' : 'delegation_capable',
-        expected_execution_mode: conditionalFallbackProvider ? 'delegated_subagent' : 'delegated_subagent',
-        fallback_allowed: conditionalFallbackProvider,
-        fallback_reason_required: conditionalFallbackProvider,
+        capability_level: policy.capability_level,
+        expected_execution_mode: policy.expected_execution_mode,
+        fallback_allowed: policy.fallback_allowed,
+        fallback_reason_required: policy.fallback_reason_required,
         actual_execution_mode: null,
         reviewer_session_id: null,
         fallback_reason: null,
@@ -325,6 +328,57 @@ export function writeCompilePassEvidence(repoRoot: string, taskId: string, prefl
     });
 }
 
+function readSeededSourceOfTruth(repoRoot: string): string {
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
+        return 'Codex';
+    }
+    try {
+        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+        return typeof payload.SourceOfTruth === 'string' && payload.SourceOfTruth.trim()
+            ? payload.SourceOfTruth.trim()
+            : 'Codex';
+    } catch {
+        return 'Codex';
+    }
+}
+
+function resolveDefaultReviewerEvidence(repoRoot: string, taskId: string): {
+    sourceOfTruth: string;
+    executionMode: 'delegated_subagent' | 'same_agent_fallback';
+    reviewerIdentity: string;
+    reviewerFallbackReason: string | null;
+    routingOverrides: Record<string, unknown>;
+} {
+    const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
+    const policy = resolveReviewerRoutingPolicy(sourceOfTruth, 'provider_entrypoint');
+    const executionMode = policy.expected_execution_mode === 'same_agent_fallback'
+        ? 'same_agent_fallback'
+        : 'delegated_subagent';
+    const reviewerIdentity = executionMode === 'same_agent_fallback'
+        ? `self:${taskId}`
+        : 'agent:test-reviewer';
+    const reviewerFallbackReason = executionMode === 'same_agent_fallback'
+        ? 'attested reviewer launch unavailable in direct provider session'
+        : null;
+    return {
+        sourceOfTruth,
+        executionMode,
+        reviewerIdentity,
+        reviewerFallbackReason,
+        routingOverrides: {
+            execution_provider_source: 'provider_entrypoint',
+            delegation_required: policy.delegation_required,
+            expected_execution_mode: policy.expected_execution_mode,
+            fallback_allowed: policy.fallback_allowed,
+            fallback_reason_required: policy.fallback_reason_required,
+            actual_execution_mode: executionMode,
+            reviewer_session_id: reviewerIdentity,
+            fallback_reason: reviewerFallbackReason
+        }
+    };
+}
+
 export function writeReceiptBackedReviewArtifact(
     repoRoot: string,
     taskId: string,
@@ -334,6 +388,7 @@ export function writeReceiptBackedReviewArtifact(
 ): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
+    const reviewerEvidence = resolveDefaultReviewerEvidence(repoRoot, taskId);
     const content = (contentLines || [
         '# Review',
         '',
@@ -355,9 +410,8 @@ export function writeReceiptBackedReviewArtifact(
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     const reviewContext = {
         review_type: reviewKey,
-        reviewer_routing: createReviewerRoutingFixture('Codex', {
-            actual_execution_mode: 'delegated_subagent',
-            reviewer_session_id: 'agent:test-reviewer'
+        reviewer_routing: createReviewerRoutingFixture(reviewerEvidence.sourceOfTruth, {
+            ...reviewerEvidence.routingOverrides
         })
     };
     const reviewContextText = JSON.stringify(reviewContext, null, 2);
@@ -374,8 +428,9 @@ export function writeReceiptBackedReviewArtifact(
         review_type: reviewKey,
         review_artifact_sha256: artifactHash,
         review_context_sha256: reviewContextHash,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_identity: 'agent:test-reviewer'
+        reviewer_execution_mode: reviewerEvidence.executionMode,
+        reviewer_identity: reviewerEvidence.reviewerIdentity,
+        reviewer_fallback_reason: reviewerEvidence.reviewerFallbackReason
     }));
 
     // Emit mandatory telemetry for authenticity
@@ -389,8 +444,9 @@ export function writeReceiptBackedReviewArtifact(
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
             review_type: reviewKey,
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_session_id: 'agent:test-reviewer',
+            reviewer_execution_mode: reviewerEvidence.executionMode,
+            reviewer_session_id: reviewerEvidence.reviewerIdentity,
+            reviewer_fallback_reason: reviewerEvidence.reviewerFallbackReason,
             delegation_used: true
         });
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
@@ -444,10 +500,28 @@ export function seedReusableReviewEvidence(
         outputPath: reviewContextPath,
         repoRoot
     });
+    const builtReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const builtReviewerRouting = builtReviewContext.reviewer_routing
+        && typeof builtReviewContext.reviewer_routing === 'object'
+        && !Array.isArray(builtReviewContext.reviewer_routing)
+        ? builtReviewContext.reviewer_routing as Record<string, unknown>
+        : {};
+    const expectedExecutionMode = typeof builtReviewerRouting.expected_execution_mode === 'string'
+        ? builtReviewerRouting.expected_execution_mode.trim()
+        : 'delegated_subagent';
+    const executionMode = expectedExecutionMode === 'same_agent_fallback'
+        ? 'same_agent_fallback'
+        : 'delegated_subagent';
+    const resolvedReviewerIdentity = executionMode === 'same_agent_fallback'
+        ? `self:${taskId}`
+        : reviewerIdentity;
+    const reviewerFallbackReason = executionMode === 'same_agent_fallback'
+        ? 'attested reviewer launch unavailable in direct provider session'
+        : null;
     applyReviewerRoutingMetadata(reviewContextPath, {
-        actualExecutionMode: 'delegated_subagent',
-        reviewerSessionId: reviewerIdentity,
-        fallbackReason: null
+        actualExecutionMode: executionMode,
+        reviewerSessionId: resolvedReviewerIdentity,
+        fallbackReason: reviewerFallbackReason
     });
     if (options.legacyReviewContextIdentity) {
         const legacyReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
@@ -484,9 +558,9 @@ export function seedReusableReviewEvidence(
         reviewContextSha256: reviewContextHash,
         reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
         reviewArtifactSha256: artifactHash,
-        reviewerExecutionMode: 'delegated_subagent',
-        reviewerIdentity,
-        reviewerFallbackReason: null,
+        reviewerExecutionMode: executionMode,
+        reviewerIdentity: resolvedReviewerIdentity,
+        reviewerFallbackReason,
         trustLevel: 'LOCAL_AUDITED'
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');

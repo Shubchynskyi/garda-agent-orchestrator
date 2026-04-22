@@ -224,11 +224,15 @@ REVIEW PASSED
             assert.ok(result.violations.some((entry: string) => entry.includes('different task')));
         });
 
-        it('fails same-agent fallback for delegation-capable providers', () => {
-            const content = '# Review\nValidated `src/gates/required-reviews-check.ts` against the routing contract with meaningful scope notes.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
+        it('passes same-agent fallback for direct provider-entrypoint Codex sessions when an explicit reason is present', () => {
+            const content = '# Review\nValidated `src/gates/required-reviews-check.ts` and `src/gates/reviewer-routing.ts` against the direct provider-entrypoint fallback contract, confirming that same-agent fallback stays explicitly attributed, carries a non-empty fallback reason, and does not claim delegated provenance.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {
                     source_of_truth: 'Codex',
+                    canonical_source_of_truth: 'Codex',
+                    execution_provider: 'Codex',
+                    execution_provider_source: 'provider_entrypoint',
+                    identity_status: 'resolved',
                     actual_execution_mode: 'same_agent_fallback',
                     reviewer_session_id: 'self:T-901',
                     fallback_reason: 'manual fallback'
@@ -243,19 +247,39 @@ REVIEW PASSED
                 review_context_sha256: reviewContextHash,
                 reviewer_execution_mode: 'same_agent_fallback',
                 reviewer_identity: 'self:T-901',
-                reviewer_fallback_reason: 'manual fallback'
+                reviewer_fallback_reason: 'manual fallback',
+                trust_level: 'LOCAL_ASSERTED'
             }));
+            const runtimeRoot = path.join(tempDir, 'runtime');
+            const reviewRuntimeDir = path.join(runtimeRoot, 'reviews');
+            const taskEventsDir = path.join(runtimeRoot, 'task-events');
+            const preflightPath = path.join(reviewRuntimeDir, 'preflight.json');
+            const timelinePath = path.join(taskEventsDir, 'T-901.jsonl');
+            fs.mkdirSync(reviewRuntimeDir, { recursive: true });
+            fs.mkdirSync(taskEventsDir, { recursive: true });
+            fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-901' }));
+            fs.writeFileSync(
+                timelinePath,
+                `${JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-22T00:00:00.000Z',
+                    details: { task_id: 'T-901' }
+                })}\n`
+            );
 
             const result = checkRequiredReviews({
                 validatedPreflight: {
                     errors: [],
                     resolved_task_id: 'T-901',
                     required_reviews: { code: true } as any,
-                    preflight_path: 'preflight.json',
+                    preflight_path: preflightPath,
                     preflight_hash: 'abc'
                 },
                 verdicts: { code: 'REVIEW PASSED' },
                 sourceOfTruth: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint',
                 reviewArtifacts: {
                     code: {
                         path: artifactPath,
@@ -264,13 +288,12 @@ REVIEW PASSED
                         reviewContextSha256: reviewContextHash
                     }
                 }
-            });
+            } as any);
 
-            assert.equal(result.status, 'FAILED');
-            assert.ok(result.violations.some((entry: string) => entry.includes('delegated_subagent')));
+            assert.equal(result.status, 'PASSED');
         });
 
-        it('passes delegated review for delegation-capable providers', () => {
+        it('fails delegated review for direct provider-entrypoint Codex sessions without attested launch evidence', () => {
             const content = '# Review\nValidated `src/gates/build-review-context.ts`, `src/gates/required-reviews-check.ts`, and the receipt-backed routing path end to end, confirming that delegated reviewer identity, context hash integrity, and verdict propagation remain consistent across the required review gate.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {
@@ -310,7 +333,8 @@ REVIEW PASSED
                 }
             });
 
-            assert.equal(result.status, 'PASSED');
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some((entry: string) => entry.includes('same_agent_fallback')));
         });
 
         it('fails when receipt reviewer execution mode is invalid', () => {

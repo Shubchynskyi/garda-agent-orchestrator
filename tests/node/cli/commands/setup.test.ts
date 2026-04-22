@@ -390,6 +390,8 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
     const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
 
     try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
         await handleSetup(
             ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
             packageJson,
