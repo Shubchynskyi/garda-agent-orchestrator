@@ -2178,6 +2178,189 @@ describe('gates/task-audit-summary', () => {
             assert.ok(renderedMarkdown.includes('Скажите агенту: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
         });
 
+        it('renders the compact agent report block in French when closeout language is French', () => {
+            const renderedMarkdown = formatFinalCloseoutMarkdown({
+                schema_version: 1,
+                event_source: 'task-audit-summary',
+                task_id: TASK_ID,
+                generated_utc: '2026-01-01T00:00:00.000Z',
+                audit_status: 'PASS',
+                status: 'READY',
+                blocker: null,
+                artifact_state: 'MATERIALIZED',
+                artifact_paths: {
+                    json: 'runtime/reviews/T-211-final-closeout.json',
+                    markdown: 'runtime/reviews/T-211-final-closeout.md'
+                },
+                implementation_summary: {
+                    requested_depth: 2,
+                    effective_depth: 2,
+                    path_mode: 'FULL_PATH',
+                    review_verdicts: { code: 'REVIEW PASSED', test: 'TEST REVIEW PASSED' },
+                    docs_updated: false,
+                    changed_files_count: 2,
+                    changed_lines_total: 15,
+                    scope_category: 'code',
+                    active_profile: 'balanced'
+                },
+                optional_skills: {
+                    policy_mode: 'advisory',
+                    decision: 'as_is',
+                    selected_skill_ids: [],
+                    used_skill_ids: [],
+                    recommended_missing_pack_ids: [],
+                    as_is_reason: 'generic_context_sufficient',
+                    visible_summary_line: 'Optional skills: as_is (reason: generic_context_sufficient)'
+                },
+                workflow: {
+                    mandatory_full_suite_enabled: true,
+                    visible_summary_line: 'Mandatory full-suite: true'
+                },
+                docs: {
+                    decision: 'NO_DOC_UPDATES',
+                    behavior_changed: false,
+                    changelog_updated: false,
+                    docs_updated: []
+                },
+                token_economy: null,
+                agent_report: {
+                    assistant_language: 'French',
+                    assistant_language_confirmed: true,
+                    next_task_command: 'Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.',
+                    latest_update_notice: '1.2.3'
+                },
+                commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_question: 'Do you want me to commit now? (yes/no)'
+            });
+
+            assert.ok(renderedMarkdown.includes('GARDA_AGENT_REPORT'));
+            assert.ok(renderedMarkdown.includes('Cloture de la tache'));
+            assert.ok(renderedMarkdown.includes('Langue: French (normalise)'));
+            assert.ok(renderedMarkdown.includes('Mode de revue: aucune revue obligatoire; verdicts: code=REVIEW PASSED, test=TEST REVIEW PASSED'));
+            assert.ok(renderedMarkdown.includes('Competences optionnelles: aucune competence supplementaire (generic_context_sufficient)'));
+            assert.ok(renderedMarkdown.includes('Full-suite obligatoire: active'));
+            assert.ok(renderedMarkdown.includes('Dites a l\'agent: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+        });
+
+        it('localizes unavailable optional-skill summaries inside the compact report block', () => {
+            const renderedMarkdown = formatFinalCloseoutMarkdown({
+                schema_version: 1,
+                event_source: 'task-audit-summary',
+                task_id: TASK_ID,
+                generated_utc: '2026-01-01T00:00:00.000Z',
+                audit_status: 'PASS',
+                status: 'READY',
+                blocker: null,
+                artifact_state: 'MATERIALIZED',
+                artifact_paths: {
+                    json: 'runtime/reviews/T-211-final-closeout.json',
+                    markdown: 'runtime/reviews/T-211-final-closeout.md'
+                },
+                implementation_summary: {
+                    requested_depth: 2,
+                    effective_depth: 2,
+                    path_mode: 'FULL_PATH',
+                    review_verdicts: { code: 'REVIEW PASSED' },
+                    docs_updated: false,
+                    changed_files_count: 1,
+                    changed_lines_total: 5,
+                    scope_category: 'code',
+                    active_profile: 'balanced'
+                },
+                optional_skills: {
+                    policy_mode: 'advisory',
+                    decision: 'unavailable',
+                    selected_skill_ids: ['node-backend'],
+                    used_skill_ids: [],
+                    recommended_missing_pack_ids: [],
+                    as_is_reason: 'task_events_integrity',
+                    visible_summary_line: 'Optional skills: unavailable (reason: task_events_integrity)'
+                },
+                workflow: {
+                    mandatory_full_suite_enabled: false,
+                    visible_summary_line: 'Mandatory full-suite: false'
+                },
+                docs: {
+                    decision: 'NO_DOC_UPDATES',
+                    behavior_changed: false,
+                    changelog_updated: false,
+                    docs_updated: []
+                },
+                token_economy: null,
+                agent_report: {
+                    assistant_language: 'French',
+                    assistant_language_confirmed: true,
+                    next_task_command: null,
+                    latest_update_notice: null
+                },
+                commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_question: 'Do you want me to commit now? (yes/no)'
+            });
+
+            assert.ok(renderedMarkdown.includes('Competences optionnelles: indisponible (raison: task_events_integrity)'));
+        });
+
+        it('localizes none-used optional-skill summaries inside the compact report block', () => {
+            const renderedMarkdown = formatFinalCloseoutMarkdown({
+                schema_version: 1,
+                event_source: 'task-audit-summary',
+                task_id: TASK_ID,
+                generated_utc: '2026-01-01T00:00:00.000Z',
+                audit_status: 'PASS',
+                status: 'READY',
+                blocker: null,
+                artifact_state: 'MATERIALIZED',
+                artifact_paths: {
+                    json: 'runtime/reviews/T-211-final-closeout.json',
+                    markdown: 'runtime/reviews/T-211-final-closeout.md'
+                },
+                implementation_summary: {
+                    requested_depth: 2,
+                    effective_depth: 2,
+                    path_mode: 'FULL_PATH',
+                    review_verdicts: { code: 'REVIEW PASSED' },
+                    docs_updated: false,
+                    changed_files_count: 1,
+                    changed_lines_total: 5,
+                    scope_category: 'code',
+                    active_profile: 'balanced'
+                },
+                optional_skills: {
+                    policy_mode: 'advisory',
+                    decision: 'selected_installed_skills',
+                    selected_skill_ids: ['node-backend'],
+                    used_skill_ids: [],
+                    recommended_missing_pack_ids: [],
+                    as_is_reason: null,
+                    visible_summary_line: 'Optional skills: none_used (selected: node-backend, reason: task_text+paths)'
+                },
+                workflow: {
+                    mandatory_full_suite_enabled: false,
+                    visible_summary_line: 'Mandatory full-suite: false'
+                },
+                docs: {
+                    decision: 'NO_DOC_UPDATES',
+                    behavior_changed: false,
+                    changelog_updated: false,
+                    docs_updated: []
+                },
+                token_economy: null,
+                agent_report: {
+                    assistant_language: 'German',
+                    assistant_language_confirmed: true,
+                    next_task_command: null,
+                    latest_update_notice: null
+                },
+                commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_question: 'Do you want me to commit now? (yes/no)'
+            });
+
+            assert.ok(renderedMarkdown.includes('Optionale Skills: nicht verwendet (ausgewaehlt: node-backend, Grund: task_text+paths)'));
+        });
+
         it('renders the compact optional skill summary line when present', () => {
             const renderedMarkdown = formatFinalCloseoutMarkdown({
                 schema_version: 1,

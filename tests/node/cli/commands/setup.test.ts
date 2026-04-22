@@ -473,6 +473,24 @@ test('buildSetupHandoffText localizes the compact report using assistant languag
     assert.ok(text.includes('Последнее update-уведомление: 1.2.3'));
 });
 
+test('buildSetupHandoffText keeps the compact report localized for German assistant language', () => {
+    const snapshot = {
+        bundlePath: '/workspace/garda-agent-orchestrator',
+        activeAgentFiles: 'AGENTS.md',
+        assistantLanguage: 'Deutsch',
+        assistantLanguageConfirmed: true,
+        mandatoryFullSuiteEnabled: false,
+        latestUpdateNotice: '1.2.3'
+    };
+    const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
+    assert.ok(text.includes('Setup-Uebergabe'));
+    assert.ok(text.includes('Sprache: Deutsch (normalisiert)'));
+    assert.ok(text.includes('Review-Modus: verbindliche Orchestrator-Gates'));
+    assert.ok(text.includes('Optionale Skills: waehrend AGENT_INIT_PROMPT klaeren'));
+    assert.ok(text.includes('Verbindliche Full-Suite: deaktiviert'));
+    assert.ok(text.includes('Letzter Update-Hinweis: 1.2.3'));
+});
+
 test('buildSetupHandoffText reports the active profile and default depth', () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-handoff-profile-'));
     try {

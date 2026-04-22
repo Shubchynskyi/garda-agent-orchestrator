@@ -6,7 +6,11 @@ import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
 import { readActiveProfileHint } from '../../validators/task-command';
-import { buildLocalizedAgentReportBlock, resolveAgentReportLocale } from './cli-format-output';
+import {
+    buildLocalizedAgentReportBlock,
+    getAgentReportMessages,
+    resolveAgentReportLocale
+} from './cli-format-output';
 import {
     acquireSourceRoot,
     bold,
@@ -249,15 +253,12 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate';
     const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
     const reportLocale = resolveAgentReportLocale(snapshot.assistantLanguage);
+    const reportMessages = getAgentReportMessages(reportLocale);
     const activeProfileSummary = activeProfileHint.activeProfile
         ? `${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth})`
         : null;
-    const reviewModeSummary = reportLocale === 'ru'
-        ? 'обязательные оркестраторные gate\'ы'
-        : 'mandatory orchestrator gates';
-    const optionalSkillsSummary = reportLocale === 'ru'
-        ? 'уточнить в AGENT_INIT_PROMPT'
-        : 'ask during AGENT_INIT_PROMPT';
+    const reviewModeSummary = reportMessages.summaries.mandatoryOrchestratorGates;
+    const optionalSkillsSummary = reportMessages.summaries.askDuringAgentInit;
     const activeProfileLine = activeProfileHint.activeProfile
         ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
         : 'Use explicit depth only as a one-run override.';

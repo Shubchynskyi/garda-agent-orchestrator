@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- fixed localized agent reports so confirmed `agent-init` language now overrides stale setup answers, and report labels now follow the configured assistant language instead of silently falling back to English
 - synced integrity-priority wording into tracked template rule sources and added contract regressions so setup or update cannot silently rematerialize stale policy text
 - kept review trust summaries visible on completion and audit compatibility paths even when consuming legacy or partial review artifacts, degrading the line to explicit unavailable status instead of dropping it outright
 - preserved delegated reviewer provenance when current-cycle code-review reuse binds to historical delegated receipts, and tightened reuse guards so invalid delegated or fallback identity combinations cannot be silently rebound into fresh-cycle evidence

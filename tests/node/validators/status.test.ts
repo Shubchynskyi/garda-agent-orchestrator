@@ -10,6 +10,7 @@ import {
     formatStatusSnapshotCompact,
     resolveInitAnswersPath
 } from '../../../src/validators/status';
+import { buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
 import {
     writeProtectedControlPlaneManifest
 } from '../../../src/gates/helpers';
@@ -234,7 +235,7 @@ test('getStatusSnapshot reads init answers when present', () => {
     }
 });
 
-test('getStatusSnapshot exposes full-suite flag and latest cached update notice when present', () => {
+test('getStatusSnapshot prefers confirmed agent-init language while still exposing full-suite flag and latest update notice', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {
         seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
@@ -271,10 +272,63 @@ test('getStatusSnapshot exposes full-suite flag and latest cached update notice 
         );
 
         const snapshot = getStatusSnapshot(tmpDir);
-        assert.equal(snapshot.assistantLanguage, 'English');
+        assert.equal(snapshot.assistantLanguage, 'Russian');
         assert.equal(snapshot.assistantLanguageConfirmed, true);
         assert.equal(snapshot.mandatoryFullSuiteEnabled, true);
         assert.equal(snapshot.latestUpdateNotice, '1.2.3');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildAgentInitOutput localizes the compact report from confirmed agent-init language even when setup answers are stale', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'Russian',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const output = buildAgentInitOutput({
+            targetRoot: tmpDir,
+            initAnswersPath: path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'),
+            bundleRoot: path.join(tmpDir, 'garda-agent-orchestrator'),
+            projectRulesUpdated: true,
+            skillsPromptCompleted: true,
+            verifyPassed: true,
+            manifestPassed: true,
+            verifyResult: { passed: true },
+            manifestResult: { passed: true },
+            activeAgentFiles: ['AGENTS.md'],
+            agentInitStatePath: path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'agent-init-state.json'),
+            readyForTasks: false,
+            state: {
+                Version: 1,
+                AssistantLanguage: 'Russian',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        } as unknown as Parameters<typeof buildAgentInitOutput>[0]);
+
+        assert.ok(output.includes('Итог agent-init'));
+        assert.ok(output.includes('Язык: Russian (нормализован)'));
+        assert.ok(output.includes('Следующая команда: Next: resolve blockers and rerun agent-init ()'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

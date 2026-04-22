@@ -1,7 +1,12 @@
 import type { FinalCloseoutArtifact, TaskAuditSummaryResult } from './task-audit-summary';
 import { toPosix } from './helpers';
 import type { TaskQueueMetadata } from './task-audit-summary-collectors';
-import { buildLocalizedAgentReportBlock, resolveAgentReportLocale, type AgentReportLocale } from '../cli/commands/cli-format-output';
+import {
+    buildLocalizedAgentReportBlock,
+    getAgentReportMessages,
+    resolveAgentReportLocale,
+    type AgentReportLocale
+} from '../cli/commands/cli-format-output';
 
 // ---------------------------------------------------------------------------
 // Commit command inference helpers
@@ -123,41 +128,56 @@ function buildLocalizedCloseoutReviewMode(
     closeout: FinalCloseoutArtifact,
     locale: AgentReportLocale
 ): string {
+    const reportMessages = getAgentReportMessages(locale);
     const trustPrefix = closeout.review_trust?.independent_review_attested
-        ? (locale === 'ru' ? 'независимое ревью подтверждено' : 'independent review attested')
+        ? reportMessages.summaries.independentReviewAttested
         : (closeout.review_trust
-            ? (locale === 'ru' ? 'локальное ревью' : 'local review')
-            : (locale === 'ru' ? 'ревью не требовалось' : 'no required review'));
+            ? reportMessages.summaries.localReview
+            : reportMessages.summaries.noRequiredReview);
     const verdicts = Object.entries(closeout.implementation_summary.review_verdicts)
         .map(([reviewType, verdict]) => `${reviewType}=${verdict}`);
     if (verdicts.length === 0) {
         return trustPrefix;
     }
-    return `${trustPrefix}; ${locale === 'ru' ? 'вердикты' : 'verdicts'}: ${verdicts.join(', ')}`;
+    return `${trustPrefix}; ${reportMessages.summaries.verdicts}: ${verdicts.join(', ')}`;
 }
 
 function buildLocalizedOptionalSkillsSummary(
     closeout: FinalCloseoutArtifact,
     locale: AgentReportLocale
 ): string | null {
+    const reportMessages = getAgentReportMessages(locale);
     const summary = closeout.optional_skills;
     if (!summary) {
         return null;
     }
+    const visibleSummaryLine = String(summary.visible_summary_line || '').trim();
+    const reasonMatch = visibleSummaryLine.match(/(?:\(|,\s*)reason:\s*([^)]+)\)\s*$/i);
+    const reasonValue = reasonMatch?.[1]?.trim() || null;
+    const reasonSuffix = reasonValue
+        ? ` (${reportMessages.summaries.reason}: ${reasonValue})`
+        : '';
     if (summary.decision === 'selected_installed_skills' && summary.selected_skill_ids.length > 0) {
-        return locale === 'ru'
-            ? `выбрано: ${summary.selected_skill_ids.join(', ')}`
-            : `selected: ${summary.selected_skill_ids.join(', ')}`;
+        if (summary.used_skill_ids.length === 0) {
+            const selectedDetails = `${reportMessages.summaries.selected}: ${summary.selected_skill_ids.join(', ')}`;
+            return `${reportMessages.summaries.noneUsed} (${selectedDetails}${reasonValue ? `, ${reportMessages.summaries.reason}: ${reasonValue}` : ''})`;
+        }
+        if (summary.used_skill_ids.length !== summary.selected_skill_ids.length) {
+            return `${summary.used_skill_ids.join(', ')}${reasonSuffix}`;
+        }
+        return `${reportMessages.summaries.selected}: ${summary.selected_skill_ids.join(', ')}`;
     }
     if (summary.decision === 'recommended_missing_packs' && summary.recommended_missing_pack_ids.length > 0) {
-        return locale === 'ru'
-            ? `рекомендуются пакеты: ${summary.recommended_missing_pack_ids.join(', ')}`
-            : `recommended packs: ${summary.recommended_missing_pack_ids.join(', ')}`;
+        return `${reportMessages.summaries.recommendedPacks}: ${summary.recommended_missing_pack_ids.join(', ')}`;
     }
     if (summary.decision === 'as_is') {
-        return locale === 'ru'
-            ? `без дополнительных навыков${summary.as_is_reason ? ` (${summary.as_is_reason})` : ''}`
-            : `no additional skills${summary.as_is_reason ? ` (${summary.as_is_reason})` : ''}`;
+        return `${reportMessages.summaries.noAdditionalSkills}${summary.as_is_reason ? ` (${summary.as_is_reason})` : ''}`;
+    }
+    if (summary.decision === 'unavailable' || summary.decision === 'invalidated') {
+        return `${reportMessages.summaries.unavailable}${reasonSuffix}`;
+    }
+    if (visibleSummaryLine) {
+        return visibleSummaryLine.replace(/^Optional skills:\s*/i, '');
     }
     return summary.visible_summary_line;
 }

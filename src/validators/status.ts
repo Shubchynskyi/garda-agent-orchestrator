@@ -208,7 +208,9 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     var assistantLanguageConfirmed = agentInitStateResult.state
         ? agentInitStateResult.state.AssistantLanguageConfirmed
         : null;
-    if (!assistantLanguage && agentInitStateResult.state && agentInitStateResult.state.AssistantLanguage) {
+    if (assistantLanguageConfirmed === true && agentInitStateResult.state && agentInitStateResult.state.AssistantLanguage) {
+        assistantLanguage = agentInitStateResult.state.AssistantLanguage;
+    } else if (!assistantLanguage && agentInitStateResult.state && agentInitStateResult.state.AssistantLanguage) {
         assistantLanguage = agentInitStateResult.state.AssistantLanguage;
     }
     if (primaryInitializationComplete) {

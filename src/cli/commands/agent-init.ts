@@ -6,6 +6,7 @@ import { buildProfileAwareNextLine } from '../../validators/task-command';
 import {
     buildGuardedCommandHelpText,
     buildLocalizedAgentReportBlock,
+    getAgentReportMessages,
     resolveAgentReportLocale
 } from './cli-format-output';
 import {
@@ -30,18 +31,17 @@ export const AGENT_INIT_DEFINITIONS = {
 export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): string {
     const snapshot = getStatusSnapshot(result.targetRoot, result.initAnswersPath);
     const reportLocale = resolveAgentReportLocale(snapshot.assistantLanguage);
+    const reportMessages = getAgentReportMessages(reportLocale);
     const lines: string[] = [];
     lines.push(buildLocalizedAgentReportBlock({
         context: 'agent_init',
         assistantLanguage: snapshot.assistantLanguage,
         assistantLanguageConfirmed: snapshot.assistantLanguageConfirmed,
         profileSummary: snapshot.activeProfile,
-        reviewModeSummary: reportLocale === 'ru'
-            ? 'обязательные оркестраторные gate\'ы'
-            : 'mandatory orchestrator gates',
+        reviewModeSummary: reportMessages.summaries.mandatoryOrchestratorGates,
         optionalSkillsSummary: result.skillsPromptCompleted
-            ? (reportLocale === 'ru' ? 'подтверждены на agent-init' : 'confirmed during agent-init')
-            : (reportLocale === 'ru' ? 'еще не подтверждены на agent-init' : 'still pending in agent-init'),
+            ? reportMessages.summaries.confirmedDuringAgentInit
+            : reportMessages.summaries.pendingDuringAgentInit,
         mandatoryFullSuiteEnabled: snapshot.mandatoryFullSuiteEnabled,
         nextCommand: snapshot.readyForTasks ? null : buildAgentInitNextStep(result),
         nextTaskPrompt: snapshot.readyForTasks ? snapshot.recommendedNextCommand : null,
