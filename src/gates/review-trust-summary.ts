@@ -27,6 +27,12 @@ export interface ReviewTrustSummary {
     policy_summary_line: string;
 }
 
+export interface ReviewTrustCompatibilityArtifact {
+    content?: string | null;
+    receipt?: Record<string, unknown> | null;
+    reviewContext?: Record<string, unknown> | null;
+}
+
 function normalizeToken(value: unknown): string | null {
     const normalized = String(value || '').trim().toUpperCase();
     return normalized ? normalized : null;
@@ -55,6 +61,83 @@ function formatModes(executionModes: ReviewerExecutionMode[]): string {
 function formatScopeLabel(scopeCategory: string | null | undefined): string {
     const normalized = String(scopeCategory || '').trim();
     return normalized ? `${normalized} task` : 'task';
+}
+
+function getReviewTrustFallbackReasonRequired(reviewContext: Record<string, unknown> | null): boolean | null {
+    if (!reviewContext) {
+        return null;
+    }
+    const reviewerRouting = reviewContext.reviewer_routing
+        && typeof reviewContext.reviewer_routing === 'object'
+        && !Array.isArray(reviewContext.reviewer_routing)
+        ? reviewContext.reviewer_routing as Record<string, unknown>
+        : null;
+    return reviewerRouting && typeof reviewerRouting.fallback_reason_required === 'boolean'
+        ? reviewerRouting.fallback_reason_required
+        : null;
+}
+
+function hasReviewTrustCompatibilityArtifact(artifact: ReviewTrustCompatibilityArtifact | null | undefined): boolean {
+    if (!artifact || typeof artifact !== 'object') {
+        return false;
+    }
+    if (typeof artifact.content === 'string' && artifact.content.trim()) {
+        return true;
+    }
+    if (artifact.receipt && typeof artifact.receipt === 'object' && !Array.isArray(artifact.receipt)) {
+        return true;
+    }
+    return !!(
+        artifact.reviewContext
+        && typeof artifact.reviewContext === 'object'
+        && !Array.isArray(artifact.reviewContext)
+    );
+}
+
+export function buildReviewTrustSummaryFromCompatibilityArtifacts(
+    artifacts: Record<string, ReviewTrustCompatibilityArtifact>,
+    scopeCategory: string | null | undefined
+): ReviewTrustSummary | null {
+    const artifactEntries = Object.entries(artifacts);
+    const discoveredArtifacts = artifactEntries.filter(([, artifact]) => hasReviewTrustCompatibilityArtifact(artifact)).length;
+    if (discoveredArtifacts <= 0) {
+        return null;
+    }
+
+    const entries = artifactEntries.flatMap(([reviewType, artifact]) => {
+        if (!artifact || typeof artifact !== 'object') {
+            return [];
+        }
+        const receipt = artifact.receipt
+            && typeof artifact.receipt === 'object'
+            && !Array.isArray(artifact.receipt)
+            ? artifact.receipt
+            : null;
+        const reviewContext = artifact.reviewContext
+            && typeof artifact.reviewContext === 'object'
+            && !Array.isArray(artifact.reviewContext)
+            ? artifact.reviewContext
+            : null;
+        const artifactContent = typeof artifact.content === 'string' ? artifact.content.trim() : '';
+        if (!receipt || !artifactContent) {
+            return [];
+        }
+        return [{
+            review_type: reviewType,
+            trust_level: typeof receipt.trust_level === 'string' ? receipt.trust_level : null,
+            reviewer_execution_mode: typeof receipt.reviewer_execution_mode === 'string'
+                ? receipt.reviewer_execution_mode
+                : null,
+            reviewer_identity: typeof receipt.reviewer_identity === 'string' ? receipt.reviewer_identity : null,
+            reviewer_fallback_reason: typeof receipt.reviewer_fallback_reason === 'string'
+                ? receipt.reviewer_fallback_reason
+                : null,
+            reviewer_fallback_reason_required: getReviewTrustFallbackReasonRequired(reviewContext),
+            reviewer_provenance: receipt.reviewer_provenance ?? null
+        }];
+    });
+
+    return buildReviewTrustSummary(entries, scopeCategory, discoveredArtifacts);
 }
 
 export function buildReviewTrustSummary(

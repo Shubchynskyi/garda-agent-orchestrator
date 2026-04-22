@@ -100,6 +100,18 @@ export interface ProfileReviewDecisionSummary {
     }>;
 }
 
+const REVIEW_TRUST_COMPATIBILITY_TYPES = [
+    'code',
+    'db',
+    'security',
+    'refactor',
+    'test',
+    'api',
+    'performance',
+    'infra',
+    'dependency'
+] as const;
+
 // ---------------------------------------------------------------------------
 // Path resolution utilities
 // ---------------------------------------------------------------------------
@@ -190,7 +202,15 @@ export function readReviewTrustSummary(
     reviewContextPaths?: Record<string, string | null>
 ): FinalCloseoutReviewTrustSummary | null {
     const requiredReviewTypes = Object.keys(requiredReviews).filter((reviewType) => requiredReviews[reviewType] === true).sort();
-    const entries = requiredReviewTypes.flatMap((reviewType) => {
+    const compatibilityFallbackActive = requiredReviewTypes.length === 0;
+    const compatibilityReviewTypes = requiredReviewTypes.length > 0
+        ? requiredReviewTypes
+        : REVIEW_TRUST_COMPATIBILITY_TYPES.filter((reviewType) => (
+            fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`))
+            || fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}.md`))
+            || fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`))
+        ));
+    const entries = compatibilityReviewTypes.flatMap((reviewType) => {
         const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
         const reviewPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
         const reviewContextPath = reviewContextPaths?.[reviewType]
@@ -207,7 +227,13 @@ export function readReviewTrustSummary(
         const recordedReviewArtifactHash = typeof receipt.review_artifact_sha256 === 'string'
             ? receipt.review_artifact_sha256.trim().toLowerCase()
             : '';
-        if (!actualReviewArtifactHash || !recordedReviewArtifactHash || recordedReviewArtifactHash !== actualReviewArtifactHash) {
+        if (!actualReviewArtifactHash) {
+            return [];
+        }
+        if (!recordedReviewArtifactHash && !compatibilityFallbackActive) {
+            return [];
+        }
+        if (recordedReviewArtifactHash && recordedReviewArtifactHash !== actualReviewArtifactHash) {
             return [];
         }
         const expectedPreflightHash = typeof preflightSha256 === 'string'
@@ -307,7 +333,7 @@ export function readReviewTrustSummary(
             reviewer_provenance: receipt.reviewer_provenance ?? null
         }];
     });
-    return buildReviewTrustSummary(entries, scopeCategory, requiredReviewTypes.length);
+    return buildReviewTrustSummary(entries, scopeCategory, compatibilityReviewTypes.length);
 }
 
 export function readDocImpactSummary(docImpact: Record<string, unknown> | null): FinalCloseoutDocsSummary {

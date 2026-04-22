@@ -626,6 +626,64 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, false);
         });
 
+        it('keeps the legacy trust summary visible when preflight review metadata is missing but historical review artifacts remain', () => {
+            fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', '# Code Review\nREVIEW PASSED');
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:code-reviewer',
+                reviewer_provenance: {
+                    schema_version: 1,
+                    attestation_type: 'controller_event_integrity',
+                    controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+                    task_sequence: 1,
+                    prev_event_sha256: null,
+                    event_sha256: 'a'.repeat(64)
+                },
+                trust_level: 'LOCAL_AUDITED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.review_trust?.status, 'LEGACY_LOCAL_AUDITED_CLAIM');
+            assert.match(result.final_closeout.review_trust?.visible_summary_line || '', /legacy LOCAL_AUDITED claim/i);
+            assert.match(formatTaskAuditSummaryText(result), /Review trust: legacy LOCAL_AUDITED claim/i);
+        });
+
+        it('keeps an unavailable trust summary visible when only a partial compatibility review artifact remains', () => {
+            fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.review_trust?.status, 'UNAVAILABLE');
+            assert.match(result.final_closeout.review_trust?.visible_summary_line || '', /incomplete or invalid/i);
+            assert.match(formatTaskAuditSummaryText(result), /Review trust: unavailable/i);
+        });
+
         it('degrades review trust summary when required review trust evidence is incomplete or invalid', () => {
             writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
                 schema_version: 2,
@@ -685,6 +743,54 @@ describe('gates/task-audit-summary', () => {
                 reviewsDir,
                 TASK_ID,
                 'code'
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('keeps current-cycle trust unavailable when a required review receipt omits review_artifact_sha256', () => {
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: 'provider limitation',
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: true
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: null,
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
             );
 
             assert.equal(summary?.status, 'UNAVAILABLE');

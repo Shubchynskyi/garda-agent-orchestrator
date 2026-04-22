@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { getBundleCliCommand, getSourceCliCommand, resolveBundleName } from '../core/constants';
 import { isOrchestratorSourceCheckout } from './helpers';
+import { buildReviewTrustSummaryFromCompatibilityArtifacts } from './review-trust-summary';
 
 /**
  * Escape a string value for use in PowerShell CLI invocations.
@@ -86,12 +87,42 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
     const reviewTrustSummary = result.review_trust_summary && typeof result.review_trust_summary === 'object'
         ? result.review_trust_summary as Record<string, unknown>
         : null;
+    const reviewArtifacts = result.review_artifacts && typeof result.review_artifacts === 'object'
+        ? result.review_artifacts as Record<string, unknown>
+        : null;
+    const compatibilityTrustSummary = reviewArtifacts
+        ? buildReviewTrustSummaryFromCompatibilityArtifacts(
+            Object.fromEntries(
+                Object.entries(reviewArtifacts).map(([reviewType, artifact]) => {
+                    const artifactRecord = artifact && typeof artifact === 'object' && !Array.isArray(artifact)
+                        ? artifact as Record<string, unknown>
+                        : {};
+                    const reviewContext = artifactRecord.reviewContext
+                        && typeof artifactRecord.reviewContext === 'object'
+                        && !Array.isArray(artifactRecord.reviewContext)
+                        ? artifactRecord.reviewContext as Record<string, unknown>
+                        : null;
+                    const receipt = artifactRecord.receipt
+                        && typeof artifactRecord.receipt === 'object'
+                        && !Array.isArray(artifactRecord.receipt)
+                        ? artifactRecord.receipt as Record<string, unknown>
+                        : null;
+                    return [reviewType, {
+                        content: typeof artifactRecord.content === 'string' ? artifactRecord.content : null,
+                        reviewContext,
+                        receipt
+                    }];
+                })
+            ),
+            typeof result.scope_category === 'string' ? result.scope_category : null
+        )
+        : null;
     const reviewTrustLine = reviewTrustSummary && typeof reviewTrustSummary.visible_summary_line === 'string'
         ? reviewTrustSummary.visible_summary_line.trim()
-        : '';
+        : (compatibilityTrustSummary?.visible_summary_line || '');
     const reviewPolicyLine = reviewTrustSummary && typeof reviewTrustSummary.policy_summary_line === 'string'
         ? reviewTrustSummary.policy_summary_line.trim()
-        : '';
+        : (compatibilityTrustSummary?.policy_summary_line || '');
     if (reviewTrustLine) {
         lines.push(reviewTrustLine);
     }

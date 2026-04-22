@@ -111,6 +111,75 @@ describe('gates/completion — helpers and formatters', () => {
             assert.match(output, /Review policy: asserted local review may finish this code task/);
             assert.doesNotMatch(output, /TrustStatus:/);
         });
+
+        it('falls back to compatibility trust rendering when legacy review artifacts are present without a structured trust summary', () => {
+            const output = formatCompletionGateResult({
+                task_id: 'T-1002',
+                status: 'FAILED',
+                outcome: 'FAIL',
+                scope_category: 'code',
+                review_artifacts: {
+                    code: {
+                        content: '# Code Review\nREVIEW PASSED',
+                        receipt: {
+                            trust_level: 'LOCAL_AUDITED',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_provenance: {
+                                schema_version: 1,
+                                attestation_type: 'controller_event_integrity',
+                                controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+                                task_sequence: 1,
+                                prev_event_sha256: null,
+                                event_sha256: 'a'.repeat(64)
+                            }
+                        }
+                    }
+                }
+            });
+
+            assert.match(output, /Review trust: legacy LOCAL_AUDITED claim via DELEGATED_SUBAGENT/);
+            assert.match(output, /Review policy: asserted local review may finish this code task/);
+        });
+
+        it('keeps an unavailable trust line visible for partial compatibility review artifacts', () => {
+            const output = formatCompletionGateResult({
+                task_id: 'T-1003',
+                status: 'FAILED',
+                outcome: 'FAIL',
+                scope_category: 'code',
+                review_artifacts: {
+                    code: {
+                        content: '# Code Review\nREVIEW PASSED'
+                    }
+                }
+            });
+
+            assert.match(output, /Review trust: unavailable \(required review trust evidence incomplete or invalid\)\./);
+            assert.match(output, /Review policy: asserted local review may finish this code task/);
+        });
+
+        it('keeps an unavailable trust line visible for receipt-only compatibility review artifacts', () => {
+            const output = formatCompletionGateResult({
+                task_id: 'T-1004',
+                status: 'FAILED',
+                outcome: 'FAIL',
+                scope_category: 'code',
+                review_artifacts: {
+                    code: {
+                        receipt: {
+                            trust_level: 'LOCAL_ASSERTED',
+                            reviewer_execution_mode: 'same_agent_fallback',
+                            reviewer_identity: 'self:T-1004',
+                            reviewer_fallback_reason: 'provider limitation'
+                        }
+                    }
+                }
+            });
+
+            assert.match(output, /Review trust: unavailable \(required review trust evidence incomplete or invalid\)\./);
+            assert.match(output, /Review policy: asserted local review may finish this code task/);
+        });
     });
 
     describe('buildReviewTrustSummary', () => {
