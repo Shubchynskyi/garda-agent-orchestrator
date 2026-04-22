@@ -225,9 +225,9 @@ describe('gates/build-review-context', () => {
             assert.equal(result.reviewer_routing.execution_provider, 'Codex');
             assert.equal(result.reviewer_routing.canonical_source_of_truth, 'Qwen');
             assert.equal(result.reviewer_routing.identity_status, 'resolved');
-            assert.equal(result.reviewer_routing.delegation_required, false);
-            assert.equal(result.reviewer_routing.expected_execution_mode, 'same_agent_fallback');
-            assert.equal(result.reviewer_routing.fallback_allowed, true);
+            assert.equal(result.reviewer_routing.delegation_required, true);
+            assert.equal(result.reviewer_routing.expected_execution_mode, 'delegated_subagent');
+            assert.equal(result.reviewer_routing.fallback_allowed, false);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -255,9 +255,9 @@ describe('gates/build-review-context', () => {
             assert.equal(result.execution_provider, 'Codex');
             assert.equal(result.execution_provider_source, 'explicit_provider');
             assert.equal(result.identity_status, 'resolved');
-            assert.equal(result.delegation_required, false);
-            assert.equal(result.expected_execution_mode, 'same_agent_fallback');
-            assert.equal(result.fallback_allowed, true);
+            assert.equal(result.delegation_required, true);
+            assert.equal(result.expected_execution_mode, 'delegated_subagent');
+            assert.equal(result.fallback_allowed, false);
             assert.deepEqual(result.violations, []);
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

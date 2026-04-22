@@ -112,9 +112,7 @@ export function resolveReviewerRoutingPolicy(
 ): ReviewerRoutingPolicy {
     const normalized = normalizeSourceOfTruthValue(sourceOfTruth);
     const tier = normalized ? getReviewerCapabilityTier(normalized) : null;
-    const normalizedExecutionProviderSource = executionProviderSource === undefined
-        ? undefined
-        : normalizeRuntimeIdentitySource(executionProviderSource);
+    void executionProviderSource;
 
     let policy: ReviewerRoutingPolicy;
 
@@ -163,23 +161,6 @@ export function resolveReviewerRoutingPolicy(
                 note: 'Provider delegation capability is unknown. Fallback is allowed only with an explicit reason.'
             };
             break;
-    }
-
-    if (
-        normalizedExecutionProviderSource !== undefined
-        && policy.delegation_required
-        && normalizedExecutionProviderSource !== 'provider_bridge'
-    ) {
-        return {
-            ...policy,
-            delegation_required: false,
-            fallback_allowed: true,
-            fallback_reason_required: true,
-            expected_execution_mode: 'same_agent_fallback',
-            note: `${normalized || 'This provider'} normally supports delegated review, but the current execution source ` +
-                `('${normalizedExecutionProviderSource || 'unknown'}') cannot supply attested reviewer launch evidence. ` +
-                'Use same_agent_fallback with an explicit reason until a provider bridge or other attested reviewer launch path is available.'
-        };
     }
 
     return policy;

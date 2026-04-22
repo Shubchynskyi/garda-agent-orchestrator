@@ -26,7 +26,8 @@ import {
 } from '../../../../src/gates/reviewer-routing';
 import {
     applyReviewerRoutingMetadata,
-    buildReviewReceipt
+    buildReviewReceipt,
+    buildReviewReceiptReviewerProvenance
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 
@@ -417,24 +418,12 @@ export function writeReceiptBackedReviewArtifact(
     const reviewContextText = JSON.stringify(reviewContext, null, 2);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
 
-    // Authenticity hardening: write a verifiable receipt.
     const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
-    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-    fs.writeFileSync(receiptPath, JSON.stringify({
-        schema_version: 2,
-        task_id: taskId,
-        review_type: reviewKey,
-        review_artifact_sha256: artifactHash,
-        review_context_sha256: reviewContextHash,
-        reviewer_execution_mode: reviewerEvidence.executionMode,
-        reviewer_identity: reviewerEvidence.reviewerIdentity,
-        reviewer_fallback_reason: reviewerEvidence.reviewerFallbackReason
-    }));
 
-    // Emit mandatory telemetry for authenticity
     const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    let reviewerProvenance = null;
     if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
         const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
@@ -442,13 +431,53 @@ export function writeReceiptBackedReviewArtifact(
         });
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
+        const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
             review_type: reviewKey,
             reviewer_execution_mode: reviewerEvidence.executionMode,
             reviewer_session_id: reviewerEvidence.reviewerIdentity,
             reviewer_fallback_reason: reviewerEvidence.reviewerFallbackReason,
-            delegation_used: true
+            delegation_used: reviewerEvidence.executionMode === 'delegated_subagent'
         });
+        reviewerProvenance = buildReviewReceiptReviewerProvenance(
+            'REVIEWER_DELEGATION_ROUTED',
+            routedEvent?.integrity
+        );
+    }
+
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    let preflightSha256: string | null = null;
+    let scopeSha256: string | null = null;
+    let codeScopeSha256: string | null = null;
+    let reviewContextReuseSha256: string | null = null;
+    if (fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()) {
+        const preflightText = fs.readFileSync(preflightPath, 'utf8');
+        const preflight = JSON.parse(preflightText) as Record<string, unknown>;
+        preflightSha256 = crypto.createHash('sha256').update(preflightText).digest('hex');
+        scopeSha256 = String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null;
+        codeScopeSha256 = reviewKey === 'code'
+            ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
+            : null;
+        reviewContextReuseSha256 = computeReviewContextReuseHash(reviewContext);
+    }
+
+    const receipt = buildReviewReceipt({
+        taskId,
+        reviewType: reviewKey,
+        preflightSha256,
+        scopeSha256,
+        codeScopeSha256,
+        reviewContextSha256: reviewContextHash,
+        reviewContextReuseSha256,
+        reviewArtifactSha256: artifactHash,
+        reviewerExecutionMode: reviewerEvidence.executionMode,
+        reviewerIdentity: reviewerEvidence.reviewerIdentity,
+        reviewerFallbackReason: reviewerEvidence.reviewerFallbackReason,
+        reviewerProvenance
+    });
+    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+
+    if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
 }

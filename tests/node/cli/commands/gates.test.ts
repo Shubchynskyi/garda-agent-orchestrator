@@ -4309,7 +4309,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-receipt accepts same-agent fallback when direct Codex runtime downgrades delegation-required policy', async () => {
+    it('record-review-receipt accepts delegated_subagent when direct Codex runtime remains delegation-required', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-receipt-policy-tamper';
         seedTaskQueue(repoRoot, taskId);
@@ -4323,7 +4323,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(artifactPath, [
             '# Code Review T-904y-receipt-policy-tamper',
             '',
-            'Validated `src/cli/commands/gate-review-handlers.ts` and the receipt-side routing enforcement path with enough implementation detail to prove that direct Codex sessions now degrade to explicit same-agent fallback instead of self-minting delegated provenance.',
+            'Validated `src/cli/commands/gate-review-handlers.ts` and the receipt-side routing enforcement path with enough implementation detail to prove that direct Codex sessions now keep delegated reviewer provenance instead of downgrading to same-agent fallback.',
             '',
             '## Findings by Severity',
             'none',
@@ -4342,16 +4342,16 @@ describe('cli/commands/gates', () => {
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
-            actualExecutionMode: 'same_agent_fallback',
-            reviewerSessionId: `self:${taskId}`,
-            fallbackReason: 'tampered review-context policy'
+            actualExecutionMode: 'delegated_subagent',
+            reviewerSessionId: `agent:${taskId}-reviewer`,
+            fallbackReason: null
         });
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'tampered fallback routed for receipt fixture', {
             review_type: 'code',
-            reviewer_execution_mode: 'same_agent_fallback',
-            reviewer_session_id: `self:${taskId}`,
-            reviewer_fallback_reason: 'tampered review-context policy',
-            delegation_used: false
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: `agent:${taskId}-reviewer`,
+            reviewer_fallback_reason: null,
+            delegation_used: true
         });
 
         const previousExitCode = process.exitCode;
@@ -4367,9 +4367,8 @@ describe('cli/commands/gates', () => {
                 '--review-type', 'code',
                 '--preflight-path', preflightPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'tampered review-context policy'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', `agent:${taskId}-reviewer`
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
@@ -4379,15 +4378,15 @@ describe('cli/commands/gates', () => {
 
         assert.equal(observedExitCode, 0);
         const receipt = JSON.parse(fs.readFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), 'utf8'));
-        assert.equal(receipt.reviewer_execution_mode, 'same_agent_fallback');
-        assert.equal(receipt.reviewer_identity, `self:${taskId}`);
-        assert.equal(receipt.reviewer_fallback_reason, 'tampered review-context policy');
+        assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
+        assert.equal(receipt.reviewer_identity, `agent:${taskId}-reviewer`);
+        assert.equal(receipt.reviewer_fallback_reason, null);
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-routing records same-agent fallback when direct Codex runtime downgrades delegation-required policy', async () => {
+    it('record-review-routing rejects same-agent fallback when direct Codex runtime remains delegation-required', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-routing-policy-tamper';
         seedTaskQueue(repoRoot, taskId);
@@ -4424,12 +4423,12 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'same_agent_fallback');
-        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, `self:${taskId}`);
-        assert.equal(reviewContext.reviewer_routing.fallback_reason, 'tampered review-context policy');
-        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        assert.equal(reviewContext.reviewer_routing.fallback_reason, null);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

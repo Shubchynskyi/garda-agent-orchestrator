@@ -732,6 +732,76 @@ describe('gates/required-reviews-check', () => {
             )));
         });
 
+        it('rejects same_agent_fallback receipts for direct Codex execution when the provider remains delegation-required', () => {
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-105',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated direct Codex review routing enforcement with concrete file references and realistic detail.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'explicit_provider',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'same_agent_fallback',
+                            reviewer_session_id: 'self:T-105',
+                            fallback_reason: 'tampered fallback'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact',
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-105',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: 'ctx',
+                        review_artifact_sha256: 'artifact',
+                        reviewer_execution_mode: 'same_agent_fallback',
+                        reviewer_identity: 'self:T-105',
+                        reviewer_fallback_reason: 'tampered fallback',
+                        recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.length > 0);
+            assert.ok(result.violations.some((violation) => (
+                violation.includes('same_agent_fallback')
+                || violation.includes('delegated_subagent')
+            )));
+        });
+
         it('rejects delegated_subagent review-context artifacts with self-scoped reviewer identities', () => {
             const result = validateReviewArtifactGateEligibility({
                 resolvedTaskId: 'T-105',
