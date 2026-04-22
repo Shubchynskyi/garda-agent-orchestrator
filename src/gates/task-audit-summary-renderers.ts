@@ -1,6 +1,7 @@
 import type { FinalCloseoutArtifact, TaskAuditSummaryResult } from './task-audit-summary';
 import { toPosix } from './helpers';
 import type { TaskQueueMetadata } from './task-audit-summary-collectors';
+import { buildLocalizedAgentReportBlock, resolveAgentReportLocale, type AgentReportLocale } from '../cli/commands/cli-format-output';
 
 // ---------------------------------------------------------------------------
 // Commit command inference helpers
@@ -118,7 +119,51 @@ export function buildCommitCommandSuggestion(
 // Final closeout markdown renderer
 // ---------------------------------------------------------------------------
 
+function buildLocalizedCloseoutReviewMode(
+    closeout: FinalCloseoutArtifact,
+    locale: AgentReportLocale
+): string {
+    const trustPrefix = closeout.review_trust?.independent_review_attested
+        ? (locale === 'ru' ? 'независимое ревью подтверждено' : 'independent review attested')
+        : (closeout.review_trust
+            ? (locale === 'ru' ? 'локальное ревью' : 'local review')
+            : (locale === 'ru' ? 'ревью не требовалось' : 'no required review'));
+    const verdicts = Object.entries(closeout.implementation_summary.review_verdicts)
+        .map(([reviewType, verdict]) => `${reviewType}=${verdict}`);
+    if (verdicts.length === 0) {
+        return trustPrefix;
+    }
+    return `${trustPrefix}; ${locale === 'ru' ? 'вердикты' : 'verdicts'}: ${verdicts.join(', ')}`;
+}
+
+function buildLocalizedOptionalSkillsSummary(
+    closeout: FinalCloseoutArtifact,
+    locale: AgentReportLocale
+): string | null {
+    const summary = closeout.optional_skills;
+    if (!summary) {
+        return null;
+    }
+    if (summary.decision === 'selected_installed_skills' && summary.selected_skill_ids.length > 0) {
+        return locale === 'ru'
+            ? `выбрано: ${summary.selected_skill_ids.join(', ')}`
+            : `selected: ${summary.selected_skill_ids.join(', ')}`;
+    }
+    if (summary.decision === 'recommended_missing_packs' && summary.recommended_missing_pack_ids.length > 0) {
+        return locale === 'ru'
+            ? `рекомендуются пакеты: ${summary.recommended_missing_pack_ids.join(', ')}`
+            : `recommended packs: ${summary.recommended_missing_pack_ids.join(', ')}`;
+    }
+    if (summary.decision === 'as_is') {
+        return locale === 'ru'
+            ? `без дополнительных навыков${summary.as_is_reason ? ` (${summary.as_is_reason})` : ''}`
+            : `no additional skills${summary.as_is_reason ? ` (${summary.as_is_reason})` : ''}`;
+    }
+    return summary.visible_summary_line;
+}
+
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
+    const reportLocale = resolveAgentReportLocale(closeout.agent_report?.assistant_language || null);
     const depthParts: string[] = [];
     if (closeout.implementation_summary.requested_depth != null) {
         depthParts.push(`requested depth=${closeout.implementation_summary.requested_depth}`);
@@ -134,6 +179,18 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     const docsUpdatedText = closeout.implementation_summary.docs_updated ? '`yes`' : '`no`';
 
     const lines: string[] = [
+        buildLocalizedAgentReportBlock({
+            context: 'task_closeout',
+            assistantLanguage: closeout.agent_report?.assistant_language || null,
+            assistantLanguageConfirmed: closeout.agent_report?.assistant_language_confirmed ?? null,
+            profileSummary: closeout.implementation_summary.active_profile,
+            reviewModeSummary: buildLocalizedCloseoutReviewMode(closeout, reportLocale),
+            optionalSkillsSummary: buildLocalizedOptionalSkillsSummary(closeout, reportLocale),
+            mandatoryFullSuiteEnabled: closeout.workflow?.mandatory_full_suite_enabled ?? null,
+            nextTaskPrompt: closeout.agent_report?.next_task_command || null,
+            latestUpdateNotice: closeout.agent_report?.latest_update_notice || null
+        }),
+        '',
         `Task \`${closeout.task_id}\` completed in \`${depthText}\`, \`path mode=${pathModeText}\`. ` +
         `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
     ];

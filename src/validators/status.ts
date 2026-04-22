@@ -66,6 +66,58 @@ function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+function readMandatoryFullSuiteEnabled(bundlePath: string): boolean | null {
+    const workflowConfigPath = path.join(bundlePath, 'live', 'config', 'workflow-config.json');
+    if (!pathExists(workflowConfigPath)) {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(readTextFile(workflowConfigPath)) as Record<string, unknown>;
+        const rawSection = parsed.full_suite_validation;
+        if (!rawSection || typeof rawSection !== 'object' || Array.isArray(rawSection)) {
+            return null;
+        }
+        const enabled = (rawSection as Record<string, unknown>).enabled;
+        return typeof enabled === 'boolean' ? enabled : null;
+    } catch {
+        return null;
+    }
+}
+
+function readLatestUpdateNotice(bundlePath: string): string | null {
+    const reportsDir = path.join(bundlePath, 'runtime', 'update-reports');
+    if (!pathExists(reportsDir) || !fs.statSync(reportsDir).isDirectory()) {
+        return null;
+    }
+
+    const latestReport = fs.readdirSync(reportsDir)
+        .filter((entry) => entry.toLowerCase().endsWith('.md'))
+        .map((entry) => {
+            const reportPath = path.join(reportsDir, entry);
+            return {
+                path: reportPath,
+                mtimeMs: fs.statSync(reportPath).mtimeMs
+            };
+        })
+        .sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
+
+    if (!latestReport) {
+        return null;
+    }
+
+    try {
+        const lines = readTextFile(latestReport.path).split(/\r?\n/);
+        const updatedVersionLine = lines.find((line) => line.startsWith('UpdatedVersion: '));
+        if (updatedVersionLine) {
+            return updatedVersionLine.replace(/^UpdatedVersion:\s*/, '').trim();
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
+
 
 export function resolveInitAnswersPath(targetRoot: string, initAnswersPath?: string): string {
     var candidate = String(initAnswersPath || '').trim();
@@ -125,6 +177,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     var answers = answersResult.answers;
     var initAnswersError = initAnswersResolveError || answersResult.error;
     var collectedVia = answers ? (answers.CollectedVia || null) : null;
+    var assistantLanguage = answers ? answers.AssistantLanguage : null;
     var liveVersionPath = path.join(livePath, 'version.json');
     var liveVersion: LiveVersionPayload | null = null;
     var liveVersionError = null;
@@ -151,6 +204,12 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
             : String(answers.ActiveAgentFiles).split(/[;,]/g).map(function (item) { return item.trim(); }).filter(Boolean);
     } else if (canonicalEntrypoint) {
         currentActiveAgentFiles = [canonicalEntrypoint];
+    }
+    var assistantLanguageConfirmed = agentInitStateResult.state
+        ? agentInitStateResult.state.AssistantLanguageConfirmed
+        : null;
+    if (!assistantLanguage && agentInitStateResult.state && agentInitStateResult.state.AssistantLanguage) {
+        assistantLanguage = agentInitStateResult.state.AssistantLanguage;
     }
     if (primaryInitializationComplete) {
         if (agentInitStateResult.error) {
@@ -252,12 +311,16 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
             // toxin metrics collection failure is non-fatal for status
         }
     }
+    var mandatoryFullSuiteEnabled = bundlePresent ? readMandatoryFullSuiteEnabled(bundlePath) : null;
+    var latestUpdateNotice = bundlePresent ? readLatestUpdateNotice(bundlePath) : null;
 
     return {
         targetRoot: resolvedTargetRoot, bundlePath: bundlePath, initAnswersResolvedPath: initAnswersResolvedPath,
         initAnswersPathForDisplay: initAnswersPath || resolveInitAnswersRelativePathForTarget(resolvedTargetRoot), bundlePresent: bundlePresent, initAnswersPresent: initAnswersPresent,
         initAnswersError: initAnswersError, taskPresent: taskPresent, livePresent: livePresent, usagePresent: usagePresent,
         commandsRulePath: commandsRulePath, missingProjectCommands: missingProjectCommands,
+        assistantLanguage: assistantLanguage,
+        assistantLanguageConfirmed: assistantLanguageConfirmed,
         sourceOfTruth: sourceOfTruth, canonicalEntrypoint: canonicalEntrypoint,
         collectedVia: collectedVia,
         agentInitStatePath: agentInitStateResult.statePath,
@@ -275,7 +338,9 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         parityResult: parityResult,
         providerComplianceResult: providerComplianceResult,
         protectedManifestEvidence: protectedManifestEvidence,
-        toxinMetricsSummary: toxinMetricsSummary
+        toxinMetricsSummary: toxinMetricsSummary,
+        mandatoryFullSuiteEnabled: mandatoryFullSuiteEnabled,
+        latestUpdateNotice: latestUpdateNotice
     };
 }
 

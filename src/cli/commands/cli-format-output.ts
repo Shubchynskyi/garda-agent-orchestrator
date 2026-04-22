@@ -40,6 +40,115 @@ export function yellow(text: string): string { return colorize(text, '33'); }
 export function red(text: string): string { return colorize(text, '31'); }
 export function dim(text: string): string { return colorize(text, '2'); }
 
+export type AgentReportLocale = 'en' | 'ru';
+
+export interface LocalizedAgentReportInput {
+    context: 'setup_handoff' | 'agent_init' | 'task_closeout';
+    assistantLanguage: string | null;
+    assistantLanguageConfirmed?: boolean | null;
+    profileSummary?: string | null;
+    reviewModeSummary?: string | null;
+    optionalSkillsSummary?: string | null;
+    mandatoryFullSuiteEnabled?: boolean | null;
+    nextCommand?: string | null;
+    nextTaskPrompt?: string | null;
+    latestUpdateNotice?: string | null;
+}
+
+export function resolveAgentReportLocale(assistantLanguage: string | null | undefined): AgentReportLocale {
+    const normalized = String(assistantLanguage || '').trim().toLowerCase();
+    return /(^|\s)(russian|рус)/i.test(normalized) ? 'ru' : 'en';
+}
+
+function localizeAgentReportTitle(
+    locale: AgentReportLocale,
+    context: LocalizedAgentReportInput['context']
+): string {
+    if (locale === 'ru') {
+        if (context === 'setup_handoff') return 'Передача после setup';
+        if (context === 'agent_init') return 'Итог agent-init';
+        return 'Итог задачи';
+    }
+    if (context === 'setup_handoff') return 'Setup handoff';
+    if (context === 'agent_init') return 'Agent-init summary';
+    return 'Task closeout';
+}
+
+function localizeAgentReportLanguageStatus(
+    locale: AgentReportLocale,
+    confirmed?: boolean | null
+): string {
+    if (confirmed === true) return locale === 'ru' ? 'нормализован' : 'normalized';
+    if (confirmed === false) return locale === 'ru' ? 'ждет подтверждения' : 'pending confirmation';
+    return locale === 'ru' ? 'неизвестно' : 'unknown';
+}
+
+function localizeAgentReportFullSuite(
+    locale: AgentReportLocale,
+    enabled: boolean | null | undefined
+): string {
+    if (enabled === true) return locale === 'ru' ? 'включен' : 'enabled';
+    if (enabled === false) return locale === 'ru' ? 'выключен' : 'disabled';
+    return locale === 'ru' ? 'неизвестно' : 'unknown';
+}
+
+export function buildLocalizedAgentReportBlock(input: LocalizedAgentReportInput): string {
+    const locale = resolveAgentReportLocale(input.assistantLanguage);
+    const labels = locale === 'ru'
+        ? {
+            language: 'Язык',
+            profile: 'Профиль',
+            reviewMode: 'Режим ревью',
+            optionalSkills: 'Опциональные навыки',
+            mandatoryFullSuite: 'Обязательный full-suite',
+            nextCommand: 'Следующая команда',
+            nextTaskPrompt: 'Скажите агенту',
+            updateNotice: 'Последнее update-уведомление',
+            noLanguage: 'не указан',
+            noProfile: 'не настроен'
+        }
+        : {
+            language: 'Language',
+            profile: 'Profile',
+            reviewMode: 'Review mode',
+            optionalSkills: 'Optional skills',
+            mandatoryFullSuite: 'Mandatory full-suite',
+            nextCommand: 'Next command',
+            nextTaskPrompt: 'Tell the agent',
+            updateNotice: 'Latest update notice',
+            noLanguage: 'not recorded',
+            noProfile: 'not configured'
+        };
+
+    const lines = [
+        'GARDA_AGENT_REPORT',
+        localizeAgentReportTitle(locale, input.context),
+        `${labels.language}: ${(input.assistantLanguage || labels.noLanguage)} (${localizeAgentReportLanguageStatus(locale, input.assistantLanguageConfirmed)})`,
+        `${labels.profile}: ${input.profileSummary || labels.noProfile}`
+    ];
+
+    if (input.reviewModeSummary) {
+        lines.push(`${labels.reviewMode}: ${input.reviewModeSummary}`);
+    }
+    if (input.optionalSkillsSummary) {
+        lines.push(`${labels.optionalSkills}: ${input.optionalSkillsSummary}`);
+    }
+    if (input.mandatoryFullSuiteEnabled !== undefined && input.mandatoryFullSuiteEnabled !== null) {
+        lines.push(`${labels.mandatoryFullSuite}: ${localizeAgentReportFullSuite(locale, input.mandatoryFullSuiteEnabled)}`);
+    }
+    if (input.nextCommand) {
+        lines.push(`${labels.nextCommand}: ${input.nextCommand}`);
+    }
+    if (input.nextTaskPrompt) {
+        lines.push(`${labels.nextTaskPrompt}: ${input.nextTaskPrompt}`);
+    }
+    if (input.latestUpdateNotice) {
+        lines.push(`${labels.updateNotice}: ${input.latestUpdateNotice}`);
+    }
+
+    return lines.join('\n');
+}
+
 export function padRight(text: string, width: number): string {
     return String(text).padEnd(width, ' ');
 }

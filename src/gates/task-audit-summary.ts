@@ -7,6 +7,7 @@ import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './tas
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
 import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
+import { getStatusSnapshot } from '../validators/status';
 import {
     type BlockerEntry,
     type EvidenceArtifact,
@@ -63,6 +64,12 @@ export interface FinalCloseoutArtifact {
     } | null;
     docs: FinalCloseoutDocsSummary;
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
+    agent_report?: {
+        assistant_language: string | null;
+        assistant_language_confirmed: boolean | null;
+        next_task_command: string | null;
+        latest_update_notice: string | null;
+    } | null;
     commit_command_template: string;
     commit_command_suggestion: string;
     commit_question: string;
@@ -251,6 +258,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         events.map((event) => String(event.event_type || '')),
         liveFullSuiteValidationEnabled
     ).required;
+    const workspaceStatusSnapshot = getStatusSnapshot(repoRoot);
     const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled);
 
     // -----------------------------------------------------------------------
@@ -748,6 +756,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         },
         docs: docsSummary,
         token_economy: tokenEconomy,
+        agent_report: {
+            assistant_language: workspaceStatusSnapshot.assistantLanguage,
+            assistant_language_confirmed: workspaceStatusSnapshot.assistantLanguageConfirmed,
+            next_task_command: workspaceStatusSnapshot.readyForTasks
+                ? workspaceStatusSnapshot.recommendedNextCommand
+                : null,
+            latest_update_notice: workspaceStatusSnapshot.latestUpdateNotice
+        },
         commit_command_template: commitCommand.template,
         commit_command_suggestion: commitCommand.suggestion,
         commit_question: finalReportContract.commit_question

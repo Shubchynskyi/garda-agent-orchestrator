@@ -225,9 +225,56 @@ test('getStatusSnapshot reads init answers when present', () => {
         assert.equal(snapshot.bundlePresent, true);
         assert.equal(snapshot.initAnswersPresent, true);
         assert.equal(snapshot.initAnswersError, null);
+        assert.equal(snapshot.assistantLanguage, 'English');
         assert.equal(snapshot.sourceOfTruth, 'Claude');
         assert.equal(snapshot.canonicalEntrypoint, 'CLAUDE.md');
         assert.equal(snapshot.collectedVia, 'CLI_INTERACTIVE');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot exposes full-suite flag and latest cached update notice when present', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'Russian',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeStatusFixtureFile(
+            path.join(bundlePath, 'live', 'config', 'workflow-config.json'),
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test'
+                }
+            }, null, 2)
+        );
+        writeStatusFixtureFile(
+            path.join(bundlePath, 'runtime', 'update-reports', 'update-20260422-010000.md'),
+            [
+                '# Update Report',
+                '',
+                'UpdatedVersion: 1.2.3'
+            ].join('\n')
+        );
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.assistantLanguage, 'English');
+        assert.equal(snapshot.assistantLanguageConfirmed, true);
+        assert.equal(snapshot.mandatoryFullSuiteEnabled, true);
+        assert.equal(snapshot.latestUpdateNotice, '1.2.3');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

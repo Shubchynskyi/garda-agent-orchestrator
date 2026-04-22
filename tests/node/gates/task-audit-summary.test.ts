@@ -2008,6 +2008,70 @@ describe('gates/task-audit-summary', () => {
             assert.ok(renderedMarkdown.includes('Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'));
         });
 
+        it('renders the localized compact agent report block when closeout carries agent report state', () => {
+            const renderedMarkdown = formatFinalCloseoutMarkdown({
+                schema_version: 1,
+                event_source: 'task-audit-summary',
+                task_id: TASK_ID,
+                generated_utc: '2026-01-01T00:00:00.000Z',
+                audit_status: 'PASS',
+                status: 'READY',
+                blocker: null,
+                artifact_state: 'MATERIALIZED',
+                artifact_paths: {
+                    json: 'runtime/reviews/T-168-final-closeout.json',
+                    markdown: 'runtime/reviews/T-168-final-closeout.md'
+                },
+                implementation_summary: {
+                    requested_depth: 2,
+                    effective_depth: 2,
+                    path_mode: 'FULL_PATH',
+                    review_verdicts: { code: 'REVIEW PASSED', test: 'TEST REVIEW PASSED' },
+                    docs_updated: false,
+                    changed_files_count: 2,
+                    changed_lines_total: 15,
+                    scope_category: 'code',
+                    active_profile: 'balanced'
+                },
+                optional_skills: {
+                    policy_mode: 'advisory',
+                    decision: 'as_is',
+                    selected_skill_ids: [],
+                    used_skill_ids: [],
+                    recommended_missing_pack_ids: [],
+                    as_is_reason: 'generic_context_sufficient',
+                    visible_summary_line: 'Optional skills: as_is (reason: generic_context_sufficient)'
+                },
+                workflow: {
+                    mandatory_full_suite_enabled: false,
+                    visible_summary_line: 'Mandatory full-suite: false'
+                },
+                docs: {
+                    decision: 'NO_DOC_UPDATES',
+                    behavior_changed: false,
+                    changelog_updated: false,
+                    docs_updated: []
+                },
+                token_economy: null,
+                agent_report: {
+                    assistant_language: 'Russian',
+                    assistant_language_confirmed: true,
+                    next_task_command: 'Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.',
+                    latest_update_notice: '1.2.3'
+                },
+                commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_question: 'Do you want me to commit now? (yes/no)'
+            });
+
+            assert.ok(renderedMarkdown.includes('GARDA_AGENT_REPORT'));
+            assert.ok(renderedMarkdown.includes('Итог задачи'));
+            assert.ok(renderedMarkdown.includes('Язык: Russian (нормализован)'));
+            assert.ok(renderedMarkdown.includes('Профиль: balanced'));
+            assert.ok(renderedMarkdown.includes('Обязательный full-suite: выключен'));
+            assert.ok(renderedMarkdown.includes('Скажите агенту: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+        });
+
         it('renders the compact optional skill summary line when present', () => {
             const renderedMarkdown = formatFinalCloseoutMarkdown({
                 schema_version: 1,

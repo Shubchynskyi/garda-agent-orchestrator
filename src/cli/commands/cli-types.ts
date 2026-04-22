@@ -28,6 +28,8 @@ export interface StatusSnapshot {
     initAnswersResolvedPath: string;
     collectedVia: string | null;
     activeAgentFiles: string | null;
+    assistantLanguage: string | null;
+    assistantLanguageConfirmed: boolean | null;
     sourceOfTruth: string | null;
     canonicalEntrypoint: string | null;
     bundlePresent: boolean;
@@ -58,4 +60,6 @@ export interface StatusSnapshot {
         remediation: string | null;
     };
     activeProfile: string | null;
+    mandatoryFullSuiteEnabled: boolean | null;
+    latestUpdateNotice: string | null;
 }

@@ -443,6 +443,7 @@ test('buildSetupHandoffText includes agent initialization section', () => {
         activeAgentFiles: 'CLAUDE.md, AGENTS.md'
     };
     const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
+    assert.ok(text.includes('GARDA_AGENT_REPORT'));
     assert.ok(text.includes('Agent Initialization'));
     assert.ok(text.includes('Primary setup is complete'));
     assert.ok(text.includes('Next stage: launch your agent'));
@@ -454,6 +455,22 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Garda captures my mind'));
     assert.ok(text.includes('Mandatory orchestrator flow:'));
     assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate'));
+});
+
+test('buildSetupHandoffText localizes the compact report using assistant language', () => {
+    const snapshot = {
+        bundlePath: '/workspace/garda-agent-orchestrator',
+        activeAgentFiles: 'AGENTS.md',
+        assistantLanguage: 'Russian',
+        assistantLanguageConfirmed: false,
+        mandatoryFullSuiteEnabled: true,
+        latestUpdateNotice: '1.2.3'
+    };
+    const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
+    assert.ok(text.includes('Передача после setup'));
+    assert.ok(text.includes('Язык: Russian (ждет подтверждения)'));
+    assert.ok(text.includes('Обязательный full-suite: включен'));
+    assert.ok(text.includes('Последнее update-уведомление: 1.2.3'));
 });
 
 test('buildSetupHandoffText reports the active profile and default depth', () => {

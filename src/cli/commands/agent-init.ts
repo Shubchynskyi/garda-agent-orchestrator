@@ -3,6 +3,7 @@ import { resolveBundleNameForTarget, resolveInitAnswersRelativePathForTarget } f
 import { runAgentInit } from '../../lifecycle/agent-init';
 import { getStatusSnapshot } from '../../validators/status';
 import { buildProfileAwareNextLine } from '../../validators/task-command';
+import { buildLocalizedAgentReportBlock, resolveAgentReportLocale } from './cli-format-output';
 import {
     bold,
     normalizePathValue,
@@ -24,7 +25,26 @@ export const AGENT_INIT_DEFINITIONS = {
 };
 
 export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): string {
+    const snapshot = getStatusSnapshot(result.targetRoot, result.initAnswersPath);
+    const reportLocale = resolveAgentReportLocale(snapshot.assistantLanguage);
     const lines: string[] = [];
+    lines.push(buildLocalizedAgentReportBlock({
+        context: 'agent_init',
+        assistantLanguage: snapshot.assistantLanguage,
+        assistantLanguageConfirmed: snapshot.assistantLanguageConfirmed,
+        profileSummary: snapshot.activeProfile,
+        reviewModeSummary: reportLocale === 'ru'
+            ? 'обязательные оркестраторные gate\'ы'
+            : 'mandatory orchestrator gates',
+        optionalSkillsSummary: result.skillsPromptCompleted
+            ? (reportLocale === 'ru' ? 'подтверждены на agent-init' : 'confirmed during agent-init')
+            : (reportLocale === 'ru' ? 'еще не подтверждены на agent-init' : 'still pending in agent-init'),
+        mandatoryFullSuiteEnabled: snapshot.mandatoryFullSuiteEnabled,
+        nextCommand: snapshot.readyForTasks ? null : buildAgentInitNextStep(result),
+        nextTaskPrompt: snapshot.readyForTasks ? snapshot.recommendedNextCommand : null,
+        latestUpdateNotice: snapshot.latestUpdateNotice
+    }));
+    lines.push('');
     lines.push(`Verify: ${result.verifyPassed ? 'PASS' : 'FAIL'}`);
     lines.push(`ManifestValidation: ${result.manifestPassed ? 'PASS' : 'FAIL'}`);
     lines.push(`ProjectRulesUpdated: ${result.projectRulesUpdated ? 'True' : 'False'}`);

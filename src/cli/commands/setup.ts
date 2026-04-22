@@ -6,6 +6,7 @@ import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
 import { readActiveProfileHint } from '../../validators/task-command';
+import { buildLocalizedAgentReportBlock, resolveAgentReportLocale } from './cli-format-output';
 import {
     acquireSourceRoot,
     bold,
@@ -240,39 +241,41 @@ export async function collectSetupAnswersInteractively(
 // ---------------------------------------------------------------------------
 
 export function printSetupHandoff(snapshot: StatusSnapshot): void {
-    const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
-    const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate';
-    const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
-    const activeProfileLine = activeProfileHint.activeProfile
-        ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
-        : 'Use explicit depth only as a one-run override.';
-    console.log('');
-    console.log(bold('Agent Initialization'));
-    console.log('  Primary setup is complete.');
-    console.log('  Next stage: launch your agent and give it the init prompt.');
-    if (snapshot.activeAgentFiles) {
-        console.log(`  Active agent files: ${snapshot.activeAgentFiles}`);
-    }
-    printHighlightedPair('1. Give your agent:', `"${initPromptPath}"`, { indent: '  ' });
-    console.log('  2. The prompt already tells the agent to validate language,');
-    console.log('     explicitly confirm active agent files, update live project rules,');
-    console.log('     ask about specialist skills, and then run the code-level agent-init gate.');
-    console.log('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
-    console.log(`     ${green('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.')}`);
-    console.log(`  4. ${buildSetupStartBannerSentence()}`);
-    console.log(`  5. ${activeProfileLine}`);
-    console.log('  6. Mandatory orchestrator flow:');
-    console.log(`     ${green(gateFlow)}`);
+    console.log(buildSetupHandoffText(snapshot));
 }
 
 export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
     const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate';
     const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
+    const reportLocale = resolveAgentReportLocale(snapshot.assistantLanguage);
+    const activeProfileSummary = activeProfileHint.activeProfile
+        ? `${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth})`
+        : null;
+    const reviewModeSummary = reportLocale === 'ru'
+        ? 'обязательные оркестраторные gate\'ы'
+        : 'mandatory orchestrator gates';
+    const optionalSkillsSummary = reportLocale === 'ru'
+        ? 'уточнить в AGENT_INIT_PROMPT'
+        : 'ask during AGENT_INIT_PROMPT';
     const activeProfileLine = activeProfileHint.activeProfile
         ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
         : 'Use explicit depth only as a one-run override.';
-    const lines = [];
+    const lines = [
+        buildLocalizedAgentReportBlock({
+            context: 'setup_handoff',
+            assistantLanguage: snapshot.assistantLanguage,
+            assistantLanguageConfirmed: snapshot.assistantLanguageConfirmed,
+            profileSummary: activeProfileSummary,
+            reviewModeSummary,
+            optionalSkillsSummary,
+            mandatoryFullSuiteEnabled: snapshot.mandatoryFullSuiteEnabled,
+            nextCommand: `Give your agent "${initPromptPath}"`,
+            nextTaskPrompt: 'Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.',
+            latestUpdateNotice: snapshot.latestUpdateNotice
+        }),
+        ''
+    ];
     lines.push('');
     lines.push('Agent Initialization');
     lines.push('  Primary setup is complete.');
