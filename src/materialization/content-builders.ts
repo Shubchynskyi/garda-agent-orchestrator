@@ -539,6 +539,8 @@ export function buildProviderOrchestratorAgentContent(
 Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
 This bridge is a router, not a second workflow.
+Do not implement tasks directly without orchestration preflight and required review gates.
+If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 
 Required:
 1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
@@ -551,6 +553,11 @@ Required:
 8. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 9. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
 10. If any mandatory gate command fails, stop, keep the task blocked, and report the exact command, cwd, CLI path, and stderr.
+11. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+12. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
+13. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+14. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
+15. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
 
 ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 
@@ -575,6 +582,13 @@ This provider profile is a strict bridge to Garda skills and the Node gate route
 Treat \`.agents/workflows/start-task.md\` as the shared router for every provider surface; it routes to canonical orchestration and does not replace \`80-task-workflow.md\`.
 Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 Do not execute task or review workflow with provider-default reviewer agents that bypass this bridge.
+
+## Non-Negotiable Priorities
+- Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+- Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
+- Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+- Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
+- If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
 
 ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 
