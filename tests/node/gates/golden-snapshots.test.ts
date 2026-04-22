@@ -231,7 +231,6 @@ describe('golden: validateStageSequence', () => {
             'PREFLIGHT_CLASSIFIED',
             'IMPLEMENTATION_STARTED',
             'COMPILE_GATE_PASSED',
-            'REVIEW_PHASE_STARTED',
             'REVIEW_GATE_PASSED'
         ]);
     });

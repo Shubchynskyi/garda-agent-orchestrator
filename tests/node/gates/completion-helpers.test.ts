@@ -11,6 +11,7 @@ import {
     getFindingsBySeverity,
     isTrivialReview
 } from '../../../src/gates/completion';
+import { buildReviewTrustSummary } from '../../../src/gates/review-trust-summary';
 describe('gates/completion — helpers and formatters', () => {
     describe('collectOrderedTimelineEvents', () => {
         it('continues scanning valid events after an invalid JSON line', () => {
@@ -88,7 +89,7 @@ describe('gates/completion — helpers and formatters', () => {
     });
 
     describe('formatCompletionGateResult', () => {
-        it('includes TrustStatus when review receipts carry trust levels', () => {
+        it('includes explicit review trust and policy summary lines when provided', () => {
             const output = formatCompletionGateResult({
                 task_id: 'T-1001',
                 status: 'PASSED',
@@ -99,10 +100,152 @@ describe('gates/completion — helpers and formatters', () => {
                             trust_level: 'LOCAL_AUDITED'
                         }
                     }
+                },
+                review_trust_summary: {
+                    visible_summary_line: 'Review trust: legacy LOCAL_AUDITED claim via delegated_subagent; treat as local historical evidence, not independent audited review.',
+                    policy_summary_line: 'Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'
                 }
             });
 
-            assert.match(output, /TrustStatus: LOCAL_AUDITED/);
+            assert.match(output, /Review trust: legacy LOCAL_AUDITED claim/);
+            assert.match(output, /Review policy: asserted local review may finish this code task/);
+            assert.doesNotMatch(output, /TrustStatus:/);
+        });
+    });
+
+    describe('buildReviewTrustSummary', () => {
+        it('returns unavailable when required review trust evidence is incomplete', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'LOCAL_ASSERTED',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_provenance: null
+                }
+            ], 'code', 2);
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
+        });
+
+        it('does not promote non-canonical independent-looking trust payloads', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'INDEPENDENT_AUDITED',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_provenance: {
+                        attestation_type: 'provider_artifact'
+                    }
+                }
+            ], 'code', 1);
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
+        });
+
+        it('degrades delegated trust receipts that omit reviewer provenance', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'LOCAL_ASSERTED',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_identity: 'agent:code-reviewer',
+                    reviewer_provenance: null
+                }
+            ], 'code', 1);
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
+        });
+
+        it('degrades trust receipts with invalid execution mode or missing reviewer identity', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'LOCAL_ASSERTED',
+                    reviewer_execution_mode: 'delegated_magic',
+                    reviewer_identity: null,
+                    reviewer_provenance: null
+                }
+            ], 'code', 1);
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
+        });
+
+        it('degrades same_agent_fallback trust receipts that omit reviewer_fallback_reason', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'LOCAL_ASSERTED',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_identity: 'self:T-135',
+                    reviewer_fallback_reason: null,
+                    reviewer_provenance: null
+                }
+            ], 'code', 1);
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
+        });
+
+        it('allows same_agent_fallback trust receipts without reviewer_fallback_reason when policy marks it optional', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'LOCAL_ASSERTED',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_identity: 'self:T-135',
+                    reviewer_fallback_reason: null,
+                    reviewer_fallback_reason_required: false,
+                    reviewer_provenance: null
+                }
+            ], 'code', 1);
+
+            assert.equal(summary?.status, 'ASSERTED_LOCAL_ONLY');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /LOCAL_ASSERTED/i);
+        });
+
+        it('degrades delegated_subagent trust receipts with self-scoped reviewer identity', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'LOCAL_ASSERTED',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_identity: 'self:T-135',
+                    reviewer_provenance: {
+                        attestation_type: 'provider_artifact'
+                    }
+                }
+            ], 'code', 1);
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
+        });
+
+        it('degrades same_agent_fallback trust receipts with agent-scoped reviewer identity', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'code',
+                    trust_level: 'LOCAL_ASSERTED',
+                    reviewer_execution_mode: 'same_agent_fallback',
+                    reviewer_identity: 'agent:code-reviewer',
+                    reviewer_fallback_reason: 'provider limitation',
+                    reviewer_provenance: null
+                }
+            ], 'code', 1);
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
         });
     });
 });

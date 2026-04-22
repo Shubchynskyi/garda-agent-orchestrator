@@ -5063,6 +5063,8 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
         assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'LOCAL_ASSERTED');
+        assert.ok(completionResult.review_trust_summary?.visible_summary_line?.includes('LOCAL_ASSERTED'));
+        assert.ok(completionResult.review_trust_summary?.policy_summary_line?.includes('asserted local review may finish this'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

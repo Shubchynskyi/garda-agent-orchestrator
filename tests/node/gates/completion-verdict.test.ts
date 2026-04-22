@@ -35,9 +35,10 @@ describe('gates/completion-verdict', () => {
 
         it('NO_REVIEW_RECORDED excludes REVIEW_RECORDED', () => {
             assert.ok(!NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER.includes('REVIEW_RECORDED'));
+            assert.ok(!NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER.includes('REVIEW_PHASE_STARTED'));
             assert.equal(
                 NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER.length,
-                STAGE_SEQUENCE_ORDER.length - 1
+                STAGE_SEQUENCE_ORDER.length - 2
             );
         });
 

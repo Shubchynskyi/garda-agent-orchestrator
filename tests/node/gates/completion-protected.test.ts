@@ -408,6 +408,141 @@ describe('gates/completion — protected control-plane', () => {
             }
         });
 
+        it('does not require REVIEW_PHASE_STARTED for docs-only completion cycles with no required reviews', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.scope_category = 'docs-only';
+                preflight.changed_files = ['docs/runbook.md'];
+                preflight.metrics = {
+                    ...preflight.metrics,
+                    changed_lines_total: 12,
+                    code_like_changed_count: 0,
+                    runtime_code_like_changed_count: 0
+                };
+                preflight.required_reviews = {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+                const timelineEntries = fs.readFileSync(workspace.timelinePath, 'utf8')
+                    .trim()
+                    .split('\n')
+                    .filter(Boolean)
+                    .map((line) => JSON.parse(line) as Record<string, unknown>)
+                    .filter((entry) => entry.event_type !== 'REVIEW_PHASE_STARTED');
+                fs.writeFileSync(
+                    workspace.timelinePath,
+                    timelineEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+                    'utf8'
+                );
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+                assert.equal(
+                    result.violations.some((entry) => String(entry).includes('REVIEW_PHASE_STARTED')),
+                    false
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('still requires REVIEW_GATE_PASSED for docs-only completion cycles with no required reviews', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, any>;
+                preflight.scope_category = 'docs-only';
+                preflight.changed_files = ['docs/runbook.md'];
+                preflight.metrics = {
+                    ...preflight.metrics,
+                    changed_lines_total: 12,
+                    code_like_changed_count: 0,
+                    runtime_code_like_changed_count: 0
+                };
+                preflight.required_reviews = {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, any>;
+                const stages = rulePack.stages as Record<string, any>;
+                const postPreflight = stages?.post_preflight as Record<string, any> | undefined;
+                if (postPreflight) {
+                    postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                }
+                writeJson(workspace.rulePackPath, rulePack);
+                const timelineEntries = fs.readFileSync(workspace.timelinePath, 'utf8')
+                    .trim()
+                    .split('\n')
+                    .filter(Boolean)
+                    .map((line) => JSON.parse(line) as Record<string, unknown>)
+                    .filter((entry) => entry.event_type !== 'REVIEW_GATE_PASSED');
+                fs.writeFileSync(
+                    workspace.timelinePath,
+                    timelineEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+                    'utf8'
+                );
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.ok(
+                    result.violations.some((entry) => String(entry).includes('REVIEW_GATE_PASSED'))
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
         it('ignores stale optional review artifacts when the latest cycle requires no reviews', () => {
             const workspace = createCompletionWorkspace(false, 'none');
 

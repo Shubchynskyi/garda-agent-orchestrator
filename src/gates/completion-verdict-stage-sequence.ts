@@ -30,7 +30,7 @@ export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
 ]);
 
 export const NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze(
-    STAGE_SEQUENCE_ORDER.filter((stage) => stage !== 'REVIEW_RECORDED')
+    STAGE_SEQUENCE_ORDER.filter((stage) => stage !== 'REVIEW_RECORDED' && stage !== 'REVIEW_PHASE_STARTED')
 );
 
 export const NON_CODE_STAGE_SEQUENCE_ORDER = NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER;

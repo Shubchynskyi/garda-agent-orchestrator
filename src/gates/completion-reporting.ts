@@ -83,18 +83,20 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
         `Status: ${result.status}`,
         `Outcome: ${result.outcome}`
     ];
-
-    const trustLevels = new Set<string>();
-    if (result.review_artifacts && typeof result.review_artifacts === 'object') {
-        for (const key of Object.keys(result.review_artifacts)) {
-            const artifact = (result.review_artifacts as any)[key];
-            if (artifact && artifact.receipt && artifact.receipt.trust_level) {
-                trustLevels.add(artifact.receipt.trust_level);
-            }
-        }
+    const reviewTrustSummary = result.review_trust_summary && typeof result.review_trust_summary === 'object'
+        ? result.review_trust_summary as Record<string, unknown>
+        : null;
+    const reviewTrustLine = reviewTrustSummary && typeof reviewTrustSummary.visible_summary_line === 'string'
+        ? reviewTrustSummary.visible_summary_line.trim()
+        : '';
+    const reviewPolicyLine = reviewTrustSummary && typeof reviewTrustSummary.policy_summary_line === 'string'
+        ? reviewTrustSummary.policy_summary_line.trim()
+        : '';
+    if (reviewTrustLine) {
+        lines.push(reviewTrustLine);
     }
-    if (trustLevels.size > 0) {
-        lines.push(`TrustStatus: ${Array.from(trustLevels).join(', ')}`);
+    if (reviewPolicyLine) {
+        lines.push(reviewPolicyLine);
     }
 
     const plan = result.plan as Record<string, unknown> | undefined;

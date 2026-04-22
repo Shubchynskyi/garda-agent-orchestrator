@@ -14,12 +14,14 @@ import {
     type FinalCloseoutDocsSummary,
     type FinalCloseoutImplementationSummary,
     type FinalCloseoutOptionalSkillsSummary,
+    type FinalCloseoutReviewTrustSummary,
     type FinalReportContract,
     type GateOutcome,
     type ProfileReviewDecisionSummary,
     type TaskQueueMetadata,
     parseOptionalNumber,
     readDocImpactSummary,
+    readReviewTrustSummary,
     readOptionalSkillsSummary,
     readReviewVerdicts,
     readTaskQueueMetadata,
@@ -53,6 +55,7 @@ export interface FinalCloseoutArtifact {
     artifact_state: 'PENDING' | 'MATERIALIZED' | 'REMOVED' | 'NOT_READY';
     artifact_paths: FinalCloseoutArtifactPaths;
     implementation_summary: FinalCloseoutImplementationSummary;
+    review_trust?: FinalCloseoutReviewTrustSummary | null;
     optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
     workflow?: {
         mandatory_full_suite_enabled: boolean;
@@ -585,11 +588,43 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     }
 
     let status: 'PASS' | 'BLOCKED' | 'INCOMPLETE';
+    const reviewsRequired = Object.keys(requiredReviews).some((reviewType) => requiredReviews[reviewType] === true);
+    const supportingLifecycleAnchorEvents = new Set([
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        'PREFLIGHT_CLASSIFIED',
+        'COMPILE_GATE_PASSED',
+        'REVIEW_PHASE_STARTED',
+        'REVIEW_GATE_PASSED',
+        'REVIEW_GATE_PASSED_WITH_OVERRIDE',
+        'DOC_IMPACT_ASSESSED'
+    ]);
+    const requireSupportingGateCompleteness = events.some((event) =>
+        supportingLifecycleAnchorEvents.has(String(event.event_type || ''))
+    );
+    const supportingGateGaps = requireSupportingGateCompleteness
+        ? gates
+            .filter((gate) => {
+                if (gate.gate === 'completion-gate') {
+                    return false;
+                }
+                if (!reviewsRequired && gate.gate === 'review-phase') {
+                    return false;
+                }
+                return gate.status !== 'PASS';
+            })
+            .map((gate) => gate.gate)
+        : [];
     if (pointInTimeSnapshot.status === 'FINALIZATION_IN_FLIGHT') {
         status = !hasIntegrityFailure && blockers.length === 0 && !hasNonCompletionFailure
             ? 'INCOMPLETE'
             : 'BLOCKED';
-    } else if (hasCompletionPass && blockers.length === 0 && !hasIntegrityFailure) {
+    } else if (
+        hasCompletionPass
+        && blockers.length === 0
+        && !hasIntegrityFailure
+        && supportingGateGaps.length === 0
+    ) {
         status = 'PASS';
     } else if (hasFailedGate || blockers.length > 0) {
         status = 'BLOCKED';
@@ -601,6 +636,42 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const reviewGatePath = path.join(reviewsRoot, `${safeTaskId}-review-gate.json`);
     const reviewGate = safeReadJson(reviewGatePath);
     const reviewVerdicts = readReviewVerdicts(requiredReviews, reviewGate);
+    const reviewContextPaths = Object.fromEntries(
+        Object.keys(requiredReviews).map((reviewType) => {
+            for (let index = events.length - 1; index >= 0; index -= 1) {
+                const entry = events[index];
+                if (String(entry.event_type || '') !== 'REVIEW_RECORDED') {
+                    continue;
+                }
+                const details = entry.details && typeof entry.details === 'object'
+                    ? entry.details as Record<string, unknown>
+                    : null;
+                const recordedReviewType = String(
+                    details?.review_type
+                    || details?.reviewType
+                    || ''
+                ).trim().toLowerCase();
+                if (recordedReviewType !== reviewType) {
+                    continue;
+                }
+                const reviewContextPath = String(
+                    details?.review_context_path
+                    || details?.reviewContextPath
+                    || ''
+                ).trim();
+                return [reviewType, reviewContextPath || null];
+            }
+            return [reviewType, null];
+        })
+    );
+    const reviewTrustSummary = readReviewTrustSummary(
+        requiredReviews,
+        reviewsRoot,
+        safeTaskId,
+        scopeCategory,
+        preflightSha256,
+        reviewContextPaths
+    );
     const docImpactPath = path.join(reviewsRoot, `${safeTaskId}-doc-impact.json`);
     const docImpact = safeReadJson(docImpactPath);
     const docsSummary = readDocImpactSummary(docImpact);
@@ -625,6 +696,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             ? null
             : pointInTimeSnapshot.status === 'FINALIZATION_IN_FLIGHT' && status === 'INCOMPLETE'
                 ? `${pointInTimeSnapshot.message} ${pointInTimeSnapshot.recommended_action}`
+                : hasCompletionPass && supportingGateGaps.length > 0
+                    ? `Completion gate passed, but supporting lifecycle evidence is incomplete: ${supportingGateGaps.join(', ')}.`
                 : 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
         required_order: [
             'implementation summary',
@@ -667,6 +740,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                 ? taskMode.active_profile.trim()
                 : null
         },
+        review_trust: reviewTrustSummary,
         optional_skills: optionalSkillsSummary,
         workflow: {
             mandatory_full_suite_enabled: fullSuiteValidationEnabled,

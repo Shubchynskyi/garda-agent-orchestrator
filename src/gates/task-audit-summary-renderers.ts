@@ -142,6 +142,14 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         lines.push(closeout.optional_skills.visible_summary_line);
     }
 
+    if (closeout.review_trust?.visible_summary_line) {
+        lines.push(closeout.review_trust.visible_summary_line);
+    }
+
+    if (closeout.review_trust?.policy_summary_line) {
+        lines.push(closeout.review_trust.policy_summary_line);
+    }
+
     if (closeout.workflow?.visible_summary_line) {
         lines.push(closeout.workflow.visible_summary_line);
     }
@@ -303,6 +311,12 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     lines.push(`  MarkdownArtifact: ${summary.final_closeout.artifact_paths.markdown}`);
     if (summary.final_closeout.optional_skills?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.optional_skills.visible_summary_line}`);
+    }
+    if (summary.final_closeout.review_trust?.visible_summary_line) {
+        lines.push(`  ${summary.final_closeout.review_trust.visible_summary_line}`);
+    }
+    if (summary.final_closeout.review_trust?.policy_summary_line) {
+        lines.push(`  ${summary.final_closeout.review_trust.policy_summary_line}`);
     }
     if (summary.final_closeout.workflow?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.workflow.visible_summary_line}`);

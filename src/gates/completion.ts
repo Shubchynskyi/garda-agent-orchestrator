@@ -61,6 +61,7 @@ import {
     buildCoherentCycleRestartCommand,
     buildReviewCycleRestartCommand
 } from './completion-reporting';
+import { readReviewTrustSummary } from './task-audit-summary-collectors';
 import {
     loadFullSuiteValidationConfig,
     type FullSuiteValidationCycleBinding,
@@ -318,10 +319,13 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     if (!timelineEventTypes.has('COMPILE_GATE_PASSED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing COMPILE_GATE_PASSED.`);
     }
-    if (!timelineEventTypes.has('REVIEW_PHASE_STARTED')) {
+    if (reviewRecordedRequired && !timelineEventTypes.has('REVIEW_PHASE_STARTED')) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing REVIEW_PHASE_STARTED.`);
     }
-    if (!timelineEventTypes.has('REVIEW_GATE_PASSED') && !timelineEventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE')) {
+    if (
+        !timelineEventTypes.has('REVIEW_GATE_PASSED')
+        && !timelineEventTypes.has('REVIEW_GATE_PASSED_WITH_OVERRIDE')
+    ) {
         errors.push(`Task timeline '${normalizePath(timelinePath)}' is missing REVIEW_GATE_PASSED.`);
     }
 
@@ -486,6 +490,21 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         observed_execution_modes: reviewSkillEvidence.reviewer_execution_modes,
         enforcement_level: 'hard_block'
     };
+    const scopeCategory = typeof preflight.scope_category === 'string' ? preflight.scope_category : null;
+    const reviewContextPaths = Object.fromEntries(
+        Object.keys(requiredReviews).map((reviewKey) => [
+            reviewKey,
+            findLatestRecordedReviewContextPath(orderedEvents, reviewKey)
+        ])
+    );
+    const reviewTrustSummary = readReviewTrustSummary(
+        requiredReviews,
+        reviewsRoot,
+        resolvedTaskId || '',
+        scopeCategory,
+        validatedPreflight.preflight_hash,
+        reviewContextPaths
+    );
 
     // Plan metadata from task-mode evidence (informational, never blocks)
     const planEvidence = {
@@ -637,8 +656,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         doc_impact_path: normalizePath(docImpactPath),
         timeline_path: normalizePath(timelinePath),
         review_artifacts: reviewArtifacts,
+        scope_category: scopeCategory,
         stage_sequence_evidence: stageSequence,
         reviewer_routing_enforcement: reviewerRoutingEnforcement,
+        review_trust_summary: reviewTrustSummary,
         full_suite_validation_evidence: fullSuiteValidationEvidence,
         zero_diff_evidence: zeroDiffEvidence,
         dirty_workspace_protection_evidence: dirtyWorkspaceProtectionEvidence,

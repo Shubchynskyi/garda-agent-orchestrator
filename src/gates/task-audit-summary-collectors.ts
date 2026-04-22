@@ -10,6 +10,7 @@ import {
     type OptionalSkillSelectionArtifactData,
     type OptionalSkillSelectionTimelineEvidence
 } from '../runtime/optional-skill-selection';
+import { buildReviewTrustSummary, type ReviewTrustSummary } from './review-trust-summary';
 
 // ---------------------------------------------------------------------------
 // Types — source-level payload shapes used by collectors and the main builder
@@ -73,6 +74,8 @@ export interface FinalCloseoutImplementationSummary {
     scope_category: string | null;
     active_profile: string | null;
 }
+
+export interface FinalCloseoutReviewTrustSummary extends ReviewTrustSummary {}
 
 export interface FinalCloseoutOptionalSkillsSummary {
     policy_mode: string | null;
@@ -176,6 +179,135 @@ export function readReviewVerdicts(
             : 'MISSING';
     }
     return reviewVerdicts;
+}
+
+export function readReviewTrustSummary(
+    requiredReviews: Record<string, boolean>,
+    reviewsRoot: string,
+    taskId: string,
+    scopeCategory: string | null,
+    preflightSha256?: string | null,
+    reviewContextPaths?: Record<string, string | null>
+): FinalCloseoutReviewTrustSummary | null {
+    const requiredReviewTypes = Object.keys(requiredReviews).filter((reviewType) => requiredReviews[reviewType] === true).sort();
+    const entries = requiredReviewTypes.flatMap((reviewType) => {
+        const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+        const reviewPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+        const reviewContextPath = reviewContextPaths?.[reviewType]
+            ? path.resolve(reviewContextPaths[reviewType] || '')
+            : path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
+        const receipt = safeReadJson(receiptPath);
+        if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
+            return [];
+        }
+        if (!fs.existsSync(reviewPath)) {
+            return [];
+        }
+        const actualReviewArtifactHash = fileSha256(reviewPath);
+        const recordedReviewArtifactHash = typeof receipt.review_artifact_sha256 === 'string'
+            ? receipt.review_artifact_sha256.trim().toLowerCase()
+            : '';
+        if (!actualReviewArtifactHash || !recordedReviewArtifactHash || recordedReviewArtifactHash !== actualReviewArtifactHash) {
+            return [];
+        }
+        const expectedPreflightHash = typeof preflightSha256 === 'string'
+            ? preflightSha256.trim().toLowerCase()
+            : '';
+        const recordedPreflightHash = typeof receipt.preflight_sha256 === 'string'
+            ? receipt.preflight_sha256.trim().toLowerCase()
+            : '';
+        if (expectedPreflightHash && (!recordedPreflightHash || recordedPreflightHash !== expectedPreflightHash)) {
+            return [];
+        }
+        const recordedReviewContextHash = typeof receipt.review_context_sha256 === 'string'
+            ? receipt.review_context_sha256.trim().toLowerCase()
+            : '';
+        let contextFallbackReasonRequired: boolean | null = null;
+        if (expectedPreflightHash && !recordedReviewContextHash) {
+            return [];
+        }
+        if (recordedReviewContextHash) {
+            const actualReviewContextHash = fs.existsSync(reviewContextPath) ? fileSha256(reviewContextPath) : null;
+            if (!actualReviewContextHash || recordedReviewContextHash !== actualReviewContextHash) {
+                return [];
+            }
+            const reviewContext = safeReadJson(reviewContextPath);
+            const reviewerRouting = reviewContext && typeof reviewContext.reviewer_routing === 'object'
+                ? reviewContext.reviewer_routing as Record<string, unknown>
+                : null;
+            const contextExecutionMode = reviewerRouting && typeof reviewerRouting.actual_execution_mode === 'string'
+                ? reviewerRouting.actual_execution_mode.trim()
+                : '';
+            const contextReviewerSessionId = reviewerRouting && typeof reviewerRouting.reviewer_session_id === 'string'
+                ? reviewerRouting.reviewer_session_id.trim()
+                : '';
+            const contextFallbackReason = reviewerRouting && typeof reviewerRouting.fallback_reason === 'string'
+                ? reviewerRouting.fallback_reason.trim()
+                : '';
+            const contextCapabilityLevel = reviewerRouting && typeof reviewerRouting.capability_level === 'string'
+                ? reviewerRouting.capability_level.trim()
+                : '';
+            const contextDelegationRequired = reviewerRouting?.delegation_required === true;
+            const contextExpectedExecutionMode = reviewerRouting && typeof reviewerRouting.expected_execution_mode === 'string'
+                ? reviewerRouting.expected_execution_mode.trim()
+                : '';
+            const contextFallbackAllowed = reviewerRouting && typeof reviewerRouting.fallback_allowed === 'boolean'
+                ? reviewerRouting.fallback_allowed
+                : null;
+            contextFallbackReasonRequired = reviewerRouting && typeof reviewerRouting.fallback_reason_required === 'boolean'
+                ? reviewerRouting.fallback_reason_required
+                : null;
+            const invalidContextIdentityScope =
+                (contextExecutionMode === 'delegated_subagent' && !contextReviewerSessionId.startsWith('agent:'))
+                || (contextExecutionMode === 'same_agent_fallback' && !contextReviewerSessionId.startsWith('self:'));
+            const missingContextFallbackReason =
+                contextExecutionMode === 'same_agent_fallback'
+                && contextFallbackReasonRequired !== false
+                && !contextFallbackReason;
+            const invalidContextPolicy =
+                (contextDelegationRequired && contextExecutionMode !== 'delegated_subagent')
+                || (contextCapabilityLevel === 'single_agent_only' && contextExecutionMode === 'delegated_subagent')
+                || (contextExpectedExecutionMode === 'same_agent_fallback' && contextExecutionMode === 'delegated_subagent')
+                || (contextExecutionMode === 'same_agent_fallback' && contextFallbackAllowed !== true);
+            const receiptExecutionMode = typeof receipt.reviewer_execution_mode === 'string'
+                ? receipt.reviewer_execution_mode.trim()
+                : '';
+            const receiptReviewerIdentity = typeof receipt.reviewer_identity === 'string'
+                ? receipt.reviewer_identity.trim()
+                : '';
+            const receiptFallbackReason = typeof receipt.reviewer_fallback_reason === 'string'
+                ? receipt.reviewer_fallback_reason.trim()
+                : '';
+            if (
+                !contextExecutionMode
+                || !contextReviewerSessionId
+                || invalidContextIdentityScope
+                || missingContextFallbackReason
+                || invalidContextPolicy
+            ) {
+                return [];
+            }
+            if (receiptExecutionMode && receiptExecutionMode !== contextExecutionMode) {
+                return [];
+            }
+            if (receiptReviewerIdentity && receiptReviewerIdentity !== contextReviewerSessionId) {
+                return [];
+            }
+            if (receiptFallbackReason && contextFallbackReason && receiptFallbackReason !== contextFallbackReason) {
+                return [];
+            }
+        }
+        return [{
+            review_type: reviewType,
+            trust_level: typeof receipt.trust_level === 'string' ? receipt.trust_level : null,
+            reviewer_execution_mode: typeof receipt.reviewer_execution_mode === 'string' ? receipt.reviewer_execution_mode : null,
+            reviewer_identity: typeof receipt.reviewer_identity === 'string' ? receipt.reviewer_identity : null,
+            reviewer_fallback_reason: typeof receipt.reviewer_fallback_reason === 'string' ? receipt.reviewer_fallback_reason : null,
+            reviewer_fallback_reason_required: contextFallbackReasonRequired,
+            reviewer_provenance: receipt.reviewer_provenance ?? null
+        }];
+    });
+    return buildReviewTrustSummary(entries, scopeCategory, requiredReviewTypes.length);
 }
 
 export function readDocImpactSummary(docImpact: Record<string, unknown> | null): FinalCloseoutDocsSummary {

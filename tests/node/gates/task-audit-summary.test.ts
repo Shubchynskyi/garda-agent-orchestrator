@@ -13,6 +13,7 @@ import {
     synchronizeFinalCloseoutArtifacts,
     type TaskAuditSummaryResult
 } from '../../../src/gates/task-audit-summary';
+import { readReviewTrustSummary } from '../../../src/gates/task-audit-summary-collectors';
 import {
     inspectCompletionGateFinalizationLock,
     scanCompletionGateFinalizationLocks,
@@ -281,8 +282,16 @@ describe('gates/task-audit-summary', () => {
             assert.equal(compileEvidence.sha256, null);
         });
 
-        it('returns PASS when completion gate is present and no blockers', () => {
+        it('returns INCOMPLETE when completion gate is present but supporting lifecycle evidence is missing', () => {
             const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 1000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed.'
+            });
             writeEvent(eventsDir, TASK_ID, {
                 timestamp_utc: now,
                 task_id: TASK_ID,
@@ -304,9 +313,9 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.status, 'PASS');
-            assert.equal(result.final_report_contract.status, 'READY');
-            assert.equal(result.final_report_contract.blocker, null);
+            assert.equal(result.status, 'INCOMPLETE');
+            assert.equal(result.final_report_contract.status, 'NOT_READY');
+            assert.ok(result.final_report_contract.blocker?.includes('supporting lifecycle evidence is incomplete'));
         });
 
         it('keeps historical completed tasks green when live full-suite validation is enabled later', () => {
@@ -334,6 +343,7 @@ describe('gates/task-audit-summary', () => {
             });
 
             assert.equal(result.status, 'PASS');
+            assert.equal(result.final_report_contract.status, 'READY');
             assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
         });
@@ -371,6 +381,7 @@ describe('gates/task-audit-summary', () => {
             });
 
             assert.equal(result.status, 'PASS');
+            assert.equal(result.final_report_contract.status, 'READY');
             assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
             assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: false');
@@ -423,6 +434,46 @@ describe('gates/task-audit-summary', () => {
         it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {
             const now = new Date().toISOString();
             writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 6000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'TASK_MODE_ENTERED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Task mode entered.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 5000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'RULE_PACK_LOADED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Rule pack loaded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 4000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Handshake diagnostics recorded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 3000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Shell smoke recorded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 2000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'PREFLIGHT_CLASSIFIED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Preflight classified.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
                 timestamp_utc: now,
                 task_id: TASK_ID,
                 event_type: 'COMPILE_GATE_PASSED',
@@ -436,6 +487,30 @@ describe('gates/task-audit-summary', () => {
                         filtered_token_count_estimate: 118
                     }
                 }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 250).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'REVIEW_PHASE_STARTED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Review phase started.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 500).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'REVIEW_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Review gate passed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 750).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'DOC_IMPACT_ASSESSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Doc impact assessed.'
             });
             writeEvent(eventsDir, TASK_ID, {
                 timestamp_utc: new Date(Date.parse(now) + 1000).toISOString(),
@@ -465,19 +540,59 @@ describe('gates/task-audit-summary', () => {
             const crypto = require('node:crypto');
             const codeReviewContent = '# Code Review\nREVIEW PASSED';
             const testReviewContent = '# Test Review\nTEST REVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: true
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-test-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'test',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: true
+                }
+            });
             writeArtifact(reviewsDir, TASK_ID, '-code.md', codeReviewContent);
             writeArtifact(reviewsDir, TASK_ID, '-test.md', testReviewContent);
             writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
                 schema_version: 2,
                 task_id: TASK_ID,
                 review_type: 'code',
-                review_artifact_sha256: crypto.createHash('sha256').update(codeReviewContent, 'utf8').digest('hex')
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(codeReviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                trust_level: 'LOCAL_ASSERTED'
             });
             writeArtifact(reviewsDir, TASK_ID, '-test-receipt.json', {
                 schema_version: 2,
                 task_id: TASK_ID,
                 review_type: 'test',
-                review_artifact_sha256: crypto.createHash('sha256').update(testReviewContent, 'utf8').digest('hex')
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-test-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(testReviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                trust_level: 'LOCAL_ASSERTED'
             });
             writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
                 decision: 'DOCS_UPDATED',
@@ -502,10 +617,526 @@ describe('gates/task-audit-summary', () => {
                 code: 'REVIEW PASSED',
                 test: 'TEST REVIEW PASSED'
             });
+            assert.equal(result.final_closeout.review_trust?.status, 'ASSERTED_LOCAL_ONLY');
+            assert.ok(result.final_closeout.review_trust?.visible_summary_line?.includes('LOCAL_ASSERTED'));
+            assert.ok(result.final_closeout.review_trust?.policy_summary_line?.includes('asserted local review may finish this'));
             assert.equal(result.final_closeout.implementation_summary.docs_updated, true);
             assert.deepEqual(result.final_closeout.docs.docs_updated, ['docs/cli-reference.md']);
             assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('Saved tokens: ~62'));
             assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, false);
+        });
+
+        it('degrades review trust summary when required review trust evidence is incomplete or invalid', () => {
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                reviewer_provenance: null,
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-test-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'test',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:test-reviewer',
+                reviewer_fallback_reason: null,
+                reviewer_provenance: {
+                    attestation_type: 'provider_artifact'
+                },
+                trust_level: 'INDEPENDENT_AUDITED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true, test: true },
+                reviewsDir,
+                TASK_ID,
+                'code'
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when the current review artifact no longer matches the receipt hash', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                review_artifact_sha256: crypto.createHash('sha256').update('# Code Review\nREVIEW PASSED - stale', 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code'
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when the receipt preflight hash no longer matches the current preflight', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: 'stale-preflight-hash',
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when same_agent_fallback receipt omits reviewer_fallback_reason', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: null,
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when delegated_subagent receipt uses a self-scoped reviewer identity', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: null,
+                reviewer_provenance: {
+                    attestation_type: 'provider_artifact'
+                },
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('accepts the current review context from REVIEW_RECORDED telemetry when it uses a noncanonical path', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            const customReviewContextPath = path.join(reviewsDir, 'custom-code-review-context.json');
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            fs.writeFileSync(customReviewContextPath, JSON.stringify({
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: 'provider limitation',
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: true
+                }
+            }, null, 2) + '\n', 'utf8');
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(customReviewContextPath),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                { code: customReviewContextPath }
+            );
+
+            assert.equal(summary?.status, 'ASSERTED_LOCAL_ONLY');
+            assert.ok(summary?.visible_summary_line?.includes('LOCAL_ASSERTED'));
+        });
+
+        it('degrades review trust summary when the current review context routing diverges from the receipt', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer',
+                    fallback_reason: null
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when same_agent_fallback routing conflicts with a delegation-required policy', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: 'provider limitation',
+                    capability_level: 'delegation_required',
+                    delegation_required: true,
+                    expected_execution_mode: 'delegated_subagent',
+                    fallback_allowed: false,
+                    fallback_reason_required: false
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when delegated_subagent routing conflicts with a same-agent-only policy', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer',
+                    fallback_reason: null,
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: true
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:code-reviewer',
+                reviewer_fallback_reason: null,
+                reviewer_provenance: {
+                    attestation_type: 'provider_artifact'
+                },
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when same_agent_fallback uses a non-self-scoped routing identity', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: 'agent:code-reviewer',
+                    fallback_reason: 'provider limitation'
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: 'agent:code-reviewer',
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('degrades review trust summary when same_agent_fallback review-context omits fallback_reason', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: null
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'provider limitation',
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
+        });
+
+        it('accepts same_agent_fallback review-context without fallback_reason when policy marks it optional', () => {
+            const crypto = require('node:crypto');
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/completion.ts'],
+                metrics: { changed_lines_total: 24 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: null,
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: false
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: null,
+                trust_level: 'LOCAL_ASSERTED',
+                recorded_at_utc: new Date().toISOString()
+            });
+
+            const summary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
+            );
+
+            assert.equal(summary?.status, 'ASSERTED_LOCAL_ONLY');
+            assert.ok(summary?.visible_summary_line?.includes('LOCAL_ASSERTED'));
         });
 
         it('infers a conventional-style commit suggestion from task metadata and changed scope', () => {
@@ -1214,6 +1845,70 @@ describe('gates/task-audit-summary', () => {
         it('writes canonical final closeout json and markdown artifacts for PASS summaries', () => {
             const now = new Date().toISOString();
             writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 7000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'TASK_MODE_ENTERED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Task mode entered.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 6000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'RULE_PACK_LOADED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Rule pack loaded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 5000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Handshake diagnostics recorded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 4000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Shell smoke recorded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 3000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'PREFLIGHT_CLASSIFIED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Preflight classified.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 2000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 1000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'REVIEW_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Review gate passed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 500).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'DOC_IMPACT_ASSESSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Doc impact assessed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
                 timestamp_utc: now,
                 task_id: TASK_ID,
                 event_type: 'COMPLETION_GATE_PASSED',
@@ -1283,6 +1978,15 @@ describe('gates/task-audit-summary', () => {
                     scope_category: 'code',
                     active_profile: 'balanced'
                 },
+                review_trust: {
+                    status: 'ASSERTED_LOCAL_ONLY',
+                    trust_levels: ['LOCAL_ASSERTED'],
+                    execution_modes: ['same_agent_fallback'],
+                    independent_review_attested: false,
+                    completion_policy: 'ASSERTED_LOCAL_ALLOWED',
+                    visible_summary_line: 'Review trust: LOCAL_ASSERTED via same_agent_fallback; not independent audited review.',
+                    policy_summary_line: 'Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'
+                },
                 workflow: {
                     mandatory_full_suite_enabled: true,
                     visible_summary_line: 'Mandatory full-suite: true'
@@ -1300,6 +2004,8 @@ describe('gates/task-audit-summary', () => {
             });
 
             assert.ok(renderedMarkdown.includes('Mandatory full-suite: true'));
+            assert.ok(renderedMarkdown.includes('Review trust: LOCAL_ASSERTED via same_agent_fallback; not independent audited review.'));
+            assert.ok(renderedMarkdown.includes('Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'));
         });
 
         it('renders the compact optional skill summary line when present', () => {
