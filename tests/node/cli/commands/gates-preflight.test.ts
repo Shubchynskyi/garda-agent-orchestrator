@@ -188,6 +188,7 @@ function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void 
 
 function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
     fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
     fs.writeFileSync(initAnswersPath, JSON.stringify({
         AssistantLanguage: 'English',
@@ -199,6 +200,13 @@ function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
         CollectedVia: 'AGENT_INIT_PROMPT.md',
         ActiveAgentFiles: 'AGENTS.md'
     }, null, 2), 'utf8');
+    if (routedTo) {
+        const routedFilePath = path.join(repoRoot, routedTo);
+        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+        if (!fs.existsSync(routedFilePath)) {
+            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+        }
+    }
 }
 
 function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
@@ -217,11 +225,20 @@ function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Co
         }
     }
     const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || 'AGENTS.md';
-    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
     const providerBridgeCandidate = PROVIDER_BRIDGE_BY_SOURCE[provider] || null;
     const providerBridgePath = providerBridgeCandidate && fs.existsSync(path.join(repoRoot, providerBridgeCandidate))
         ? providerBridgeCandidate
         : null;
+    const providerEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
+    const routedTo = providerBridgePath || providerEntrypoint || null;
+    const executionProviderSource = providerBridgePath ? 'provider_bridge' : 'provider_entrypoint';
+    if (routedTo) {
+        const routedFilePath = path.join(repoRoot, routedTo);
+        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+        if (!fs.existsSync(routedFilePath)) {
+            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+        }
+    }
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
         schema_version: 1,
@@ -238,8 +255,10 @@ function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Co
         provider_bridge: providerBridgePath,
         provider_bridge_exists: providerBridgePath !== null,
         routed_to: routedTo,
-        execution_provider_source: 'explicit_provider',
+        execution_provider_source: executionProviderSource,
         runtime_identity_status: 'resolved',
+        reviewer_subagent_launch_status: 'launchable',
+        reviewer_subagent_launch_route: routedTo,
         start_task_router_path: '.agents/workflows/start-task.md',
         start_task_router_exists: true,
         execution_context: 'materialized-bundle',
@@ -269,7 +288,7 @@ function runHandshakeForTask(repoRoot: string, taskId: string, provider = 'Codex
             provider,
             execution_provider: artifact.execution_provider ?? provider,
             canonical_source_of_truth: artifact.canonical_source_of_truth ?? provider,
-            execution_provider_source: artifact.execution_provider_source ?? 'explicit_provider',
+            execution_provider_source: artifact.execution_provider_source ?? 'provider_entrypoint',
             execution_context: 'materialized-bundle',
             cli_path: 'node garda-agent-orchestrator/bin/garda.js',
             passed: true,
@@ -773,8 +792,116 @@ describe('cli/commands/gates — preflight', () => {
         }));
 
         assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before shell-smoke-preflight/i);
-        assert.match(error.message, /Re-enter task mode with explicit --provider <runtime-provider> or --routed-to/i);
+        assert.match(error.message, /Re-enter task mode with explicit runtime identity via `--provider "<provider>"`/i);
         assert.match(error.message, /enter-task-mode/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('allows shell-smoke-preflight when runtime identity is pinned with an explicit provider session', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-direct-provider';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# routed workflow fixture\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow shell-smoke-preflight after explicit provider task-mode entry',
+            provider: 'Codex'
+        });
+        runHandshakeForTask(repoRoot, taskId, 'Codex');
+
+        const result = runShellSmokePreflightCommand({
+            repoRoot,
+            taskId,
+            provider: 'Codex'
+        });
+
+        assert.equal(result.exitCode, 0);
+        assert.match(result.outputLines.join('\n'), /SHELL_SMOKE_PREFLIGHT_PASSED/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects shell-smoke-preflight when persisted task-mode launchability is blocked', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-launchability-blocked';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# routed workflow fixture\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block shell-smoke-preflight when persisted reviewer launchability is unavailable',
+            provider: 'Codex'
+        });
+        runHandshakeForTask(repoRoot, taskId, 'Codex');
+
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const taskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        taskModeArtifact.reviewer_subagent_launch_status = 'blocked';
+        taskModeArtifact.reviewer_subagent_launch_reason = 'Reviewer subagent launch is blocked for the persisted task-mode runtime.';
+        taskModeArtifact.reviewer_subagent_launch_remediation = 'Re-enter task mode with a runtime session that can launch delegated reviewer subagents.';
+        fs.writeFileSync(taskModePath, JSON.stringify(taskModeArtifact, null, 2), 'utf8');
+
+        const error = captureExpectedError(() => runShellSmokePreflightCommand({
+            repoRoot,
+            taskId
+        }));
+
+        assert.match(error.message, /Reviewer subagent launchability is 'blocked' before shell-smoke-preflight/i);
+        assert.match(error.message, /Re-enter task mode with a runtime session that can launch delegated reviewer subagents/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails handshake-diagnostics when persisted task-mode launchability is blocked', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-handshake-launchability-blocked';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# routed workflow fixture\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Fail handshake-diagnostics when persisted reviewer launchability is unavailable',
+            provider: 'Codex'
+        });
+
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const taskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        taskModeArtifact.reviewer_subagent_launch_status = 'blocked';
+        taskModeArtifact.reviewer_subagent_launch_reason = 'Reviewer subagent launch is blocked for the persisted task-mode runtime.';
+        taskModeArtifact.reviewer_subagent_launch_remediation = 'Re-enter task mode with a runtime session that can launch delegated reviewer subagents.';
+        fs.writeFileSync(taskModePath, JSON.stringify(taskModeArtifact, null, 2), 'utf8');
+
+        const result = runHandshakeDiagnosticsCommand({
+            repoRoot,
+            taskId
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.match(result.outputLines.join('\n'), /ReviewerSubagentLaunchStatus: blocked/);
+        assert.match(result.outputLines.join('\n'), /Reviewer subagent launch is blocked for the persisted task-mode runtime/i);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -791,8 +918,26 @@ describe('cli/commands/gates — preflight', () => {
         }));
 
         assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before command-timeout-diagnostics/i);
-        assert.match(error.message, /Re-enter task mode with explicit --provider <runtime-provider> or --routed-to/i);
+        assert.match(error.message, /Re-enter task mode with explicit runtime identity via `--provider "<provider>"`/i);
         assert.match(error.message, /command-timeout-diagnostics/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('allows command-timeout-diagnostics when runtime identity is pinned with an explicit provider session', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-command-timeout-direct-provider';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const result = runCommandTimeoutDiagnosticsCommand({
+            repoRoot,
+            taskId,
+            provider: 'Codex'
+        });
+
+        assert.equal(result.exitCode, 0);
+        assert.match(result.outputLines.join('\n'), /COMMAND_TIMEOUT_DIAGNOSTICS_PASSED/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -816,7 +961,8 @@ describe('cli/commands/gates — preflight', () => {
                 () => runShellSmokePreflightCommand({
                     repoRoot,
                     taskId,
-                    provider: 'Codex'
+                    provider: 'Codex',
+                    routedTo: 'AGENTS.md'
                 }),
                 /Timed out acquiring file lock/
             );

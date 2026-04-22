@@ -10,6 +10,7 @@ import {
 import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
+    getProviderOrchestratorProfileDefinitions,
     SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
 } from '../materialization/common';
 import {
@@ -51,6 +52,10 @@ export interface HandshakeDiagnosticsArtifact {
     reviewer_expected_execution_mode?: string | null;
     reviewer_fallback_allowed?: boolean | null;
     reviewer_fallback_reason_required?: boolean | null;
+    reviewer_subagent_launch_status?: string | null;
+    reviewer_subagent_launch_route?: string | null;
+    reviewer_subagent_launch_reason?: string | null;
+    reviewer_subagent_launch_remediation?: string | null;
     runtime_identity_status?: string | null;
     runtime_identity_violations?: string[];
     start_task_router_path: string;
@@ -94,9 +99,28 @@ export interface BuildHandshakeDiagnosticsOptions {
     reviewerExpectedExecutionMode?: string | null;
     reviewerFallbackAllowed?: boolean | null;
     reviewerFallbackReasonRequired?: boolean | null;
+    reviewerSubagentLaunchStatus?: string | null;
+    reviewerSubagentLaunchRoute?: string | null;
+    reviewerSubagentLaunchReason?: string | null;
+    reviewerSubagentLaunchRemediation?: string | null;
     runtimeIdentityStatus?: string | null;
     runtimeIdentityViolations?: string[] | null;
     precheckViolations?: string[];
+}
+
+function normalizeRoutePath(value: unknown): string | null {
+    const text = String(value || '').trim().replace(/\\/g, '/');
+    if (!text) {
+        return null;
+    }
+    return text.replace(/^\.\//, '');
+}
+
+function isAttestedReviewerSubagentExecutionSource(source: string | null): boolean {
+    return source === 'provider_bridge'
+        || source === 'provider_entrypoint'
+        || source === 'explicit_provider'
+        || source === 'task_mode';
 }
 
 function resolveCliPath(repoRoot: string, isSourceCheckout: boolean): string {
@@ -164,6 +188,18 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
     const reviewerFallbackReasonRequired = typeof options.reviewerFallbackReasonRequired === 'boolean'
         ? options.reviewerFallbackReasonRequired
         : identity.fallback_reason_required;
+    const reviewerSubagentLaunchStatus = String(options.reviewerSubagentLaunchStatus || '').trim()
+        || identity.reviewer_subagent_launch_status
+        || null;
+    const reviewerSubagentLaunchRoute = String(options.reviewerSubagentLaunchRoute || '').trim()
+        || identity.reviewer_subagent_launch_route
+        || null;
+    const reviewerSubagentLaunchReason = String(options.reviewerSubagentLaunchReason || '').trim()
+        || identity.reviewer_subagent_launch_reason
+        || null;
+    const reviewerSubagentLaunchRemediation = String(options.reviewerSubagentLaunchRemediation || '').trim()
+        || identity.reviewer_subagent_launch_remediation
+        || null;
     const diagnostics: HandshakeDiagnostic[] = [];
     const precheckViolations = Array.isArray(options.precheckViolations)
         ? options.precheckViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
@@ -191,6 +227,10 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
             reviewer_expected_execution_mode: reviewerExpectedExecutionMode,
             reviewer_fallback_allowed: reviewerFallbackAllowed,
             reviewer_fallback_reason_required: reviewerFallbackReasonRequired,
+            reviewer_subagent_launch_status: reviewerSubagentLaunchStatus,
+            reviewer_subagent_launch_route: reviewerSubagentLaunchRoute,
+            reviewer_subagent_launch_reason: reviewerSubagentLaunchReason,
+            reviewer_subagent_launch_remediation: reviewerSubagentLaunchRemediation,
             runtime_identity_status: runtimeIdentityStatus,
             runtime_identity_violations: runtimeIdentityViolations,
             start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
@@ -257,6 +297,36 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         });
     }
 
+    if (reviewerSubagentLaunchStatus === 'launchable') {
+        diagnostics.push({
+            check: 'reviewer_subagent_launch',
+            status: 'ok',
+            detail: reviewerSubagentLaunchReason || `Reviewer subagent launch is attested for provider '${executionProvider || 'unknown'}'.`
+        });
+    } else if (reviewerSubagentLaunchStatus === 'blocked') {
+        diagnostics.push({
+            check: 'reviewer_subagent_launch',
+            status: 'error',
+            detail: reviewerSubagentLaunchReason || 'Reviewer subagent launch is blocked for this runtime session.'
+        });
+        violations.push(
+            reviewerSubagentLaunchRemediation
+                ? `${reviewerSubagentLaunchReason || 'Reviewer subagent launch is blocked for this runtime session.'} ${reviewerSubagentLaunchRemediation}`
+                : (reviewerSubagentLaunchReason || 'Reviewer subagent launch is blocked for this runtime session.')
+        );
+    } else {
+        diagnostics.push({
+            check: 'reviewer_subagent_launch',
+            status: 'error',
+            detail: reviewerSubagentLaunchReason || 'Reviewer subagent launchability is unknown for this runtime session.'
+        });
+        violations.push(
+            reviewerSubagentLaunchRemediation
+                ? `${reviewerSubagentLaunchReason || 'Reviewer subagent launchability is unknown for this runtime session.'} ${reviewerSubagentLaunchRemediation}`
+                : (reviewerSubagentLaunchReason || 'Reviewer subagent launchability is unknown for this runtime session.')
+        );
+    }
+
     if (!canonicalSourceOfTruth) {
         diagnostics.push({
             check: 'canonical_source_of_truth',
@@ -300,13 +370,19 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
                 status: 'ok',
                 detail: `Provider bridge '${providerBridge}' exists.`
             });
-        } else {
+        } else if (executionProviderSource === 'provider_bridge') {
             diagnostics.push({
                 check: 'provider_bridge',
                 status: 'error',
-                detail: `Provider bridge '${providerBridge}' not found. Expected bridge file is missing for this provider.`
+                detail: `Provider bridge '${providerBridge}' not found. Expected bridge file is missing for this bridge-routed runtime session.`
             });
-            violations.push(`Provider bridge '${providerBridge}' is missing from workspace. This provider family requires a bridge file.`);
+            violations.push(`Provider bridge '${providerBridge}' is missing from workspace for the active bridge-routed runtime session.`);
+        } else {
+            diagnostics.push({
+                check: 'provider_bridge',
+                status: 'warning',
+                detail: `Provider bridge '${providerBridge}' not found, but the current runtime session is '${executionProviderSource || 'unknown'}' so bridge presence is telemetry-only here.`
+            });
         }
     } else {
         diagnostics.push({
@@ -419,6 +495,10 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         reviewer_expected_execution_mode: reviewerExpectedExecutionMode,
         reviewer_fallback_allowed: reviewerFallbackAllowed,
         reviewer_fallback_reason_required: reviewerFallbackReasonRequired,
+        reviewer_subagent_launch_status: reviewerSubagentLaunchStatus,
+        reviewer_subagent_launch_route: reviewerSubagentLaunchRoute,
+        reviewer_subagent_launch_reason: reviewerSubagentLaunchReason,
+        reviewer_subagent_launch_remediation: reviewerSubagentLaunchRemediation,
         runtime_identity_status: runtimeIdentityStatus,
         runtime_identity_violations: runtimeIdentityViolations,
         start_task_router_path: startTaskRouterPath,
@@ -559,6 +639,37 @@ export function getHandshakeEvidence(repoRoot: string, taskId: string | null, ar
 
     const status = String(artifact.status || '').trim().toUpperCase();
     const outcome = String(artifact.outcome || '').trim().toUpperCase();
+    const executionProviderSource = String(artifact.execution_provider_source || '').trim().toLowerCase() || null;
+    const routedTo = normalizeRoutePath(artifact.routed_to);
+    const runtimeIdentityStatus = String(artifact.runtime_identity_status || '').trim().toLowerCase() || null;
+    const reviewerSubagentLaunchStatus = String(artifact.reviewer_subagent_launch_status || '').trim().toLowerCase() || null;
+    if (!isAttestedReviewerSubagentExecutionSource(executionProviderSource)) {
+        result.evidence_status = 'EVIDENCE_RUNTIME_SESSION_INVALID';
+        result.violations.push(
+            executionProviderSource
+                ? `Handshake diagnostics evidence is not usable because execution_provider_source is '${executionProviderSource}', ` +
+                    'which does not attest launchable reviewer subagents. Re-enter task mode with explicit runtime identity and rerun handshake-diagnostics.'
+                : 'Handshake diagnostics evidence is not usable because execution_provider_source is missing. ' +
+                    'Re-enter task mode with explicit runtime identity and rerun handshake-diagnostics.'
+        );
+        return result;
+    }
+    if (runtimeIdentityStatus !== 'resolved') {
+        result.evidence_status = 'EVIDENCE_RUNTIME_SESSION_INVALID';
+        result.violations.push(
+            `Handshake diagnostics evidence is not usable because runtime_identity_status is '${runtimeIdentityStatus || 'unknown'}'. ` +
+            'Re-enter task mode through a launchable provider route and rerun handshake-diagnostics.'
+        );
+        return result;
+    }
+    if (reviewerSubagentLaunchStatus !== 'launchable') {
+        result.evidence_status = 'EVIDENCE_RUNTIME_SESSION_INVALID';
+        result.violations.push(
+            `Handshake diagnostics evidence is not usable because reviewer_subagent_launch_status is '${reviewerSubagentLaunchStatus || 'unknown'}'. ` +
+            'Re-enter task mode through a launchable provider route and rerun handshake-diagnostics.'
+        );
+        return result;
+    }
     if (status === 'PASSED' && outcome === 'PASS') {
         result.evidence_status = 'PASS';
         return result;
@@ -652,6 +763,8 @@ export function getHandshakeEvidenceViolations(result: HandshakeEvidenceResult):
             return result.violations;
         case 'EVIDENCE_TIMELINE_UNBOUND':
             return result.violations;
+        case 'EVIDENCE_RUNTIME_SESSION_INVALID':
+            return result.violations;
         default:
             return ['Handshake diagnostics evidence is missing or invalid. Run handshake-diagnostics gate.'];
     }
@@ -671,6 +784,8 @@ export function formatHandshakeDiagnosticsResult(artifact: HandshakeDiagnosticsA
         `RuntimeIdentityStatus: ${artifact.runtime_identity_status || 'unknown'}`,
         `ReviewerCapabilityLevel: ${artifact.reviewer_capability_level || 'unknown'}`,
         `ReviewerExpectedExecutionMode: ${artifact.reviewer_expected_execution_mode || 'unknown'}`,
+        `ReviewerSubagentLaunchStatus: ${artifact.reviewer_subagent_launch_status || 'unknown'}`,
+        `ReviewerSubagentLaunchRoute: ${artifact.reviewer_subagent_launch_route || 'none'}`,
         `StartTaskRouter: ${artifact.start_task_router_path} (${artifact.start_task_router_exists ? 'exists' : 'missing'})`,
         `ExecutionContext: ${artifact.execution_context}`,
         `CliPath: ${artifact.cli_path}`,

@@ -79,6 +79,9 @@ function buildResolvedTaskModeArtifact(
         provider: 'Codex',
         canonicalSourceOfTruth: 'Codex',
         executionProviderSource: 'provider_entrypoint',
+        reviewerSubagentLaunchStatus: 'launchable',
+        reviewerSubagentLaunchRoute: 'AGENTS.md',
+        reviewerSubagentLaunchReason: "Reviewer subagent launch is attested via provider_entrypoint 'AGENTS.md'.",
         runtimeIdentityStatus: 'resolved',
         routedTo: 'AGENTS.md',
         ...options
@@ -88,6 +91,7 @@ function buildResolvedTaskModeArtifact(
 function runEnterTaskModeWithDefaultRouting(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    const routedTo = 'AGENTS.md';
     fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
     if (!fs.existsSync(initAnswersPath)) {
         fs.writeFileSync(initAnswersPath, JSON.stringify({
@@ -101,11 +105,16 @@ function runEnterTaskModeWithDefaultRouting(options: Parameters<typeof runEnterT
             ActiveAgentFiles: 'AGENTS.md'
         }, null, 2), 'utf8');
     }
+    const routedFilePath = path.join(repoRoot, routedTo);
+    fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+    if (!fs.existsSync(routedFilePath)) {
+        fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+    }
 
     return runEnterTaskModeCommand({
         startBanner: 'Garda captures my mind',
         provider: 'Codex',
-        routedTo: 'AGENTS.md',
+        routedTo,
         ...options
     });
 }
@@ -175,6 +184,27 @@ test('buildTaskModeArtifact assigns a repo-owned start banner', () => {
     assert.ok(ORCHESTRATOR_START_BANNERS.includes(artifact.start_banner as (typeof ORCHESTRATOR_START_BANNERS)[number]));
 });
 
+test('buildTaskModeArtifact preserves blocked reviewer-subagent launch metadata when provided', () => {
+    const artifact = buildTaskModeArtifact({
+        taskId: 'T-099',
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Record reviewer subagent launch diagnostics for an unavailable reviewer runtime',
+        provider: 'Codex',
+        canonicalSourceOfTruth: 'Codex',
+        executionProviderSource: 'explicit_provider',
+        reviewerSubagentLaunchStatus: 'blocked',
+        reviewerSubagentLaunchRoute: 'AGENTS.md',
+        reviewerSubagentLaunchReason: "Reviewer subagent launchability is unavailable for runtime provider 'Codex'.",
+        reviewerSubagentLaunchRemediation: "Re-enter task mode with explicit runtime identity and rerun handshake-diagnostics before preparing required reviews.",
+        runtimeIdentityStatus: 'resolved'
+    });
+    assert.equal(artifact.reviewer_subagent_launch_status, 'blocked');
+    assert.equal(artifact.reviewer_subagent_launch_route, 'AGENTS.md');
+    assert.match(String(artifact.reviewer_subagent_launch_reason || ''), /Codex/i);
+});
+
 // ---------------------------------------------------------------------------
 // getTaskModeEvidence — plan round-trip
 // ---------------------------------------------------------------------------
@@ -201,6 +231,8 @@ test('getTaskModeEvidence reads plan metadata from artifact', () => {
         assert.equal(evidence.plan.plan_path, PLAN_METADATA.plan_path);
         assert.equal(evidence.plan.plan_sha256, PLAN_METADATA.plan_sha256);
         assert.equal(evidence.plan.plan_summary, PLAN_METADATA.plan_summary);
+        assert.equal(evidence.reviewer_subagent_launch_status, 'launchable');
+        assert.equal(evidence.reviewer_subagent_launch_route, 'AGENTS.md');
     } finally {
         cleanupDir(tmpDir);
     }
@@ -658,7 +690,7 @@ test('getTaskModeEvidence backfills legacy provider-bridge task-mode artifacts w
     }
 });
 
-test('getTaskModeEvidence rejects routed task-mode artifacts whose execution_provider_source contradicts routed_to', () => {
+test('getTaskModeEvidence treats routed_to as telemetry when execution_provider_source differs but provider stays the same', () => {
     const tmpDir = makeTempDir();
     try {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
@@ -669,18 +701,19 @@ test('getTaskModeEvidence rejects routed task-mode artifacts whose execution_pro
             entryMode: 'EXPLICIT_TASK_EXECUTION',
             requestedDepth: 2,
             effectiveDepth: 2,
-            taskSummary: 'Reject contradictory routed runtime source evidence',
-            provider: 'Codex',
-            canonicalSourceOfTruth: 'Codex',
-            executionProviderSource: 'provider_bridge',
+            taskSummary: 'Preserve routed telemetry without invalidating same-provider runtime identity',
+            provider: 'GitHubCopilot',
+            canonicalSourceOfTruth: 'GitHubCopilot',
+            executionProviderSource: 'explicit_provider',
             runtimeIdentityStatus: 'resolved',
-            routedTo: 'AGENTS.md'
+            routedTo: '.github/copilot-instructions.md'
         });
         fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
 
         const evidence = getTaskModeEvidence(tmpDir, 'T-099');
-        assert.equal(evidence.evidence_status, 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_ROUTE_MISMATCH');
-        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes("execution_provider_source='provider_bridge'")));
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.execution_provider_source, 'explicit_provider');
+        assert.equal(evidence.routed_to, '.github/copilot-instructions.md');
     } finally {
         cleanupDir(tmpDir);
     }

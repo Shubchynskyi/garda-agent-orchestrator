@@ -55,12 +55,31 @@ const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
     Antigravity: '.antigravity/agents/orchestrator.md'
 };
 
+function resolveAttestedTaskModeRoute(provider: string): string | null {
+    const normalizedProvider = String(provider || '').trim();
+    if (!normalizedProvider) {
+        return null;
+    }
+    return PROVIDER_BRIDGE_BY_SOURCE[normalizedProvider] || PROVIDER_ENTRYPOINT_BY_SOURCE[normalizedProvider] || null;
+}
+
 function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
-    if (String(options.provider || '').trim() || String(options.routedTo || '').trim()) {
+    if (String(options.routedTo || '').trim()) {
         return options;
     }
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    const explicitProvider = String(options.provider || '').trim();
+    if (explicitProvider) {
+        const routedTo = resolveAttestedTaskModeRoute(explicitProvider);
+        return routedTo
+            ? {
+                ...options,
+                provider: explicitProvider,
+                routedTo
+            }
+            : options;
+    }
     if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
         return options;
     }
@@ -68,7 +87,7 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
     try {
         const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
         const sourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
-        const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
+        const routedTo = resolveAttestedTaskModeRoute(sourceOfTruth);
         if (!sourceOfTruth || !routedTo) {
             return options;
         }
@@ -83,10 +102,20 @@ function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: un
 }
 
 function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    return runEnterTaskModeCommand(withDefaultTaskModeRouting({
+    const resolvedOptions = withDefaultTaskModeRouting({
         startBanner: 'Garda captures my mind',
         ...options
-    }));
+    });
+    const repoRoot = path.resolve(String(resolvedOptions.repoRoot || '.'));
+    const routedTo = String(resolvedOptions.routedTo || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+    if (routedTo) {
+        const routedFilePath = path.join(repoRoot, routedTo);
+        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+        if (!fs.existsSync(routedFilePath)) {
+            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+        }
+    }
+    return runEnterTaskModeCommand(resolvedOptions);
 }
 
 function seedRuleFiles(repoRoot: string): void {
@@ -375,6 +404,7 @@ function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void 
 
 function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
     fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
     fs.writeFileSync(initAnswersPath, JSON.stringify({
         AssistantLanguage: 'English',
@@ -386,6 +416,13 @@ function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
         CollectedVia: 'AGENT_INIT_PROMPT.md',
         ActiveAgentFiles: 'AGENTS.md'
     }, null, 2), 'utf8');
+    if (routedTo) {
+        const routedFilePath = path.join(repoRoot, routedTo);
+        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+        if (!fs.existsSync(routedFilePath)) {
+            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+        }
+    }
 }
 
 function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
@@ -403,12 +440,21 @@ function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Co
             // Keep the lightweight test fixture tolerant of malformed init answers.
         }
     }
-    const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || 'AGENTS.md';
-    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
     const providerBridgeCandidate = PROVIDER_BRIDGE_BY_SOURCE[provider] || null;
     const providerBridgePath = providerBridgeCandidate && fs.existsSync(path.join(repoRoot, providerBridgeCandidate))
         ? providerBridgeCandidate
         : null;
+    const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || 'AGENTS.md';
+    const providerEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
+    const routedTo = providerBridgePath || providerEntrypoint || null;
+    const executionProviderSource = providerBridgePath ? 'provider_bridge' : 'provider_entrypoint';
+    if (routedTo) {
+        const routedFilePath = path.join(repoRoot, routedTo);
+        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+        if (!fs.existsSync(routedFilePath)) {
+            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+        }
+    }
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
         schema_version: 1,
@@ -425,8 +471,10 @@ function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Co
         provider_bridge: providerBridgePath,
         provider_bridge_exists: providerBridgePath !== null,
         routed_to: routedTo,
-        execution_provider_source: 'explicit_provider',
+        execution_provider_source: executionProviderSource,
         runtime_identity_status: 'resolved',
+        reviewer_subagent_launch_status: 'launchable',
+        reviewer_subagent_launch_route: routedTo,
         start_task_router_path: '.agents/workflows/start-task.md',
         start_task_router_exists: true,
         execution_context: 'materialized-bundle',

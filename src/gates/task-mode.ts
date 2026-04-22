@@ -74,6 +74,10 @@ export interface TaskModeArtifact {
     reviewer_expected_execution_mode: string | null;
     reviewer_fallback_allowed: boolean | null;
     reviewer_fallback_reason_required: boolean | null;
+    reviewer_subagent_launch_status: string | null;
+    reviewer_subagent_launch_route: string | null;
+    reviewer_subagent_launch_reason: string | null;
+    reviewer_subagent_launch_remediation: string | null;
     runtime_identity_status: string | null;
     runtime_identity_violations: string[];
     routed_to: string | null;
@@ -100,6 +104,10 @@ export interface BuildTaskModeArtifactOptions {
     reviewerExpectedExecutionMode?: string | null;
     reviewerFallbackAllowed?: boolean | null;
     reviewerFallbackReasonRequired?: boolean | null;
+    reviewerSubagentLaunchStatus?: string | null;
+    reviewerSubagentLaunchRoute?: string | null;
+    reviewerSubagentLaunchReason?: string | null;
+    reviewerSubagentLaunchRemediation?: string | null;
     runtimeIdentityStatus?: string | null;
     runtimeIdentityViolations?: string[] | null;
     routedTo?: string | null;
@@ -138,6 +146,10 @@ export interface TaskModeEvidenceResult {
     reviewer_expected_execution_mode: string | null;
     reviewer_fallback_allowed: boolean | null;
     reviewer_fallback_reason_required: boolean | null;
+    reviewer_subagent_launch_status: string | null;
+    reviewer_subagent_launch_route: string | null;
+    reviewer_subagent_launch_reason: string | null;
+    reviewer_subagent_launch_remediation: string | null;
     runtime_identity_status: string | null;
     runtime_identity_violations: string[];
     routed_to: string | null;
@@ -250,6 +262,10 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
                 'reviewer_expected_execution_mode',
                 'reviewer_fallback_allowed',
                 'reviewer_fallback_reason_required',
+                'reviewer_subagent_launch_status',
+                'reviewer_subagent_launch_route',
+                'reviewer_subagent_launch_reason',
+                'reviewer_subagent_launch_remediation',
                 'runtime_identity_status',
                 'runtime_identity_violations'
             ].some((key) => Object.prototype.hasOwnProperty.call(details || {}, key));
@@ -460,6 +476,10 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         reviewer_fallback_reason_required: typeof options.reviewerFallbackReasonRequired === 'boolean'
             ? options.reviewerFallbackReasonRequired
             : null,
+        reviewer_subagent_launch_status: String(options.reviewerSubagentLaunchStatus || '').trim() || null,
+        reviewer_subagent_launch_route: String(options.reviewerSubagentLaunchRoute || '').trim() || null,
+        reviewer_subagent_launch_reason: String(options.reviewerSubagentLaunchReason || '').trim() || null,
+        reviewer_subagent_launch_remediation: String(options.reviewerSubagentLaunchRemediation || '').trim() || null,
         runtime_identity_status: String(options.runtimeIdentityStatus || '').trim() || null,
         runtime_identity_violations: Array.isArray(options.runtimeIdentityViolations)
             ? options.runtimeIdentityViolations.map((entry) => String(entry || '').trim()).filter(Boolean)
@@ -502,6 +522,10 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         reviewer_expected_execution_mode: null,
         reviewer_fallback_allowed: null,
         reviewer_fallback_reason_required: null,
+        reviewer_subagent_launch_status: null,
+        reviewer_subagent_launch_route: null,
+        reviewer_subagent_launch_reason: null,
+        reviewer_subagent_launch_remediation: null,
         runtime_identity_status: null,
         runtime_identity_violations: [],
         routed_to: null,
@@ -542,6 +566,10 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         'reviewer_expected_execution_mode',
         'reviewer_fallback_allowed',
         'reviewer_fallback_reason_required',
+        'reviewer_subagent_launch_status',
+        'reviewer_subagent_launch_route',
+        'reviewer_subagent_launch_reason',
+        'reviewer_subagent_launch_remediation',
         'runtime_identity_status',
         'runtime_identity_violations'
     ].some((key) => Object.prototype.hasOwnProperty.call(artifactObject, key));
@@ -564,6 +592,10 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.reviewer_fallback_reason_required = typeof artifactObject.reviewer_fallback_reason_required === 'boolean'
         ? artifactObject.reviewer_fallback_reason_required
         : null;
+    result.reviewer_subagent_launch_status = String(artifactObject.reviewer_subagent_launch_status || '').trim() || null;
+    result.reviewer_subagent_launch_route = String(artifactObject.reviewer_subagent_launch_route || '').trim() || null;
+    result.reviewer_subagent_launch_reason = String(artifactObject.reviewer_subagent_launch_reason || '').trim() || null;
+    result.reviewer_subagent_launch_remediation = String(artifactObject.reviewer_subagent_launch_remediation || '').trim() || null;
     result.runtime_identity_status = String(artifactObject.runtime_identity_status || '').trim() || null;
     result.runtime_identity_violations = Array.isArray(artifactObject.runtime_identity_violations)
         ? artifactObject.runtime_identity_violations.map((entry) => String(entry || '').trim()).filter(Boolean)
@@ -686,14 +718,6 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         return result;
     }
     if (
-        routeIdentity.routeKind
-        && result.execution_provider_source
-        && routeIdentity.routeKind !== result.execution_provider_source
-    ) {
-        result.evidence_status = 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_ROUTE_MISMATCH';
-        return result;
-    }
-    if (
         result.timeline_artifact_path
         && result.evidence_path
         && result.timeline_artifact_path.toLowerCase() !== result.evidence_path.toLowerCase()
@@ -778,11 +802,6 @@ export function getTaskModeEvidenceViolations(result: TaskModeEvidenceResult): s
             return [
                 `Task-mode entry evidence records provider '${result.provider || 'missing'}', ` +
                 `but routed_to '${result.routed_to || 'missing'}' identifies a different provider.`
-            ];
-        case 'EVIDENCE_EXECUTION_PROVIDER_SOURCE_ROUTE_MISMATCH':
-            return [
-                `Task-mode entry evidence records execution_provider_source='${result.execution_provider_source || 'missing'}', ` +
-                `but routed_to '${result.routed_to || 'missing'}' resolves to a different runtime source.`
             ];
         case 'EVIDENCE_ARTIFACT_PATH_MISMATCH':
             return [

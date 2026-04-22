@@ -8,6 +8,7 @@ import { getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode'
 export type ReviewerExecutionMode = 'delegated_subagent' | 'same_agent_fallback';
 export type ReviewerCapabilityLevel = 'delegation_required' | 'delegation_conditional' | 'single_agent_only' | 'unknown';
 export type RuntimeProviderIdentityStatus = 'resolved' | 'legacy_fallback' | 'missing' | 'contradictory';
+export type ReviewerSubagentLaunchStatus = 'launchable' | 'blocked' | 'unknown';
 export type RuntimeProviderIdentitySource =
     | 'provider_bridge'
     | 'provider_entrypoint'
@@ -29,6 +30,7 @@ export interface ReviewerRoutingPolicy {
 export interface RuntimeReviewerIdentity {
     canonical_source_of_truth: string | null;
     canonical_entrypoint: string | null;
+    execution_entrypoint: string | null;
     execution_provider: string | null;
     execution_provider_source: RuntimeProviderIdentitySource;
     task_mode_identity_backfilled: boolean;
@@ -40,6 +42,10 @@ export interface RuntimeReviewerIdentity {
     fallback_allowed: boolean;
     fallback_reason_required: boolean;
     expected_execution_mode: ReviewerExecutionMode;
+    reviewer_subagent_launch_status: ReviewerSubagentLaunchStatus;
+    reviewer_subagent_launch_route: string | null;
+    reviewer_subagent_launch_reason: string;
+    reviewer_subagent_launch_remediation: string | null;
     note: string;
     violations: string[];
 }
@@ -77,6 +83,18 @@ export function normalizeRuntimeIdentitySource(value: unknown): RuntimeProviderI
         case 'explicit_provider':
         case 'task_mode':
         case 'legacy_source_of_truth':
+            return normalized;
+        default:
+            return null;
+    }
+}
+
+function normalizeReviewerSubagentLaunchStatus(value: unknown): ReviewerSubagentLaunchStatus | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    switch (normalized) {
+        case 'launchable':
+        case 'blocked':
+        case 'unknown':
             return normalized;
         default:
             return null;
@@ -184,6 +202,91 @@ function resolveKnownBridgePath(provider: string | null): string | null {
     return null;
 }
 
+function buildReviewerSubagentLaunchability(options: {
+    repoRoot: string;
+    executionProvider: string | null;
+    executionProviderSource: RuntimeProviderIdentitySource;
+    identityStatus: RuntimeProviderIdentityStatus;
+    executionEntrypoint: string | null;
+    providerBridge: string | null;
+    routedTo: string | null;
+    preserveTaskModeLaunchability: boolean;
+    taskModeReviewerSubagentLaunchStatus: ReviewerSubagentLaunchStatus | null;
+    taskModeReviewerSubagentLaunchRoute: string | null;
+    taskModeReviewerSubagentLaunchReason: string | null;
+    taskModeReviewerSubagentLaunchRemediation: string | null;
+}): {
+    status: ReviewerSubagentLaunchStatus;
+    route: string | null;
+    reason: string;
+    remediation: string | null;
+} {
+    const routeHint = options.routedTo || options.providerBridge || options.executionEntrypoint || null;
+    if (!options.executionProvider || options.identityStatus !== 'resolved') {
+        return {
+            status: 'unknown',
+            route: routeHint,
+            reason: options.identityStatus === 'legacy_fallback'
+                ? 'Reviewer subagent launchability is unknown because runtime identity still relies on legacy SourceOfTruth fallback.'
+                : options.identityStatus === 'missing'
+                    ? 'Reviewer subagent launchability is unknown because runtime identity is missing.'
+                    : options.identityStatus === 'contradictory'
+                        ? 'Reviewer subagent launchability is unknown because runtime identity is contradictory.'
+                        : 'Reviewer subagent launchability is unknown because runtime identity is unresolved.',
+            remediation: routeHint
+                ? `Re-enter task mode through '${routeHint}' and rerun handshake-diagnostics before preparing required reviews.`
+                : 'Re-enter task mode with explicit runtime identity and rerun handshake-diagnostics before preparing required reviews.'
+        };
+    }
+
+    if (options.preserveTaskModeLaunchability && options.taskModeReviewerSubagentLaunchStatus === 'blocked') {
+        return {
+            status: 'blocked',
+            route: options.taskModeReviewerSubagentLaunchRoute || routeHint,
+            reason: options.taskModeReviewerSubagentLaunchReason
+                || `Reviewer subagent launch is blocked for persisted task-mode runtime '${options.executionProvider}'.`,
+            remediation: options.taskModeReviewerSubagentLaunchRemediation
+                || 'Re-enter task mode with a runtime session that can launch delegated reviewer subagents and rerun handshake-diagnostics before preparing required reviews.'
+        };
+    }
+
+    if (options.executionProviderSource === 'provider_bridge' || options.executionProviderSource === 'provider_entrypoint') {
+        return {
+            status: 'launchable',
+            route: options.routedTo || routeHint,
+            reason: `Reviewer subagent launch is attested via ${options.executionProviderSource} '${options.routedTo || routeHint || options.executionProvider}'.`,
+            remediation: null
+        };
+    }
+
+    if (options.executionProviderSource === 'explicit_provider') {
+        return {
+            status: 'launchable',
+            route: routeHint,
+            reason: `Reviewer subagent launch is attested via explicit provider selection '${options.executionProvider}' inside the orchestrator runtime.`,
+            remediation: null
+        };
+    }
+
+    if (options.executionProviderSource === 'task_mode') {
+        return {
+            status: 'launchable',
+            route: routeHint,
+            reason: `Reviewer subagent launch is attested via persisted task-mode runtime identity for '${options.executionProvider}'.`,
+            remediation: null
+        };
+    }
+
+    return {
+        status: 'unknown',
+        route: routeHint,
+        reason: `Reviewer subagent launchability is unknown for runtime identity source '${options.executionProviderSource || 'unknown'}'.`,
+        remediation: routeHint
+            ? `Re-enter task mode through '${routeHint}' and rerun handshake-diagnostics before preparing required reviews.`
+            : 'Re-enter task mode with explicit runtime identity and rerun handshake-diagnostics before preparing required reviews.'
+    };
+}
+
 function resolveExecutionProviderFromRoutePath(routedTo: string | null): {
     provider: string | null;
     routeKind: Extract<RuntimeProviderIdentitySource, 'provider_bridge' | 'provider_entrypoint'> | null;
@@ -266,6 +369,18 @@ export function resolveRuntimeReviewerIdentity(options: {
     const taskModeExecutionProviderSource = hasPinnedTaskModeIdentity
         ? normalizeRuntimeIdentitySource(taskMode?.execution_provider_source)
         : null;
+    const taskModeReviewerSubagentLaunchStatus = hasPinnedTaskModeIdentity
+        ? normalizeReviewerSubagentLaunchStatus(taskMode?.reviewer_subagent_launch_status)
+        : null;
+    const taskModeReviewerSubagentLaunchRoute = hasPinnedTaskModeIdentity
+        ? normalizeRoutePath(taskMode?.reviewer_subagent_launch_route)
+        : null;
+    const taskModeReviewerSubagentLaunchReason = hasPinnedTaskModeIdentity
+        ? String(taskMode?.reviewer_subagent_launch_reason || '').trim() || null
+        : null;
+    const taskModeReviewerSubagentLaunchRemediation = hasPinnedTaskModeIdentity
+        ? String(taskMode?.reviewer_subagent_launch_remediation || '').trim() || null
+        : null;
     const canonicalSourceOfTruth = taskModeCanonicalSourceOfTruth ?? workspaceCanonicalSourceOfTruth;
     const canonicalEntrypoint = resolveCanonicalEntrypoint(canonicalSourceOfTruth);
     const taskModeProvider = hasPinnedTaskModeIdentity
@@ -275,10 +390,12 @@ export function resolveRuntimeReviewerIdentity(options: {
     const explicitProvider = normalizeSourceOfTruthValue(options.executionProvider);
     const explicitRoutedToRaw = String(options.routedTo || '').trim();
     const explicitRoutedTo = normalizeRoutePath(options.routedTo);
+    const hasExplicitProviderOverride = explicitProviderRaw.length > 0;
+    const hasExplicitRouteOverride = explicitRoutedToRaw.length > 0;
     const taskModeRoutedTo = hasPinnedTaskModeIdentity
         ? normalizeRoutePath(taskMode?.routed_to)
         : null;
-    const routedTo = explicitRoutedTo || taskModeRoutedTo || null;
+    const routedTo = explicitRoutedTo || (!hasExplicitProviderOverride ? taskModeRoutedTo : null) || null;
     const routeIdentity = resolveExecutionProviderFromRoutePath(routedTo);
     const violations: string[] = [];
 
@@ -327,12 +444,6 @@ export function resolveRuntimeReviewerIdentity(options: {
         );
     }
 
-    if (taskModeRoutedTo && explicitRoutedTo && taskModeRoutedTo !== explicitRoutedTo) {
-        violations.push(
-            `Runtime route '${explicitRoutedTo}' contradicts task-mode routed_to '${taskModeRoutedTo}'.`
-        );
-    }
-
     if (routeIdentity.provider && explicitProvider && routeIdentity.provider !== explicitProvider) {
         violations.push(
             `Runtime execution provider '${explicitProvider}' contradicts routed path '${routedTo}' ` +
@@ -365,7 +476,7 @@ export function resolveRuntimeReviewerIdentity(options: {
     }
 
     let resolvedExecutionProviderSource = executionProviderSource;
-    if (hasPinnedTaskModeIdentity && taskModeExecutionProviderSource && !explicitProvider && !explicitRoutedTo) {
+    if (hasPinnedTaskModeIdentity && taskModeExecutionProviderSource && !hasExplicitProviderOverride && !hasExplicitRouteOverride) {
         if (!resolvedExecutionProviderSource || resolvedExecutionProviderSource === 'task_mode') {
             executionProviderSource = taskModeExecutionProviderSource;
             resolvedExecutionProviderSource = taskModeExecutionProviderSource;
@@ -376,6 +487,8 @@ export function resolveRuntimeReviewerIdentity(options: {
         && taskModeExecutionProviderSource
         && resolvedExecutionProviderSource
         && taskModeExecutionProviderSource !== resolvedExecutionProviderSource
+        && !hasExplicitProviderOverride
+        && !hasExplicitRouteOverride
     ) {
         violations.push(
             `Task-mode execution_provider_source '${taskModeExecutionProviderSource}' contradicts resolved source '${resolvedExecutionProviderSource}'.`
@@ -383,20 +496,36 @@ export function resolveRuntimeReviewerIdentity(options: {
     }
 
     const policy = resolveReviewerRoutingPolicy(executionProvider, executionProviderSource);
+    const executionEntrypoint = resolveCanonicalEntrypoint(executionProvider);
     let identityStatus: RuntimeProviderIdentityStatus = 'resolved';
     if (violations.length > 0) {
         identityStatus = 'contradictory';
     } else if (!executionProvider) {
         identityStatus = 'missing';
-    } else if (hasPinnedTaskModeIdentity && taskModeIdentityStatus && !explicitProvider && !explicitRoutedTo) {
+    } else if (hasPinnedTaskModeIdentity && taskModeIdentityStatus && !hasExplicitProviderOverride && !hasExplicitRouteOverride) {
         identityStatus = taskModeIdentityStatus;
     } else if (executionProviderSource === 'legacy_source_of_truth') {
         identityStatus = 'legacy_fallback';
     }
+    const reviewerLaunchability = buildReviewerSubagentLaunchability({
+        repoRoot: normalizedRepoRoot,
+        executionProvider,
+        executionProviderSource,
+        identityStatus,
+        executionEntrypoint,
+        providerBridge: routeIdentity.bridgePath || resolveKnownBridgePath(executionProvider),
+        routedTo,
+        preserveTaskModeLaunchability: hasPinnedTaskModeIdentity && !hasExplicitProviderOverride && !hasExplicitRouteOverride,
+        taskModeReviewerSubagentLaunchStatus,
+        taskModeReviewerSubagentLaunchRoute,
+        taskModeReviewerSubagentLaunchReason,
+        taskModeReviewerSubagentLaunchRemediation
+    });
 
     return {
         canonical_source_of_truth: canonicalSourceOfTruth,
         canonical_entrypoint: canonicalEntrypoint,
+        execution_entrypoint: executionEntrypoint,
         execution_provider: executionProvider,
         execution_provider_source: executionProviderSource,
         task_mode_identity_backfilled: taskModeIdentityBackfilled,
@@ -408,6 +537,10 @@ export function resolveRuntimeReviewerIdentity(options: {
         fallback_allowed: policy.fallback_allowed,
         fallback_reason_required: policy.fallback_reason_required,
         expected_execution_mode: policy.expected_execution_mode,
+        reviewer_subagent_launch_status: reviewerLaunchability.status,
+        reviewer_subagent_launch_route: reviewerLaunchability.route,
+        reviewer_subagent_launch_reason: reviewerLaunchability.reason,
+        reviewer_subagent_launch_remediation: reviewerLaunchability.remediation,
         note: policy.note,
         violations
     };

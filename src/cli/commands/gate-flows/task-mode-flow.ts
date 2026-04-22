@@ -152,6 +152,7 @@ export interface ShellSmokePreflightCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
     provider?: unknown;
+    routedTo?: unknown;
     effectiveCwd?: unknown;
     probeTimeoutMs?: unknown;
     artifactPath?: string;
@@ -163,6 +164,7 @@ export interface CommandTimeoutDiagnosticsCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
     provider?: unknown;
+    routedTo?: unknown;
     effectiveCwd?: unknown;
     commandRecordsPath?: string;
     artifactPath?: string;
@@ -309,23 +311,58 @@ function buildTaskModeIdentitySuggestionCommand(
         '--task-summary "<task-summary>"',
         '--start-banner "<repo-owned-banner>"'
     ];
-    const safeRoutedIdentityHint = (
-        routingDecision.identityStatus !== 'contradictory'
-        && (
-            routingDecision.executionProviderSource === 'provider_bridge'
-            || routingDecision.executionProviderSource === 'provider_entrypoint'
+    if (routingDecision.provider) {
+        commandParts.push(`--provider ${quotePowerShellCliValue(routingDecision.provider)}`);
+    } else {
+        commandParts.push('--provider "<provider>"');
+    }
+    const safeRoutedIdentityHint = routingDecision.identityStatus !== 'contradictory'
+        ? (
+            routingDecision.reviewerSubagentLaunchRoute
+            || routingDecision.routedTo
+            || routingDecision.providerBridge
+            || routingDecision.executionEntrypoint
+            || routingDecision.canonicalEntrypoint
         )
-    )
-        ? (routingDecision.routedTo || routingDecision.providerBridge)
         : null;
     if (safeRoutedIdentityHint) {
         commandParts.push(`--routed-to ${quotePowerShellCliValue(safeRoutedIdentityHint)}`);
-    } else if (routingDecision.provider && routingDecision.executionProviderSource === 'explicit_provider') {
-        commandParts.push(`--provider ${quotePowerShellCliValue(routingDecision.provider)}`);
-    } else {
-        commandParts.push('--provider "<runtime-provider>"');
     }
     return commandParts.join(' ');
+}
+
+function assertLaunchableReviewerSubagents(
+    repoRoot: string,
+    taskId: string,
+    stageLabel: string,
+    routingDecision: ReturnType<typeof readRoutingDecision>,
+    rerunGateName: string | null = null
+): void {
+    const reviewerSubagentLaunchStatus = String(routingDecision.reviewerSubagentLaunchStatus || '').trim() || 'unknown';
+    if (reviewerSubagentLaunchStatus === 'launchable') {
+        return;
+    }
+
+    const reviewerSubagentLaunchReason = String(routingDecision.reviewerSubagentLaunchReason || '').trim();
+    const reviewerSubagentLaunchRemediation = String(routingDecision.reviewerSubagentLaunchRemediation || '').trim();
+    const errorParts = [
+        `Reviewer subagent launchability is '${reviewerSubagentLaunchStatus}' ${stageLabel}.`
+    ];
+    if (reviewerSubagentLaunchReason) {
+        errorParts.push(reviewerSubagentLaunchReason);
+    }
+    if (reviewerSubagentLaunchRemediation) {
+        errorParts.push(reviewerSubagentLaunchRemediation);
+    }
+    if (rerunGateName) {
+        errorParts.push(
+            `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)} ; ` +
+            `${buildGateRerunCommand(repoRoot, taskId, rerunGateName)}`
+        );
+    } else {
+        errorParts.push(`Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)}`);
+    }
+    throw new Error(errorParts.join(' '));
 }
 
 function assertTaskModeRuntimeIdentity(
@@ -341,17 +378,16 @@ function assertTaskModeRuntimeIdentity(
     }
 
     if (routingDecision.identityStatus === 'resolved') {
+        assertLaunchableReviewerSubagents(repoRoot, taskId, 'at task-mode entry', routingDecision);
         return;
     }
 
     const violationText = routingDecision.violations.length > 0
         ? ` ${routingDecision.violations.join(' ')}`
         : '';
-    const remediation = routingDecision.routedTo || routingDecision.providerBridge
-        ? 'Re-run enter-task-mode with explicit runtime identity via the active provider bridge/entrypoint route, ' +
-            'or pass --provider <runtime-provider>. Do not infer runtime provider from canonical SourceOfTruth.'
-        : 'Re-run enter-task-mode with explicit --provider <runtime-provider> or --routed-to <provider-bridge-or-entrypoint>. ' +
-            'Do not infer runtime provider from canonical SourceOfTruth.';
+    const remediation = 'Re-run enter-task-mode with explicit runtime identity via `--provider "<provider>"` ' +
+        'and add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned. ' +
+        'Do not infer runtime provider from canonical SourceOfTruth.';
 
     throw new Error(
         `Runtime execution identity is '${routingDecision.identityStatus}' at task-mode entry.${violationText} ${remediation} ` +
@@ -374,17 +410,16 @@ function assertResolvedRuntimeIdentityForDependentPreflightGate(
     }
 
     if (routingDecision.identityStatus === 'resolved') {
+        assertLaunchableReviewerSubagents(repoRoot, taskId, `before ${gateName}`, routingDecision, gateName);
         return;
     }
 
     const violationText = routingDecision.violations.length > 0
         ? ` ${routingDecision.violations.join(' ')}`
         : '';
-    const remediation = routingDecision.routedTo || routingDecision.providerBridge
-        ? 'Re-enter task mode with explicit runtime identity via the active provider bridge/entrypoint route, ' +
-            'or pass --provider <runtime-provider>. Do not infer runtime provider from canonical SourceOfTruth.'
-        : 'Re-enter task mode with explicit --provider <runtime-provider> or --routed-to <provider-bridge-or-entrypoint>. ' +
-            'Do not infer runtime provider from canonical SourceOfTruth.';
+    const remediation = 'Re-enter task mode with explicit runtime identity via `--provider "<provider>"` ' +
+        'and add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned. ' +
+        'Do not infer runtime provider from canonical SourceOfTruth.';
 
     throw new Error(
         `Runtime execution identity is '${routingDecision.identityStatus}' before ${gateName}.${violationText} ${remediation} ` +
@@ -525,6 +560,10 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         reviewerFallbackReasonRequired: routingDecision.provider
             ? resolveReviewerRoutingPolicy(routingDecision.provider).fallback_reason_required
             : null,
+        reviewerSubagentLaunchStatus: routingDecision.reviewerSubagentLaunchStatus,
+        reviewerSubagentLaunchRoute: routingDecision.reviewerSubagentLaunchRoute,
+        reviewerSubagentLaunchReason: routingDecision.reviewerSubagentLaunchReason,
+        reviewerSubagentLaunchRemediation: routingDecision.reviewerSubagentLaunchRemediation,
         runtimeIdentityStatus: routingDecision.identityStatus,
         runtimeIdentityViolations: routingDecision.violations,
         routedTo: routingDecision.routedTo,
@@ -583,6 +622,10 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 reviewer_expected_execution_mode: taskModeArtifact.reviewer_expected_execution_mode,
                 reviewer_fallback_allowed: taskModeArtifact.reviewer_fallback_allowed,
                 reviewer_fallback_reason_required: taskModeArtifact.reviewer_fallback_reason_required,
+                reviewer_subagent_launch_status: taskModeArtifact.reviewer_subagent_launch_status,
+                reviewer_subagent_launch_route: taskModeArtifact.reviewer_subagent_launch_route,
+                reviewer_subagent_launch_reason: taskModeArtifact.reviewer_subagent_launch_reason,
+                reviewer_subagent_launch_remediation: taskModeArtifact.reviewer_subagent_launch_remediation,
                 runtime_identity_status: taskModeArtifact.runtime_identity_status,
                 runtime_identity_violations: taskModeArtifact.runtime_identity_violations,
                 routed_to: taskModeArtifact.routed_to,
@@ -652,6 +695,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             ...(routingDecision.executionProviderSource ? [`ExecutionProviderSource: ${routingDecision.executionProviderSource}`] : []),
             ...(routingDecision.identityStatus ? [`RuntimeIdentityStatus: ${routingDecision.identityStatus}`] : []),
             ...(routingDecision.routedTo ? [`RoutedTo: ${routingDecision.routedTo}`] : []),
+            ...(routingDecision.reviewerSubagentLaunchStatus ? [`ReviewerSubagentLaunchStatus: ${routingDecision.reviewerSubagentLaunchStatus}`] : []),
+            ...(routingDecision.reviewerSubagentLaunchRoute ? [`ReviewerSubagentLaunchRoute: ${routingDecision.reviewerSubagentLaunchRoute}`] : []),
             ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`]),
             ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : []),
             ...(plannedChangedFiles.length > 0 ? [`PlannedChangedFilesCount: ${plannedChangedFiles.length}`] : []),
@@ -885,6 +930,10 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
             reviewerFallbackReasonRequired: provider
                 ? resolveReviewerRoutingPolicy(provider).fallback_reason_required
                 : null,
+            reviewerSubagentLaunchStatus: routingDecision.reviewerSubagentLaunchStatus,
+            reviewerSubagentLaunchRoute: routingDecision.reviewerSubagentLaunchRoute,
+            reviewerSubagentLaunchReason: routingDecision.reviewerSubagentLaunchReason,
+            reviewerSubagentLaunchRemediation: routingDecision.reviewerSubagentLaunchRemediation,
             runtimeIdentityStatus: routingDecision.identityStatus,
             runtimeIdentityViolations: routingDecision.violations,
             precheckViolations: handshakePrecheckViolations
@@ -933,7 +982,7 @@ export function runShellSmokePreflightCommand(options: ShellSmokePreflightComman
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider, undefined, taskId);
+    const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo, taskId);
     assertResolvedRuntimeIdentityForDependentPreflightGate(repoRoot, taskId, 'shell-smoke-preflight', routingDecision);
     const provider = routingDecision.provider;
 
@@ -1003,7 +1052,7 @@ export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagn
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider, undefined, taskId);
+    const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo, taskId);
     assertResolvedRuntimeIdentityForDependentPreflightGate(repoRoot, taskId, 'command-timeout-diagnostics', routingDecision);
     const provider = routingDecision.provider;
 

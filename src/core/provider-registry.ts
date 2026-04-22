@@ -182,7 +182,7 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerLaunchLabel: 'Windsurf',
         entrypointFile: '.windsurf/rules/rules.md',
         reviewerCapabilityTier: 'delegation_required',
-        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents through the provider bridge.',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
         bridge: {
             orchestratorRelativePath: '.windsurf/agents/orchestrator.md',
             managedDirectoryRelativePath: '.windsurf/agents',
@@ -200,7 +200,7 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerLaunchLabel: 'Junie',
         entrypointFile: '.junie/guidelines.md',
         reviewerCapabilityTier: 'delegation_required',
-        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents through the provider bridge.',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
         bridge: {
             orchestratorRelativePath: '.junie/agents/orchestrator.md',
             managedDirectoryRelativePath: '.junie/agents',
@@ -218,7 +218,7 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerLaunchLabel: 'Antigravity',
         entrypointFile: '.antigravity/rules.md',
         reviewerCapabilityTier: 'delegation_required',
-        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents through the provider bridge.',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
         bridge: {
             orchestratorRelativePath: '.antigravity/agents/orchestrator.md',
             managedDirectoryRelativePath: '.antigravity/agents',

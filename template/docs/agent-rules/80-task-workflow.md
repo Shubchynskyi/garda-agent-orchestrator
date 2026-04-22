@@ -60,12 +60,14 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task-mode entry command must pass before preflight or implementation:
   `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode`.
 - If the likely task file list is already known before task-mode entry, pass repeated `--planned-changed-file` hints to `enter-task-mode`. When those hints include protected orchestrator paths and `--orchestrator-work` is missing, the gate must stop before preflight and print a rerun command with explicit `--orchestrator-work`; it must never auto-enable the flag silently.
+- Enter task mode with explicit runtime identity via `--provider "<provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned, and do not rely on canonical SourceOfTruth fallback.
 - Task-mode entry must produce `runtime/reviews/<task-id>-task-mode.json` and task-timeline event `TASK_MODE_ENTERED`.
 - Baseline downstream rules must be opened and recorded before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --stage "TASK_ENTRY"`.
 - Baseline rule-pack evidence must produce `runtime/reviews/<task-id>-rule-pack.json` and task-timeline event `RULE_PACK_LOADED`.
 - Handshake diagnostics must pass after task-mode entry and before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate handshake-diagnostics`.
+- Handshake must fail closed when runtime identity is unresolved or the current runtime session does not attest launchable reviewer subagents.
 - Handshake diagnostics must emit task-timeline event `HANDSHAKE_DIAGNOSTICS_RECORDED`.
 - Shell smoke preflight must pass after handshake diagnostics and before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate shell-smoke-preflight`.
@@ -164,10 +166,11 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - Gemini: use delegated reviewer sub-agents with isolated context.
   - Qwen: use delegated reviewer sub-agents with isolated context.
   - GitHub Copilot CLI: use `task` tool with `agent_type="general-purpose"` (one reviewer per isolated task run).
-  - Windsurf: use delegated reviewer sub-agents through the provider bridge.
-  - Junie: use delegated reviewer sub-agents through the provider bridge.
-  - Antigravity: use delegated reviewer sub-agents through the provider bridge.
+  - Windsurf: use delegated reviewer sub-agents with isolated context.
+  - Junie: use delegated reviewer sub-agents with isolated context.
+  - Antigravity: use delegated reviewer sub-agents with isolated context.
   - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
+- If runtime identity is missing, contradictory, still relies on canonical SourceOfTruth fallback, or does not attest launchable reviewer subagents, rerun `enter-task-mode` with explicit runtime identity before `handshake-diagnostics` or `build-review-context`.
 - Launch required reviewers in dependency order. If `test` depends on a current-cycle upstream `code` PASS artifact and receipt, finish upstream receipt materialization before any downstream reviewer launch.
 - Reviewer execution mode must be recorded in review receipts and telemetry:
   - `reviewer_execution_mode`: `delegated_subagent`.

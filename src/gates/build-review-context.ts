@@ -213,6 +213,16 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             `Review context cannot be built because runtime identity is invalid. ${runtimeIdentityViolations.join(' ')}`
         );
     }
+    if (runtimeIdentity.reviewer_subagent_launch_status !== 'launchable') {
+        const launchReason = runtimeIdentity.reviewer_subagent_launch_reason || 'Reviewer subagent launch is unavailable for this runtime session.';
+        const launchRemediation = runtimeIdentity.reviewer_subagent_launch_remediation
+            ? ` ${runtimeIdentity.reviewer_subagent_launch_remediation}`
+            : '';
+        throw new Error(
+            `Review context cannot be built for review '${reviewType}' because delegated reviewer launch is not attested. ` +
+            `${launchReason}${launchRemediation} Re-enter task mode, rerun handshake-diagnostics, and then rerun build-review-context.`
+        );
+    }
 
     // Read plan metadata from task-mode evidence (optional, never blocks)
     let planMetadata: { plan_guided: boolean; plan_path: string | null; plan_sha256: string | null; plan_summary: string | null } = {
@@ -369,6 +379,10 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             expected_execution_mode: runtimeIdentity.expected_execution_mode,
             fallback_allowed: runtimeIdentity.fallback_allowed,
             fallback_reason_required: runtimeIdentity.fallback_reason_required,
+            reviewer_subagent_launch_status: runtimeIdentity.reviewer_subagent_launch_status,
+            reviewer_subagent_launch_route: runtimeIdentity.reviewer_subagent_launch_route,
+            reviewer_subagent_launch_reason: runtimeIdentity.reviewer_subagent_launch_reason,
+            reviewer_subagent_launch_remediation: runtimeIdentity.reviewer_subagent_launch_remediation,
             reviewer_execution_mode_required: !!requiredReview,
             reviewer_identity_required: !!requiredReview,
             actual_execution_mode: null as string | null,

@@ -193,7 +193,7 @@ describe('cli/commands/gates', () => {
         const helpCases: Array<{ argv: string[]; expectedSnippets: string[] }> = [
             {
                 argv: ['gate', 'enter-task-mode', '--help'],
-                expectedSnippets: ['gate enter-task-mode', '--task-id "<task-id>"', '--provider "<runtime-provider>"']
+                expectedSnippets: ['gate enter-task-mode', '--task-id "<task-id>"', '--routed-to "<provider-bridge-or-entrypoint>"']
             },
             {
                 argv: ['gate', 'build-review-context', '--help'],
@@ -5089,7 +5089,8 @@ describe('cli/commands/gates', () => {
             repoRoot,
             taskId,
             taskSummary: 'Block downstream test review until code review is recorded',
-            provider: 'Codex'
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -5296,7 +5297,8 @@ describe('cli/commands/gates', () => {
             repoRoot,
             taskId,
             taskSummary: 'Keep downstream test review blocked until upstream code review is gate-eligible',
-            provider: 'Codex'
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -5453,7 +5455,8 @@ describe('cli/commands/gates', () => {
             repoRoot,
             taskId,
             taskSummary: 'Block downstream test review materialization until upstream code review passes current cycle',
-            provider: 'Codex'
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -5577,7 +5580,8 @@ describe('cli/commands/gates', () => {
             repoRoot,
             taskId,
             taskSummary: 'Allow downstream test review after code review was recorded from a custom context path',
-            provider: 'Codex'
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -5787,7 +5791,8 @@ describe('cli/commands/gates', () => {
             repoRoot,
             taskId,
             taskSummary: 'Prefer canonical review-context artifacts over stale legacy default files',
-            provider: 'Codex'
+            provider: 'Codex',
+            routedTo: 'AGENTS.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -6874,7 +6879,8 @@ describe('cli/commands/gates', () => {
             repoRoot,
             taskId,
             taskSummary: 'Validate delegated review flow on a provider that previously allowed fallback',
-            provider: 'Antigravity'
+            provider: 'Antigravity',
+            routedTo: '.antigravity/agents/orchestrator.md'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId, 'Antigravity');
@@ -6913,7 +6919,10 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
-                execution_provider_source: 'explicit_provider'
+                execution_provider_source: 'provider_bridge',
+                routed_to: '.antigravity/agents/orchestrator.md',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: '.antigravity/agents/orchestrator.md'
             })
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: 'code-review' });

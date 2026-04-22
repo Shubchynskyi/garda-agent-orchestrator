@@ -81,11 +81,12 @@ function buildTaskStartSnippetSection(runtimeProviderLabel: string, routeTarget:
     return [
         '## Copy-Paste Start Commands',
         `- Source checkout (\`--provider\`): \`${buildEnterTaskModeSnippet(sourcePrefix, `--provider "${runtimeProviderLabel}"`)}\``,
-        `- Source checkout (\`--routed-to\`): \`${buildEnterTaskModeSnippet(sourcePrefix, `--routed-to "${routeTarget}"`)}\``,
+        `- Source checkout (\`--provider\` + \`--routed-to\`, optional telemetry): \`${buildEnterTaskModeSnippet(sourcePrefix, `--provider "${runtimeProviderLabel}" --routed-to "${routeTarget}"`)}\``,
         `- Source checkout (\`TASK_ENTRY\` rules): \`${buildTaskEntryRulePackSnippet(sourcePrefix, bundleName)}\``,
         `- Deployed workspace (\`--provider\`): \`${buildEnterTaskModeSnippet(bundlePrefix, `--provider "${runtimeProviderLabel}"`)}\``,
-        `- Deployed workspace (\`--routed-to\`): \`${buildEnterTaskModeSnippet(bundlePrefix, `--routed-to "${routeTarget}"`)}\``,
-        `- Deployed workspace (\`TASK_ENTRY\` rules): \`${buildTaskEntryRulePackSnippet(bundlePrefix, bundleName)}\``
+        `- Deployed workspace (\`--provider\` + \`--routed-to\`, optional telemetry): \`${buildEnterTaskModeSnippet(bundlePrefix, `--provider "${runtimeProviderLabel}" --routed-to "${routeTarget}"`)}\``,
+        `- Deployed workspace (\`TASK_ENTRY\` rules): \`${buildTaskEntryRulePackSnippet(bundlePrefix, bundleName)}\``,
+        `- Required runtime identity: use \`--provider "${runtimeProviderLabel}"\`; add \`--routed-to "${routeTarget}"\` only when route telemetry must be pinned.`
     ].join('\n');
 }
 
@@ -523,8 +524,8 @@ export function buildProviderOrchestratorAgentContent(
 ): string {
     const providerEntry = getRequiredProviderEntryByBridgePath(bridgePath);
     const runtimeProviderLabel = providerEntry.displayLabel;
-    const runtimeIdentityInstruction = `include explicit runtime identity with ` +
-        `\`--provider "${runtimeProviderLabel}"\` or \`--routed-to "${bridgePath}"\`; do not rely on canonical SourceOfTruth fallback`;
+    const runtimeIdentityInstruction = `pin runtime identity with ` +
+        `\`--provider "${runtimeProviderLabel}"\` and optionally \`--routed-to "${bridgePath}"\` when route telemetry must be pinned`;
     if (providerEntry?.bridge?.profileVariant === 'compact_router') {
         return `${MANAGED_START}
 # ${runtimeProviderLabel} Agent: Orchestrator
@@ -663,7 +664,7 @@ Before any code changes:
 ${buildTaskStartSnippetSection(runtimeProviderPlaceholder, routePlaceholder)}
 
 Mandatory gate order:
-1. \`gate enter-task-mode\` with explicit runtime identity via \`--provider "<runtime-provider>"\` or \`--routed-to "<provider-bridge-or-entrypoint>"\`; never rely on canonical SourceOfTruth fallback
+1. \`gate enter-task-mode\` with explicit runtime identity via \`--provider "<provider>"\`; add \`--routed-to "<provider-bridge-or-entrypoint>"\` only when route telemetry must be pinned, and never rely on canonical SourceOfTruth fallback
 2. \`gate load-rule-pack --stage TASK_ENTRY\`
 3. \`gate handshake-diagnostics\`
 4. \`gate shell-smoke-preflight\`

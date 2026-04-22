@@ -201,6 +201,7 @@ describe('provider-workflow-execution: handshake per provider family', () => {
         const canonicalFile = getCanonicalEntrypointFile(provider);
         const bridgeProfile = BRIDGE_PROFILES.find((p) => p.entrypointFile === canonicalFile);
         const hasBridge = !!bridgeProfile;
+        const routedTo = bridgeProfile?.orchestratorRelativePath ?? canonicalFile;
 
         describe(`${provider} (entrypoint=${canonicalFile})`, () => {
             it('PASS in source-checkout context with all required files', () => {
@@ -210,7 +211,7 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     const result = buildHandshakeDiagnostics({
                         taskId: `T-EXEC-${provider}-SC`,
                         repoRoot: dir,
-                        provider
+                        routedTo
                     });
                     assert.equal(result.status, 'PASSED', `${provider} should pass handshake in source-checkout`);
                     assert.equal(result.outcome, 'PASS');
@@ -219,13 +220,14 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     assert.equal(result.canonical_source_of_truth, provider);
                     assert.equal(result.canonical_entrypoint, canonicalFile);
                     assert.equal(result.canonical_entrypoint_exists, true);
-                    assert.equal(result.execution_provider_source, 'explicit_provider');
+                    assert.equal(result.execution_provider_source, hasBridge ? 'provider_bridge' : 'provider_entrypoint');
                     assert.equal(result.runtime_identity_status, 'resolved');
+                    assert.equal(result.reviewer_subagent_launch_status, 'launchable');
                     assert.equal(result.execution_context, 'source-checkout');
                     assert.equal(result.cli_path, 'node bin/garda.js');
                     assert.equal(result.start_task_router_exists, true);
                     assert.equal(result.violations.length, 0);
-                    assert.equal(result.diagnostics.length, 8, 'Should produce exactly 8 diagnostic checks');
+                    assert.equal(result.diagnostics.length, 9, 'Should produce exactly 9 diagnostic checks');
 
                     if (hasBridge) {
                         assert.equal(result.provider_bridge, bridgeProfile!.orchestratorRelativePath);
@@ -246,13 +248,14 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     const result = buildHandshakeDiagnostics({
                         taskId: `T-EXEC-${provider}-MB`,
                         repoRoot: dir,
-                        provider
+                        routedTo
                     });
                     assert.equal(result.status, 'PASSED', `${provider} should pass handshake in materialized-bundle`);
                     assert.equal(result.execution_provider, provider);
                     assert.equal(result.canonical_source_of_truth, provider);
-                    assert.equal(result.execution_provider_source, 'explicit_provider');
+                    assert.equal(result.execution_provider_source, hasBridge ? 'provider_bridge' : 'provider_entrypoint');
                     assert.equal(result.runtime_identity_status, 'resolved');
+                    assert.equal(result.reviewer_subagent_launch_status, 'launchable');
                     assert.equal(result.execution_context, 'materialized-bundle');
                     assert.equal(result.cli_path, 'node garda-agent-orchestrator/bin/garda.js');
                     assert.equal(result.violations.length, 0);
@@ -260,6 +263,47 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     removeTempDir(dir);
                 }
             });
+
+            it('PASS when runtime stays in a direct provider session with explicit runtime identity', () => {
+                const dir = createTempDir();
+                try {
+                    scaffoldProviderWorkspace(dir, { provider, sourceCheckout: true });
+                    const result = buildHandshakeDiagnostics({
+                        taskId: `T-EXEC-${provider}-DIRECT`,
+                        repoRoot: dir,
+                        provider
+                    });
+                    assert.equal(result.status, 'PASSED');
+                    assert.equal(result.execution_provider_source, 'explicit_provider');
+                    assert.equal(result.reviewer_subagent_launch_status, 'launchable');
+                    assert.equal(result.reviewer_subagent_launch_route, routedTo);
+                    assert.equal(result.violations.length, 0);
+                } finally {
+                    removeTempDir(dir);
+                }
+            });
+
+            if (hasBridge) {
+                it('PASS when runtime enters through the canonical root entrypoint', () => {
+                    const dir = createTempDir();
+                    try {
+                        scaffoldProviderWorkspace(dir, { provider, sourceCheckout: true });
+                        const result = buildHandshakeDiagnostics({
+                            taskId: `T-EXEC-${provider}-ROOTENTRY`,
+                            repoRoot: dir,
+                            routedTo: canonicalFile
+                        });
+                        assert.equal(result.status, 'PASSED');
+                        assert.equal(result.execution_provider_source, 'provider_entrypoint');
+                        assert.equal(result.runtime_identity_status, 'resolved');
+                        assert.equal(result.reviewer_subagent_launch_status, 'launchable');
+                        assert.equal(result.reviewer_subagent_launch_route, canonicalFile);
+                        assert.equal(result.violations.length, 0);
+                    } finally {
+                        removeTempDir(dir);
+                    }
+                });
+            }
 
             it('FAIL when canonical entrypoint is missing', () => {
                 const dir = createTempDir();
@@ -327,6 +371,30 @@ describe('provider-workflow-execution: handshake per provider family', () => {
             });
 
             if (hasBridge) {
+                it('PASS when a direct provider session does not have the optional bridge file on disk', () => {
+                    const dir = createTempDir();
+                    try {
+                        scaffoldProviderWorkspace(dir, { provider, writeBridge: false });
+                        const bridgePath = path.join(dir, bridgeProfile!.orchestratorRelativePath);
+                        if (fs.existsSync(bridgePath)) fs.unlinkSync(bridgePath);
+
+                        const result = buildHandshakeDiagnostics({
+                            taskId: `T-EXEC-${provider}-DIRECT-NOBRIDGE`,
+                            repoRoot: dir,
+                            provider
+                        });
+                        assert.equal(result.status, 'PASSED');
+                        assert.equal(result.execution_provider_source, 'explicit_provider');
+                        assert.equal(result.provider_bridge_exists, false);
+                        assert.ok(result.diagnostics.some((entry) => (
+                            entry.check === 'provider_bridge'
+                            && entry.status === 'warning'
+                        )));
+                    } finally {
+                        removeTempDir(dir);
+                    }
+                });
+
                 it('FAIL when expected provider bridge is missing', () => {
                     const dir = createTempDir();
                     try {
@@ -338,7 +406,7 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                         const result = buildHandshakeDiagnostics({
                             taskId: `T-EXEC-${provider}-NOBRIDGE`,
                             repoRoot: dir,
-                            provider
+                            routedTo: bridgeProfile!.orchestratorRelativePath
                         });
                         assert.equal(result.status, 'FAILED');
                         assert.equal(result.provider_bridge, bridgeProfile!.orchestratorRelativePath);
@@ -369,7 +437,7 @@ describe('provider-workflow-execution: split canonical/runtime identity', () => 
         const artifact = buildHandshakeDiagnostics({
             taskId,
             repoRoot: tempDir,
-            provider: 'Antigravity'
+            routedTo: '.antigravity/agents/orchestrator.md'
         });
 
         assert.equal(artifact.status, 'PASSED');
@@ -380,8 +448,9 @@ describe('provider-workflow-execution: split canonical/runtime identity', () => 
         assert.equal(artifact.canonical_entrypoint, 'AGENTS.md');
         assert.equal(artifact.provider_bridge, '.antigravity/agents/orchestrator.md');
         assert.equal(artifact.provider_bridge_exists, true);
-        assert.equal(artifact.execution_provider_source, 'explicit_provider');
+        assert.equal(artifact.execution_provider_source, 'provider_bridge');
         assert.equal(artifact.runtime_identity_status, 'resolved');
+        assert.equal(artifact.reviewer_subagent_launch_status, 'launchable');
         assert.equal(artifact.violations.length, 0);
 
         const artifactPath = writeHandshakeArtifact(tempDir, taskId, artifact);
@@ -413,6 +482,8 @@ describe('provider-workflow-execution: evidence lifecycle per provider', () => {
             const taskId = `T-EV-${provider}`;
             const canonicalFile = getCanonicalEntrypointFile(provider);
             const bridgeProfile = BRIDGE_PROFILES.find((p) => p.entrypointFile === canonicalFile);
+            const routedTo = bridgeProfile?.orchestratorRelativePath ?? canonicalFile;
+            const executionProviderSource = bridgeProfile ? 'provider_bridge' : 'provider_entrypoint';
 
             const artifact: HandshakeDiagnosticsArtifact = {
                 schema_version: 1,
@@ -428,8 +499,11 @@ describe('provider-workflow-execution: evidence lifecycle per provider', () => {
                 canonical_entrypoint_exists: true,
                 provider_bridge: bridgeProfile?.orchestratorRelativePath ?? null,
                 provider_bridge_exists: !!bridgeProfile,
-                execution_provider_source: 'explicit_provider',
+                routed_to: routedTo,
+                execution_provider_source: executionProviderSource,
                 runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: routedTo,
                 start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -458,9 +532,10 @@ describe('provider-workflow-execution: evidence lifecycle per provider', () => {
             assert.equal(evidenceWithTimeline.violations.length, 0);
         });
 
-        it(`${provider}: evidence UNBOUND when timeline hash mismatches`, () => {
-            const taskId = `T-UNBOUND-${provider}`;
+        it(`${provider}: evidence accepts direct-provider PASS artifacts when timeline binding exists`, () => {
+            const taskId = `T-EV-DIRECT-${provider}`;
             const canonicalFile = getCanonicalEntrypointFile(provider);
+            const bridgeProfile = BRIDGE_PROFILES.find((p) => p.entrypointFile === canonicalFile);
 
             const artifact: HandshakeDiagnosticsArtifact = {
                 schema_version: 1,
@@ -474,10 +549,59 @@ describe('provider-workflow-execution: evidence lifecycle per provider', () => {
                 canonical_source_of_truth: provider,
                 canonical_entrypoint: canonicalFile,
                 canonical_entrypoint_exists: true,
-                provider_bridge: null,
-                provider_bridge_exists: false,
+                provider_bridge: bridgeProfile?.orchestratorRelativePath ?? null,
+                provider_bridge_exists: !!bridgeProfile,
                 execution_provider_source: 'explicit_provider',
                 runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: tempDir.replace(/\\/g, '/'),
+                workspace_root: tempDir.replace(/\\/g, '/'),
+                diagnostics: [],
+                violations: []
+            };
+
+            const artifactPath = writeHandshakeArtifact(tempDir, taskId, artifact);
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+            const timelinePath = writeTimelineEvent(tempDir, taskId, [
+                { event_type: 'TASK_MODE_ENTERED', timestamp_utc: new Date().toISOString() },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED', timestamp_utc: new Date().toISOString(), details: { artifact_hash: hash } }
+            ]);
+
+            const evidence = getHandshakeEvidence(tempDir, taskId, { timelinePath });
+            assert.equal(evidence.evidence_status, 'PASS');
+            assert.equal(evidence.violations.length, 0);
+        });
+
+        it(`${provider}: evidence UNBOUND when timeline hash mismatches`, () => {
+            const taskId = `T-UNBOUND-${provider}`;
+            const canonicalFile = getCanonicalEntrypointFile(provider);
+            const bridgeProfile = BRIDGE_PROFILES.find((p) => p.entrypointFile === canonicalFile);
+            const routedTo = bridgeProfile?.orchestratorRelativePath ?? canonicalFile;
+            const executionProviderSource = bridgeProfile ? 'provider_bridge' : 'provider_entrypoint';
+
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider,
+                execution_provider: provider,
+                canonical_source_of_truth: provider,
+                canonical_entrypoint: canonicalFile,
+                canonical_entrypoint_exists: true,
+                provider_bridge: bridgeProfile?.orchestratorRelativePath ?? null,
+                provider_bridge_exists: !!bridgeProfile,
+                routed_to: routedTo,
+                execution_provider_source: executionProviderSource,
+                runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: routedTo,
                 start_task_router_path: SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',

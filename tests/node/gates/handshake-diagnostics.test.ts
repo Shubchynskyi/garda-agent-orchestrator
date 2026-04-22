@@ -81,7 +81,8 @@ describe('gates/handshake-diagnostics', () => {
             const result = buildHandshakeDiagnostics({
                 taskId: 'T-TEST-01',
                 repoRoot: tempDir,
-                provider: 'GitHubCopilot'
+                provider: 'GitHubCopilot',
+                providerBridge: '.github/agents/orchestrator.md'
             });
 
             assert.equal(result.status, 'PASSED');
@@ -94,8 +95,9 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(result.canonical_entrypoint_exists, true);
             assert.equal(result.provider_bridge, '.github/agents/orchestrator.md');
             assert.equal(result.provider_bridge_exists, true);
-            assert.equal(result.execution_provider_source, 'explicit_provider');
+            assert.equal(result.execution_provider_source, 'provider_bridge');
             assert.equal(result.runtime_identity_status, 'resolved');
+            assert.equal(result.reviewer_subagent_launch_status, 'launchable');
             assert.equal(result.start_task_router_exists, true);
             assert.equal(result.execution_context, 'source-checkout');
             assert.equal(result.cli_path, 'node bin/garda.js');
@@ -114,7 +116,8 @@ describe('gates/handshake-diagnostics', () => {
             const result = buildHandshakeDiagnostics({
                 taskId: 'T-TEST-02',
                 repoRoot: tempDir,
-                provider: 'Claude'
+                provider: 'Claude',
+                routedTo: 'CLAUDE.md'
             });
 
             assert.equal(result.status, 'PASSED');
@@ -126,9 +129,35 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(result.canonical_entrypoint_exists, true);
             assert.equal(result.provider_bridge, null);
             assert.equal(result.provider_bridge_exists, false);
-            assert.equal(result.execution_provider_source, 'explicit_provider');
+            assert.equal(result.execution_provider_source, 'provider_entrypoint');
             assert.equal(result.runtime_identity_status, 'resolved');
+            assert.equal(result.reviewer_subagent_launch_status, 'launchable');
             assert.equal(result.execution_context, 'materialized-bundle');
+        });
+
+        it('reports PASS when a bridge-based provider uses its root entrypoint', () => {
+            scaffoldWorkspace(tempDir, {
+                sourceCheckout: true,
+                entrypoint: '.github/copilot-instructions.md',
+                bridge: '.github/agents/orchestrator.md',
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'GitHubCopilot'
+            });
+
+            const result = buildHandshakeDiagnostics({
+                taskId: 'T-TEST-02C',
+                repoRoot: tempDir,
+                provider: 'GitHubCopilot',
+                routedTo: '.github/copilot-instructions.md'
+            });
+
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.equal(result.execution_provider_source, 'provider_entrypoint');
+            assert.equal(result.runtime_identity_status, 'resolved');
+            assert.equal(result.reviewer_subagent_launch_status, 'launchable');
+            assert.equal(result.reviewer_subagent_launch_route, '.github/copilot-instructions.md');
+            assert.equal(result.violations.length, 0);
         });
 
         it('produces PASS when canonical SourceOfTruth and execution provider intentionally differ', () => {
@@ -143,7 +172,8 @@ describe('gates/handshake-diagnostics', () => {
             const result = buildHandshakeDiagnostics({
                 taskId: 'T-TEST-02B',
                 repoRoot: tempDir,
-                provider: 'Antigravity'
+                provider: 'Antigravity',
+                providerBridge: '.antigravity/agents/orchestrator.md'
             });
 
             assert.equal(result.status, 'PASSED');
@@ -154,8 +184,9 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(result.canonical_entrypoint, 'AGENTS.md');
             assert.equal(result.provider_bridge, '.antigravity/agents/orchestrator.md');
             assert.equal(result.provider_bridge_exists, true);
-            assert.equal(result.execution_provider_source, 'explicit_provider');
+            assert.equal(result.execution_provider_source, 'provider_bridge');
             assert.equal(result.runtime_identity_status, 'resolved');
+            assert.equal(result.reviewer_subagent_launch_status, 'launchable');
             assert.equal(result.execution_context, 'source-checkout');
             assert.equal(result.violations.length, 0);
         });
@@ -312,7 +343,7 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(result.provider_bridge_exists, true);
         });
 
-        it('reports FAIL when expected provider bridge is missing', () => {
+        it('keeps missing provider bridge non-blocking for explicit provider sessions', () => {
             scaffoldWorkspace(tempDir, {
                 entrypoint: '.github/copilot-instructions.md',
                 startTaskRouter: true,
@@ -325,11 +356,56 @@ describe('gates/handshake-diagnostics', () => {
                 provider: 'GitHubCopilot'
             });
 
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.equal(result.provider_bridge, '.github/agents/orchestrator.md');
+            assert.equal(result.provider_bridge_exists, false);
+            assert.ok(result.diagnostics.some((entry) => (
+                entry.check === 'provider_bridge'
+                && entry.status === 'warning'
+            )));
+            assert.ok(!result.violations.some(v => v.includes('Provider bridge') && v.includes('missing')));
+        });
+
+        it('reports FAIL when a bridge-routed runtime session is missing its provider bridge', () => {
+            scaffoldWorkspace(tempDir, {
+                entrypoint: '.github/copilot-instructions.md',
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'GitHubCopilot'
+            });
+
+            const result = buildHandshakeDiagnostics({
+                taskId: 'T-TEST-10B',
+                repoRoot: tempDir,
+                routedTo: '.github/agents/orchestrator.md'
+            });
+
             assert.equal(result.status, 'FAILED');
             assert.equal(result.outcome, 'FAIL');
             assert.equal(result.provider_bridge, '.github/agents/orchestrator.md');
             assert.equal(result.provider_bridge_exists, false);
-            assert.ok(result.violations.some(v => v.includes('Provider bridge') && v.includes('missing')));
+            assert.ok(result.violations.some(v => v.includes('bridge-routed runtime session')));
+        });
+
+        it('reports FAIL when reviewer subagent launchability is explicitly blocked', () => {
+            scaffoldWorkspace(tempDir, {
+                entrypoint: 'AGENTS.md',
+                startTaskRouter: true,
+                canonicalSourceOfTruth: 'Codex'
+            });
+
+            const result = buildHandshakeDiagnostics({
+                taskId: 'T-TEST-10C',
+                repoRoot: tempDir,
+                provider: 'Codex',
+                reviewerSubagentLaunchStatus: 'blocked',
+                reviewerSubagentLaunchReason: 'Reviewer subagent launch is blocked for the active runtime session.',
+                reviewerSubagentLaunchRemediation: 'Re-enter task mode with a runtime session that can launch delegated reviewer subagents.'
+            });
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.outcome, 'FAIL');
+            assert.ok(result.violations.some(v => v.includes('Reviewer subagent launch is blocked')));
         });
 
         it('cli_path mismatch alone causes FAIL even when all other checks pass', () => {
@@ -343,6 +419,7 @@ describe('gates/handshake-diagnostics', () => {
                 taskId: 'T-TEST-CLIPATH-01',
                 repoRoot: tempDir,
                 provider: 'Claude',
+                routedTo: 'CLAUDE.md',
                 cliPath: 'node wrong/cli.js'
             });
 
@@ -365,6 +442,7 @@ describe('gates/handshake-diagnostics', () => {
                 taskId: 'T-TEST-CLIPATH-02',
                 repoRoot: tempDir,
                 provider: 'Claude',
+                routedTo: 'CLAUDE.md',
                 cliPath: 'node bin/garda.js'
             });
 
@@ -411,8 +489,11 @@ describe('gates/handshake-diagnostics', () => {
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
-                execution_provider_source: 'explicit_provider',
+                routed_to: 'CLAUDE.md',
+                execution_provider_source: 'provider_entrypoint',
                 runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'CLAUDE.md',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -429,6 +510,85 @@ describe('gates/handshake-diagnostics', () => {
             fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
 
             const evidence = getHandshakeEvidence(tempDir, 'T-EVIDENCE-01');
+            assert.equal(evidence.evidence_status, 'PASS');
+            assert.equal(evidence.violations.length, 0);
+        });
+
+        it('accepts route-attested legacy task_mode handshake evidence when routed_to stays on a canonical entrypoint', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-EVIDENCE-TASKMODE-01',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                routed_to: 'AGENTS.md',
+                execution_provider_source: 'task_mode',
+                runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'AGENTS.md',
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-EVIDENCE-TASKMODE-01-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-EVIDENCE-TASKMODE-01');
+            assert.equal(evidence.evidence_status, 'PASS');
+            assert.equal(evidence.violations.length, 0);
+        });
+
+        it('accepts legacy task_mode handshake evidence without routed_to when runtime identity is otherwise attested', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-EVIDENCE-TASKMODE-02',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                execution_provider_source: 'task_mode',
+                runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'AGENTS.md',
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-EVIDENCE-TASKMODE-02-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-EVIDENCE-TASKMODE-02');
             assert.equal(evidence.evidence_status, 'PASS');
             assert.equal(evidence.violations.length, 0);
         });
@@ -479,8 +639,11 @@ describe('gates/handshake-diagnostics', () => {
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
-                execution_provider_source: 'explicit_provider',
+                routed_to: 'CLAUDE.md',
+                execution_provider_source: 'provider_entrypoint',
                 runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'CLAUDE.md',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -521,8 +684,11 @@ describe('gates/handshake-diagnostics', () => {
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
-                execution_provider_source: 'explicit_provider',
+                routed_to: 'CLAUDE.md',
+                execution_provider_source: 'provider_entrypoint',
                 runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'CLAUDE.md',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -573,8 +739,11 @@ describe('gates/handshake-diagnostics', () => {
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
-                execution_provider_source: 'explicit_provider',
+                routed_to: 'CLAUDE.md',
+                execution_provider_source: 'provider_entrypoint',
                 runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'CLAUDE.md',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',
@@ -613,6 +782,64 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(evidence.violations.length, 0);
         });
 
+        it('accepts bridge-based provider artifacts that claim provider_entrypoint launchability via the root entrypoint', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-HASH-BRIDGE-ENTRYPOINT-01',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'GitHubCopilot',
+                execution_provider: 'GitHubCopilot',
+                canonical_source_of_truth: 'GitHubCopilot',
+                canonical_entrypoint: '.github/copilot-instructions.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: '.github/agents/orchestrator.md',
+                provider_bridge_exists: true,
+                routed_to: '.github/copilot-instructions.md',
+                execution_provider_source: 'provider_entrypoint',
+                runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: '.github/copilot-instructions.md',
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-HASH-BRIDGE-ENTRYPOINT-01-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(timelineDir, { recursive: true });
+            const timelinePath = path.join(timelineDir, 'T-HASH-BRIDGE-ENTRYPOINT-01.jsonl');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-16T09:00:00.000Z'
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    timestamp_utc: new Date().toISOString(),
+                    details: { artifact_hash: hash }
+                })
+            ].join('\n') + '\n', 'utf8');
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-HASH-BRIDGE-ENTRYPOINT-01', { timelinePath });
+            assert.equal(evidence.evidence_status, 'PASS');
+            assert.equal(evidence.violations.length, 0);
+        });
+
         it('uses the latest HANDSHAKE_DIAGNOSTICS_RECORDED event when the gate is rerun', () => {
             const artifact: HandshakeDiagnosticsArtifact = {
                 schema_version: 1,
@@ -628,8 +855,11 @@ describe('gates/handshake-diagnostics', () => {
                 canonical_entrypoint_exists: true,
                 provider_bridge: null,
                 provider_bridge_exists: false,
-                execution_provider_source: 'explicit_provider',
+                routed_to: 'CLAUDE.md',
+                execution_provider_source: 'provider_entrypoint',
                 runtime_identity_status: 'resolved',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'CLAUDE.md',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
                 execution_context: 'source-checkout',

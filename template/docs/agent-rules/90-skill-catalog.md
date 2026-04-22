@@ -52,6 +52,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 ## Preflight Gate (Mandatory)
 - Before preflight, enter task mode explicitly:
   `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>"`
+- Enter task mode with explicit runtime identity via `--provider "<provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned, and do not rely on canonical SourceOfTruth fallback.
 - Before preflight, record the baseline downstream rules that were actually opened:
   `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"`
 - Run before review stage:
@@ -103,6 +104,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
     - `dependency-review` for `required_reviews.dependency=true`
 - `build-review-context` is the canonical proof that the selected review skill and its rule context were loaded; completion for code-changing tasks expects `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` in the task timeline.
 - `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; reviewers must be launched as fresh-context sub-agents on every provider, and the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
+- `build-review-context` must fail closed when the pinned runtime identity is unresolved or does not attest launchable reviewer subagents for the current runtime session.
 - Same-agent self-review is invalid for mandatory reviews. Historical `same_agent_fallback` artifacts remain diagnostic compatibility evidence only and cannot satisfy a current review cycle.
 - Before `DONE`, run:
   `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`

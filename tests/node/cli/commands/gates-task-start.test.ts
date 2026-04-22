@@ -158,6 +158,7 @@ function readTaskQueueStatusFromTaskFile(repoRoot: string, taskId: string): stri
 
 function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
     fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
     fs.writeFileSync(initAnswersPath, JSON.stringify({
         AssistantLanguage: 'English',
@@ -169,6 +170,13 @@ function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
         CollectedVia: 'AGENT_INIT_PROMPT.md',
         ActiveAgentFiles: 'AGENTS.md'
     }, null, 2), 'utf8');
+    if (routedTo) {
+        const routedFilePath = path.join(repoRoot, routedTo);
+        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+        if (!fs.existsSync(routedFilePath)) {
+            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
+        }
+    }
 }
 
 function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
@@ -477,8 +485,9 @@ describe('cli/commands/gates — task-start', () => {
         const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.deepEqual(
             artifact.dirty_workspace_baseline.changed_files,
-            ['src/app.ts', 'src/unrelated.ts']
+            ['AGENTS.md', 'src/app.ts', 'src/unrelated.ts']
         );
+        assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['AGENTS.md'], 'string');
         assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['src/app.ts'], 'string');
         assert.equal(typeof artifact.dirty_workspace_baseline.file_hashes['src/unrelated.ts'], 'string');
 
@@ -619,6 +628,7 @@ describe('cli/commands/gates — task-start', () => {
         const taskId = 'T-900c-provider';
         seedTaskQueue(repoRoot, taskId, 'TODO');
         seedInitAnswers(repoRoot, 'Qwen');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# routed workflow fixture\n', 'utf8');
 
         const result = runEnterTaskMode({
             repoRoot,
@@ -671,8 +681,8 @@ describe('cli/commands/gates — task-start', () => {
         }));
 
         assert.match(error.message, /Runtime execution identity is 'legacy_fallback' at task-mode entry/i);
-        assert.doesNotMatch(error.message, /--provider\s+['"]?Codex['"]?/i);
-        assert.match(error.message, /--provider <runtime-provider>|--routed-to/i);
+        assert.match(error.message, /--provider\s+['"]?Codex['"]?/i);
+        assert.match(error.message, /--routed-to ['"]?AGENTS\.md['"]?/i);
         const staleArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.equal(staleArtifact.provider, 'Qwen');
         assert.equal(staleArtifact.routed_to, 'QWEN.md');
@@ -744,9 +754,56 @@ describe('cli/commands/gates — task-start', () => {
 
         assert.match(error.message, /Runtime execution identity is 'contradictory' at task-mode entry/i);
         assert.match(error.message, /route override 'NOT-A-REAL-ROUTE\.md' is not a recognized provider bridge or canonical entrypoint/i);
-        assert.match(error.message, /--provider ['"]?Codex['"]?/i);
+        assert.match(error.message, /--routed-to "<provider-bridge-or-entrypoint>"/i);
         assert.doesNotMatch(error.message, /--routed-to ['"]?NOT-A-REAL-ROUTE\.md['"]?/i);
         assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('accepts enter-task-mode when runtime identity is pinned with an explicit provider session', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-direct-provider-launch-blocked';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const result = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow direct provider task-mode entry when runtime identity is explicit',
+            provider: 'Codex'
+        });
+
+        assert.equal(result.exitCode, 0);
+        const taskModeArtifact = JSON.parse(fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8'));
+        assert.equal(taskModeArtifact.provider, 'Codex');
+        assert.equal(taskModeArtifact.execution_provider_source, 'explicit_provider');
+        assert.equal(taskModeArtifact.reviewer_subagent_launch_status, 'launchable');
+        assert.match(String(taskModeArtifact.reviewer_subagent_launch_reason || ''), /explicit provider selection/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('accepts enter-task-mode when a bridge-based provider uses its root entrypoint', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-bridge-provider-root-entrypoint';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'GitHubCopilot');
+
+        const result = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow bridge provider task-mode entry through root entrypoint',
+            provider: 'GitHubCopilot',
+            routedTo: '.github/copilot-instructions.md'
+        });
+
+        assert.equal(result.exitCode, 0);
+        const taskModeArtifact = JSON.parse(fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8'));
+        assert.equal(taskModeArtifact.provider, 'GitHubCopilot');
+        assert.equal(taskModeArtifact.execution_provider_source, 'provider_entrypoint');
+        assert.equal(taskModeArtifact.routed_to, '.github/copilot-instructions.md');
+        assert.equal(taskModeArtifact.reviewer_subagent_launch_status, 'launchable');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

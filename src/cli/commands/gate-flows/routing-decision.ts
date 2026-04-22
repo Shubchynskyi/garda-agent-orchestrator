@@ -10,9 +10,14 @@ export function readRoutingDecision(
     routedTo: string | null;
     canonicalSourceOfTruth: string | null;
     canonicalEntrypoint: string | null;
+    executionEntrypoint: string | null;
     executionProviderSource: string | null;
     providerBridge: string | null;
     identityStatus: string;
+    reviewerSubagentLaunchStatus: string;
+    reviewerSubagentLaunchRoute: string | null;
+    reviewerSubagentLaunchReason: string;
+    reviewerSubagentLaunchRemediation: string | null;
     violations: string[];
 } {
     const identity = resolveRuntimeReviewerIdentity({
@@ -27,9 +32,14 @@ export function readRoutingDecision(
         routedTo: identity.routed_to,
         canonicalSourceOfTruth: identity.canonical_source_of_truth,
         canonicalEntrypoint: identity.canonical_entrypoint,
+        executionEntrypoint: identity.execution_entrypoint,
         executionProviderSource: identity.execution_provider_source,
         providerBridge: identity.provider_bridge,
         identityStatus: identity.identity_status,
+        reviewerSubagentLaunchStatus: identity.reviewer_subagent_launch_status,
+        reviewerSubagentLaunchRoute: identity.reviewer_subagent_launch_route,
+        reviewerSubagentLaunchReason: identity.reviewer_subagent_launch_reason,
+        reviewerSubagentLaunchRemediation: identity.reviewer_subagent_launch_remediation,
         violations: identity.violations
     };
 }

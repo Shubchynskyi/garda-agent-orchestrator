@@ -104,6 +104,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 4. Enter task mode explicitly before preflight:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>"`
    - `enter-task-mode` writes task-scoped event `TASK_MODE_ENTERED` automatically and persists `runtime/reviews/<task-id>-task-mode.json`.
+   - Enter task mode with explicit runtime identity via `--provider "<provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned, and do not rely on canonical SourceOfTruth fallback.
 5. Record baseline downstream rules explicitly before preflight:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"`
    - `load-rule-pack` writes task-scoped event `RULE_PACK_LOADED` automatically and persists `runtime/reviews/<task-id>-rule-pack.json`.
@@ -111,6 +112,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
    - `enter-task-mode` auto-emits `PLAN_CREATED`; do not backfill it manually unless recovery tooling explicitly requires it.
 7. Run handshake diagnostics after task-mode entry and baseline rule-pack loading:
    - canonical invocation: `node garda-agent-orchestrator/bin/garda.js gate handshake-diagnostics ...`.
+   - Handshake must fail closed when runtime identity is unresolved or the current runtime session does not attest launchable reviewer subagents.
 8. Run shell smoke preflight after handshake diagnostics:
    - canonical invocation: `node garda-agent-orchestrator/bin/garda.js gate shell-smoke-preflight ...`.
 9. Run preflight with explicit `--output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`:
@@ -142,7 +144,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 16. Run only required independent reviews from preflight:
     - mandatory on every provider: clean-context delegated reviewer sub-agents with isolated review context.
     - same-agent fallback does not satisfy the mandatory review workflow.
-    - if a provider bridge cannot launch delegated reviewers, stop and treat the task as blocked until delegated review support exists.
+    - if the current runtime session cannot launch delegated reviewers, stop and treat the task as blocked until delegated review support exists.
+    - if runtime identity is missing, contradictory, still relies on canonical SourceOfTruth fallback, or does not attest launchable reviewer subagents, rerun `enter-task-mode` with explicit runtime identity before `handshake-diagnostics` or `build-review-context`.
     - baseline: `code`, `db`, `security`, `refactor`
     - optional when enabled in `garda-agent-orchestrator/live/config/review-capabilities.json`: `api`, `test`, `performance`, `infra`, `dependency`
     - when token economy mode is active, generate review-context artifact and attach both the JSON metadata artifact and its `rule_context.artifact_path` markdown snapshot to the reviewer prompt.
@@ -205,13 +208,14 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
   - Gemini (delegation-capable): use delegated reviewer sub-agents with isolated context.
   - Qwen (delegation-capable): use delegated reviewer sub-agents with isolated context.
   - GitHub Copilot CLI (delegation-capable): use `task` tool with `agent_type="general-purpose"`; run one reviewer per isolated task execution.
-  - Windsurf (delegation-capable): use delegated reviewer sub-agents through the provider bridge.
-  - Junie (delegation-capable): use delegated reviewer sub-agents through the provider bridge.
-  - Antigravity (delegation-capable): use delegated reviewer sub-agents through the provider bridge.
+  - Windsurf (delegation-capable): use delegated reviewer sub-agents with isolated context.
+  - Junie (delegation-capable): use delegated reviewer sub-agents with isolated context.
+  - Antigravity (delegation-capable): use delegated reviewer sub-agents with isolated context.
   - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
 - Reviewer routing metadata contract:
   - Each reviewer invocation must capture `reviewer_execution_mode` (`delegated_subagent`) and `reviewer_identity` (`agent:<reviewer-id>`).
   - `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
+  - `build-review-context` must fail closed when the pinned runtime identity is unresolved or does not attest launchable reviewer subagents for the current runtime session.
   - Historical `same_agent_fallback` artifacts are compatibility-only diagnostics and must not satisfy a fresh mandatory review cycle.
   - Gate diagnostics (`required-reviews-check`, `completion-gate`) must report whether each review has valid delegated fresh-context execution evidence.
 - For each required review where preflight `required_reviews.<type>=true`:

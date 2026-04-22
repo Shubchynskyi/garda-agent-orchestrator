@@ -118,10 +118,9 @@ function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<R
             taskIdRemediation: false
         },
         'enter-task-mode': {
-            summary: 'Enter explicit task mode before any implementation, with runtime identity pinned.',
+            summary: 'Enter explicit task mode before any implementation, with runtime identity pinned through explicit provider selection and optional route telemetry.',
             usage: Object.freeze([
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --repo-root "."`,
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."`
+                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] --repo-root "."`
             ]),
             taskIdRemediation: true
         },
@@ -141,23 +140,23 @@ function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<R
             taskIdRemediation: true
         },
         'handshake-diagnostics': {
-            summary: 'Verify runtime identity, router presence, provider bridge expectations, and CLI path before preflight.',
+            summary: 'Verify runtime identity, reviewer-subagent launchability, router presence, and CLI path before preflight.',
             usage: Object.freeze([
-                `${cliPrefix} gate handshake-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --provider "<runtime-provider>" --repo-root "."`
+                `${cliPrefix} gate handshake-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
             ]),
             taskIdRemediation: true
         },
         'shell-smoke-preflight': {
             summary: 'Run lightweight launchability and filesystem probes before classify-change.',
             usage: Object.freeze([
-                `${cliPrefix} gate shell-smoke-preflight --task-id "${TASK_ID_PLACEHOLDER}" --provider "<runtime-provider>" --repo-root "."`
+                `${cliPrefix} gate shell-smoke-preflight --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
             ]),
             taskIdRemediation: true
         },
         'command-timeout-diagnostics': {
             summary: 'Inspect command timeout records for the active task/runtime identity.',
             usage: Object.freeze([
-                `${cliPrefix} gate command-timeout-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --provider "<runtime-provider>" --repo-root "."`
+                `${cliPrefix} gate command-timeout-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
             ]),
             taskIdRemediation: true
         },
