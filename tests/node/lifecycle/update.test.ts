@@ -41,6 +41,24 @@ function copyDirRecursive(src: string, dst: string) {
     }
 }
 
+function extractMarkdownSection(content: string, heading: string): string {
+    const headingMatch = heading.match(/^(#+)\s+/);
+    assert.ok(headingMatch, `Heading must be markdown-formatted: ${heading}`);
+    const headingLevel = headingMatch[1].length;
+    const startPattern = new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
+    const startMatch = startPattern.exec(content);
+    assert.ok(startMatch, `Missing heading: ${heading}`);
+    const sectionStart = startMatch.index;
+    const searchStart = sectionStart + startMatch[0].length;
+    const remainder = content.slice(searchStart);
+    const nextHeadingPattern = new RegExp(`^#{1,${headingLevel}}\\s+`, 'm');
+    const nextHeadingMatch = nextHeadingPattern.exec(remainder);
+    const sectionEnd = nextHeadingMatch
+        ? searchStart + nextHeadingMatch.index
+        : content.length;
+    return content.slice(sectionStart, sectionEnd).trim();
+}
+
 function seedExecutableBundleSurface(repoRoot: string, bundleRoot: string) {
     fs.copyFileSync(path.join(repoRoot, 'package.json'), path.join(bundleRoot, 'package.json'));
     copyDirRecursive(path.join(repoRoot, 'bin'), path.join(bundleRoot, 'bin'));
@@ -589,12 +607,29 @@ describe('runUpdate', () => {
             fs.writeFileSync(path.join(liveRuleDir, '80-task-workflow.md'), [
                 '# Task Workflow',
                 '',
+                '## Integrity Priority Rules',
+                'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+                '',
+                '## Notes',
+                'Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.',
+                'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+                'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.',
+                'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.',
+                '',
                 '## Mandatory Gate Contract',
                 '- Preflight artifact must exist before review stage.',
                 '- Compile gate command must pass before `IN_REVIEW`.'
             ].join('\n'), 'utf8');
             fs.writeFileSync(path.join(liveRuleDir, '90-skill-catalog.md'), [
                 '# Skill Catalog',
+                '',
+                '## Integrity Priority Rules',
+                'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+                '',
+                '## Notes',
+                'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.',
+                'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+                'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.',
                 '',
                 '## Preflight Gate (Mandatory)',
                 '- Run before review stage:',
@@ -647,11 +682,24 @@ describe('runUpdate', () => {
             const commandsContent = fs.readFileSync(path.join(liveRuleDir, '40-commands.md'), 'utf8');
             const taskWorkflowContent = fs.readFileSync(path.join(liveRuleDir, '80-task-workflow.md'), 'utf8');
             const skillCatalogContent = fs.readFileSync(path.join(liveRuleDir, '90-skill-catalog.md'), 'utf8');
+            const templateRuleDir = path.join(bundleRoot, 'template', 'docs', 'agent-rules');
+            const taskWorkflowTemplateContent = fs.readFileSync(path.join(templateRuleDir, '80-task-workflow.md'), 'utf8');
+            const skillCatalogTemplateContent = fs.readFileSync(path.join(templateRuleDir, '90-skill-catalog.md'), 'utf8');
+            const taskWorkflowIntegritySection = extractMarkdownSection(taskWorkflowContent, '## Integrity Priority Rules');
+            const skillCatalogIntegritySection = extractMarkdownSection(skillCatalogContent, '## Integrity Priority Rules');
 
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode'));
             assert.ok(commandsContent.includes('node garda-agent-orchestrator/bin/garda.js gate load-rule-pack'));
             assert.ok(taskWorkflowContent.includes('TASK_MODE_ENTERED'));
             assert.ok(taskWorkflowContent.includes('RULE_PACK_LOADED'));
+            assert.equal(
+                taskWorkflowIntegritySection,
+                extractMarkdownSection(taskWorkflowTemplateContent, '## Integrity Priority Rules')
+            );
+            assert.equal(
+                skillCatalogIntegritySection,
+                extractMarkdownSection(skillCatalogTemplateContent, '## Integrity Priority Rules')
+            );
             assert.ok(skillCatalogContent.includes('Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.'));
             assert.ok(skillCatalogContent.includes('Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'));
         } finally {

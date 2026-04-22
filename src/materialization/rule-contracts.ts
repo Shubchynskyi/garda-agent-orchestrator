@@ -89,6 +89,19 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
         ])
     }),
     Object.freeze({
+        liveRelativePath: `${bn}/live/docs/agent-rules/80-task-workflow.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
+        heading: '## Integrity Priority Rules',
+        requiredSnippets: Object.freeze([
+            '## Integrity Priority Rules',
+            'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+            'Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.',
+            'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+            'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.',
+            'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.'
+        ])
+    }),
+    Object.freeze({
         liveRelativePath: `${bn}/live/docs/agent-rules/90-skill-catalog.md`,
         templateRelativePath: `${bn}/template/docs/agent-rules/90-skill-catalog.md`,
         heading: '## Preflight Gate (Mandatory)',
@@ -101,6 +114,18 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
             'build-review-context --review-type "<review-type>" --depth "<1|2|3>"',
             '`test` review is downstream: prepare it only after every required upstream non-`test` review for the current cycle is already recorded as PASS.',
             'On pure test-scope reruns, run `build-review-context` for reusable upstream `code` review first so the current-cycle reuse receipt exists before launching `test` review.'
+        ])
+    }),
+    Object.freeze({
+        liveRelativePath: `${bn}/live/docs/agent-rules/90-skill-catalog.md`,
+        templateRelativePath: `${bn}/template/docs/agent-rules/90-skill-catalog.md`,
+        heading: '## Integrity Priority Rules',
+        requiredSnippets: Object.freeze([
+            '## Integrity Priority Rules',
+            'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+            'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.',
+            'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+            'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.'
         ])
     }),
     Object.freeze({

@@ -8,6 +8,12 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Avoid duplicating orchestration step sequence; canonical lifecycle is in:
   `garda-agent-orchestrator/live/skills/orchestration/SKILL.md`.
 
+## Integrity Priority Rules
+- Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+- Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.
+- Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+- If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
+
 ## Available Project Skills
 - `garda-agent-orchestrator/live/skills/orchestration`
 - `garda-agent-orchestrator/live/skills/orchestration-depth1`

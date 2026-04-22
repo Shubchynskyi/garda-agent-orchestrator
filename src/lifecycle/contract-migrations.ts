@@ -57,6 +57,24 @@ function extractSectionOrThrow(content: string, heading: string, sourcePath: str
     return content.slice(bounds.start, bounds.end).trim();
 }
 
+function getMissingSectionSnippets(content: string, migration: RuleContractSectionMigration): string[] {
+    const bounds = getSectionBounds(content, migration.heading);
+    if (!bounds) {
+        return [...migration.requiredSnippets];
+    }
+
+    const sectionContent = content.slice(bounds.start, bounds.end);
+    return migration.requiredSnippets.filter((snippet) => !sectionContent.includes(snippet));
+}
+
+function normalizeComparableSection(content: string): string {
+    return normalizeNewlines(content, '\n').trim();
+}
+
+function requiresExactSectionParity(migration: RuleContractSectionMigration): boolean {
+    return migration.heading === '## Integrity Priority Rules';
+}
+
 function replaceOrAppendSection(content: string, heading: string, replacement: string, newline: string): string {
     const normalizedReplacement = normalizeNewlines(replacement, newline).trimEnd();
     const bounds = getSectionBounds(content, heading);
@@ -86,19 +104,28 @@ function applySectionMigration(rootPath: string, migration: RuleContractSectionM
         return false;
     }
 
-    const currentContent = readTextFile(livePath);
-    const hasAllRequiredSnippets = migration.requiredSnippets.every((snippet) => currentContent.includes(snippet));
-    if (hasAllRequiredSnippets) {
-        return false;
-    }
-
     const templatePath = path.join(rootPath, migration.templateRelativePath);
     if (!pathExists(templatePath)) {
         throw new Error(`Contract migration template file not found: ${templatePath}`);
     }
 
+    const currentContent = readTextFile(livePath);
     const templateContent = readTextFile(templatePath);
     const templateSection = extractSectionOrThrow(templateContent, migration.heading, templatePath);
+    if (!requiresExactSectionParity(migration)) {
+        if (getMissingSectionSnippets(currentContent, migration).length === 0) {
+            return false;
+        }
+    } else {
+        const currentBounds = getSectionBounds(currentContent, migration.heading);
+        if (currentBounds) {
+            const currentSection = currentContent.slice(currentBounds.start, currentBounds.end);
+            if (normalizeComparableSection(currentSection) === normalizeComparableSection(templateSection)) {
+                return false;
+            }
+        }
+    }
+
     const newline = detectNewline(currentContent || templateContent);
     const updatedContent = replaceOrAppendSection(currentContent, migration.heading, templateSection, newline);
 

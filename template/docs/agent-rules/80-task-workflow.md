@@ -40,6 +40,13 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
+## Integrity Priority Rules
+- Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+- Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.
+- Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+- Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
+- If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
+
 ## Task Resume Protocol
 - Apply this protocol whenever resuming an existing task in `IN_PROGRESS` or `IN_REVIEW`.
 - Mandatory resume sequence:

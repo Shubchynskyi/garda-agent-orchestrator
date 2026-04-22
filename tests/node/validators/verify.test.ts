@@ -193,8 +193,115 @@ test('detectTaskModeRuleContractViolations reports stale task-mode rule snippets
         assert.ok(violations.some(v => v.includes("40-commands.md must include task-mode contract snippet 'node garda-agent-orchestrator/bin/garda.js gate enter-task-mode'")));
         assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Baseline downstream rules must be opened and recorded before preflight:'")));
         assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Task-mode entry command must pass before preflight or implementation:'")));
+        assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet '## Integrity Priority Rules'")));
+        assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.'")));
         assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Missing rule-pack artifact (`runtime/reviews/<task-id>-rule-pack.json`) blocks progression.'")));
         assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'")));
+        assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet '## Integrity Priority Rules'")));
+        assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.'")));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectTaskModeRuleContractViolations rejects duplicated snippets outside the target section', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    const rulesDir = path.join(
+        tmpDir,
+        'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'
+    );
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, '80-task-workflow.md'), [
+        '# Task Workflow',
+        '',
+        '## Integrity Priority Rules',
+        'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        '',
+        '## Appendix',
+        'Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.',
+        'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.',
+        'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.'
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '90-skill-catalog.md'), [
+        '# Skill Catalog',
+        '',
+        '## Integrity Priority Rules',
+        'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        '',
+        '## Appendix',
+        'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.',
+        'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.'
+    ].join('\n'), 'utf8');
+
+    try {
+        const violations = detectTaskModeRuleContractViolations(tmpDir);
+        assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.'")));
+        assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.'")));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectTaskModeRuleContractViolations rejects exact section drift when template exists', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    const rulesDir = path.join(
+        tmpDir,
+        'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'
+    );
+    const templateRulesDir = path.join(
+        tmpDir,
+        'garda-agent-orchestrator', 'template', 'docs', 'agent-rules'
+    );
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.mkdirSync(templateRulesDir, { recursive: true });
+    const workflowTemplate = [
+        '# Task Workflow',
+        '',
+        '## Agent Start Contract',
+        'Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.',
+        '',
+        '## Integrity Priority Rules',
+        'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        'Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.',
+        'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.',
+        'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.',
+        '',
+        '## Mandatory Gate Contract',
+        'TASK_MODE_ENTERED'
+    ].join('\n');
+    const skillCatalogTemplate = [
+        '# Skill Catalog',
+        '',
+        '## Integrity Priority Rules',
+        'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.',
+        'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.',
+        '',
+        '## Preflight Gate (Mandatory)',
+        'node garda-agent-orchestrator/bin/garda.js gate enter-task-mode',
+        '',
+        '## Enforcement',
+        'Missing task-mode entry artifact (`runtime/reviews/<task-id>-task-mode.json`) blocks progression.'
+    ].join('\n');
+    fs.writeFileSync(path.join(templateRulesDir, '80-task-workflow.md'), workflowTemplate, 'utf8');
+    fs.writeFileSync(path.join(templateRulesDir, '90-skill-catalog.md'), skillCatalogTemplate, 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '80-task-workflow.md'), workflowTemplate.replace(
+        'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.',
+        'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.\nExceptions may be tolerated during fast-moving review cycles.'
+    ), 'utf8');
+    fs.writeFileSync(path.join(rulesDir, '90-skill-catalog.md'), skillCatalogTemplate.replace(
+        'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.',
+        'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.\nOptional skills may still bypass some validation when context is tight.'
+    ), 'utf8');
+
+    try {
+        const violations = detectTaskModeRuleContractViolations(tmpDir);
+        assert.ok(violations.some(v => v.includes("80-task-workflow.md section '## Integrity Priority Rules' must stay synchronized with template source.")));
+        assert.ok(violations.some(v => v.includes("90-skill-catalog.md section '## Integrity Priority Rules' must stay synchronized with template source.")));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -229,14 +336,24 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
     fs.writeFileSync(path.join(rulesDir, '80-task-workflow.md'), [
         '# Task Workflow',
         '',
-        '## Mandatory Gate Contract',
-        'Task-mode entry command must pass before preflight or implementation:',
-        'TASK_MODE_ENTERED',
+        '## Agent Start Contract',
         'The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
         'Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.',
         'Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.',
         'That same reply must list the first mandatory gates to run before implementation.',
         'Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.',
+        'If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.',
+        '',
+        '## Integrity Priority Rules',
+        'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        'Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.',
+        'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        'Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.',
+        'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.',
+        '',
+        '## Mandatory Gate Contract',
+        'Task-mode entry command must pass before preflight or implementation:',
+        'TASK_MODE_ENTERED',
         'Baseline downstream rules must be opened and recorded before preflight:',
         'RULE_PACK_LOADED',
         'HANDSHAKE_DIAGNOSTICS_RECORDED',
@@ -257,11 +374,16 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         'Task timeline completeness is surfaced in `status` and `doctor`',
         'HARD STOP: do not skip `load-rule-pack`',
         'HARD STOP: do not skip `enter-task-mode`',
-        'If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.',
         'HARD STOP: do not launch required reviewers without `build-review-context`; completion requires review-skill telemetry.'
     ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(rulesDir, '90-skill-catalog.md'), [
         '# Skill Catalog',
+        '',
+        '## Integrity Priority Rules',
+        'Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.',
+        'Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        'If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.',
         '',
         '## Preflight Gate (Mandatory)',
         'Before preflight, enter task mode explicitly:',

@@ -85,6 +85,50 @@ function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+function escapeRegex(text: string): string {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getMarkdownHeadingLevel(heading: string): number {
+    const headingPrefixMatch = heading.trim().match(/^(#+)\s+/);
+    if (!headingPrefixMatch) {
+        return 0;
+    }
+    return headingPrefixMatch[1].length;
+}
+
+function getMarkdownSection(content: string, heading: string): string | null {
+    const headingLevel = getMarkdownHeadingLevel(heading);
+    if (headingLevel === 0) {
+        return null;
+    }
+
+    const headingPattern = new RegExp(`^${escapeRegex(heading)}\\s*$`, 'm');
+    const headingMatch = headingPattern.exec(content);
+    if (!headingMatch) {
+        return null;
+    }
+
+    const sectionStart = headingMatch.index;
+    const searchStart = sectionStart + headingMatch[0].length;
+    const remainder = content.slice(searchStart);
+    const nextHeadingPattern = new RegExp(`^#{1,${headingLevel}}\\s+`, 'm');
+    const nextHeadingMatch = nextHeadingPattern.exec(remainder);
+    const sectionEnd = nextHeadingMatch
+        ? searchStart + nextHeadingMatch.index
+        : content.length;
+
+    return content.slice(sectionStart, sectionEnd);
+}
+
+function normalizeMarkdownSectionForComparison(content: string): string {
+    return String(content).replace(/\r?\n/g, '\n').trim();
+}
+
+function requiresExactTaskModeRuleSectionParity(heading: string): boolean {
+    return heading === '## Integrity Priority Rules';
+}
+
 export function parseBooleanLike(value: unknown, defaultValue: boolean): boolean {
     if (value === null || value === undefined) return defaultValue;
     if (typeof value === 'boolean') return value;
@@ -250,11 +294,28 @@ export function detectTaskModeRuleContractViolations(targetRoot: string): string
 
         const content = readTextFile(fullPath);
         const fileLabel = path.basename(migration.liveRelativePath);
+        const sectionContent = getMarkdownSection(content, migration.heading);
+        const templatePath = path.join(targetRoot, migration.templateRelativePath);
+        if (requiresExactTaskModeRuleSectionParity(migration.heading) && pathExists(templatePath)) {
+            const templateSection = getMarkdownSection(readTextFile(templatePath), migration.heading);
+            if (templateSection) {
+                if (
+                    sectionContent == null
+                    || normalizeMarkdownSectionForComparison(sectionContent)
+                        !== normalizeMarkdownSectionForComparison(templateSection)
+                ) {
+                    violations.push(`${fileLabel} section '${migration.heading}' must stay synchronized with template source.`);
+                    continue;
+                }
+            }
+        }
+
+        const fallbackSectionContent = sectionContent ?? '';
         for (const snippet of migration.requiredSnippets) {
             const alternatives = getCommandSnippetAlternatives(snippet);
             let present = false;
             for (const candidate of alternatives) {
-                if (content.includes(candidate)) {
+                if (fallbackSectionContent.includes(candidate)) {
                     present = true;
                     break;
                 }

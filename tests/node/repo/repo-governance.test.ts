@@ -17,18 +17,34 @@ function readRepoFile(relativePath: string): string {
     return fs.readFileSync(filePath, 'utf8');
 }
 
-function readGeneratedRepoFileIfMaterialized(relativePath: string): string | null {
+function readGeneratedRepoFile(relativePath: string): string {
     const repoRoot = getRepoRoot();
     const filePath = path.join(repoRoot, relativePath);
     assertRepoFileIgnoredAndNotTracked(relativePath);
-    if (!fs.existsSync(filePath)) {
-        return null;
-    }
+    assert.ok(fs.existsSync(filePath), `${relativePath} must exist in the materialized repo surface`);
     return fs.readFileSync(filePath, 'utf8');
 }
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractMarkdownSection(content: string, heading: string): string {
+    const headingMatch = heading.match(/^(#+)\s+/);
+    assert.ok(headingMatch, `Heading must be markdown-formatted: ${heading}`);
+    const headingLevel = headingMatch[1].length;
+    const startPattern = new RegExp(`^${escapeRegExp(heading)}\\s*$`, 'm');
+    const startMatch = startPattern.exec(content);
+    assert.ok(startMatch, `Missing heading: ${heading}`);
+    const sectionStart = startMatch.index;
+    const searchStart = sectionStart + startMatch[0].length;
+    const remainder = content.slice(searchStart);
+    const nextHeadingPattern = new RegExp(`^#{1,${headingLevel}}\\s+`, 'm');
+    const nextHeadingMatch = nextHeadingPattern.exec(remainder);
+    const sectionEnd = nextHeadingMatch
+        ? searchStart + nextHeadingMatch.index
+        : content.length;
+    return content.slice(sectionStart, sectionEnd);
 }
 
 function assertRepoFileTrackedAndNotIgnored(relativePath: string): void {
@@ -206,10 +222,7 @@ test('start-banner contract stays synced across canonical guidance files', () =>
     }
 
     for (const relativePath of materializedGeneratedFiles) {
-        const content = readGeneratedRepoFileIfMaterialized(relativePath);
-        if (content == null) {
-            continue;
-        }
+        const content = readGeneratedRepoFile(relativePath);
         if (
             relativePath.endsWith('/skills/orchestration/SKILL.md')
             || relativePath.endsWith('/docs/agent-rules/40-commands.md')
@@ -233,5 +246,45 @@ test('start-banner contract stays synced across canonical guidance files', () =>
         ) {
             assert.ok(!content.includes(legacyStartMarker), `${relativePath} must not keep the legacy start marker`);
         }
+    }
+});
+
+test('integrity-priority wording stays synced across tracked and materialized rule files', () => {
+    const workflowSection = [
+        '## Integrity Priority Rules',
+        '- Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        '- Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.',
+        '- Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        '- Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.',
+        '- If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.'
+    ].join('\n');
+    const skillCatalogSection = [
+        '## Integrity Priority Rules',
+        '- Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.',
+        '- Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.',
+        '- Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.',
+        '- If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.'
+    ].join('\n');
+
+    for (const relativePath of [
+        'template/docs/agent-rules/80-task-workflow.md',
+        'template/docs/agent-rules/90-skill-catalog.md'
+    ] as const) {
+        const content = readRepoFile(relativePath);
+        const sectionContent = extractMarkdownSection(content, '## Integrity Priority Rules');
+        const expectedSection = relativePath.endsWith('80-task-workflow.md') ? workflowSection : skillCatalogSection;
+        assert.equal(sectionContent.trim(), expectedSection, `${relativePath} must preserve exact integrity-priority section parity`);
+    }
+
+    for (const relativePath of [
+        'garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
+        'garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md'
+    ] as const) {
+        const content = readGeneratedRepoFile(relativePath);
+        const sectionContent = extractMarkdownSection(content, '## Integrity Priority Rules');
+        const expectedSection = relativePath.endsWith('80-task-workflow.md') ? workflowSection : skillCatalogSection;
+        assert.equal(sectionContent.trim(), expectedSection, `${relativePath} must preserve exact integrity-priority section parity`);
     }
 });
