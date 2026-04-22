@@ -5,9 +5,6 @@ import {
     normalizePathValue,
     padRight,
     PackageJsonLike,
-    printBanner,
-    printCommandSummary,
-    printStatus,
     resolveWorkspaceDisplayVersion
 } from './cli-helpers';
 
@@ -49,14 +46,7 @@ export function buildOverviewOutput(packageJson: PackageJsonLike, targetRoot?: s
  *   - Available Commands
  */
 export function printOverview(packageJson: PackageJsonLike, targetRoot?: string): void {
-    if (targetRoot === undefined) targetRoot = normalizePathValue('.');
-    const snapshot = getStatusSnapshot(targetRoot);
-    console.log('GARDA_OVERVIEW');
-    printBanner(packageJson, 'Workspace overview', targetRoot, {
-        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
-    });
-    printStatus(snapshot, { heading: 'GARDA_STATUS' });
-    printCommandSummary();
+    console.log(buildOverviewOutput(packageJson, targetRoot));
 }
 
 /**

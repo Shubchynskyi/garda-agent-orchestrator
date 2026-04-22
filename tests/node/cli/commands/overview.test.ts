@@ -52,6 +52,18 @@ test('buildOverviewOutput includes Available Commands', () => {
     }
 });
 
+test('buildOverviewOutput renders Available Commands exactly once', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'overview-test-'));
+    try {
+        const pkg = { version: '1.0.8', name: 'garda-agent-orchestrator' };
+        const output = buildOverviewOutput(pkg, tmpDir);
+        const matches = output.match(/Available Commands/g) || [];
+        assert.equal(matches.length, 1);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('buildOverviewOutput includes banner with version', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'overview-test-'));
     try {
