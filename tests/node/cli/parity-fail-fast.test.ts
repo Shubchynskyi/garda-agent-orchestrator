@@ -62,6 +62,8 @@ test('CLI blocks task execution commands when bundle is stale', () => {
             combined.includes('Source Parity Violation: The deployed bundle is stale'),
             'Expected CLI to print parity violation message'
         );
+        assert.ok(combined.includes('GARDA_COMMAND_HELP'));
+        assert.ok(combined.includes('gate'));
         assert.ok(
             combined.includes('older than source launcher'),
             'Expected CLI to specify the launcher age violation'
@@ -119,6 +121,81 @@ test('workflow command resolves parity against --target-root instead of the call
     }
 });
 
+test('workflow help remains discoverable when parity blocks the caller workspace', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-help-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(tmpDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(tmpDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'workflow', '--help'],
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, EXIT_PRECONDITION_FAILURE);
+        assert.ok(combined.includes('PARITY_BLOCKED'));
+        assert.ok(combined.includes('GARDA_COMMAND_HELP'));
+        assert.ok(combined.includes('workflow'));
+        assert.ok(combined.includes('Default mode: workflow with no subcommand behaves like workflow show.'));
+        assert.ok(combined.includes('Fix'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('gate subcommand help remains discoverable when parity blocks the caller workspace', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-gate-help-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(tmpDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(tmpDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'gate', 'enter-task-mode', '--help'],
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, EXIT_PRECONDITION_FAILURE);
+        assert.ok(combined.includes('PARITY_BLOCKED'));
+        assert.ok(combined.includes('enter-task-mode'));
+        assert.ok(combined.includes('Enter explicit task mode before any implementation'));
+        assert.ok(combined.includes('Usage'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('workflow set routes through the CLI dispatcher for --target-root and preserves JSON output', () => {
     const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-set-caller-'));
     const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-set-target-'));
@@ -167,6 +244,63 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
         assert.equal(fs.existsSync(configPath), true);
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.full_suite_validation.enabled, true);
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('profile command resolves parity against --target-root instead of the caller cwd', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-profile-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-profile-target-'));
+    try {
+        fs.mkdirSync(path.join(callerDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(callerDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(callerDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(callerDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const profilesConfigDir = path.join(targetDir, 'garda-agent-orchestrator', 'live', 'config');
+        fs.mkdirSync(profilesConfigDir, { recursive: true });
+        fs.writeFileSync(path.join(profilesConfigDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Default profile.',
+                    depth: 2,
+                    review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                    token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }, null, 2), 'utf8');
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'profile', '--target-root', targetDir, '--json'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, 0, 'profile should succeed when the target root itself is not stale');
+        assert.ok(!combined.includes('Source Parity Violation: The deployed bundle is stale'));
+
+        const parsed = JSON.parse(result.stdout || '');
+        assert.equal(parsed.active_profile, 'balanced');
+        assert.equal(parsed.config_path, path.join(targetDir, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'));
     } finally {
         fs.rmSync(callerDir, { recursive: true, force: true });
         fs.rmSync(targetDir, { recursive: true, force: true });

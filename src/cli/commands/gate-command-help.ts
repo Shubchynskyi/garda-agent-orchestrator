@@ -6,6 +6,7 @@ import {
     resolveBundleNameForTarget
 } from '../../core/constants';
 import { isOrchestratorSourceCheckout } from '../../gates/helpers';
+import { bold, cyan, dim, green, styleHelpCommandLine } from './cli-format-output';
 
 interface GateHelpEntry {
     summary: string;
@@ -364,20 +365,42 @@ function resolveSuggestedCommand(entry: GateHelpEntry, mistakenTaskId: string | 
     return entry.usage[0].split(TASK_ID_PLACEHOLDER).join(taskId);
 }
 
+export function buildGateCommandOverviewText(repoRoot = process.cwd()): string {
+    const resolvedRepoRoot = resolveGateHelpRepoRoot(repoRoot);
+    const cliPrefix = buildCliPrefix(resolvedRepoRoot);
+    return [
+        'GARDA_COMMAND_HELP',
+        cyan('gate'),
+        dim('Run an agent gate or helper command.'),
+        '',
+        bold('Usage'),
+        `  ${styleHelpCommandLine(`${cliPrefix} gate <gate-name> [options]`)}`,
+        `  ${styleHelpCommandLine(`${cliPrefix} gate <gate-name> --help`)}`,
+        '',
+        bold('Hints'),
+        `  ${dim('Use per-gate help to inspect exact syntax before execution.')}`,
+        '',
+        bold('Examples'),
+        `  ${green(`${cliPrefix} gate enter-task-mode --task-id "T-178" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "2" --task-summary "<task summary>" --start-banner "Garda captures my mind" --provider "Codex" --repo-root "."`)}`,
+        `  ${green(`${cliPrefix} gate task-audit-summary --task-id "T-178" --as-json --repo-root "."`)}`
+    ].join('\n');
+}
+
 export function buildGateHelpText(gateName: string, repoRoot = process.cwd()): string {
     const entry = getGateHelpEntry(gateName, repoRoot);
     if (!entry) {
         throw new Error(`Unknown gate: ${gateName}`);
     }
     return [
-        `Gate: ${gateName}`,
-        entry.summary,
+        'GARDA_COMMAND_HELP',
+        `${cyan('gate')} ${cyan(gateName)}`,
+        dim(entry.summary),
         '',
-        'Usage:',
-        ...entry.usage.map((line) => `  ${line}`),
+        bold('Usage'),
+        ...entry.usage.map((line) => `  ${styleHelpCommandLine(line)}`),
         '',
-        'Options:',
-        '  -h, --help     Show this gate help and exit.'
+        bold('Options'),
+        `  ${styleHelpCommandLine('-h --help')}     ${dim('Show this gate help and exit.')}`
     ].join('\n');
 }
 

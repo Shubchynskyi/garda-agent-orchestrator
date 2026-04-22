@@ -331,10 +331,185 @@ export function printStatus(snapshot: StatusSnapshot, options?: { heading?: stri
 }
 
 export function printCommandSummary(): void {
-    console.log(bold('Available Commands'));
-    for (const [name, description] of COMMAND_SUMMARY) {
-        console.log(`  ${padRight(name, 10)} ${description}`);
+    for (const line of buildCommandSummaryLines()) {
+        console.log(line);
     }
+}
+
+export function buildCommandSummaryLines(): string[] {
+    const lines = [bold('Available Commands')];
+    for (const [name, description] of COMMAND_SUMMARY) {
+        lines.push(`  ${cyan(padRight(name, 10))} ${dim(description)}`);
+    }
+    return lines;
+}
+
+type GuardedCommandHelpName = 'agent-init' | 'skills' | 'profile' | 'workflow';
+
+interface GuardedCommandHelpDescriptor {
+    readonly summary: string;
+    readonly usage: readonly string[];
+    readonly examples: readonly string[];
+    readonly hints?: readonly string[];
+}
+
+const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedCommandHelpDescriptor>> = Object.freeze({
+    'agent-init': Object.freeze({
+        summary: 'Finalize mandatory agent onboarding after AGENT_INIT_PROMPT work is complete.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} agent-init --active-agent-files "<file1>,<file2>" --project-rules-updated true|false --skills-prompted true|false [--target-root PATH] [--bundle-root PATH] [--init-answers-path PATH]`,
+            `${PRIMARY_CLI_NAME} status`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} agent-init --active-agent-files "AGENTS.md,AGENT_INIT_PROMPT.md" --project-rules-updated true --skills-prompted true`
+        ]),
+        hints: Object.freeze([
+            'This command has no subcommands and requires explicit completion flags.',
+            'Use status first if you need to confirm whether agent-init is still required.'
+        ])
+    }),
+    skills: Object.freeze({
+        summary: 'List, suggest, add, remove, and validate optional built-in skill packs.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} skills [list] [--target-root PATH] [--bundle-root PATH]`,
+            `${PRIMARY_CLI_NAME} skills suggest --task-text "<task summary>" [--changed-path src/<file>] [--limit N]`,
+            `${PRIMARY_CLI_NAME} skills add <pack-id> | remove <pack-id> | validate`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} skills`,
+            `${PRIMARY_CLI_NAME} skills suggest --task-text "Improve parity-blocked command discoverability"`
+        ]),
+        hints: Object.freeze([
+            'Default mode: skills with no subcommand behaves like skills list.'
+        ])
+    }),
+    profile: Object.freeze({
+        summary: 'List, switch, create, delete, and validate workspace profiles.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} profile [current|list|validate] [--target-root PATH] [--bundle-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} profile use <name>`,
+            `${PRIMARY_CLI_NAME} profile create <name> [--description TEXT] [--depth 1|2|3] [--copy-from <existing>]`,
+            `${PRIMARY_CLI_NAME} profile delete <name>`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} profile`,
+            `${PRIMARY_CLI_NAME} profile use balanced`
+        ]),
+        hints: Object.freeze([
+            'Default mode: profile with no subcommand behaves like profile current.'
+        ])
+    }),
+    workflow: Object.freeze({
+        summary: 'Show and set repo-local workflow config.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} workflow [show] [--target-root PATH] [--bundle-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} workflow set --full-suite-enabled true|false [--full-suite-command CMD] [--target-root PATH] [--json]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} workflow`,
+            `${PRIMARY_CLI_NAME} workflow set --full-suite-enabled true --full-suite-command "npm test"`
+        ]),
+        hints: Object.freeze([
+            'Default mode: workflow with no subcommand behaves like workflow show.'
+        ])
+    })
+});
+
+function styleHelpToken(token: string): string {
+    const trimmed = token.trim();
+    const normalized = trimmed.replace(/^[[(]+|[\]),]+$/g, '');
+    if (!trimmed) {
+        return trimmed;
+    }
+    if (trimmed.startsWith('--') || trimmed.startsWith('[--')) {
+        return yellow(trimmed);
+    }
+    if (
+        normalized === PRIMARY_CLI_NAME
+        || normalized === PRIMARY_PACKAGE_NAME
+        || normalized === 'node'
+        || normalized.endsWith('garda.js')
+        || [
+            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'bootstrap', 'install', 'init', 'reinit',
+            'update', 'rollback', 'uninstall', 'cleanup', 'gc', 'clean', 'verify', 'check-update', 'skills',
+            'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current', 'use', 'create',
+            'delete', 'validate', 'suggest', 'add', 'remove'
+        ].includes(normalized)
+    ) {
+        return cyan(trimmed);
+    }
+    if (
+        normalized.startsWith('<')
+        || normalized.startsWith('[')
+        || normalized.includes('|')
+        || normalized === 'PATH'
+        || normalized === 'TEXT'
+        || normalized === 'CMD'
+        || normalized === 'N'
+    ) {
+        return dim(trimmed);
+    }
+    return trimmed;
+}
+
+export function styleHelpCommandLine(line: string): string {
+    return line
+        .split(/\s+/)
+        .map((token) => styleHelpToken(token))
+        .join(' ');
+}
+
+export function buildGuardedCommandHelpText(commandName: GuardedCommandHelpName): string {
+    const entry = GUARDED_COMMAND_HELP[commandName];
+    const lines: string[] = [];
+    lines.push('GARDA_COMMAND_HELP');
+    lines.push(cyan(commandName));
+    lines.push(dim(entry.summary));
+    lines.push('');
+    lines.push(bold('Usage'));
+    for (const usageLine of entry.usage) {
+        lines.push(`  ${styleHelpCommandLine(usageLine)}`);
+    }
+    if (entry.hints && entry.hints.length > 0) {
+        lines.push('');
+        lines.push(bold('Hints'));
+        for (const hint of entry.hints) {
+            lines.push(`  ${dim(hint)}`);
+        }
+    }
+    lines.push('');
+    lines.push(bold('Examples'));
+    for (const exampleLine of entry.examples) {
+        lines.push(`  ${green(exampleLine)}`);
+    }
+    return lines.join('\n');
+}
+
+export function buildParityBlockedCommandText(options: {
+    commandName: string;
+    helpText: string;
+    violations: readonly string[];
+    remediation: string | null | undefined;
+}): string {
+    const lines: string[] = [];
+    lines.push(red('PARITY_BLOCKED'));
+    lines.push(red(`BlockedCommand: ${options.commandName}`));
+    lines.push(red('Source Parity Violation: The deployed bundle is stale compared to the source checkout.'));
+    if (options.violations.length > 0) {
+        lines.push('');
+        lines.push(bold('Detected drift'));
+        for (const violation of options.violations) {
+            lines.push(`  ${red(violation)}`);
+        }
+    }
+    if (options.remediation) {
+        lines.push('');
+        lines.push(bold('Fix'));
+        lines.push(`  ${green(options.remediation)}`);
+    }
+    lines.push('');
+    lines.push(options.helpText);
+    return lines.join('\n');
 }
 
 export function printHelp(packageJson: PackageJsonLike): void {

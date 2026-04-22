@@ -14,8 +14,7 @@ import {
     runRequiredReviewsCheckCommand
 } from '../../../../src/cli/commands/gates';
 import {
-    runCliMain,
-    runCliMainWithHandling
+    runCliMain
 } from '../../../../src/cli/main';
 import { runCompletionGate } from '../../../../src/gates/completion';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
@@ -25,7 +24,8 @@ import {
 } from '../../../../src/gates/review-reuse';
 import {
     applyReviewerRoutingMetadata,
-    buildReviewReceipt
+    buildReviewReceipt,
+    buildReviewReceiptReviewerProvenance
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
@@ -177,6 +177,18 @@ function getReviewsRoot(repoRoot: string): string {
 
 function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
+}
+
+function loadTaskEventsIoModule(): { appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>; } {
+    return require(path.join(__dirname, '../../../../src/gate-runtime/task-events-io.js')) as {
+        appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
+    };
+}
+
+function loadTimelineSummaryModule(): { reconcileTimelineSummaryForTask: (...args: unknown[]) => void; } {
+    return require(path.join(__dirname, '../../../../src/gate-runtime/timeline-summary.js')) as {
+        reconcileTimelineSummaryForTask: (...args: unknown[]) => void;
+    };
 }
 
 function writePreflight(
@@ -336,6 +348,7 @@ function writeReceiptBackedReviewArtifact(
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    let reviewerProvenance: ReturnType<typeof buildReviewReceiptReviewerProvenance> | null = null;
     fs.writeFileSync(receiptPath, JSON.stringify({
         schema_version: 2,
         task_id: taskId,
@@ -345,6 +358,7 @@ function writeReceiptBackedReviewArtifact(
         reviewer_execution_mode: execution.reviewerExecutionMode,
         reviewer_identity: execution.reviewerIdentity,
         reviewer_fallback_reason: execution.reviewerFallbackReason,
+        reviewer_provenance: reviewerProvenance,
         trust_level: execution.trustLevel
     }));
 
@@ -357,13 +371,26 @@ function writeReceiptBackedReviewArtifact(
         });
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
+        const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
             review_type: reviewKey,
             reviewer_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,
             delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
             reviewer_fallback_reason: execution.reviewerFallbackReason
-        });
+        }, { passThru: true });
+        reviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity);
+        fs.writeFileSync(receiptPath, JSON.stringify({
+            schema_version: 2,
+            task_id: taskId,
+            review_type: reviewKey,
+            review_artifact_sha256: artifactHash,
+            review_context_sha256: reviewContextHash,
+            reviewer_execution_mode: execution.reviewerExecutionMode,
+            reviewer_identity: execution.reviewerIdentity,
+            reviewer_fallback_reason: execution.reviewerFallbackReason,
+            reviewer_provenance: reviewerProvenance,
+            trust_level: execution.trustLevel
+        }));
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
 }
@@ -452,6 +479,14 @@ function seedReusableReviewEvidence(
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const preflightHash = crypto.createHash('sha256').update(preflightText).digest('hex');
+    const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'historical review routing recorded', {
+        review_type: reviewKey,
+        reviewer_execution_mode: execution.reviewerExecutionMode,
+        reviewer_session_id: execution.reviewerIdentity,
+        delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
+        reviewer_fallback_reason: execution.reviewerFallbackReason
+    }, { passThru: true });
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -466,9 +501,13 @@ function seedReusableReviewEvidence(
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
         reviewerFallbackReason: execution.reviewerFallbackReason,
+        reviewerProvenance: buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity),
         trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'historical review recorded', {
+        review_type: reviewKey
+    });
     return reviewContextPath;
 }
 
@@ -776,7 +815,7 @@ describe('cli/commands/gates', () => {
         let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
-            await runCliMainWithHandling([
+            await runCliMain([
                 'gate',
                 'completion-gate',
                 '--preflight-path', preflightPath,
@@ -852,10 +891,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
         assert.equal(docImpactResult.exitCode, 0);
-
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[2] || '') === 'STATUS_CHANGED') {
@@ -1216,10 +1252,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
         assert.equal(docImpactResult.exitCode, 0);
-
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -1343,9 +1376,7 @@ describe('cli/commands/gates', () => {
         const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
         const aggregatePath = path.join(taskEventsRoot, 'all-tasks.jsonl');
         const timelineSummaryPath = path.join(taskEventsRoot, '.timeline-summary.json');
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -1516,9 +1547,7 @@ describe('cli/commands/gates', () => {
 
         const baselinePlanCreatedCount = readTaskTimelineEvents(repoRoot, taskId)
             .filter((event) => event.event_type === 'PLAN_CREATED').length;
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -1621,9 +1650,7 @@ describe('cli/commands/gates', () => {
         assert.equal(docImpactResult.exitCode, 0);
 
         const taskTimelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -1724,9 +1751,7 @@ describe('cli/commands/gates', () => {
 
         const baselinePlanCreatedCount = readTaskTimelineEvents(repoRoot, taskId)
             .filter((event) => event.event_type === 'PLAN_CREATED').length;
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'STATUS_CHANGED') {
@@ -1832,10 +1857,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
         assert.equal(docImpactResult.exitCode, 0);
-
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'STATUS_CHANGED') {
@@ -1943,9 +1965,7 @@ describe('cli/commands/gates', () => {
 
         const baselinePlanCreatedCount = readTaskTimelineEvents(repoRoot, taskId)
             .filter((event) => event.event_type === 'PLAN_CREATED').length;
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -2071,10 +2091,7 @@ describe('cli/commands/gates', () => {
                 }
             }
         }, null, 2) + '\n', 'utf8');
-
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -2168,10 +2185,8 @@ describe('cli/commands/gates', () => {
         const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
         const aggregatePath = path.join(taskEventsRoot, 'all-tasks.jsonl');
         const baselineAggregateContent = fs.readFileSync(aggregatePath, 'utf8');
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
         const fsModule = require('node:fs') as typeof import('node:fs');
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         const originalWriteFileSync = fsModule.writeFileSync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
@@ -2279,9 +2294,7 @@ describe('cli/commands/gates', () => {
 
         const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
         const aggregatePath = path.join(taskEventsRoot, 'all-tasks.jsonl');
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -2384,9 +2397,7 @@ describe('cli/commands/gates', () => {
             event_type: 'PLAN_CREATED',
             legacy_marker: 'BASELINE_NO_INTEGRITY'
         })}\n`, 'utf8');
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -2599,14 +2610,9 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
         assert.equal(docImpactResult.exitCode, 0);
-
-        const taskEventsIoModule = require('../../../../src/gate-runtime/task-events-io') as {
-            appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
-        };
-        const timelineSummaryModule = require('../../../../src/gate-runtime/timeline-summary') as {
-            reconcileTimelineSummaryForTask: (...args: unknown[]) => void;
-        };
+        const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
+        const timelineSummaryModule = loadTimelineSummaryModule();
         const originalReconcileTimelineSummaryForTask = timelineSummaryModule.reconcileTimelineSummaryForTask;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
@@ -3059,7 +3065,7 @@ describe('cli/commands/gates', () => {
         try {
             process.chdir(repoRoot);
             process.exitCode = 0;
-            await runCliMainWithHandling([
+            await runCliMain([
                 'gate',
                 'completion-gate',
                 '--preflight-path', preflightPath,
@@ -3069,7 +3075,7 @@ describe('cli/commands/gates', () => {
             assert.equal(process.exitCode ?? 0, 0);
 
             process.exitCode = 0;
-            await runCliMainWithHandling([
+            await runCliMain([
                 'gate',
                 'task-audit-summary',
                 '--task-id', taskId,
@@ -3848,3 +3854,5 @@ describe('cli/commands/gates', () => {
     });
 
 });
+
+

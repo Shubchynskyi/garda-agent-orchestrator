@@ -3,11 +3,11 @@ import * as path from 'node:path';
 import { PRIMARY_CLI_NAME, resolveBundleName } from '../../core/constants';
 import { validateProfilesConfig } from '../../schemas/config-artifacts';
 import {
+    buildGuardedCommandHelpText,
     normalizePathValue,
     padRight,
     parseOptions,
     PackageJsonLike,
-    printHelp,
     promptSingleSelect,
     promptTextInput,
     supportsInteractivePrompts
@@ -708,7 +708,7 @@ export function handleProfile(commandArgv: string[], packageJson: PackageJsonLik
     });
     const options = rawOptions as ParsedOptionsRecord;
 
-    if (options.help) { printHelp(packageJson); return null; }
+    if (options.help) { console.log(buildGuardedCommandHelpText('profile')); return null; }
     if (options.version) { console.log(packageJson.version); return null; }
 
     const { bundleRoot } = resolveBundleRoot(options);

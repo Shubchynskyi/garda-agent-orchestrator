@@ -329,6 +329,21 @@ function seedReusableReviewEvidence(
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const preflightHash = crypto.createHash('sha256').update(preflightText).digest('hex');
+    const routedEvent = appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'REVIEWER_DELEGATION_ROUTED',
+        'INFO',
+        'historical review routing recorded',
+        {
+            review_type: reviewKey,
+            reviewer_execution_mode: execution.reviewerExecutionMode,
+            reviewer_session_id: execution.reviewerIdentity,
+            delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
+            reviewer_fallback_reason: execution.reviewerFallbackReason
+        },
+        { passThru: true }
+    );
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -343,6 +358,7 @@ function seedReusableReviewEvidence(
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
         reviewerFallbackReason: execution.reviewerFallbackReason,
+        reviewerProvenance: buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity),
         trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
@@ -731,7 +747,15 @@ describe('cli/commands/gates', () => {
                 reviewer_session_id: codeExecution.reviewerIdentity,
                 delegation_used: codeExecution.reviewerExecutionMode === 'delegated_subagent',
                 reviewer_fallback_reason: codeExecution.reviewerFallbackReason
-            }
+            },
+            { passThru: true }
+        );
+        refreshReviewReceiptProvenance(
+            repoRoot,
+            taskId,
+            'code',
+            codeExecution.reviewerExecutionMode,
+            codeExecution.reviewerIdentity
         );
         appendTaskEvent(
             getOrchestratorRoot(repoRoot),
@@ -750,7 +774,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -901,7 +925,8 @@ describe('cli/commands/gates', () => {
                 reviewer_session_id: codeExecution.reviewerIdentity,
                 delegation_used: codeExecution.reviewerExecutionMode === 'delegated_subagent',
                 reviewer_fallback_reason: codeExecution.reviewerFallbackReason
-            }
+            },
+            { passThru: true }
         );
         refreshReviewReceiptProvenance(
             repoRoot,
@@ -1099,7 +1124,8 @@ describe('cli/commands/gates', () => {
                 reviewer_session_id: codeExecution.reviewerIdentity,
                 delegation_used: codeExecution.reviewerExecutionMode === 'delegated_subagent',
                 reviewer_fallback_reason: codeExecution.reviewerFallbackReason
-            }
+            },
+            { passThru: true }
         );
         refreshReviewReceiptProvenance(
             repoRoot,
@@ -1292,7 +1318,7 @@ describe('cli/commands/gates', () => {
                 reviewer_execution_mode: 'delegated_subagent',
                 reviewer_session_id: 'agent:code-reviewer',
                 delegation_used: true
-            });
+            }, { passThru: true });
             appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', {
                 review_type: 'code',
                 review_context_path: legacyCodeReviewContextPath.replace(/\\/g, '/')
@@ -1651,7 +1677,7 @@ describe('cli/commands/gates', () => {
                 reviewer_execution_mode: 'delegated_subagent',
                 reviewer_session_id: 'agent:code-reviewer',
                 delegation_used: true
-            });
+            }, { passThru: true });
 
             fs.writeFileSync(reviewOutputPath, [
                 '# Review',

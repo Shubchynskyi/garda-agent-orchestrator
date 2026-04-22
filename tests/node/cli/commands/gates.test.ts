@@ -189,23 +189,23 @@ describe('cli/commands/gates', () => {
         const helpCases: Array<{ argv: string[]; expectedSnippets: string[] }> = [
             {
                 argv: ['gate', 'enter-task-mode', '--help'],
-                expectedSnippets: ['Gate: enter-task-mode', '--task-id "<task-id>"', '--provider "<runtime-provider>"']
+                expectedSnippets: ['gate enter-task-mode', '--task-id "<task-id>"', '--provider "<runtime-provider>"']
             },
             {
                 argv: ['gate', 'build-review-context', '--help'],
-                expectedSnippets: ['Gate: build-review-context', '--review-type "<code|db|security|refactor|api|test|performance|infra|dependency>"', '--preflight-path']
+                expectedSnippets: ['gate build-review-context', '--review-type "<code|db|security|refactor|api|test|performance|infra|dependency>"', '--preflight-path']
             },
             {
                 argv: ['gate', 'activate-optional-skill', '--help'],
-                expectedSnippets: ['Gate: activate-optional-skill', '--task-id "<task-id>"', '--skill-id "<selected-skill-id>"']
+                expectedSnippets: ['gate activate-optional-skill', '--task-id "<task-id>"', '--skill-id "<selected-skill-id>"']
             },
             {
                 argv: ['gate', 'completion-gate', '--help'],
-                expectedSnippets: ['Gate: completion-gate', '--task-id "<task-id>"', '--preflight-path']
+                expectedSnippets: ['gate completion-gate', '--task-id "<task-id>"', '--preflight-path']
             },
             {
                 argv: ['gate', 'full-suite-validation', '--help'],
-                expectedSnippets: ['Gate: full-suite-validation', '--task-id "<task-id>"', '--preflight-path']
+                expectedSnippets: ['gate full-suite-validation', '--task-id "<task-id>"', '--preflight-path']
             }
         ];
 
@@ -227,8 +227,8 @@ describe('cli/commands/gates', () => {
             assert.equal(result.exitCode, 0, gateName);
             assert.equal(result.errors.length, 0, gateName);
             const combinedOutput = result.logs.join('\n');
-            assert.ok(combinedOutput.includes(`Gate: ${gateName}`), gateName);
-            assert.ok(combinedOutput.includes('Usage:'), gateName);
+            assert.ok(combinedOutput.includes(`gate ${gateName}`), gateName);
+            assert.ok(combinedOutput.includes('Usage'), gateName);
             assert.ok(!combinedOutput.includes('TaskId must not be empty'), gateName);
             assert.ok(!combinedOutput.includes('ReviewType must not be empty'), gateName);
         }
@@ -390,8 +390,8 @@ describe('cli/commands/gates', () => {
         assert.equal(enterTaskModeResult.exitCode, 0);
         assert.equal(enterTaskModeResult.errors.length, 0);
         const enterTaskModeOutput = enterTaskModeResult.logs.join('\n');
-        assert.ok(enterTaskModeOutput.includes('Gate: enter-task-mode'));
-        assert.ok(enterTaskModeOutput.includes('Usage:'));
+        assert.ok(enterTaskModeOutput.includes('gate enter-task-mode'));
+        assert.ok(enterTaskModeOutput.includes('Usage'));
         assert.ok(!enterTaskModeOutput.includes('legacy_fallback'));
 
         const loadRulePackResult = await runCliWithCapturedOutput([
@@ -403,8 +403,8 @@ describe('cli/commands/gates', () => {
         assert.equal(loadRulePackResult.exitCode, 0);
         assert.equal(loadRulePackResult.errors.length, 0);
         const loadRulePackOutput = loadRulePackResult.logs.join('\n');
-        assert.ok(loadRulePackOutput.includes('Gate: load-rule-pack'));
-        assert.ok(loadRulePackOutput.includes('Usage:'));
+        assert.ok(loadRulePackOutput.includes('gate load-rule-pack'));
+        assert.ok(loadRulePackOutput.includes('Usage'));
         assert.ok(!loadRulePackOutput.includes('RULE_PACK_LOAD_FAILED'));
     });
 
@@ -1704,8 +1704,6 @@ describe('cli/commands/gates', () => {
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         const reviewsRoot = getReviewsRoot(repoRoot);
-        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
-
         await runCompileGateCommand({
             repoRoot,
             taskId,
@@ -1715,7 +1713,7 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
 
-        // Telemetry must be in the timeline; writeCleanReviewArtifact handles it.
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
         const result = runRequiredReviewsCheckCommand({
             repoRoot,
@@ -4026,7 +4024,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-receipt rejects superseded same-cycle routing telemetry', async () => {
+    it('record-review-receipt accepts earlier matching same-cycle routing telemetry when reviewer identity still matches the review context', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-superseded-routing';
         seedTaskQueue(repoRoot, taskId);
@@ -4094,9 +4092,9 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
-        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), true);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -5195,9 +5193,8 @@ describe('cli/commands/gates', () => {
                 '--review-type', 'code',
                 '--review-context-path', codeReviewContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
             ]);
             await runCliMainWithHandling([
                 'gate',
@@ -5207,9 +5204,8 @@ describe('cli/commands/gates', () => {
                 '--preflight-path', preflightPath,
                 '--review-output-path', codeReviewOutputPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
             ]);
             codeReviewRecordExitCode = Number(process.exitCode ?? 0);
 
@@ -5654,9 +5650,8 @@ describe('cli/commands/gates', () => {
                 '--review-type', 'code',
                 '--review-context-path', customCodeReviewContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
             ]);
             await runCliMainWithHandling([
                 'gate',
@@ -5667,9 +5662,8 @@ describe('cli/commands/gates', () => {
                 '--review-output-path', codeReviewOutputPath,
                 '--review-context-path', customCodeReviewContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
             ]);
             codeReviewRecordExitCode = Number(process.exitCode ?? 0);
 
@@ -5708,9 +5702,8 @@ describe('cli/commands/gates', () => {
                 '--review-type', 'test',
                 '--review-context-path', testReviewContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
             ]);
             await runCliMainWithHandling([
                 'gate',
@@ -5721,9 +5714,8 @@ describe('cli/commands/gates', () => {
                 '--review-output-path', testReviewOutputPath,
                 '--review-context-path', testReviewContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
             ]);
             testReviewRecordExitCode = Number(process.exitCode ?? 0);
         } finally {
@@ -5862,9 +5854,8 @@ describe('cli/commands/gates', () => {
                 taskId,
                 reviewType: 'code',
                 repoRoot,
-                reviewerExecutionMode: 'same_agent_fallback',
-                reviewerIdentity: `self:${taskId}`,
-                reviewerFallbackReason: 'attested reviewer launch unavailable in direct provider session'
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
             });
             await runCliMainWithHandling([
                 'gate',
@@ -5875,9 +5866,8 @@ describe('cli/commands/gates', () => {
                 '--review-output-path', reviewOutputPath,
                 '--review-context-path', canonicalContextPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'attested reviewer launch unavailable in direct provider session'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
             ]);
             recordExitCode = Number(process.exitCode ?? 0);
         } finally {
@@ -6833,7 +6823,6 @@ describe('cli/commands/gates', () => {
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
-        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Prior review gate passed.', {});
 
         const compileResult = await runCompileGateCommand({
@@ -6844,6 +6833,8 @@ describe('cli/commands/gates', () => {
             emitMetrics: false
         });
         assert.equal(compileResult.exitCode, 0);
+
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
 
         const reviewResult = runRequiredReviewsCheckCommand({
             repoRoot,

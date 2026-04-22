@@ -344,7 +344,7 @@ function readSeededSourceOfTruth(repoRoot: string): string {
     }
 }
 
-function resolveDefaultReviewerEvidence(repoRoot: string, taskId: string): {
+function resolveDefaultReviewerEvidence(repoRoot: string, taskId: string, reviewKey: string): {
     sourceOfTruth: string;
     executionMode: 'delegated_subagent' | 'same_agent_fallback';
     reviewerIdentity: string;
@@ -356,9 +356,14 @@ function resolveDefaultReviewerEvidence(repoRoot: string, taskId: string): {
     const executionMode = policy.expected_execution_mode === 'same_agent_fallback'
         ? 'same_agent_fallback'
         : 'delegated_subagent';
+    const delegatedReviewerIdentity = reviewKey === 'code'
+        ? 'agent:code-reviewer'
+        : reviewKey === 'test'
+            ? 'agent:test-reviewer'
+            : `agent:${reviewKey}-reviewer`;
     const reviewerIdentity = executionMode === 'same_agent_fallback'
         ? `self:${taskId}`
-        : 'agent:test-reviewer';
+        : delegatedReviewerIdentity;
     const reviewerFallbackReason = executionMode === 'same_agent_fallback'
         ? 'attested reviewer launch unavailable in direct provider session'
         : null;
@@ -389,7 +394,7 @@ export function writeReceiptBackedReviewArtifact(
 ): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
-    const reviewerEvidence = resolveDefaultReviewerEvidence(repoRoot, taskId);
+    const reviewerEvidence = resolveDefaultReviewerEvidence(repoRoot, taskId, reviewKey);
     const content = (contentLines || [
         '# Review',
         '',
@@ -423,26 +428,23 @@ export function writeReceiptBackedReviewArtifact(
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
 
     const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
-    let reviewerProvenance = null;
-    if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
-        const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
-            review_type: reviewKey
-        });
-        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
-        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
-        const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
-            review_type: reviewKey,
-            reviewer_execution_mode: reviewerEvidence.executionMode,
-            reviewer_session_id: reviewerEvidence.reviewerIdentity,
-            reviewer_fallback_reason: reviewerEvidence.reviewerFallbackReason,
-            delegation_used: reviewerEvidence.executionMode === 'delegated_subagent'
-        });
-        reviewerProvenance = buildReviewReceiptReviewerProvenance(
-            'REVIEWER_DELEGATION_ROUTED',
-            routedEvent?.integrity
-        );
-    }
+    const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
+        review_type: reviewKey
+    });
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
+    const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
+        review_type: reviewKey,
+        reviewer_execution_mode: reviewerEvidence.executionMode,
+        reviewer_session_id: reviewerEvidence.reviewerIdentity,
+        reviewer_fallback_reason: reviewerEvidence.reviewerFallbackReason,
+        delegation_used: reviewerEvidence.executionMode === 'delegated_subagent'
+    }, { passThru: true });
+    const reviewerProvenance = buildReviewReceiptReviewerProvenance(
+        'REVIEWER_DELEGATION_ROUTED',
+        routedEvent?.integrity
+    );
 
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     let preflightSha256: string | null = null;
@@ -477,9 +479,7 @@ export function writeReceiptBackedReviewArtifact(
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
     fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
 
-    if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
-    }
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
 }
 
 export function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {

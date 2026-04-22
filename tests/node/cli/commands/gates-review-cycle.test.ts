@@ -20,7 +20,8 @@ import { serializeTaskPlan, validateTaskPlan } from '../../../../src/schemas/tas
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import {
     applyReviewerRoutingMetadata,
-    buildReviewReceipt
+    buildReviewReceipt,
+    buildReviewReceiptReviewerProvenance
 } from '../../../../src/gate-runtime/review-context';
 import {
     computeCodeReviewScopeFingerprint,
@@ -68,7 +69,7 @@ function resolveReviewerExecutionFixture(
     reviewerExecutionMode: 'delegated_subagent' | 'same_agent_fallback';
     reviewerIdentity: string;
     reviewerFallbackReason: string | null;
-    trustLevel: 'LOCAL_AUDITED' | 'LOCAL_ASSERTED';
+    trustLevel: 'LOCAL_ASSERTED';
 } {
     const policy = resolveReviewerRoutingPolicy(sourceOfTruth, 'provider_entrypoint');
     const reviewerExecutionMode = policy.expected_execution_mode;
@@ -80,8 +81,22 @@ function resolveReviewerExecutionFixture(
         reviewerFallbackReason: reviewerExecutionMode === 'same_agent_fallback'
             ? `${sourceOfTruth} provider_entrypoint fixtures cannot supply attested reviewer launch evidence.`
             : null,
-        trustLevel: reviewerExecutionMode === 'same_agent_fallback' ? 'LOCAL_ASSERTED' : 'LOCAL_AUDITED'
+        trustLevel: 'LOCAL_ASSERTED'
     };
+}
+
+function readSeededSourceOfTruth(repoRoot: string): string {
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
+        return 'Codex';
+    }
+    try {
+        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
+        const sourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
+        return sourceOfTruth || 'Codex';
+    } catch {
+        return 'Codex';
+    }
 }
 
 function createTempRepo(): string {
@@ -410,10 +425,11 @@ function writeReceiptBackedReviewArtifact(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
-    const execution = resolveReviewerExecutionFixture(taskId);
+    const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
+    const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth);
     const reviewContext = {
         review_type: reviewKey,
-        reviewer_routing: createReviewerRoutingFixture('Codex', {
+        reviewer_routing: createReviewerRoutingFixture(sourceOfTruth, {
             actual_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,
             fallback_reason: execution.reviewerFallbackReason
@@ -422,10 +438,29 @@ function writeReceiptBackedReviewArtifact(
     const reviewContextText = JSON.stringify(reviewContext, null, 2);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
 
-    // Authenticity hardening: write a verifiable receipt.
+    // Authenticity hardening: write a verifiable receipt with attested routing provenance.
     const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
+    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    let reviewerProvenance = null;
+    if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
+        const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
+            review_type: reviewKey
+        });
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
+        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
+        const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'review routing recorded', {
+            review_type: reviewKey,
+            reviewer_execution_mode: execution.reviewerExecutionMode,
+            reviewer_session_id: execution.reviewerIdentity,
+            delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
+            reviewer_fallback_reason: execution.reviewerFallbackReason
+        }, { passThru: true });
+        reviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity);
+        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
+    }
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
     fs.writeFileSync(receiptPath, JSON.stringify({
         schema_version: 2,
@@ -435,27 +470,10 @@ function writeReceiptBackedReviewArtifact(
         review_context_sha256: reviewContextHash,
         reviewer_execution_mode: execution.reviewerExecutionMode,
         reviewer_identity: execution.reviewerIdentity,
-        reviewer_fallback_reason: execution.reviewerFallbackReason
+        reviewer_fallback_reason: execution.reviewerFallbackReason,
+        reviewer_provenance: reviewerProvenance,
+        trust_level: execution.trustLevel
     }));
-
-    // Emit mandatory telemetry for authenticity
-    const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
-    if (fs.existsSync(path.join(orchestratorRoot, 'runtime', 'task-events', `${taskId}.jsonl`))) {
-        const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
-            review_type: reviewKey
-        });
-        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
-        appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'review routing recorded', {
-            review_type: reviewKey,
-            reviewer_execution_mode: execution.reviewerExecutionMode,
-            reviewer_session_id: execution.reviewerIdentity,
-            delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
-            reviewer_fallback_reason: execution.reviewerFallbackReason
-        });
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
-    }
 }
 
 function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
@@ -479,7 +497,8 @@ function seedReusableReviewEvidence(
     const crypto = require('node:crypto');
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
-    const execution = resolveReviewerExecutionFixture(taskId, 'Codex', reviewerIdentity);
+    const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
+    const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth, reviewerIdentity);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`);
     const artifactText = [
@@ -535,6 +554,20 @@ function seedReusableReviewEvidence(
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const preflightHash = crypto.createHash('sha256').update(preflightText).digest('hex');
+    const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'historical review started', {
+        review_type: reviewKey
+    });
+    const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
+    const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'historical review routing recorded', {
+        review_type: reviewKey,
+        reviewer_execution_mode: execution.reviewerExecutionMode,
+        reviewer_session_id: execution.reviewerIdentity,
+        delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
+        reviewer_fallback_reason: execution.reviewerFallbackReason
+    }, { passThru: true });
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -549,9 +582,13 @@ function seedReusableReviewEvidence(
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
         reviewerFallbackReason: execution.reviewerFallbackReason,
+        reviewerProvenance: buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity),
         trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'historical review recorded', {
+        review_type: reviewKey
+    });
     return reviewContextPath;
 }
 
@@ -1369,7 +1406,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
+        seedInitAnswers(repoRoot, 'Qwen');
         writeReviewCapabilitiesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
@@ -1472,7 +1509,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.ok(firstCompileIndex > lastHandshakeIndex);
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
-        assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
+        assert.ok(lastCodeReviewPhaseIndex === -1 || lastCodeReviewPhaseIndex > lastCompileIndex);
         assert.equal(lastTestReviewPhaseIndex, -1);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1638,7 +1675,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restart-review-cycle reuses eligible code review evidence so downstream test review can be prepared in one command', { concurrency: false }, async () => {
+    it('restart-review-cycle keeps downstream test review blocked until the refreshed code review is recorded', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-reuse';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -1719,12 +1756,14 @@ describe('cli/commands/gates – review-cycle suites', () => {
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /PreparedReviewTypes: code, test/);
-        assert.match(output, /LaunchRequiredReviewTypes: test/);
-        assert.match(output, /ReusedReviewTypes: code/);
+        assert.match(output, /PreparedReviewTypes: code/);
+        assert.match(output, /LaunchRequiredReviewTypes: code/);
+        assert.match(output, /ReusedReviewTypes: none/);
+        assert.match(output, /PendingReviewTypes: test/);
+        assert.match(output, /PendingReason: ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code\./);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
-            true
+            false
         );
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
@@ -1742,8 +1781,8 @@ describe('cli/commands/gates – review-cycle suites', () => {
         }, []);
         const firstCompileIndex = events.findIndex((event) => event.event_type === 'COMPILE_GATE_PASSED');
         const lastCompileIndex = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
-        const lastCodeReviewRecordedIndex = findLastTimelineEventIndex(events, (event) => (
-            event.event_type === 'REVIEW_RECORDED'
+        const lastCodeReviewPhaseIndex = findLastTimelineEventIndex(events, (event) => (
+            event.event_type === 'REVIEW_PHASE_STARTED'
             && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
         ));
         const lastTestReviewPhaseIndex = findLastTimelineEventIndex(events, (event) => (
@@ -1759,8 +1798,8 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.ok(firstCompileIndex > lastHandshakeIndex);
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
-        assert.ok(lastCodeReviewRecordedIndex > lastCompileIndex);
-        assert.ok(lastTestReviewPhaseIndex > lastCodeReviewRecordedIndex);
+        assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
+        assert.equal(lastTestReviewPhaseIndex, -1);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

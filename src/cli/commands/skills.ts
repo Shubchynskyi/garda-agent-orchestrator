@@ -9,11 +9,11 @@ import {
     validateSkillPacks
 } from '../../runtime/skills';
 import {
+    buildGuardedCommandHelpText,
     normalizePathValue,
     padRight,
     parseOptions,
-    PackageJsonLike,
-    printHelp
+    PackageJsonLike
 } from './cli-helpers';
 
 type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
@@ -217,7 +217,7 @@ export function handleSkills(commandArgv: string[], packageJson: PackageJsonLike
         maxPositionals: 1
     });
 
-    if (options.help) { printHelp(packageJson); return null; }
+    if (options.help) { console.log(buildGuardedCommandHelpText('skills')); return null; }
     if (options.version) { console.log(packageJson.version); return null; }
 
     const { bundleRoot } = resolveBundleRoot(options);

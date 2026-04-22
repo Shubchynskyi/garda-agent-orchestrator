@@ -14,6 +14,7 @@ import {
     runRequiredReviewsCheckCommand
 } from '../../../../src/cli/commands/gates';
 import { runCompletionGate } from '../../../../src/gates/completion';
+import { buildReviewReceiptReviewerProvenance } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import * as childProcess from 'node:child_process';
@@ -321,6 +322,7 @@ function writeReceiptBackedReviewArtifact(
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    let reviewerProvenance: ReturnType<typeof buildReviewReceiptReviewerProvenance> | null = null;
     fs.writeFileSync(receiptPath, JSON.stringify({
         schema_version: 2,
         task_id: taskId,
@@ -330,6 +332,7 @@ function writeReceiptBackedReviewArtifact(
         reviewer_execution_mode: execution.reviewerExecutionMode,
         reviewer_identity: execution.reviewerIdentity,
         reviewer_fallback_reason: execution.reviewerFallbackReason,
+        reviewer_provenance: reviewerProvenance,
         trust_level: execution.trustLevel
     }));
 
@@ -342,13 +345,26 @@ function writeReceiptBackedReviewArtifact(
         });
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
         appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
-        appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
+        const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
             review_type: reviewKey,
             reviewer_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,
             delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
             reviewer_fallback_reason: execution.reviewerFallbackReason
-        });
+        }, { passThru: true });
+        reviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity);
+        fs.writeFileSync(receiptPath, JSON.stringify({
+            schema_version: 2,
+            task_id: taskId,
+            review_type: reviewKey,
+            review_artifact_sha256: artifactHash,
+            review_context_sha256: reviewContextHash,
+            reviewer_execution_mode: execution.reviewerExecutionMode,
+            reviewer_identity: execution.reviewerIdentity,
+            reviewer_fallback_reason: execution.reviewerFallbackReason,
+            reviewer_provenance: reviewerProvenance,
+            trust_level: execution.trustLevel
+        }));
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
 }

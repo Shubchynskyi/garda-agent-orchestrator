@@ -10,10 +10,10 @@ import {
 } from '../../gates/full-suite-validation';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
+    buildGuardedCommandHelpText,
     normalizePathValue,
     parseOptions,
-    PackageJsonLike,
-    printHelp
+    PackageJsonLike
 } from './cli-helpers';
 
 type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
@@ -329,7 +329,7 @@ export function handleWorkflow(
         : WORKFLOW_SHARED_DEFINITIONS;
     const { options } = parseOptions(subcommandArgv, optionDefinitions);
 
-    if (options.help) { printHelp(packageJson); return null; }
+    if (options.help) { console.log(buildGuardedCommandHelpText('workflow')); return null; }
     if (options.version) { console.log(packageJson.version); return null; }
 
     switch (subcommand) {

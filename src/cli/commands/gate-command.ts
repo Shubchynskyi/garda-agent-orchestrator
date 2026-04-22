@@ -1,6 +1,6 @@
 import { getAllShimmedGateNames } from '../../compat/shim-registry';
-import { bold } from './cli-helpers';
 import {
+    buildGateCommandOverviewText,
     buildGateHelpText,
     buildTaskIdSyntaxRemediationMessage,
     hasStandaloneGateHelpFlag
@@ -40,7 +40,9 @@ import { handleValidateIsolation, handlePrepareIsolation } from './gate-isolatio
 
 export async function handleGate(commandArgv: string[]): Promise<void> {
     if (commandArgv.length === 0 || commandArgv[0] === '-h' || commandArgv[0] === '--help') {
-        console.log(bold('Available gates:'));
+        console.log(buildGateCommandOverviewText());
+        console.log('');
+        console.log('Available gates:');
         for (const name of getAllShimmedGateNames()) {
             console.log(`  ${name}`);
         }

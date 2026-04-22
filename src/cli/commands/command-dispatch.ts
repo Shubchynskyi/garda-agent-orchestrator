@@ -2,6 +2,8 @@ import { PRIMARY_PACKAGE_NAME } from '../../core/constants';
 import { detectSourceBundleParity } from '../../validators/workspace-layout';
 import { assertOfflinePolicy } from '../../policy/offline-mode';
 import { EXIT_VALIDATION_FAILURE } from '../exit-codes';
+import { buildGuardedCommandHelpText, buildParityBlockedCommandText } from './cli-format-output';
+import { buildGateCommandOverviewText, buildGateHelpText } from './gate-command-help';
 import { isFailedValidationResult } from './shared-command-utils';
 import { PackageJsonLike, printHelp } from './cli-helpers';
 import * as path from 'node:path';
@@ -30,20 +32,24 @@ function readPathFlag(commandArgv: string[], flag: string): string | null {
     return null;
 }
 
-function resolveParityRoot(commandName: string, commandArgv: string[]): string {
-    if (commandName === 'gate') {
-        const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
-        return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
-    }
-    if (commandName !== 'workflow') {
-        return '.';
-    }
+function resolveTargetOrBundleParityRoot(commandArgv: string[]): string {
     const explicitBundleRoot = readPathFlag(commandArgv, '--bundle-root');
     if (explicitBundleRoot) {
         return path.dirname(path.resolve(explicitBundleRoot));
     }
     const explicitTargetRoot = readPathFlag(commandArgv, '--target-root');
     return explicitTargetRoot ? path.resolve(explicitTargetRoot) : '.';
+}
+
+function resolveParityRoot(commandName: string, commandArgv: string[]): string {
+    if (commandName === 'gate') {
+        const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
+        return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
+    }
+    if (!['workflow', 'agent-init', 'skills', 'profile'].includes(commandName)) {
+        return '.';
+    }
+    return resolveTargetOrBundleParityRoot(commandArgv);
 }
 
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
@@ -55,12 +61,29 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
     }
 
     if (['gate', 'agent-init', 'skills', 'profile', 'workflow'].includes(commandName)) {
-        const parityResult = detectSourceBundleParity(resolveParityRoot(commandName, commandArgv));
+        const parityRoot = resolveParityRoot(commandName, commandArgv);
+        const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale) {
+            const helpText = commandName === 'gate'
+                ? (() => {
+                    const gateName = String(commandArgv[0] || '').trim();
+                    if (!gateName || gateName.startsWith('-')) {
+                        return buildGateCommandOverviewText(parityRoot);
+                    }
+                    try {
+                        return buildGateHelpText(gateName, parityRoot);
+                    } catch {
+                        return buildGateCommandOverviewText(parityRoot);
+                    }
+                })()
+                : buildGuardedCommandHelpText(commandName as 'agent-init' | 'skills' | 'profile' | 'workflow');
             throw new Error(
-                'Source Parity Violation: The deployed bundle is stale compared to the source checkout.\n'
-                + (parityResult.violations.length > 0 ? parityResult.violations.join('\n') + '\n' : '')
-                + (parityResult.remediation ? `Fix: ${parityResult.remediation}` : `Run "npm run build" then "npx ${PRIMARY_PACKAGE_NAME} setup".`)
+                buildParityBlockedCommandText({
+                    commandName,
+                    helpText,
+                    violations: parityResult.violations,
+                    remediation: parityResult.remediation || `Run "npm run build" then "npx ${PRIMARY_PACKAGE_NAME} setup".`
+                })
             );
         }
     }

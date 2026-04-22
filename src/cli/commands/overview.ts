@@ -1,9 +1,8 @@
 import { getStatusSnapshot, formatStatusSnapshot } from '../../validators/status';
 import {
     buildBannerText,
-    COMMAND_SUMMARY,
+    buildCommandSummaryLines,
     normalizePathValue,
-    padRight,
     PackageJsonLike,
     resolveWorkspaceDisplayVersion
 } from './cli-helpers';
@@ -26,10 +25,7 @@ export function buildOverviewOutput(packageJson: PackageJsonLike, targetRoot?: s
     }));
     lines.push(formatStatusSnapshot(snapshot, { heading: 'GARDA_STATUS' }));
     lines.push('');
-    lines.push('Available Commands');
-    for (const [name, description] of COMMAND_SUMMARY) {
-        lines.push(`  ${padRight(name, 10)} ${description}`);
-    }
+    lines.push(...buildCommandSummaryLines());
     return lines.join('\n');
 }
 

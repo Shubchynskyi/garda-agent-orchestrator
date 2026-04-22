@@ -224,7 +224,7 @@ REVIEW PASSED
             assert.ok(result.violations.some((entry: string) => entry.includes('different task')));
         });
 
-        it('passes same-agent fallback for direct provider-entrypoint Codex sessions when an explicit reason is present', () => {
+        it('fails same-agent fallback for direct provider-entrypoint Codex sessions even when an explicit reason is present', () => {
             const content = '# Review\nValidated `src/gates/required-reviews-check.ts` and `src/gates/reviewer-routing.ts` against the direct provider-entrypoint fallback contract, confirming that same-agent fallback stays explicitly attributed, carries a non-empty fallback reason, and does not claim delegated provenance.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {
@@ -290,7 +290,8 @@ REVIEW PASSED
                 }
             } as any);
 
-            assert.equal(result.status, 'PASSED');
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some((entry: string) => entry.includes('delegated_subagent') || entry.includes('fallback is not allowed')));
         });
 
         it('fails delegated review for direct provider-entrypoint Codex sessions without attested launch evidence', () => {
@@ -334,7 +335,6 @@ REVIEW PASSED
             });
 
             assert.equal(result.status, 'FAILED');
-            assert.ok(result.violations.some((entry: string) => entry.includes('same_agent_fallback')));
         });
 
         it('fails when receipt reviewer execution mode is invalid', () => {

@@ -3,14 +3,17 @@ import { resolveBundleNameForTarget, resolveInitAnswersRelativePathForTarget } f
 import { runAgentInit } from '../../lifecycle/agent-init';
 import { getStatusSnapshot } from '../../validators/status';
 import { buildProfileAwareNextLine } from '../../validators/task-command';
-import { buildLocalizedAgentReportBlock, resolveAgentReportLocale } from './cli-format-output';
+import {
+    buildGuardedCommandHelpText,
+    buildLocalizedAgentReportBlock,
+    resolveAgentReportLocale
+} from './cli-format-output';
 import {
     bold,
     normalizePathValue,
     parseOptions,
     PackageJsonLike,
     printBanner,
-    printHelp,
     printStatus,
     resolveWorkspaceDisplayVersion
 } from './cli-helpers';
@@ -80,7 +83,7 @@ export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>):
 export function handleAgentInit(commandArgv: string[], packageJson: PackageJsonLike): ReturnType<typeof runAgentInit> | null {
     const { options } = parseOptions(commandArgv, AGENT_INIT_DEFINITIONS);
 
-    if (options.help) { printHelp(packageJson); return null; }
+    if (options.help) { console.log(buildGuardedCommandHelpText('agent-init')); return null; }
     if (options.version) { console.log(packageJson.version); return null; }
 
     if (typeof options.activeAgentFiles !== 'string' || !options.activeAgentFiles.trim()) {
