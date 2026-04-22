@@ -149,39 +149,42 @@ describe('gates/build-review-context', () => {
             assert.equal(policy.fallback_allowed, false);
         });
 
-        it('marks Antigravity as conditional delegation with fallback reason', () => {
+        it('marks Antigravity as delegation-required', () => {
             const policy = resolveReviewerRoutingPolicy('Antigravity');
-            assert.equal(policy.delegation_required, false);
+            assert.equal(policy.capability_level, 'delegation_required');
+            assert.equal(policy.delegation_required, true);
             assert.equal(policy.expected_execution_mode, 'delegated_subagent');
-            assert.equal(policy.fallback_allowed, true);
-            assert.equal(policy.fallback_reason_required, true);
+            assert.equal(policy.fallback_allowed, false);
+            assert.equal(policy.fallback_reason_required, false);
         });
 
-        it('marks single-agent providers as fallback-allowed with reason required', () => {
+        it('marks previously single-agent providers as delegation-required', () => {
             for (const provider of ['Gemini', 'Qwen']) {
                 const policy = resolveReviewerRoutingPolicy(provider);
-                assert.equal(policy.capability_level, 'single_agent_only', `${provider} capability_level`);
-                assert.equal(policy.delegation_required, false, `${provider} delegation_required`);
-                assert.equal(policy.fallback_allowed, true, `${provider} fallback_allowed`);
-                assert.equal(policy.fallback_reason_required, true, `${provider} fallback_reason_required`);
-                assert.equal(policy.expected_execution_mode, 'same_agent_fallback', `${provider} expected_execution_mode`);
+                assert.equal(policy.capability_level, 'delegation_required', `${provider} capability_level`);
+                assert.equal(policy.delegation_required, true, `${provider} delegation_required`);
+                assert.equal(policy.fallback_allowed, false, `${provider} fallback_allowed`);
+                assert.equal(policy.fallback_reason_required, false, `${provider} fallback_reason_required`);
+                assert.equal(policy.expected_execution_mode, 'delegated_subagent', `${provider} expected_execution_mode`);
             }
         });
 
-        it('marks unknown providers as fallback-allowed with reason required', () => {
+        it('marks unknown providers as delegated-only until proven otherwise', () => {
             const policy = resolveReviewerRoutingPolicy('UnknownProvider');
             assert.equal(policy.capability_level, 'unknown');
-            assert.equal(policy.delegation_required, false);
-            assert.equal(policy.fallback_allowed, true);
-            assert.equal(policy.fallback_reason_required, true);
-            assert.equal(policy.expected_execution_mode, 'same_agent_fallback');
+            assert.equal(policy.delegation_required, true);
+            assert.equal(policy.fallback_allowed, false);
+            assert.equal(policy.fallback_reason_required, false);
+            assert.equal(policy.expected_execution_mode, 'delegated_subagent');
         });
 
-        it('marks null/empty provider as unknown with fallback reason required', () => {
+        it('marks null/empty provider as unknown with delegated-only routing', () => {
             for (const value of [null, '', undefined]) {
                 const policy = resolveReviewerRoutingPolicy(value);
                 assert.equal(policy.capability_level, 'unknown', `value=${String(value)}`);
-                assert.equal(policy.fallback_reason_required, true, `value=${String(value)}`);
+                assert.equal(policy.delegation_required, true, `value=${String(value)}`);
+                assert.equal(policy.fallback_allowed, false, `value=${String(value)}`);
+                assert.equal(policy.fallback_reason_required, false, `value=${String(value)}`);
             }
         });
 

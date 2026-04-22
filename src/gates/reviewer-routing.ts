@@ -114,56 +114,27 @@ export function resolveReviewerRoutingPolicy(
     const tier = normalized ? getReviewerCapabilityTier(normalized) : null;
     void executionProviderSource;
 
-    let policy: ReviewerRoutingPolicy;
-
-    switch (tier) {
-        case 'delegation_required':
-            policy = {
-                source_of_truth: normalized,
-                capability_level: 'delegation_required',
-                delegation_required: true,
-                fallback_allowed: false,
-                fallback_reason_required: false,
-                expected_execution_mode: 'delegated_subagent',
-                note: `${normalized} is treated as delegation-capable. Same-agent fallback is invalid for required reviews.`
-            };
-            break;
-        case 'delegation_conditional':
-            policy = {
-                source_of_truth: normalized,
-                capability_level: 'delegation_conditional',
-                delegation_required: false,
-                fallback_allowed: true,
-                fallback_reason_required: true,
-                expected_execution_mode: 'delegated_subagent',
-                note: `${normalized} should delegate when provider sub-agent support is available; fallback requires an explicit reason.`
-            };
-            break;
-        case 'single_agent_only':
-            policy = {
-                source_of_truth: normalized,
-                capability_level: 'single_agent_only',
-                delegation_required: false,
-                fallback_allowed: true,
-                fallback_reason_required: true,
-                expected_execution_mode: 'same_agent_fallback',
-                note: `${normalized} is treated as single-agent for review routing. Fallback receipts must still include reviewer_fallback_reason.`
-            };
-            break;
-        default:
-            policy = {
-                source_of_truth: normalized,
-                capability_level: 'unknown',
-                delegation_required: false,
-                fallback_allowed: true,
-                fallback_reason_required: true,
-                expected_execution_mode: 'same_agent_fallback',
-                note: 'Provider delegation capability is unknown. Fallback is allowed only with an explicit reason.'
-            };
-            break;
+    if (tier === 'delegation_required') {
+        return {
+            source_of_truth: normalized,
+            capability_level: 'delegation_required',
+            delegation_required: true,
+            fallback_allowed: false,
+            fallback_reason_required: false,
+            expected_execution_mode: 'delegated_subagent',
+            note: `${normalized} requires delegated_subagent execution for mandatory reviews. Same-agent fallback is invalid.`
+        };
     }
 
-    return policy;
+    return {
+        source_of_truth: normalized,
+        capability_level: 'unknown',
+        delegation_required: true,
+        fallback_allowed: false,
+        fallback_reason_required: false,
+        expected_execution_mode: 'delegated_subagent',
+        note: 'Provider delegation capability is unknown. Mandatory reviews still require delegated_subagent execution.'
+    };
 }
 
 export function readCanonicalSourceOfTruth(repoRoot: string): string | null {

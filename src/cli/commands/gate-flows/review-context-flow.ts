@@ -193,7 +193,6 @@ async function tryReuseCodeReviewEvidence(options: {
 
     const reviewerExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
     const reviewerIdentity = String(receipt.reviewer_identity || '').trim() || null;
-    const reviewerFallbackReason = String(receipt.reviewer_fallback_reason || '').trim() || null;
     const historicalReviewerProvenance = receipt.reviewer_provenance == null
         ? null
         : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
@@ -208,11 +207,7 @@ async function tryReuseCodeReviewEvidence(options: {
     if (!reviewerExecutionMode || !reviewerIdentity || !expectedContextSha256) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
-    if (reviewerExecutionMode === 'delegated_subagent') {
-        if (!reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
-            return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
-        }
-    } else if (!reviewerIdentity.startsWith('self:') || !reviewerFallbackReason) {
+    if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
     if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase()) {
@@ -273,6 +268,7 @@ async function tryReuseCodeReviewEvidence(options: {
     if (!contextHashMatches && !contextReuseHashMatches) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
+    const reviewerFallbackReason = null;
     const routingUpdate = applyReviewerRoutingMetadata(
         options.reviewContextPath,
         {
@@ -317,10 +313,8 @@ async function tryReuseCodeReviewEvidence(options: {
         if (!routingEvent || (Array.isArray(routingEvent.warnings) && routingEvent.warnings.length > 0)) {
             throw new Error('REVIEWER_DELEGATION_ROUTED telemetry could not be persisted for review reuse.');
         }
-        const currentReviewerProvenance = reviewerExecutionMode === 'delegated_subagent'
-            ? buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routingEvent.integrity)
-            : null;
-        if (reviewerExecutionMode === 'delegated_subagent' && !currentReviewerProvenance) {
+        const currentReviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routingEvent.integrity);
+        if (!currentReviewerProvenance) {
             throw new Error('Delegated review reuse could not derive reviewer_provenance from current-cycle routing telemetry.');
         }
         const refreshedReceipt = buildReviewReceipt({

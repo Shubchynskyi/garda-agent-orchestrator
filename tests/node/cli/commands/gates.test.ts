@@ -3396,7 +3396,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result records same_agent_fallback receipt through the public CLI path when controller routing telemetry already exists', async () => {
+    it('record-review-result rejects deprecated same_agent_fallback receipt evidence through the public CLI path', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-fallback';
         seedTaskQueue(repoRoot, taskId);
@@ -3420,7 +3420,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(reviewOutputPath, [
             '# Review',
             '',
-            'Validated fallback-mode ingestion through `src/cli/commands/gate-review-handlers.ts`, confirming that same-agent fallback still writes the canonical artifact, routing metadata, and receipt without bypassing delegated review controls. The fixture also references the fallback routing contract and receipt persistence behavior so the review text is clearly substantive.',
+            'Validated deprecated fallback-mode rejection through `src/cli/commands/gate-review-handlers.ts`, confirming that same-agent fallback no longer writes the canonical artifact, routing metadata, or receipt for the current mandatory review contract.',
             '',
             '## Findings by Severity',
             'none',
@@ -3463,21 +3463,18 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
-        assert.equal(receipt.reviewer_execution_mode, 'same_agent_fallback');
-        assert.equal(receipt.reviewer_identity, `self:${taskId}`);
-        assert.equal(receipt.reviewer_fallback_reason, 'provider bridge does not expose subagent routing');
-        assert.equal(receipt.trust_level, 'LOCAL_ASSERTED');
-        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'same_agent_fallback');
-        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, `self:${taskId}`);
-        assert.equal(reviewContext.reviewer_routing.fallback_reason, 'provider bridge does not expose subagent routing');
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
+        assert.equal(reviewContext.reviewer_routing.fallback_reason, null);
         assert.ok(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'));
-        assert.ok(events.some((event) => event.event_type === 'REVIEW_RECORDED'));
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -4239,7 +4236,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-receipt rejects delegated_subagent for single-agent providers', async () => {
+    it('record-review-receipt accepts delegated_subagent for providers that previously used single-agent fallback', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904y-receipt-single-agent';
         seedTaskQueue(repoRoot, taskId);
@@ -4253,7 +4250,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(artifactPath, [
             '# Code Review T-904y-receipt-single-agent',
             '## Summary',
-            'Verified delegated receipt rejection for a single-agent provider with realistic detail.',
+            'Verified delegated receipt acceptance for a provider that previously used same-agent fallback, with realistic detail.',
             '## Findings by Severity',
             'none',
             '## Residual Risks',
@@ -4263,12 +4260,7 @@ describe('cli/commands/gates', () => {
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
-            reviewer_routing: createReviewerRoutingFixture('Qwen', {
-                capability_level: 'single_agent_only',
-                expected_execution_mode: 'same_agent_fallback',
-                fallback_allowed: true,
-                fallback_reason_required: true
-            })
+            reviewer_routing: createReviewerRoutingFixture('Qwen')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
             actualExecutionMode: 'delegated_subagent',
@@ -4304,9 +4296,9 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
-        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), true);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -4648,7 +4640,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('records fallback routing and receipt through the public CLI path', async () => {
+    it('records delegated routing and receipt through the public CLI path for providers that previously allowed fallback', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904z';
         seedTaskQueue(repoRoot, taskId);
@@ -4661,7 +4653,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(artifactPath, [
             '# Code Review T-904z',
             '## Summary',
-            'Verified fallback reviewer routing with concrete implementation detail and realistic wording.',
+            'Verified delegated reviewer routing with concrete implementation detail and realistic wording.',
             '## Findings by Severity',
             'none',
             '## Residual Risks',
@@ -4686,9 +4678,8 @@ describe('cli/commands/gates', () => {
                 '--task-id', taskId,
                 '--review-type', 'code',
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'provider bridge does not expose subagent routing'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', `agent:${taskId}-reviewer`
             ]);
             await runCliMainWithHandling([
                 'gate',
@@ -4697,9 +4688,8 @@ describe('cli/commands/gates', () => {
                 '--review-type', 'code',
                 '--preflight-path', preflightPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'provider bridge does not expose subagent routing'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', `agent:${taskId}-reviewer`
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
@@ -4711,12 +4701,12 @@ describe('cli/commands/gates', () => {
         const receipt = JSON.parse(fs.readFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), 'utf8'));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
-        assert.equal(receipt.reviewer_execution_mode, 'same_agent_fallback');
-        assert.equal(receipt.reviewer_identity, `self:${taskId}`);
-        assert.equal(receipt.reviewer_fallback_reason, 'provider bridge does not expose subagent routing');
-        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'same_agent_fallback');
-        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, `self:${taskId}`);
-        assert.equal(reviewContext.reviewer_routing.fallback_reason, 'provider bridge does not expose subagent routing');
+        assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
+        assert.equal(receipt.reviewer_identity, `agent:${taskId}-reviewer`);
+        assert.equal(receipt.reviewer_fallback_reason, null);
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, `agent:${taskId}-reviewer`);
+        assert.equal(reviewContext.reviewer_routing.fallback_reason, null);
         assert.ok(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'));
         assert.ok(events.some((event) => event.event_type === 'REVIEW_RECORDED'));
 
@@ -4737,7 +4727,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(artifactPath, [
             '# Code Review T-904z-lock',
             '## Summary',
-            'Verified fallback reviewer routing with concrete implementation detail and realistic wording.',
+            'Verified delegated reviewer routing with concrete implementation detail and realistic wording.',
             '## Findings by Severity',
             'none',
             '## Residual Risks',
@@ -4762,9 +4752,8 @@ describe('cli/commands/gates', () => {
                 '--task-id', taskId,
                 '--review-type', 'code',
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'provider bridge does not expose subagent routing'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', `agent:${taskId}-reviewer`
             ]);
 
             const lockPath = `${receiptPath}.lock`;
@@ -4782,9 +4771,8 @@ describe('cli/commands/gates', () => {
                 '--review-type', 'code',
                 '--preflight-path', preflightPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'provider bridge does not expose subagent routing'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', `agent:${taskId}-reviewer`
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
@@ -6855,7 +6843,7 @@ describe('cli/commands/gates', () => {
     });
 
 
-    it('passes required review and completion flow for conditional-provider fallback evidence', async () => {
+    it('passes required review and completion flow for delegated evidence on providers that previously allowed fallback', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904c';
         seedTaskQueue(repoRoot, taskId);
@@ -6885,7 +6873,7 @@ describe('cli/commands/gates', () => {
         runEnterTaskMode({
             repoRoot,
             taskId,
-            taskSummary: 'Validate fallback review flow',
+            taskSummary: 'Validate delegated review flow on a provider that previously allowed fallback',
             provider: 'Antigravity'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
@@ -6911,7 +6899,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(artifactPath, [
             '# Code Review',
             '',
-            'Validated the Antigravity fallback path across `src/cli/main.ts`, `src/gates/required-reviews-check.ts`, and `src/gates/completion.ts`, confirming that same-agent fallback requires an explicit reason, preserves reviewer identity consistency, and is consumed correctly by both review-gate and completion-gate in the absence of delegated subagent execution.',
+            'Validated the Antigravity delegated reviewer path across `src/cli/main.ts`, `src/gates/required-reviews-check.ts`, and `src/gates/completion.ts`, confirming that providers which previously allowed fallback now materialize delegated reviewer routing, receipts, and completion evidence through the standard mandatory flow.',
             '',
             '## Findings by Severity',
             'none',
@@ -6925,11 +6913,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             review_type: 'code',
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
-                execution_provider_source: 'explicit_provider',
-                capability_level: 'delegation_conditional',
-                expected_execution_mode: 'delegated_subagent',
-                fallback_allowed: true,
-                fallback_reason_required: true
+                execution_provider_source: 'explicit_provider'
             })
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: 'code-review' });
@@ -6948,9 +6932,8 @@ describe('cli/commands/gates', () => {
                 '--task-id', taskId,
                 '--review-type', 'code',
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'provider bridge did not expose subagent execution'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
             ]);
             await runCliMainWithHandling([
                 'gate',
@@ -6959,9 +6942,8 @@ describe('cli/commands/gates', () => {
                 '--review-type', 'code',
                 '--preflight-path', preflightPath,
                 '--repo-root', repoRoot,
-                '--reviewer-execution-mode', 'same_agent_fallback',
-                '--reviewer-identity', `self:${taskId}`,
-                '--reviewer-fallback-reason', 'provider bridge did not expose subagent execution'
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
             ]);
         } finally {
             process.chdir(previousCwd);

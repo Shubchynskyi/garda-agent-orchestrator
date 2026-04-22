@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- removed same-agent fallback from the mandatory review workflow so required reviews must come from delegated sub-agents, and deprecated fallback artifacts now degrade to unavailable trust diagnostics instead of satisfying active review summaries
 - fixed localized agent reports so confirmed `agent-init` language now overrides stale setup answers, and report labels now follow the configured assistant language instead of silently falling back to English
 - synced integrity-priority wording into tracked template rule sources and added contract regressions so setup or update cannot silently rematerialize stale policy text
 - kept review trust summaries visible on completion and audit compatibility paths even when consuming legacy or partial review artifacts, degrading the line to explicit unavailable status instead of dropping it outright

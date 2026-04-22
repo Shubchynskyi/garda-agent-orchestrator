@@ -7,8 +7,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+    normalizeCompatibilityReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance,
-    normalizeReviewerExecutionMode,
     type ReviewReceipt
 } from '../gate-runtime/review-context';
 import { getReviewSkillCandidates } from './build-review-context';
@@ -321,7 +321,7 @@ export function validateReviewSkillEvidence(
                 const reviewContextExecutionProvider = resolvedRoutingIdentity.execution_provider;
                 const reviewContextExecutionProviderSource = normalizeRuntimeIdentitySource(reviewerRouting.execution_provider_source);
                 const reviewContextIdentityStatus = resolvedRoutingIdentity.identity_status;
-                const actualExecutionMode = normalizeReviewerExecutionMode(reviewerRouting.actual_execution_mode);
+                const actualExecutionMode = normalizeCompatibilityReviewerExecutionMode(reviewerRouting.actual_execution_mode);
                 const reviewerSessionId = normalizeTimelineDetailString(reviewerRouting.reviewer_session_id);
                 const fallbackReason = normalizeTimelineDetailString(reviewerRouting.fallback_reason);
                 if (!canonicalSourceOfTruth) {
@@ -391,27 +391,27 @@ export function validateReviewSkillEvidence(
                             `Required review '${key}' must use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'.`
                         );
                     }
-                    if (routingPolicy.capability_level === 'single_agent_only' && actualExecutionMode === 'delegated_subagent') {
+                    if (actualExecutionMode === 'same_agent_fallback') {
                         result.violations.push(
-                            `Required review '${key}' cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
-                            'Explicit same_agent_fallback evidence is required on single-agent providers.'
+                            `Required review '${key}' used deprecated same_agent_fallback review-context routing. ` +
+                            'Record a fresh delegated_subagent reviewer for the current cycle.'
                         );
                     }
-                    if (routingPolicy.expected_execution_mode === 'same_agent_fallback' && actualExecutionMode === 'delegated_subagent') {
+                    if (routingPolicy.expected_execution_mode !== 'delegated_subagent' || !routingPolicy.delegation_required) {
                         result.violations.push(
-                            `Required review '${key}' cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}' ` +
-                            `when execution_provider_source is '${executionProviderSource || 'unknown'}'. ` +
-                            'Direct or non-bridge sessions must use same_agent_fallback until reviewer launch attestation is available.'
+                            `Required review '${key}' resolved non-delegated reviewer policy metadata for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
+                            'Mandatory reviews require delegated_subagent routing.'
                         );
                     }
-                    if (!routingPolicy.fallback_allowed && actualExecutionMode === 'same_agent_fallback') {
+                    if (routingPolicy.fallback_allowed || routingPolicy.fallback_reason_required) {
                         result.violations.push(
-                            `Required review '${key}' used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}', but fallback is not allowed.`
+                            `Required review '${key}' resolved stale fallback-capable reviewer policy metadata for provider '${routingPolicy.source_of_truth || 'unknown'}'.`
                         );
                     }
-                    if (routingPolicy.fallback_reason_required && actualExecutionMode === 'same_agent_fallback' && !fallbackReason) {
+                    if (fallbackReason) {
                         result.violations.push(
-                            `Required review '${key}' used same_agent_fallback without reviewer_routing.fallback_reason.`
+                            `Required review '${key}' review-context includes reviewer_routing.fallback_reason, ` +
+                            'but mandatory reviews now require delegated_subagent only.'
                         );
                     }
                     if (actualExecutionMode === 'delegated_subagent' && reviewerSessionId && !reviewerSessionId.startsWith('agent:')) {
@@ -420,19 +420,13 @@ export function validateReviewSkillEvidence(
                             `must be agent-scoped (expected prefix 'agent:').`
                         );
                     }
-                    if (actualExecutionMode === 'same_agent_fallback' && reviewerSessionId && !reviewerSessionId.startsWith('self:')) {
-                        result.violations.push(
-                            `Required review '${key}' claims same_agent_fallback but reviewer_routing.reviewer_session_id ` +
-                            `must be self-scoped (expected prefix 'self:').`
-                        );
-                    }
                 }
                 if (!reviewerSessionId) {
                     result.violations.push(`Required review '${key}' is missing reviewer_routing.reviewer_session_id in review-context.`);
                 }
                 const receipt = artifact.receipt;
                 if (receipt) {
-                    const receiptExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
+                    const receiptExecutionMode = normalizeCompatibilityReviewerExecutionMode(receipt.reviewer_execution_mode);
                     const receiptReviewerIdentity = normalizeTimelineDetailString(receipt.reviewer_identity);
                     const receiptFallbackReason = normalizeTimelineDetailString(receipt.reviewer_fallback_reason);
                     const receiptTrustLevel = normalizeTimelineDetailString(receipt.trust_level)?.toUpperCase() ?? null;
@@ -445,7 +439,7 @@ export function validateReviewSkillEvidence(
                             &&
                             entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
                             && String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
-                            && normalizeReviewerExecutionMode(entry.details?.reviewer_execution_mode ?? entry.details?.reviewerExecutionMode) === receiptExecutionMode
+                            && normalizeCompatibilityReviewerExecutionMode(entry.details?.reviewer_execution_mode ?? entry.details?.reviewerExecutionMode) === receiptExecutionMode
                             && normalizeTimelineDetailString(entry.details?.reviewer_session_id ?? entry.details?.reviewerSessionId) === receiptReviewerIdentity
                             && (receiptExecutionMode !== 'same_agent_fallback'
                                 || normalizeTimelineDetailString(entry.details?.reviewer_fallback_reason ?? entry.details?.reviewerFallbackReason) === receiptFallbackReason)
@@ -473,20 +467,21 @@ export function validateReviewSkillEvidence(
                             'Every receipt must include reviewer_identity for routing enforcement.'
                         );
                     }
-                    if (receiptExecutionMode === 'same_agent_fallback' && !receiptFallbackReason) {
+                    if (receiptExecutionMode === 'same_agent_fallback') {
                         result.violations.push(
-                            `Required review '${key}' receipt used same_agent_fallback without reviewer_fallback_reason. ` +
-                            'Fallback receipts must include reviewer_fallback_reason.'
+                            `Required review '${key}' receipt used deprecated same_agent_fallback execution. ` +
+                            'Record a fresh delegated_subagent review receipt for the current cycle.'
+                        );
+                    }
+                    if (receiptFallbackReason) {
+                        result.violations.push(
+                            `Required review '${key}' receipt includes reviewer_fallback_reason, ` +
+                            'but mandatory reviews now require delegated_subagent only.'
                         );
                     }
                     if (receipt.reviewer_provenance != null && !receiptReviewerProvenance) {
                         result.violations.push(
                             `Required review '${key}' receipt has invalid reviewer_provenance.`
-                        );
-                    }
-                    if (receiptTrustLevel === 'LOCAL_AUDITED' && receiptExecutionMode === 'same_agent_fallback') {
-                        result.violations.push(
-                            `Required review '${key}' receipt cannot claim LOCAL_AUDITED trust for same_agent_fallback execution.`
                         );
                     }
                     if (receiptExecutionMode === 'delegated_subagent' && routingEvent) {
@@ -529,30 +524,18 @@ export function validateReviewSkillEvidence(
                         if (routingPolicy.delegation_required && receiptExecutionMode !== 'delegated_subagent') {
                             result.violations.push(
                                 `Required review '${key}' receipt must use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
-                                'Same-agent self-review is invalid on delegation-capable providers.'
+                                'Same-agent self-review is invalid for the mandatory review workflow.'
                             );
                         }
-                        if (routingPolicy.capability_level === 'single_agent_only' && receiptExecutionMode === 'delegated_subagent') {
+                        if (routingPolicy.expected_execution_mode !== 'delegated_subagent' || !routingPolicy.delegation_required) {
                             result.violations.push(
-                                `Required review '${key}' receipt cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
-                                'Explicit same_agent_fallback evidence is required on single-agent providers.'
+                                `Required review '${key}' receipt resolved non-delegated reviewer policy metadata for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
+                                'Mandatory reviews require delegated_subagent routing.'
                             );
                         }
-                        if (routingPolicy.expected_execution_mode === 'same_agent_fallback' && receiptExecutionMode === 'delegated_subagent') {
+                        if (routingPolicy.fallback_allowed || routingPolicy.fallback_reason_required) {
                             result.violations.push(
-                                `Required review '${key}' receipt cannot use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}' ` +
-                                `when execution_provider_source is '${executionProviderSource || 'unknown'}'. ` +
-                                'Direct or non-bridge sessions must use same_agent_fallback until reviewer launch attestation is available.'
-                            );
-                        }
-                        if (!routingPolicy.fallback_allowed && receiptExecutionMode === 'same_agent_fallback') {
-                            result.violations.push(
-                                `Required review '${key}' receipt used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}', but fallback is not allowed.`
-                            );
-                        }
-                        if (routingPolicy.fallback_reason_required && receiptExecutionMode === 'same_agent_fallback' && !receiptFallbackReason) {
-                            result.violations.push(
-                                `Required review '${key}' receipt used same_agent_fallback on provider '${routingPolicy.source_of_truth || 'unknown'}' without reviewer_fallback_reason.`
+                                `Required review '${key}' receipt resolved stale fallback-capable reviewer policy metadata for provider '${routingPolicy.source_of_truth || 'unknown'}'.`
                             );
                         }
                     }
@@ -575,7 +558,7 @@ export function validateReviewSkillEvidence(
                     }
                 }
                 if (routingEvent?.details) {
-                    const routingExecutionMode = normalizeReviewerExecutionMode(
+                    const routingExecutionMode = normalizeCompatibilityReviewerExecutionMode(
                         routingEvent.details.reviewer_execution_mode ?? routingEvent.details.reviewerExecutionMode
                     );
                     const routingSessionId = normalizeTimelineDetailString(

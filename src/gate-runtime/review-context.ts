@@ -389,11 +389,16 @@ export interface RestoreReviewerRoutingMetadataResult {
 }
 
 export const REVIEWER_EXECUTION_MODES = Object.freeze([
+    'delegated_subagent'
+] as const);
+
+export const COMPATIBILITY_REVIEWER_EXECUTION_MODES = Object.freeze([
     'delegated_subagent',
     'same_agent_fallback'
 ] as const);
 
 export type ReviewerExecutionMode = (typeof REVIEWER_EXECUTION_MODES)[number];
+export type CompatibilityReviewerExecutionMode = (typeof COMPATIBILITY_REVIEWER_EXECUTION_MODES)[number];
 
 export function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutionMode | null {
     const text = String(value || '').trim();
@@ -402,6 +407,16 @@ export function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutio
     }
     return REVIEWER_EXECUTION_MODES.includes(text as ReviewerExecutionMode)
         ? text as ReviewerExecutionMode
+        : null;
+}
+
+export function normalizeCompatibilityReviewerExecutionMode(value: unknown): CompatibilityReviewerExecutionMode | null {
+    const text = String(value || '').trim();
+    if (!text) {
+        return null;
+    }
+    return COMPATIBILITY_REVIEWER_EXECUTION_MODES.includes(text as CompatibilityReviewerExecutionMode)
+        ? text as CompatibilityReviewerExecutionMode
         : null;
 }
 

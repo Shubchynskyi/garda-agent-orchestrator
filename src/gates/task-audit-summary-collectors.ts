@@ -284,17 +284,15 @@ export function readReviewTrustSummary(
                 ? reviewerRouting.fallback_reason_required
                 : null;
             const invalidContextIdentityScope =
-                (contextExecutionMode === 'delegated_subagent' && !contextReviewerSessionId.startsWith('agent:'))
-                || (contextExecutionMode === 'same_agent_fallback' && !contextReviewerSessionId.startsWith('self:'));
-            const missingContextFallbackReason =
-                contextExecutionMode === 'same_agent_fallback'
-                && contextFallbackReasonRequired !== false
-                && !contextFallbackReason;
+                contextExecutionMode !== 'delegated_subagent'
+                || !contextReviewerSessionId.startsWith('agent:');
             const invalidContextPolicy =
                 (contextDelegationRequired && contextExecutionMode !== 'delegated_subagent')
-                || (contextCapabilityLevel === 'single_agent_only' && contextExecutionMode === 'delegated_subagent')
-                || (contextExpectedExecutionMode === 'same_agent_fallback' && contextExecutionMode === 'delegated_subagent')
-                || (contextExecutionMode === 'same_agent_fallback' && contextFallbackAllowed !== true);
+                || contextCapabilityLevel === 'single_agent_only'
+                || contextExpectedExecutionMode === 'same_agent_fallback'
+                || contextFallbackAllowed === true
+                || contextFallbackReasonRequired === true
+                || !!contextFallbackReason;
             const receiptExecutionMode = typeof receipt.reviewer_execution_mode === 'string'
                 ? receipt.reviewer_execution_mode.trim()
                 : '';
@@ -308,18 +306,23 @@ export function readReviewTrustSummary(
                 !contextExecutionMode
                 || !contextReviewerSessionId
                 || invalidContextIdentityScope
-                || missingContextFallbackReason
                 || invalidContextPolicy
             ) {
+                return [];
+            }
+            if (receiptExecutionMode && receiptExecutionMode !== 'delegated_subagent') {
                 return [];
             }
             if (receiptExecutionMode && receiptExecutionMode !== contextExecutionMode) {
                 return [];
             }
+            if (receiptReviewerIdentity && !receiptReviewerIdentity.startsWith('agent:')) {
+                return [];
+            }
             if (receiptReviewerIdentity && receiptReviewerIdentity !== contextReviewerSessionId) {
                 return [];
             }
-            if (receiptFallbackReason && contextFallbackReason && receiptFallbackReason !== contextFallbackReason) {
+            if (receiptFallbackReason) {
                 return [];
             }
         }

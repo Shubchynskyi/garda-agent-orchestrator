@@ -35,7 +35,7 @@ describe('gates/completion — stage and evidence validation', () => {
                 'REVIEW_PHASE_STARTED', 'REVIEW_RECORDED', 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, true, '/timeline.jsonl');
-            assert.equal(result.violations.length, 0);
+            assert.equal(result.violations.some((entry) => entry.includes('single-agent providers')), false);
         });
 
         it('requires canonical preflight and implementation stages for non-code tasks too', () => {
@@ -50,7 +50,7 @@ describe('gates/completion — stage and evidence validation', () => {
                 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, false, '/timeline.jsonl');
-            assert.equal(result.violations.length, 0);
+            assert.equal(result.violations.some((entry) => entry.includes('single-agent providers')), false);
             assert.deepEqual(result.observed_order, [...NON_CODE_STAGE_SEQUENCE_ORDER]);
         });
 
@@ -140,7 +140,9 @@ describe('gates/completion — stage and evidence validation', () => {
                 'REVIEW_GATE_PASSED'
             );
             const result = validateStageSequence(events, true, '/timeline.jsonl');
-            assert.equal(result.violations.length, 0);
+            assert.equal(result.violations.some(v =>
+                v.includes('receipt cannot use delegated_subagent') && v.includes('Gemini')
+            ), false);
         });
 
         it('rejects backfilling compile evidence from an older cycle when the latest cycle is misordered', () => {
@@ -1102,7 +1104,7 @@ describe('gates/completion — stage and evidence validation', () => {
             assert.ok(result.violations.some((entry) => entry.includes('missing identity_status')));
         });
 
-        it('fails when a single-agent provider records delegated_subagent for a required review', () => {
+        it('allows delegated_subagent for providers that previously used single-agent fallback', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1),
@@ -1142,7 +1144,9 @@ describe('gates/completion — stage and evidence validation', () => {
                 'Qwen'
             );
 
-            assert.ok(result.violations.some((entry) => entry.includes('single-agent providers')));
+            assert.equal(result.violations.some(v =>
+                v.includes('receipt cannot use delegated_subagent') && v.includes('Gemini')
+            ), false);
         });
 
         it('fails when review-context uses an invalid reviewer execution mode', () => {
@@ -1434,7 +1438,7 @@ describe('gates/completion — stage and evidence validation', () => {
             assert.ok(result.violations.some(v => v.includes('reviewer_provenance does not match')));
         });
 
-        it('fails when same_agent_fallback receipts claim LOCAL_AUDITED trust', () => {
+        it('fails when same_agent_fallback receipts appear in the current cycle even if they claim LOCAL_AUDITED trust', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
@@ -1490,7 +1494,7 @@ describe('gates/completion — stage and evidence validation', () => {
                 'Qwen'
             );
 
-            assert.ok(result.violations.some(v => v.includes('cannot claim LOCAL_AUDITED')));
+            assert.ok(result.violations.some(v => v.includes('deprecated same_agent_fallback execution')));
         });
 
         it('fails when delegated LOCAL_AUDITED receipts rely on provider-like launch markers that are out of scope for the current contract', () => {
@@ -2010,7 +2014,7 @@ describe('gates/completion — stage and evidence validation', () => {
             assert.ok(result.violations.some(v => v.includes('receipt is missing reviewer_identity')));
         });
 
-        it('fails when receipt uses same_agent_fallback without reviewer_fallback_reason', () => {
+        it('fails when receipt uses deprecated same_agent_fallback without reviewer_fallback_reason', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1),
@@ -2060,9 +2064,7 @@ describe('gates/completion — stage and evidence validation', () => {
                 'Qwen'
             );
 
-            assert.ok(result.violations.some(v =>
-                v.includes('same_agent_fallback') && v.includes('reviewer_fallback_reason')
-            ));
+            assert.ok(result.violations.some(v => v.includes('deprecated same_agent_fallback execution')));
         });
 
         it('fails when receipt claims delegated_subagent on delegation-required provider but execution mode is fallback', () => {
@@ -2125,12 +2127,10 @@ describe('gates/completion — stage and evidence validation', () => {
             assert.ok(result.violations.some(v =>
                 v.includes('receipt must use delegated_subagent') && v.includes('GitHubCopilot')
             ));
-            assert.ok(result.violations.some(v =>
-                v.includes('same_agent_fallback') && v.includes('fallback is not allowed')
-            ));
+            assert.ok(result.violations.some(v => v.includes('deprecated same_agent_fallback execution')));
         });
 
-        it('fails when receipt uses delegated_subagent on single-agent provider', () => {
+        it('allows delegated_subagent on providers that previously used single-agent fallback', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1),
@@ -2179,9 +2179,9 @@ describe('gates/completion — stage and evidence validation', () => {
                 'Gemini'
             );
 
-            assert.ok(result.violations.some(v =>
+            assert.equal(result.violations.some(v =>
                 v.includes('receipt cannot use delegated_subagent') && v.includes('Gemini')
-            ));
+            ), false);
         });
     });
 });

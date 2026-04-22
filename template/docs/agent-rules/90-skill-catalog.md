@@ -29,8 +29,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Template must stay generic; project-specific specialists are not written back into `template/`.
 - Capability flags for optional specialists are managed in:
   `garda-agent-orchestrator/live/config/review-capabilities.json`.
-- Compact optional-skill discovery metadata is managed in:
+- Compact optional-skill discovery metadata for pack suggestion and init-time recommendations is managed in:
   `garda-agent-orchestrator/live/config/skills-index.json`.
+- Compact task-start optional-skill selection headlines are managed in:
+  `garda-agent-orchestrator/live/config/skills-headlines.json`.
 - Built-in domain packs are managed through:
   - `node garda-agent-orchestrator/bin/garda.js skills list --target-root "."`
   - `node garda-agent-orchestrator/bin/garda.js skills suggest --target-root "." --task-text "<task summary>" --changed-path "<path>"`
@@ -41,7 +43,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   `garda-agent-orchestrator/live/config/skill-packs.json`.
 - Built-in pack ids come from `skills list`; do not hardcode the list in downstream prompts.
 - Optional skill selection contract:
-  - read only `live/config/skills-index.json` when deciding what to suggest;
+  - read `live/config/skills-index.json` for pack suggestion and init-time optional-skill discovery;
+  - read `live/config/skills-headlines.json` for current-task optional-skill selection after task text and planned scope are known;
   - after the user selects a pack, install/copy it into `garda-agent-orchestrator/live/skills/**` without reading the full optional `SKILL.md`;
   - do not open a full optional `SKILL.md` unless that selected skill is actually being activated for a task or a hard activation rule requires it;
   - after a pack is installed, full optional skills live under `garda-agent-orchestrator/live/skills/**`.
@@ -99,8 +102,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
     - `devops-k8s` (or custom `infra-review`) for `required_reviews.infra=true`
     - `dependency-review` for `required_reviews.dependency=true`
 - `build-review-context` is the canonical proof that the selected review skill and its rule context were loaded; completion for code-changing tasks expects `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` in the task timeline.
-- `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; on delegation-capable providers, reviewers must be launched as fresh-context sub-agents and the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
-- Same-agent self-review is invalid by default on delegation-capable providers (Codex, Claude Code, GitHub Copilot CLI); fallback to `same_agent_fallback` is allowed only on platforms without sub-agent support or on conditional-delegation providers with an explicit fallback reason.
+- `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; reviewers must be launched as fresh-context sub-agents on every provider, and the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
+- Same-agent self-review is invalid for mandatory reviews. Historical `same_agent_fallback` artifacts remain diagnostic compatibility evidence only and cannot satisfy a current review cycle.
 - Before `DONE`, run:
   `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" ...`
 - Then run completion gate:

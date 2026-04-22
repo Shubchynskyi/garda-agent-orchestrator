@@ -15,13 +15,6 @@ import {
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
 import { getNodeBundleCliCommand, getNodeGateCommandPrefix, getNodeHumanCommitCommand } from './command-constants';
 
-function getConditionalDelegationProviderList(): string {
-    return getProviderEntries()
-        .filter((e) => e.reviewerCapabilityTier === 'delegation_conditional')
-        .map((e) => e.id)
-        .join(', ');
-}
-
 function getDelegationRequiredProviderLaunchLines(): readonly string[] {
     return Object.freeze(
         getProviderEntries()
@@ -613,13 +606,12 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 18. Log or inspect lifecycle events by task id via \`node bin/garda.js gate log-task-event ...\` / \`task-events-summary\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} log-task-event ...\` / \`task-events-summary\` inside a materialized/deployed workspace.
 
 ## Reviewer Launch Mapping (Mandatory Delegation)
-- Delegation-capable providers must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid when delegation is available.
+- Every provider must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid for mandatory reviews.
 ${getDelegationRequiredProviderLaunchLines().join('\n')}
-- ${getConditionalDelegationProviderList()}: delegate when provider sub-agent support is available; otherwise use fallback.
-- Platforms without task/sub-agent support (fallback only): run sequential isolated reviewer passes in one thread; never use provider-default reviewer agents.
+- Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
 - Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge for the current cycle.
-- Each review receipt must include \`reviewer_execution_mode\` (\`delegated_subagent\` or \`same_agent_fallback\`), \`reviewer_identity\`, and \`reviewer_fallback_reason\` when fallback mode is used.
+- Each review receipt must include \`reviewer_execution_mode\` (\`delegated_subagent\`) and \`reviewer_identity\` (\`agent:...\`). Same-agent fallback receipts are historical-only compatibility evidence and cannot satisfy a fresh mandatory review cycle.
 
 ## Skill Routing
 - Orchestration: \`${resolveBundleName()}/live/skills/orchestration/SKILL.md\`

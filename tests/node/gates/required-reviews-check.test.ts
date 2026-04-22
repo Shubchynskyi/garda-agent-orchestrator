@@ -1000,7 +1000,7 @@ describe('gates/required-reviews-check', () => {
             assert.ok(result.violations.some((violation) => violation.includes('missing reviewer_provenance')));
         });
 
-        it('rejects same_agent_fallback receipts that claim LOCAL_AUDITED trust', () => {
+        it('rejects same_agent_fallback receipts as deprecated current-cycle evidence even when they claim LOCAL_AUDITED trust', () => {
             const result = validateReviewArtifactGateEligibility({
                 resolvedTaskId: 'T-105',
                 reviewKey: 'code',
@@ -1064,7 +1064,7 @@ describe('gates/required-reviews-check', () => {
                 }
             });
 
-            assert.ok(result.violations.some((violation) => violation.includes('cannot claim LOCAL_AUDITED')));
+            assert.ok(result.violations.some((violation) => violation.includes('deprecated same_agent_fallback evidence')));
         });
 
         it('rejects delegated LOCAL_AUDITED claims even when routing telemetry carries provider-like launch markers', () => {

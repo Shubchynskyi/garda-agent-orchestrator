@@ -802,7 +802,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('keeps downstream test review blocked when the rerun still needs a fresh current-cycle code review', async () => {
+    it('reuses current-cycle code review evidence and unblocks downstream test review when runtime code scope is unchanged', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-reuse-code-review';
         seedTaskQueue(repoRoot, taskId);
@@ -957,10 +957,15 @@ describe('cli/commands/gates – review-reuse suites', () => {
             process.exitCode = previousExitCode;
         }
 
+        const refreshedReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(refreshedReceipt.reviewer_execution_mode, 'delegated_subagent');
+        assert.equal(refreshedReceipt.reviewer_identity, codeExecution.reviewerIdentity);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
-        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
-        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-test-review-context.json`)), false);
+        assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
+        assert.equal(reviewContext.reviewer_routing.reviewer_session_id, codeExecution.reviewerIdentity);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-test-review-context.json`)), true);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         let latestCompileSequence = -1;
         for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -985,7 +990,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
         assert.ok(latestCompileSequence >= 0);
         assert.ok(reviewPhaseSequences.some((sequence) => sequence < latestCompileSequence));
         assert.ok(recordedEvents.some(({ index }) => index < latestCompileSequence));
-        assert.equal(recordedEvents.some(({ index }) => index > latestCompileSequence), false);
+        assert.equal(recordedEvents.some(({ index }) => index > latestCompileSequence), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -314,22 +314,25 @@ describe('provider-registry: reviewer routing sync', () => {
             .filter((e) => e.reviewerCapabilityTier === 'delegation_required')
             .map((e) => e.id)
             .sort();
-        assert.deepStrictEqual(delegationRequired, ['Claude', 'Codex', 'GitHubCopilot']);
+        assert.deepStrictEqual(
+            delegationRequired,
+            ['Antigravity', 'Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Junie', 'Qwen', 'Windsurf']
+        );
     });
 
-    it('delegation_conditional providers match known set', () => {
+    it('delegation_conditional providers are no longer present in the strict delegated review contract', () => {
         const delegationConditional = getProviderEntries()
             .filter((e) => e.reviewerCapabilityTier === 'delegation_conditional')
             .map((e) => e.id)
             .sort();
-        assert.deepStrictEqual(delegationConditional, ['Antigravity', 'Junie', 'Windsurf']);
+        assert.deepStrictEqual(delegationConditional, []);
     });
 
-    it('single_agent_only providers match known set', () => {
+    it('single_agent_only providers are no longer present in the strict delegated review contract', () => {
         const singleAgent = getProviderEntries()
             .filter((e) => e.reviewerCapabilityTier === 'single_agent_only')
             .map((e) => e.id)
             .sort();
-        assert.deepStrictEqual(singleAgent, ['Gemini', 'Qwen']);
+        assert.deepStrictEqual(singleAgent, []);
     });
 });

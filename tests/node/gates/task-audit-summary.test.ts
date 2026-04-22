@@ -617,8 +617,8 @@ describe('gates/task-audit-summary', () => {
                 code: 'REVIEW PASSED',
                 test: 'TEST REVIEW PASSED'
             });
-            assert.equal(result.final_closeout.review_trust?.status, 'ASSERTED_LOCAL_ONLY');
-            assert.ok(result.final_closeout.review_trust?.visible_summary_line?.includes('LOCAL_ASSERTED'));
+            assert.equal(result.final_closeout.review_trust?.status, 'UNAVAILABLE');
+            assert.ok(result.final_closeout.review_trust?.visible_summary_line?.includes('incomplete or invalid'));
             assert.ok(result.final_closeout.review_trust?.policy_summary_line?.includes('asserted local review may finish this'));
             assert.equal(result.final_closeout.implementation_summary.docs_updated, true);
             assert.deepEqual(result.final_closeout.docs.docs_updated, ['docs/cli-reference.md']);
@@ -912,7 +912,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
         });
 
-        it('accepts the current review context from REVIEW_RECORDED telemetry when it uses a noncanonical path', () => {
+        it('keeps trust unavailable when REVIEW_RECORDED telemetry points to a deprecated same_agent_fallback context at a noncanonical path', () => {
             const crypto = require('node:crypto');
             const reviewContent = '# Code Review\nREVIEW PASSED';
             const customReviewContextPath = path.join(reviewsDir, 'custom-code-review-context.json');
@@ -959,8 +959,8 @@ describe('gates/task-audit-summary', () => {
                 { code: customReviewContextPath }
             );
 
-            assert.equal(summary?.status, 'ASSERTED_LOCAL_ONLY');
-            assert.ok(summary?.visible_summary_line?.includes('LOCAL_ASSERTED'));
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
         });
 
         it('degrades review trust summary when the current review context routing diverges from the receipt', () => {
@@ -1196,7 +1196,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
         });
 
-        it('accepts same_agent_fallback review-context without fallback_reason when policy marks it optional', () => {
+        it('keeps same_agent_fallback review-context unavailable even when legacy policy marked fallback_reason optional', () => {
             const crypto = require('node:crypto');
             const reviewContent = '# Code Review\nREVIEW PASSED';
             writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
@@ -1241,8 +1241,8 @@ describe('gates/task-audit-summary', () => {
                 computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`))
             );
 
-            assert.equal(summary?.status, 'ASSERTED_LOCAL_ONLY');
-            assert.ok(summary?.visible_summary_line?.includes('LOCAL_ASSERTED'));
+            assert.equal(summary?.status, 'UNAVAILABLE');
+            assert.ok(summary?.visible_summary_line?.includes('incomplete or invalid'));
         });
 
         it('infers a conventional-style commit suggestion from task metadata and changed scope', () => {
@@ -2087,10 +2087,10 @@ describe('gates/task-audit-summary', () => {
                 review_trust: {
                     status: 'ASSERTED_LOCAL_ONLY',
                     trust_levels: ['LOCAL_ASSERTED'],
-                    execution_modes: ['same_agent_fallback'],
+                    execution_modes: ['DELEGATED_SUBAGENT'],
                     independent_review_attested: false,
                     completion_policy: 'ASSERTED_LOCAL_ALLOWED',
-                    visible_summary_line: 'Review trust: LOCAL_ASSERTED via same_agent_fallback; not independent audited review.',
+                    visible_summary_line: 'Review trust: LOCAL_ASSERTED via DELEGATED_SUBAGENT; not independent audited review.',
                     policy_summary_line: 'Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'
                 },
                 workflow: {
@@ -2110,7 +2110,7 @@ describe('gates/task-audit-summary', () => {
             });
 
             assert.ok(renderedMarkdown.includes('Mandatory full-suite: true'));
-            assert.ok(renderedMarkdown.includes('Review trust: LOCAL_ASSERTED via same_agent_fallback; not independent audited review.'));
+            assert.ok(renderedMarkdown.includes('Review trust: LOCAL_ASSERTED via DELEGATED_SUBAGENT; not independent audited review.'));
             assert.ok(renderedMarkdown.includes('Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'));
         });
 

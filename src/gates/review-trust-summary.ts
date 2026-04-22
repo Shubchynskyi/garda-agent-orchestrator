@@ -1,6 +1,6 @@
 import { normalizeReviewReceiptReviewerProvenance } from '../gate-runtime/review-context';
 
-type ReviewerExecutionMode = 'DELEGATED_SUBAGENT' | 'SAME_AGENT_FALLBACK';
+type ReviewerExecutionMode = 'DELEGATED_SUBAGENT';
 
 export interface ReviewTrustEvidenceEntry {
     review_type: string;
@@ -48,7 +48,7 @@ function normalizeLocalTrustLevel(value: unknown): 'LOCAL_ASSERTED' | 'LOCAL_AUD
 
 function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutionMode | null {
     const normalized = normalizeToken(value);
-    if (normalized === 'DELEGATED_SUBAGENT' || normalized === 'SAME_AGENT_FALLBACK') {
+    if (normalized === 'DELEGATED_SUBAGENT') {
         return normalized;
     }
     return null;
@@ -164,21 +164,16 @@ export function buildReviewTrustSummary(
         const missingDelegatedProvenance =
             normalizedExecutionMode === 'DELEGATED_SUBAGENT'
             && normalizedProvenance == null;
-        const missingFallbackReason =
-            normalizedExecutionMode === 'SAME_AGENT_FALLBACK'
-            && fallbackReasonRequired !== false
-            && !normalizedFallbackReason;
         const invalidDelegatedIdentity =
             normalizedExecutionMode === 'DELEGATED_SUBAGENT'
             && (!normalizedReviewerIdentity || !normalizedReviewerIdentity.startsWith('agent:'));
-        const invalidFallbackIdentity =
-            normalizedExecutionMode === 'SAME_AGENT_FALLBACK'
-            && (!normalizedReviewerIdentity || !normalizedReviewerIdentity.startsWith('self:'));
         return {
             trust_level: normalizedTrustLevel,
             execution_mode: normalizedExecutionMode,
-            invalid_identity: !normalizedReviewerIdentity || invalidDelegatedIdentity || invalidFallbackIdentity,
-            invalid_fallback_reason: missingFallbackReason,
+            invalid_identity: !normalizedReviewerIdentity || invalidDelegatedIdentity,
+            invalid_fallback_reason:
+                !!normalizedFallbackReason
+                || fallbackReasonRequired === true,
             invalid_provenance: (provenanceProvided && normalizedProvenance == null) || missingDelegatedProvenance
         };
     });

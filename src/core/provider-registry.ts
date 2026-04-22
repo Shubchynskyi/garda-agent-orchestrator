@@ -72,13 +72,11 @@ function validateProviderEntries(entries: readonly ProviderEntry[]): void {
     }
 
     for (const entry of entries) {
-        if (entry.reviewerCapabilityTier === 'delegation_required') {
-            if (!entry.reviewerLaunchLabel?.trim()) {
-                throw new Error(`Delegation-required provider '${entry.id}' is missing reviewerLaunchLabel.`);
-            }
-            if (!entry.delegatedReviewerLaunchInstruction?.trim()) {
-                throw new Error(`Delegation-required provider '${entry.id}' is missing delegatedReviewerLaunchInstruction.`);
-            }
+        if (!entry.reviewerLaunchLabel?.trim()) {
+            throw new Error(`Delegation-required provider '${entry.id}' is missing reviewerLaunchLabel.`);
+        }
+        if (!entry.delegatedReviewerLaunchInstruction?.trim()) {
+            throw new Error(`Delegation-required provider '${entry.id}' is missing delegatedReviewerLaunchInstruction.`);
         }
 
         if (!entry.bridge) {
@@ -143,16 +141,20 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
     {
         id: 'Gemini',
         displayLabel: 'Gemini',
+        reviewerLaunchLabel: 'Gemini',
         entrypointFile: 'GEMINI.md',
-        reviewerCapabilityTier: 'single_agent_only',
+        reviewerCapabilityTier: 'delegation_required',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
         bridge: null,
         aliases: ['gemini', 'gemini.md']
     },
     {
         id: 'Qwen',
         displayLabel: 'Qwen',
+        reviewerLaunchLabel: 'Qwen',
         entrypointFile: 'QWEN.md',
-        reviewerCapabilityTier: 'single_agent_only',
+        reviewerCapabilityTier: 'delegation_required',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
         bridge: null,
         aliases: ['qwen', 'qwen.md']
     },
@@ -177,8 +179,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
     {
         id: 'Windsurf',
         displayLabel: 'Windsurf',
+        reviewerLaunchLabel: 'Windsurf',
         entrypointFile: '.windsurf/rules/rules.md',
-        reviewerCapabilityTier: 'delegation_conditional',
+        reviewerCapabilityTier: 'delegation_required',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents through the provider bridge.',
         bridge: {
             orchestratorRelativePath: '.windsurf/agents/orchestrator.md',
             managedDirectoryRelativePath: '.windsurf/agents',
@@ -193,8 +197,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
     {
         id: 'Junie',
         displayLabel: 'Junie',
+        reviewerLaunchLabel: 'Junie',
         entrypointFile: '.junie/guidelines.md',
-        reviewerCapabilityTier: 'delegation_conditional',
+        reviewerCapabilityTier: 'delegation_required',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents through the provider bridge.',
         bridge: {
             orchestratorRelativePath: '.junie/agents/orchestrator.md',
             managedDirectoryRelativePath: '.junie/agents',
@@ -209,8 +215,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
     {
         id: 'Antigravity',
         displayLabel: 'Antigravity',
+        reviewerLaunchLabel: 'Antigravity',
         entrypointFile: '.antigravity/rules.md',
-        reviewerCapabilityTier: 'delegation_conditional',
+        reviewerCapabilityTier: 'delegation_required',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents through the provider bridge.',
         bridge: {
             orchestratorRelativePath: '.antigravity/agents/orchestrator.md',
             managedDirectoryRelativePath: '.antigravity/agents',

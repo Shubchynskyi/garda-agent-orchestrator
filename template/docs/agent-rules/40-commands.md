@@ -30,41 +30,39 @@ Replace these defaults with repository-specific commands when the real project d
 ### Setup
 ```bash
 npm install --prefer-offline --no-fund --no-audit
-npx garda-agent-orchestrator setup
+node garda-agent-orchestrator/bin/garda.js setup --target-root "."
 ```
 
 ### Run
 ```bash
-npx garda-agent-orchestrator status --target-root "."
-npx garda-agent-orchestrator agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md" --project-rules-updated yes --skills-prompted yes
-npx garda-agent-orchestrator doctor --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
-npx garda-agent-orchestrator --help
+node garda-agent-orchestrator/bin/garda.js status --target-root "."
+node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "AGENTS.md, CLAUDE.md, GEMINI.md, QWEN.md, .github/copilot-instructions.md, .windsurf/rules/rules.md, .junie/guidelines.md, .antigravity/rules.md" --project-rules-updated yes --skills-prompted yes
+node garda-agent-orchestrator/bin/garda.js doctor --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
+node garda-agent-orchestrator/bin/garda.js --help
 ```
 
 ### Skill Packs
 ```bash
-npx garda-agent-orchestrator skills list --target-root "."
-npx garda-agent-orchestrator skills suggest --target-root "." --task-text "<task summary>" --changed-path "<path>"
-npx garda-agent-orchestrator skills add node-backend --target-root "."
-npx garda-agent-orchestrator skills validate --target-root "."
+node garda-agent-orchestrator/bin/garda.js skills list --target-root "."
+node garda-agent-orchestrator/bin/garda.js skills suggest --target-root "."
+node garda-agent-orchestrator/bin/garda.js skills add node-backend --target-root "."
+node garda-agent-orchestrator/bin/garda.js skills validate --target-root "."
 ```
 
 ### Test
 ```bash
 npm test
-npm run test:integration
-npm run test:e2e
+node --test .node-build/tests/node/packaging/pack-smoke.test.js
 ```
 
 Rules:
-- Direct generated-artifact test consumers are producer-consumer flows: refresh the artifact producer first, then run the consumer sequentially.
-- Do not launch producer and generated-artifact consumer commands as parallel raw shell sidecars; that bypasses guarded validation-chain checks.
+- Direct `.node-build` test consumers are producer-consumer flows: refresh `.node-build` first with `npm run build:node-foundation` or `npm test`, then run the consumer.
+- Do not launch the producer and direct `.node-build` consumer as parallel raw shell commands; that bypasses the guarded validation-chain path.
 
 ### Quality
 ```bash
-npm run lint
-npx tsc --noEmit --pretty false
-npm run format:check
+npm run typecheck
+npm run validate:version-parity
 ```
 
 ### Compile Gate (Mandatory)
@@ -80,7 +78,8 @@ Rules:
 ### Build and Package
 ```bash
 npm run build
-docker build .
+npm pack
+npm publish
 ```
 
 ## Compact Command Policy
@@ -197,17 +196,17 @@ Examples that must not be first pass without a reason:
 Canonical gate surface is the Node CLI router.
 
 ```bash
-node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --artifact-path "garda-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json" --metrics-path "garda-agent-orchestrator/runtime/metrics.jsonl"
+node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --planned-changed-file "src/<planned-file>" --planned-changed-file "garda-agent-orchestrator/live/docs/agent-rules/<planned-rule>.md" --artifact-path "garda-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json" --metrics-path "garda-agent-orchestrator/runtime/metrics.jsonl"
 node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
 node garda-agent-orchestrator/bin/garda.js gate classify-change --changed-file "src/<example-file>" --task-intent "<task summary>" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --metrics-path "garda-agent-orchestrator/runtime/metrics.jsonl"
 node garda-agent-orchestrator/bin/garda.js gate classify-change --use-staged --task-intent "<task summary>" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --metrics-path "garda-agent-orchestrator/runtime/metrics.jsonl"
+node garda-agent-orchestrator/bin/garda.js gate classify-change --task-id "<task-id>" --task-mode-path "garda-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json" --changed-file "src/<example-file>" --task-intent "<task summary>" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
 node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md"
 node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md"
 node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "SKIPPED_BY_OVERRIDE" --skip-reviews "code" --skip-reason "1-line config hotfix; rollback plan exists"
 node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "No behavior/contract/ops-doc impact."
 node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --sensitive-scope-reviewed true --rationale "API trigger fired but changes are internal-only: no public contract affected."
-node garda-agent-orchestrator/bin/garda.js gate full-suite-validation --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --repo-root "."
 node garda-agent-orchestrator/bin/garda.js gate completion-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"
 node garda-agent-orchestrator/bin/garda.js gate log-task-event --task-id "<task-id>" --event-type "PLAN_CREATED" --outcome "INFO" --message "<short stage message>" --actor "orchestrator"
 node garda-agent-orchestrator/bin/garda.js gate task-events-summary --task-id "<task-id>"
@@ -215,15 +214,17 @@ node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<t
 node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json
 node garda-agent-orchestrator/bin/garda.js gate build-scoped-diff --review-type "<db|security|refactor>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"
 node garda-agent-orchestrator/bin/garda.js gate build-review-context --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth <1|2|3> --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"
-node garda-agent-orchestrator/bin/garda.js gate record-review-result --task-id "<task-id>" --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --review-output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md" --reviewer-execution-mode "<delegated_subagent|same_agent_fallback>" --reviewer-identity "<agent:...|self:...>"
-node garda-agent-orchestrator/bin/garda.js gate record-review-result --task-id "<task-id>" --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --review-output-stdin --reviewer-execution-mode "<delegated_subagent|same_agent_fallback>" --reviewer-identity "<agent:...|self:...>"
+node garda-agent-orchestrator/bin/garda.js gate record-review-result --task-id "<task-id>" --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --review-output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>"
+node garda-agent-orchestrator/bin/garda.js gate record-review-result --task-id "<task-id>" --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --review-output-stdin --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>"
 node garda-agent-orchestrator/bin/garda.js gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"
 node garda-agent-orchestrator/bin/garda.js gate human-commit --message "<message>"
 ```
 
 Notes:
 - Enter task mode explicitly before preflight; downstream compile/review/completion gates fail without `runtime/reviews/<task-id>-task-mode.json` and timeline event `TASK_MODE_ENTERED`.
+- When the likely task file list is already known, pass repeated `--planned-changed-file` entries to `enter-task-mode`. If any planned path is under protected orchestrator roots, the gate must fail early with a remediation command that reruns the same task-mode entry with explicit `--orchestrator-work`; it must not silently auto-enable orchestrator mode.
 - After opening baseline downstream rules, record them explicitly via `load-rule-pack --stage TASK_ENTRY`; `classify-change` fails without rule-pack evidence and timeline event `RULE_PACK_LOADED`.
+- When task-mode evidence lives at a nondefault path, pass the same `--task-mode-path` through `classify-change`, `load-rule-pack`, `compile-gate`, `restart-coherent-cycle`, and `restart-review-cycle`; mixed paths are treated as provenance drift.
 - After preflight decides the required reviews, re-run `load-rule-pack --stage POST_PREFLIGHT --preflight-path ...` with the actual downstream rule files loaded for this task.
 - For one task cycle, `classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate` is a strict sequence, not a parallelizable set. If a newer preflight is classified, rerun downstream gates from `load-rule-pack --stage POST_PREFLIGHT` against that latest preflight before compile.
 - `record-review-result` accepts exactly one reviewer-output source: `--review-output-path` or `--review-output-stdin`.
@@ -244,14 +245,14 @@ Notes:
 - If explicit `--*-review-verdict` flags are omitted, `required-reviews-check` defaults the expected required verdicts from `preflight.required_reviews` for the current task cycle.
 - These defaults do not relax validation: the gate still requires current-cycle artifacts, receipts, review-context bindings, and exact pass tokens; it must not auto-scan `runtime/reviews` for a convenient PASS.
 - `required-reviews-check` validates workspace drift against compile evidence scope snapshot; any post-compile changes require re-run of compile gate.
-- `full-suite-validation` is controlled by `garda-agent-orchestrator/live/config/workflow-config.json` (`full_suite_validation.enabled`). When enabled, run it after `doc-impact-gate` and before `completion-gate`; when disabled (default), it emits SKIPPED and `completion-gate` does not require the artifact.
-- `full-suite-validation` binds to the current cycle (task id, preflight path, preflight hash, compile timestamp); stale artifacts from a different cycle are rejected by `completion-gate`.
 - `required-reviews-check` supports audited override only for code review in tiny low-risk scopes; all other review overrides are rejected.
 - `doc-impact-gate` is mandatory before completion; it writes `runtime/reviews/<task-id>-doc-impact.json`. When the preflight detected `api`, `security`, `infra`, `dependency`, or `db` triggers, `NO_DOC_UPDATES` requires `--sensitive-scope-reviewed true` with a rationale explaining why no documentation updates are needed.
 - Run `build-review-context` before every required reviewer invocation, even when token economy is inactive; the generated review-context artifact is also lifecycle evidence.
 - `build-review-context` writes `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` automatically for the selected review skill.
+- Upstream review dependencies are launch-time guards, not only gate-time guards. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt already exist for the same cycle.
+- Parallel reviewer launch is allowed only for independent review types with no dependency edge in the current cycle; `test` is not independent when upstream non-`test` reviews are required.
 - `classify-change` auto-emits `PREFLIGHT_STARTED` and, on failure, `PREFLIGHT_FAILED`; `compile-gate` auto-emits `IMPLEMENTATION_STARTED` before compile execution.
-- `completion-gate` validates task-mode evidence, rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, full-suite-validation evidence (when enabled), rework-after-failure evidence, ordered lifecycle evidence (`PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`), real review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), required review artifacts, and best-effort task-event integrity before `DONE`.
+- `completion-gate` validates task-mode evidence, rule-pack evidence, compile evidence, review-gate evidence, doc-impact evidence, rework-after-failure evidence, ordered lifecycle evidence (`PREFLIGHT_CLASSIFIED`, `IMPLEMENTATION_STARTED`, `REVIEW_PHASE_STARTED`), real review-skill telemetry (`SKILL_SELECTED`, `SKILL_REFERENCE_LOADED`), required review artifacts, and best-effort task-event integrity before `DONE`.
 - `build-scoped-diff` can also write `runtime/reviews/<task-id>-<review-type>-scoped.json` so reviewer prompts know whether scoped diff fell back to full diff.
 - `build-review-context` writes `runtime/reviews/<task-id>-<review-type>-review-context.json` plus a sibling markdown snapshot referenced by `rule_context.artifact_path`; the JSON records selected rule pack, omitted sections, sanitized rule-context metadata, and scoped-diff fallback evidence for token economy mode.
 - Classification roots and trigger regexes are configurable in `garda-agent-orchestrator/live/config/paths.json`.
@@ -262,3 +263,10 @@ Notes:
 - Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.
 - Human-readable timeline can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-events-summary`; summary output includes `IntegrityStatus`.
 - Compact task audit summary can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>"`; it shows status, gates, changed files, evidence paths, blockers, and final closeout contract data. Use `--as-json` for structured output; on `PASS` it also materializes canonical `runtime/reviews/<task-id>-final-closeout.{json,md}` artifacts. Non-zero exit when status is not `PASS`.
+
+## Project Discovery Snapshot
+- Discovery source: git_index_and_worktree
+- Files considered: 515
+- Detected stacks: Node.js or JavaScript, TypeScript
+- Top-level directories: .agents, .claude, .github, .idea, .node-build, .pytest_cache, .review-temp, .scripts-build, .vscode, docs
+- Full report: `garda-agent-orchestrator/live/project-discovery.md`

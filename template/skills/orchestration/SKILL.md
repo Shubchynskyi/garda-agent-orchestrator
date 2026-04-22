@@ -140,9 +140,9 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
    - Node: `node garda-agent-orchestrator/bin/garda.js gate build-review-context --review-type "<review-type>" --depth "<1|2|3>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"`
    - This step is mandatory even when token economy is inactive because it auto-emits `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED`.
 16. Run only required independent reviews from preflight:
-    - preferred when available: clean-context reviewer agents
-    - fallback for single-agent platforms: sequential independent review passes with explicit reviewer role prompt and isolated checklist per pass.
-    - fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewer and do not require extra user confirmation to start review passes.
+    - mandatory on every provider: clean-context delegated reviewer sub-agents with isolated review context.
+    - same-agent fallback does not satisfy the mandatory review workflow.
+    - if a provider bridge cannot launch delegated reviewers, stop and treat the task as blocked until delegated review support exists.
     - baseline: `code`, `db`, `security`, `refactor`
     - optional when enabled in `garda-agent-orchestrator/live/config/review-capabilities.json`: `api`, `test`, `performance`, `infra`, `dependency`
     - when token economy mode is active, generate review-context artifact and attach both the JSON metadata artifact and its `rule_context.artifact_path` markdown snapshot to the reviewer prompt.
@@ -197,20 +197,23 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 
 ## Reviewer Agent Execution (Platform-Agnostic)
 - Apply this section on every platform.
-- Mandatory mode on delegation-capable providers: launch each required reviewer as a fresh-context sub-agent with isolated context. Same-agent self-review is invalid by default when delegation is available.
+- Mandatory reviews must launch each required reviewer as a fresh-context delegated sub-agent with isolated context on every provider.
 - Do not use provider-default reviewer agents that bypass this contract.
 - Provider delegation capability and platform launch mapping:
   - Codex (delegation-capable): use sub-agents with isolated review context.
   - Claude Code (delegation-capable): use Agent tool/sub-agents with `fork_context=false`.
+  - Gemini (delegation-capable): use delegated reviewer sub-agents with isolated context.
+  - Qwen (delegation-capable): use delegated reviewer sub-agents with isolated context.
   - GitHub Copilot CLI (delegation-capable): use `task` tool with `agent_type="general-purpose"`; run one reviewer per isolated task execution.
-  - Windsurf, Junie, Antigravity: delegate when provider sub-agent support is available; otherwise use fallback.
-  - Platforms without task/sub-agent support (fallback): use sequential single-agent fallback with explicit reviewer role prompts and isolated checklists.
+  - Windsurf (delegation-capable): use delegated reviewer sub-agents through the provider bridge.
+  - Junie (delegation-capable): use delegated reviewer sub-agents through the provider bridge.
+  - Antigravity (delegation-capable): use delegated reviewer sub-agents through the provider bridge.
+  - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
 - Reviewer routing metadata contract:
-  - Each reviewer invocation must capture `reviewer_execution_mode` (`delegated_subagent` or `same_agent_fallback`) and `reviewer_identity` (provider-assigned session/agent id, or `self:<task-id>` for fallback).
-  - When `same_agent_fallback` is used on a conditional/unknown delegation provider, record `reviewer_fallback_reason` in the receipt.
+  - Each reviewer invocation must capture `reviewer_execution_mode` (`delegated_subagent`) and `reviewer_identity` (`agent:<reviewer-id>`).
   - `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
-  - Review receipts must include `reviewer_execution_mode`, `reviewer_identity`, and `reviewer_fallback_reason` when fallback mode is used.
-  - Gate diagnostics (`required-reviews-check`, `completion-gate`) must report whether each review used delegated fresh-context execution or fallback mode.
+  - Historical `same_agent_fallback` artifacts are compatibility-only diagnostics and must not satisfy a fresh mandatory review cycle.
+  - Gate diagnostics (`required-reviews-check`, `completion-gate`) must report whether each review has valid delegated fresh-context execution evidence.
 - For each required review where preflight `required_reviews.<type>=true`:
   1. Launch reviewer using the platform mapping above with mandatory delegation on capable providers.
   2. Prompt must include:
@@ -225,7 +228,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
       - required output contract:
         - verdict token (`... PASSED` or `... FAILED`);
         - findings list with file evidence;
-        - `reviewer_execution_mode` used for this review (`delegated_subagent` or `same_agent_fallback`);
+        - `reviewer_execution_mode` used for this review (`delegated_subagent`);
         - when verdict is pass, keep active `Findings by Severity` and `Residual Risks` empty (`none`); move any accepted non-blocking follow-up to `Deferred Findings` and include `Justification:` in each deferred entry;
         - review artifact write path: `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>.md`.
    3. Feed reviewer output into `record-review-result` using exactly one source: `--review-output-path` or `--review-output-stdin`.
@@ -250,8 +253,8 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
   - Node: `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "<path>" --task-id "<task-id>" --decision "<NO_DOC_UPDATES|DOCS_UPDATED>" --behavior-changed "<true|false>" --changelog-updated "<true|false>" --rationale "<why>"`
 - After review gate pass, run completion gate before `DONE`:
   - Node: `node garda-agent-orchestrator/bin/garda.js gate completion-gate --preflight-path "<path>" --task-id "<task-id>"`
-- In single-agent fallback mode (no Agent tool), run the same review scopes sequentially with explicit role prompts and use the same verdict tokens and artifact contract. Each review artifact and receipt must record `reviewer_execution_mode: same_agent_fallback` and `reviewer_identity: self:<task-id>`.
-- HARD STOP: on delegation-capable providers, same-agent self-review is invalid. If the provider supports sub-agents or isolated task execution, the orchestrator must use delegated reviewer launch; skipping delegation without an explicit fallback reason is a workflow violation.
+- Historical `same_agent_fallback` artifacts may be read for diagnostics only; they do not satisfy a fresh mandatory review cycle.
+- HARD STOP: if the provider cannot launch delegated reviewer sub-agents, the mandatory review workflow is blocked until delegated launch support exists.
 
 ## Task Event Logging Commands
 - Node:

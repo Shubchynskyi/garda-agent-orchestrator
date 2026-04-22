@@ -249,7 +249,7 @@ export function emitReviewerDelegationRoutedEvent(
     repoRoot: string,
     taskId: string,
     reviewType: string,
-    executionMode: 'delegated_subagent' | 'same_agent_fallback',
+    executionMode: 'delegated_subagent',
     reviewerSessionId: string,
     fallbackReason: string | null = null,
     options: AutoEmitOptions = {}
@@ -275,7 +275,7 @@ export async function emitReviewerDelegationRoutedEventAsync(
     repoRoot: string,
     taskId: string,
     reviewType: string,
-    executionMode: 'delegated_subagent' | 'same_agent_fallback',
+    executionMode: 'delegated_subagent',
     reviewerSessionId: string,
     fallbackReason: string | null = null,
     options: AutoEmitOptions = {}

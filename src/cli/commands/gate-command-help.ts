@@ -229,21 +229,21 @@ function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<R
         'record-review-result': {
             summary: 'Materialize reviewer output into canonical artifacts, receipts, and routing telemetry.',
             usage: Object.freeze([
-                `${cliPrefix} gate record-review-result --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-output.md`)}" --reviewer-execution-mode "<delegated_subagent|same_agent_fallback>" --reviewer-identity "<agent:...|self:...>" --repo-root "."`
+                `${cliPrefix} gate record-review-result --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-output.md`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`
             ]),
             taskIdRemediation: true
         },
         'record-review-routing': {
             summary: 'Record reviewer routing metadata for a prepared review context.',
             usage: Object.freeze([
-                `${cliPrefix} gate record-review-routing --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "<delegated_subagent|same_agent_fallback>" --reviewer-identity "<agent:...|self:...>" --repo-root "."`
+                `${cliPrefix} gate record-review-routing --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`
             ]),
             taskIdRemediation: true
         },
         'record-review-receipt': {
             summary: 'Record a review receipt when verdict capture and routing were completed externally.',
             usage: Object.freeze([
-                `${cliPrefix} gate record-review-receipt --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --reviewer-execution-mode "<delegated_subagent|same_agent_fallback>" --reviewer-identity "<agent:...|self:...>" --repo-root "."`
+                `${cliPrefix} gate record-review-receipt --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`
             ]),
             taskIdRemediation: true
         },

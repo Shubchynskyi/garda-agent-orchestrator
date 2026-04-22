@@ -425,7 +425,7 @@ REVIEW PASSED
             assert.ok(result.violations.some((entry: string) => entry.includes('inconsistent reviewer identity')));
         });
 
-        it('fails conditional-provider fallback without explicit reason', () => {
+        it('fails deprecated same_agent_fallback evidence for providers that previously used conditional routing', () => {
             const content = '# Review\nChecked `src/gate-runtime/lifecycle-events.ts` receipt telemetry integration with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {
@@ -466,10 +466,10 @@ REVIEW PASSED
             });
 
             assert.equal(result.status, 'FAILED');
-            assert.ok(result.violations.some((entry: string) => entry.includes('reviewer_fallback_reason')));
+            assert.ok(result.violations.some((entry: string) => entry.includes('same_agent_fallback')));
         });
 
-        it('fails single-agent-provider fallback without reviewer_fallback_reason', () => {
+        it('fails deprecated same_agent_fallback evidence for providers that previously used single-agent routing', () => {
             const content = '# Review\nChecked `src/gates/reviewer-routing.ts` enforcement with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {
@@ -510,7 +510,7 @@ REVIEW PASSED
             });
 
             assert.equal(result.status, 'FAILED');
-            assert.ok(result.violations.some((entry: string) => entry.includes('reviewer_fallback_reason')));
+            assert.ok(result.violations.some((entry: string) => entry.includes('same_agent_fallback')));
         });
 
         it('fails when review-context artifact hash changes after receipt recording', () => {

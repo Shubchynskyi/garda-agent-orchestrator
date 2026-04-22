@@ -84,7 +84,7 @@ test('assessUpstreamReviewDependencyStatus accepts upstream PASS with split cano
 
         const reviewContent = [
             '# Review',
-            'Validated split canonical/runtime routing across `src/gates/review-dependencies.ts`, `src/gates/reviewer-routing.ts`, and `src/gates/required-reviews-check.ts`, confirming that upstream PASS evidence remains bound to the audited Antigravity execution provider while canonical ownership stays Codex and fallback-mode receipts still line up with the active runtime identity for downstream dependency checks.',
+            'Validated split canonical/runtime routing across `src/gates/review-dependencies.ts`, `src/gates/reviewer-routing.ts`, and `src/gates/required-reviews-check.ts`, confirming that upstream PASS evidence remains bound to the audited Antigravity execution provider while canonical ownership stays Codex and delegated reviewer receipts still line up with the active runtime identity for downstream dependency checks.',
             '## Findings by Severity',
             'none',
             '## Residual Risks',
@@ -107,9 +107,9 @@ test('assessUpstreamReviewDependencyStatus accepts upstream PASS with split cano
                 execution_provider: 'Antigravity',
                 execution_provider_source: 'provider_bridge',
                 identity_status: 'resolved',
-                actual_execution_mode: 'same_agent_fallback',
-                reviewer_session_id: 'self:T-105',
-                fallback_reason: 'single-agent provider'
+                actual_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:antigravity-reviewer',
+                fallback_reason: null
             }
         });
 
@@ -137,9 +137,9 @@ test('assessUpstreamReviewDependencyStatus accepts upstream PASS with split cano
             scope_sha256: null,
             review_context_sha256: reviewContextSha256,
             review_artifact_sha256: reviewArtifactSha256,
-            reviewer_execution_mode: 'same_agent_fallback',
-            reviewer_identity: 'self:T-105',
-            reviewer_fallback_reason: 'single-agent provider',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: 'agent:antigravity-reviewer',
+            reviewer_fallback_reason: null,
             recorded_at_utc: '2026-04-17T11:31:00.000Z'
         });
 

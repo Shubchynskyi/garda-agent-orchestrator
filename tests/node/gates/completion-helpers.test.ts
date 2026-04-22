@@ -264,7 +264,7 @@ describe('gates/completion — helpers and formatters', () => {
             assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
         });
 
-        it('allows same_agent_fallback trust receipts without reviewer_fallback_reason when policy marks it optional', () => {
+        it('keeps same_agent_fallback trust receipts unavailable even when legacy policy marked fallback_reason optional', () => {
             const summary = buildReviewTrustSummary([
                 {
                     review_type: 'code',
@@ -277,9 +277,9 @@ describe('gates/completion — helpers and formatters', () => {
                 }
             ], 'code', 1);
 
-            assert.equal(summary?.status, 'ASSERTED_LOCAL_ONLY');
+            assert.equal(summary?.status, 'UNAVAILABLE');
             assert.equal(summary?.independent_review_attested, false);
-            assert.match(summary?.visible_summary_line || '', /LOCAL_ASSERTED/i);
+            assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
         });
 
         it('degrades delegated_subagent trust receipts with self-scoped reviewer identity', () => {

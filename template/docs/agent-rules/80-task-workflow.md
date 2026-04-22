@@ -59,6 +59,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 ## Mandatory Gate Contract
 - Task-mode entry command must pass before preflight or implementation:
   `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode`.
+- If the likely task file list is already known before task-mode entry, pass repeated `--planned-changed-file` hints to `enter-task-mode`. When those hints include protected orchestrator paths and `--orchestrator-work` is missing, the gate must stop before preflight and print a rerun command with explicit `--orchestrator-work`; it must never auto-enable the flag silently.
 - Task-mode entry must produce `runtime/reviews/<task-id>-task-mode.json` and task-timeline event `TASK_MODE_ENTERED`.
 - Baseline downstream rules must be opened and recorded before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --stage "TASK_ENTRY"`.
@@ -69,6 +70,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Shell smoke preflight must pass after handshake diagnostics and before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate shell-smoke-preflight`.
 - Shell smoke preflight must emit task-timeline event `SHELL_SMOKE_PREFLIGHT_RECORDED`.
+- Treat `handshake-diagnostics -> shell-smoke-preflight -> classify-change` as one strict same-task chain. Do not parallelize these transitions; a newer `TASK_MODE_ENTERED` invalidates older handshake evidence, and a newer `HANDSHAKE_DIAGNOSTICS_RECORDED` invalidates older shell-smoke evidence.
 - Preflight artifact must exist before review stage.
 - Preflight classification must run with explicit `--output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`.
 - Preflight lifecycle telemetry must show `PREFLIGHT_STARTED` and then either `PREFLIGHT_CLASSIFIED` or `PREFLIGHT_FAILED`.
@@ -91,9 +93,11 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Before each required reviewer invocation, run `node garda-agent-orchestrator/bin/garda.js gate build-review-context ...` for that review type.
 - Reviewer preparation must emit `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` before the review gate can satisfy completion for code-changing tasks.
 - Downstream `test` review preparation must not start until every required upstream non-`test` review for the current cycle has a clean PASS artifact and receipt.
+- Downstream reviewer dependencies are launch blockers, not only materialization blockers. Do not spawn or pre-launch a dependent downstream reviewer as an exploratory pass, early signal, or parallel sidecar before the required upstream PASS artifact and receipt exist for the same cycle.
 - Known producer-consumer validation flows are launch blockers too. Do not fan out raw shell commands such as `npm run build:node-foundation` and direct `node --test .node-build/...` in parallel; use the guarded workflow path or run producer then consumer strictly sequentially.
 - If a later cycle changes only test scope, still run `build-review-context` for reusable upstream `code` review first so current-cycle reuse evidence exists before `test` review starts.
 - Required reviews must be launched only from preflight `required_reviews.*`.
+- Parallel reviewer fan-out is allowed only between independent required review types with no dependency edge for the current cycle.
 - Review gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate required-reviews-check`.
 - If explicit `--*-review-verdict` flags are omitted, the review gate defaults the expected required verdicts from `preflight.required_reviews` for the current task cycle.
@@ -105,11 +109,13 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Review gate rejects zero-diff implementation tasks unless an audited no-op artifact exists for the same task id.
 - Documentation impact gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate`.
-- Full-suite validation gate command must run after `doc-impact-gate` and before `completion-gate` when enabled:
+- Full-suite validation gate must run before `completion-gate` when enabled:
   `node garda-agent-orchestrator/bin/garda.js gate full-suite-validation --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --repo-root "."`.
-- Full-suite validation is controlled by `garda-agent-orchestrator/live/config/workflow-config.json` (`full_suite_validation.enabled`). Operators toggle the mode by manually editing that file; there is no separate CLI toggle command.
-- When enabled, `completion-gate` requires a full-suite-validation artifact with status `PASSED` or `WARNED` for the current task cycle. Status `FAILED` or `SKIPPED` blocks completion.
+- Full-suite validation is controlled by `garda-agent-orchestrator/live/config/workflow-config.json` (`full_suite_validation.enabled`). Operators may edit that file directly or use the repo-local CLI surface (`garda workflow show`, `garda workflow set --full-suite-enabled true|false`); do not introduce setup/init/reinit questions for this mode.
+- When enabled, `completion-gate` requires a full-suite-validation artifact with status `PASSED` or `WARNED` (AUDIT_AND_WARN policy). Status `FAILED` blocks completion.
 - When disabled (default), `full-suite-validation` emits `SKIPPED` and `completion-gate` does not require the artifact.
+- `AUDIT_AND_WARN` policy with out-of-scope-only failures produces status `WARNED`, exits 0, and does not block completion. The warning is audited in the artifact and timeline.
+- `AUDIT_AND_BLOCK` policy with out-of-scope failures produces status `FAILED` and blocks completion.
 - Completion gate command must pass before `DONE`:
   `node garda-agent-orchestrator/bin/garda.js gate completion-gate`.
 - After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json`; the gate now materializes canonical closeout artifacts at `runtime/reviews/<task-id>-final-closeout.json` and `runtime/reviews/<task-id>-final-closeout.md`. Use those artifacts instead of reconstructing the final closeout order free-form.
@@ -137,7 +143,9 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
 - HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED`, every review finding is either resolved or explicitly deferred with `Justification:`, and the final user report is delivered in mandatory order.
 - HARD STOP: any mandatory gate/tooling failure (`Unknown gate`, missing CLI, build dependency errors, stale bundle mismatch) forces an immediate `BLOCKED` state. Broken infrastructure is not a license to continue implementation or bypass the orchestrator.
-- If compile command or workflow infra files are hotfixed inside current task, scope is expanded and full re-run is mandatory: preflight -> compile gate -> required reviews gate -> doc impact gate -> full-suite-validation -> completion gate.
+- HARD STOP: do not use agent-authored scripts to batch, loop over, or "green-light" orchestrator gates or to write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+- HARD STOP: do not fabricate review artifacts, receipts, routing metadata, telemetry, task statuses, or claims that a task is commit-ready when the required gate evidence is absent.
+- If compile command or workflow infra files are hotfixed inside current task, scope is expanded and full re-run is mandatory: preflight -> compile gate -> required reviews gate -> doc impact gate -> completion gate.
 
 ## Escape Hatch Contract
 - Audited skip-review override is allowed only through gate script parameters.
@@ -149,20 +157,23 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - DB, security, and refactor mandatory reviews are never skippable by override.
 
 ## Reviewer Independence
-- Mandatory mode on delegation-capable providers: reviewers must be spawned as fresh-context sub-agents (separate reviewer agent with isolated context built from `build-review-context`).
-- Same-agent self-review is invalid by default when the provider supports sub-agent delegation; the implementation agent must not review its own changes in-place on delegation-capable platforms.
-- Provider delegation capability:
-  - Codex: delegation-capable — use sub-agents with isolated review context.
-  - Claude Code: delegation-capable — use Agent tool/sub-agents with `fork_context=false`.
-  - GitHub Copilot CLI: delegation-capable — use `task` tool with `agent_type="general-purpose"` (one reviewer per isolated task run).
-  - Windsurf, Junie, Antigravity: evaluate provider sub-agent support at runtime; default to delegation when available.
-  - Single-agent platforms (no sub-agent/task tool): explicit fallback allowed — run independent review passes sequentially, each with explicit scope and isolated checklist, before final verdict aggregation.
-- Fallback self-review is mandatory and immediate on single-agent platforms; do not wait for external reviewers.
+- Mandatory reviews must be spawned as fresh-context sub-agents on every provider. The implementation agent must not satisfy a required review in-place.
+- Provider launch contract:
+  - Codex: use sub-agents with isolated review context.
+  - Claude Code: use Agent tool/sub-agents with `fork_context=false`.
+  - Gemini: use delegated reviewer sub-agents with isolated context.
+  - Qwen: use delegated reviewer sub-agents with isolated context.
+  - GitHub Copilot CLI: use `task` tool with `agent_type="general-purpose"` (one reviewer per isolated task run).
+  - Windsurf: use delegated reviewer sub-agents through the provider bridge.
+  - Junie: use delegated reviewer sub-agents through the provider bridge.
+  - Antigravity: use delegated reviewer sub-agents through the provider bridge.
+  - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
+- Launch required reviewers in dependency order. If `test` depends on a current-cycle upstream `code` PASS artifact and receipt, finish upstream receipt materialization before any downstream reviewer launch.
 - Reviewer execution mode must be recorded in review receipts and telemetry:
-  - `reviewer_execution_mode`: `delegated_subagent` (preferred) or `same_agent_fallback`.
-  - `reviewer_identity`: provider-assigned session/agent id when available, or `self:<task-id>` for fallback.
-  - `reviewer_fallback_reason`: required when `same_agent_fallback` is used on conditional/unknown delegation platforms.
-  - Gate diagnostics must explain whether each review used delegated fresh-context execution or fallback mode.
+  - `reviewer_execution_mode`: `delegated_subagent`.
+  - `reviewer_identity`: provider-assigned reviewer id with `agent:` scope.
+  - Historical `same_agent_fallback` receipts may be read for diagnostics only; they do not satisfy a fresh mandatory review cycle.
+  - Gate diagnostics must explain whether each review has valid delegated fresh-context execution evidence.
 - Reviewer verdict is a release gate, not optional advice.
 - Required verdicts:
   - code: `REVIEW PASSED`

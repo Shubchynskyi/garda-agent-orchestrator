@@ -5,7 +5,7 @@ import {
     buildReviewReceipt,
     buildReviewReceiptReviewerProvenance,
     extractReviewVerdictToken,
-    normalizeReviewerExecutionMode,
+    normalizeCompatibilityReviewerExecutionMode,
     restoreReviewerRoutingMetadata
 } from '../../../gate-runtime/review-context';
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
@@ -58,7 +58,7 @@ interface ResolvedCanonicalReviewPaths {
 }
 
 interface ParsedReviewerIdentity {
-    reviewerExecutionMode: NonNullable<ReturnType<typeof normalizeReviewerExecutionMode>>;
+    reviewerExecutionMode: NonNullable<ReturnType<typeof normalizeCompatibilityReviewerExecutionMode>>;
     reviewerIdentity: string;
     reviewerFallbackReason: string | null;
 }
@@ -126,7 +126,7 @@ function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequiredMessage
     const rawReviewerExecutionMode = options.reviewerExecutionMode
         ? String(options.reviewerExecutionMode).trim()
         : null;
-    const reviewerExecutionMode = normalizeReviewerExecutionMode(rawReviewerExecutionMode);
+    const reviewerExecutionMode = normalizeCompatibilityReviewerExecutionMode(rawReviewerExecutionMode);
     const reviewerIdentity = options.reviewerIdentity
         ? String(options.reviewerIdentity).trim()
         : null;
@@ -138,23 +138,31 @@ function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequiredMessage
         if (rawReviewerExecutionMode) {
             throw new Error(
                 `ReviewerExecutionMode '${rawReviewerExecutionMode}' is invalid. ` +
-                "Expected one of 'delegated_subagent' or 'same_agent_fallback'."
+                "Expected 'delegated_subagent'."
             );
         }
         throw new Error(modeRequiredMessage);
     }
+    if (reviewerExecutionMode !== 'delegated_subagent') {
+        throw new Error(
+            `ReviewerExecutionMode '${reviewerExecutionMode}' is no longer supported. ` +
+            "Mandatory reviews must use 'delegated_subagent'."
+        );
+    }
     if (!reviewerIdentity) {
         throw new Error('ReviewerIdentity is required.');
     }
-    if (reviewerExecutionMode === 'delegated_subagent') {
-        if (reviewerIdentity.startsWith('self:')) {
-            throw new Error('Delegated review evidence cannot use a self-scoped reviewer identity.');
-        }
-        if (!reviewerIdentity.startsWith('agent:')) {
-            throw new Error("Delegated review evidence requires an agent-scoped reviewer identity (prefix 'agent:').");
-        }
-    } else if (!reviewerIdentity.startsWith('self:')) {
-        throw new Error("Fallback review evidence requires a self-scoped reviewer identity (prefix 'self:').");
+    if (reviewerIdentity.startsWith('self:')) {
+        throw new Error('Delegated review evidence cannot use a self-scoped reviewer identity.');
+    }
+    if (!reviewerIdentity.startsWith('agent:')) {
+        throw new Error("Delegated review evidence requires an agent-scoped reviewer identity (prefix 'agent:').");
+    }
+    if (reviewerFallbackReason) {
+        throw new Error(
+            'ReviewerFallbackReason is not supported for delegated_subagent review evidence. ' +
+            'Remove --reviewer-fallback-reason and rerun the delegated reviewer flow.'
+        );
     }
 
     return {
@@ -577,24 +585,27 @@ function assertRoutingCompatibility(
     const providerLabel = runtimeIdentity.execution_provider
         || runtimeIdentity.canonical_source_of_truth
         || String(currentRouting?.execution_provider || currentRouting?.source_of_truth || 'unknown');
-    if (
-        reviewerExecutionMode === 'delegated_subagent' &&
-        (capabilityLevel === 'single_agent_only' || expectedExecutionMode === 'same_agent_fallback')
-    ) {
+    if (reviewerExecutionMode !== 'delegated_subagent') {
         throw new Error(
-            `Review '${reviewType}' cannot record delegated_subagent routing for provider ` +
-            `'${providerLabel}'. Explicit fallback is required instead.`
+            `Review '${reviewType}' must use delegated_subagent for provider '${providerLabel}'.`
         );
     }
-    if (reviewerExecutionMode === 'same_agent_fallback' && !fallbackAllowed) {
+    if (capabilityLevel !== 'delegation_required' && capabilityLevel !== 'unknown') {
         throw new Error(
-            `Review '${reviewType}' does not allow same_agent_fallback for provider '${providerLabel}'.`
+            `Review '${reviewType}' resolved unexpected reviewer capability '${capabilityLevel}' ` +
+            `for provider '${providerLabel}'.`
         );
     }
-    if (reviewerExecutionMode === 'same_agent_fallback' && fallbackReasonRequired && !reviewerFallbackReason) {
+    if (expectedExecutionMode !== 'delegated_subagent' || !runtimeIdentity.delegation_required) {
         throw new Error(
-            `Review '${reviewType}' requires --reviewer-fallback-reason for same_agent_fallback ` +
-            `on provider '${providerLabel}'.`
+            `Review '${reviewType}' resolved a non-delegated reviewer routing policy for provider '${providerLabel}'. ` +
+            'Mandatory reviews require delegated_subagent execution.'
+        );
+    }
+    if (fallbackAllowed || fallbackReasonRequired || reviewerFallbackReason) {
+        throw new Error(
+            `Review '${reviewType}' encountered stale fallback routing metadata for provider '${providerLabel}'. ` +
+            'Mandatory reviews do not permit same_agent_fallback.'
         );
     }
 }
@@ -730,7 +741,7 @@ function matchesRoutingEvent(
     const eventFallbackReason = String((details?.reviewer_fallback_reason ?? details?.reviewerFallbackReason) || '').trim();
     return entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
         && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === reviewType
-        && normalizeReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
+        && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
         && String((details?.reviewer_session_id ?? details?.reviewerSessionId) || '').trim() === reviewerIdentity
         && (reviewerExecutionMode !== 'same_agent_fallback' || eventFallbackReason === (reviewerFallbackReason || ''));
 }
@@ -898,7 +909,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerExecutionMode: options.reviewerExecutionMode,
         reviewerFallbackReason: options.reviewerFallbackReason
     });
-    const currentExecutionMode = normalizeReviewerExecutionMode(currentRouting?.actual_execution_mode);
+    const currentExecutionMode = normalizeCompatibilityReviewerExecutionMode(currentRouting?.actual_execution_mode);
     const currentReviewerSessionId = currentRouting?.reviewer_session_id != null
         ? String(currentRouting.reviewer_session_id).trim()
         : '';
@@ -925,7 +936,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         ? String(currentRouting.fallback_reason).trim()
         : '';
     if (
-        options.reviewerExecutionMode === 'same_agent_fallback' &&
+        options.reviewerExecutionMode === 'delegated_subagent' &&
         currentFallbackReason !== (options.reviewerFallbackReason || '')
     ) {
         throw new Error(
@@ -1042,7 +1053,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
     const rawReviewerExecutionMode = options.reviewerExecutionMode
         ? String(options.reviewerExecutionMode).trim()
         : null;
-    const reviewerExecutionMode = normalizeReviewerExecutionMode(rawReviewerExecutionMode);
+    const reviewerExecutionMode = normalizeCompatibilityReviewerExecutionMode(rawReviewerExecutionMode);
     const reviewerIdentity = options.reviewerIdentity
         ? String(options.reviewerIdentity).trim()
         : null;
@@ -1050,20 +1061,28 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
         ? String(options.reviewerFallbackReason).trim()
         : null;
     if (!reviewerExecutionMode) {
-        throw new Error("ReviewerExecutionMode is required. Expected one of 'delegated_subagent' or 'same_agent_fallback'.");
+        throw new Error("ReviewerExecutionMode is required. Expected 'delegated_subagent'.");
     }
     if (!reviewerIdentity) {
         throw new Error('ReviewerIdentity is required.');
     }
-    if (reviewerExecutionMode === 'delegated_subagent') {
-        if (reviewerIdentity.startsWith('self:')) {
-            throw new Error('Delegated review routing cannot use a self-scoped reviewer identity.');
-        }
-        if (!reviewerIdentity.startsWith('agent:')) {
-            throw new Error("Delegated review routing requires an agent-scoped reviewer identity (prefix 'agent:').");
-        }
-    } else if (!reviewerIdentity.startsWith('self:')) {
-        throw new Error("Fallback review routing requires a self-scoped reviewer identity (prefix 'self:').");
+    if (reviewerExecutionMode !== 'delegated_subagent') {
+        throw new Error(
+            `ReviewerExecutionMode '${reviewerExecutionMode}' is no longer supported. ` +
+            "Mandatory reviews must use 'delegated_subagent'."
+        );
+    }
+    if (reviewerIdentity.startsWith('self:')) {
+        throw new Error('Delegated review routing cannot use a self-scoped reviewer identity.');
+    }
+    if (!reviewerIdentity.startsWith('agent:')) {
+        throw new Error("Delegated review routing requires an agent-scoped reviewer identity (prefix 'agent:').");
+    }
+    if (reviewerFallbackReason) {
+        throw new Error(
+            'ReviewerFallbackReason is not supported for delegated_subagent review routing. ' +
+            'Remove --reviewer-fallback-reason and rerun the delegated reviewer flow.'
+        );
     }
     const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
@@ -1252,7 +1271,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
 
     const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
         options,
-        "ReviewerExecutionMode is required. Expected one of 'delegated_subagent' or 'same_agent_fallback'."
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
     );
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
@@ -1396,7 +1415,7 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
     );
     const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
         options,
-        "ReviewerExecutionMode is required. Expected one of 'delegated_subagent' or 'same_agent_fallback'."
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
     );
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
