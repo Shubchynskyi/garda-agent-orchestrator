@@ -93,6 +93,10 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'task-audit-summary'
 ]);
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
 function getSourceCheckoutNestedCwd(): string {
     return path.join(path.resolve('.'), 'src', 'cli');
 }
@@ -333,13 +337,13 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(path.join(bundleRoot, 'bin', 'garda.js'), '// test fixture\n', 'utf8');
 
         try {
-            const helpOutput = buildGateHelpText('enter-task-mode', nestedCwd);
+            const helpOutput = stripAnsi(buildGateHelpText('enter-task-mode', nestedCwd));
             assert.ok(helpOutput.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
             assert.ok(!helpOutput.includes('node bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
 
-            const remediationOutput = buildTaskIdSyntaxRemediationMessage('enter-task-mode', ['--task=T-008'], nestedCwd);
+            const remediationOutput = stripAnsi(buildTaskIdSyntaxRemediationMessage('enter-task-mode', ['--task=T-008'], nestedCwd) || '');
             assert.ok(remediationOutput);
-            assert.ok(remediationOutput!.includes('Suggested command: node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "T-008"'));
+            assert.ok(remediationOutput.includes('Suggested command: node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "T-008"'));
         } finally {
             fs.rmSync(workspaceRoot, { recursive: true, force: true });
         }
@@ -349,7 +353,7 @@ describe('cli/commands/gates', () => {
         const previousBundleName = process.env.GARDA_BUNDLE_NAME;
         process.env.GARDA_BUNDLE_NAME = 'custom-garda-bundle';
         try {
-            const helpOutput = buildGateHelpText('load-rule-pack', path.resolve('.'));
+            const helpOutput = stripAnsi(buildGateHelpText('load-rule-pack', path.resolve('.')));
             assert.ok(helpOutput.includes('custom-garda-bundle/live/docs/agent-rules/00-core.md'));
             assert.ok(helpOutput.includes('custom-garda-bundle/runtime/reviews/<task-id>-preflight.json'));
             assert.ok(!helpOutput.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));

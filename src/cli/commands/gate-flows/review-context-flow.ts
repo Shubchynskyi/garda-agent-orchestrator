@@ -16,6 +16,7 @@ import {
     buildReviewReceipt,
     buildReviewReceiptReviewerProvenance,
     normalizeReviewerExecutionMode,
+    normalizeReviewReceiptReviewerProvenance,
     restoreReviewerRoutingMetadata,
     type ReviewReceipt
 } from '../../../gate-runtime/review-context';
@@ -193,6 +194,9 @@ async function tryReuseCodeReviewEvidence(options: {
     const reviewerExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
     const reviewerIdentity = String(receipt.reviewer_identity || '').trim() || null;
     const reviewerFallbackReason = String(receipt.reviewer_fallback_reason || '').trim() || null;
+    const historicalReviewerProvenance = receipt.reviewer_provenance == null
+        ? null
+        : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
     const expectedContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
     const expectedContextReuseSha256 = String(
         receipt.review_context_reuse_sha256 || options.previousReviewContextReuseSha256 || ''
@@ -202,6 +206,13 @@ async function tryReuseCodeReviewEvidence(options: {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
     if (!reviewerExecutionMode || !reviewerIdentity || !expectedContextSha256) {
+        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+    }
+    if (reviewerExecutionMode === 'delegated_subagent') {
+        if (!reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
+            return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        }
+    } else if (!reviewerIdentity.startsWith('self:') || !reviewerFallbackReason) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
     if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase()) {
@@ -262,9 +273,6 @@ async function tryReuseCodeReviewEvidence(options: {
     if (!contextHashMatches && !contextReuseHashMatches) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
-    if (reviewerExecutionMode === 'delegated_subagent') {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
-    }
     const routingUpdate = applyReviewerRoutingMetadata(
         options.reviewContextPath,
         {
@@ -309,6 +317,12 @@ async function tryReuseCodeReviewEvidence(options: {
         if (!routingEvent || (Array.isArray(routingEvent.warnings) && routingEvent.warnings.length > 0)) {
             throw new Error('REVIEWER_DELEGATION_ROUTED telemetry could not be persisted for review reuse.');
         }
+        const currentReviewerProvenance = reviewerExecutionMode === 'delegated_subagent'
+            ? buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routingEvent.integrity)
+            : null;
+        if (reviewerExecutionMode === 'delegated_subagent' && !currentReviewerProvenance) {
+            throw new Error('Delegated review reuse could not derive reviewer_provenance from current-cycle routing telemetry.');
+        }
         const refreshedReceipt = buildReviewReceipt({
             taskId: options.taskId,
             reviewType: options.reviewType,
@@ -321,7 +335,7 @@ async function tryReuseCodeReviewEvidence(options: {
             reviewerExecutionMode,
             reviewerIdentity,
             reviewerFallbackReason,
-            reviewerProvenance: null,
+            reviewerProvenance: currentReviewerProvenance,
             trustLevel: 'LOCAL_ASSERTED'
         });
         writeReviewArtifactJson(receiptPath, refreshedReceipt);

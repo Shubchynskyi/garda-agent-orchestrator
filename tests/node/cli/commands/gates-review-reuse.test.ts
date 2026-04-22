@@ -1076,6 +1076,121 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('preserves delegated reviewer provenance when historical code review evidence is reused in the current cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-delegated-reuse-provenance';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable delegated code review evidence before a pure test-only rerun',
+            provider: 'Codex'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', reviewContextPath,
+                '--repo-root', repoRoot
+            ]);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const refreshedReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(refreshedReceipt.reviewer_execution_mode, 'delegated_subagent');
+        assert.equal(refreshedReceipt.reviewer_identity, 'agent:code-reviewer');
+        assert.equal(refreshedReceipt.trust_level, 'LOCAL_ASSERTED');
+        const refreshedProvenance = refreshedReceipt.reviewer_provenance as Record<string, unknown> | null;
+        assert.ok(refreshedProvenance);
+
+        const refreshedContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const refreshedRouting = refreshedContext.reviewer_routing as Record<string, unknown>;
+        assert.equal(refreshedRouting.actual_execution_mode, 'delegated_subagent');
+        assert.equal(refreshedRouting.reviewer_session_id, 'agent:code-reviewer');
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        let currentCycleRoutedEvent: Record<string, unknown> | null = null;
+        for (let index = events.length - 1; index >= 0; index -= 1) {
+            const event = events[index];
+            if (index <= latestCompileSequence) {
+                break;
+            }
+            if (
+                event.event_type === 'REVIEWER_DELEGATION_ROUTED'
+                && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+            ) {
+                currentCycleRoutedEvent = event;
+                break;
+            }
+        }
+        assert.ok(currentCycleRoutedEvent);
+        const routedIntegrity = currentCycleRoutedEvent?.integrity as Record<string, unknown> | undefined;
+        assert.equal(refreshedProvenance?.task_sequence, routedIntegrity?.task_sequence);
+        assert.equal(refreshedProvenance?.event_sha256, routedIntegrity?.event_sha256);
+        assert.equal(refreshedProvenance?.prev_event_sha256 ?? null, routedIntegrity?.prev_event_sha256 ?? null);
+
+        const recordedEvents = events.filter((event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        ));
+        assert.ok(recordedEvents.length >= 1);
+        assert.equal((recordedEvents.at(-1)?.details as Record<string, unknown>).reused_existing_review, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('does not reuse prior code-review evidence when the runtime reviewer identity changes for the same code scope', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-no-reuse-runtime-identity';

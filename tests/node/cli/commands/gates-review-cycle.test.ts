@@ -1675,7 +1675,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restart-review-cycle keeps downstream test review blocked until the refreshed code review is recorded', { concurrency: false }, async () => {
+    it('restart-review-cycle materializes downstream test review after current-cycle code review is refreshed via reuse', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-reuse';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -1756,14 +1756,18 @@ describe('cli/commands/gates – review-cycle suites', () => {
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /PreparedReviewTypes: code/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
-        assert.match(output, /ReusedReviewTypes: none/);
-        assert.match(output, /PendingReviewTypes: test/);
-        assert.match(output, /PendingReason: ReviewType 'test' is blocked until upstream reviews pass for the current cycle: code\./);
+        assert.match(output, /PreparedReviewTypes: code, test/);
+        assert.match(output, /LaunchRequiredReviewTypes: test/);
+        assert.match(output, /ReusedReviewTypes: code/);
+        assert.doesNotMatch(output, /PendingReviewTypes:/);
+        assert.doesNotMatch(output, /PendingReason:/);
+        assert.equal(
+            fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
+            true
+        );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
-            false
+            true
         );
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
@@ -1799,7 +1803,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
         assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
-        assert.equal(lastTestReviewPhaseIndex, -1);
+        assert.ok(lastTestReviewPhaseIndex > lastCodeReviewPhaseIndex);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

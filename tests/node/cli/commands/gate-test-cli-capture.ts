@@ -31,20 +31,25 @@ export async function runCliWithCapturedOutput(
     argv: readonly string[],
     options: { cwd?: string } = {}
 ): Promise<{ exitCode: number; logs: string[]; errors: string[] }> {
+    const stripAnsi = (value: string): string => value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
     const previousExitCode = process.exitCode;
     const previousCwd = process.cwd();
+    const previousNoColor = process.env.NO_COLOR;
+    const previousForceColor = process.env.FORCE_COLOR;
     const originalConsoleLog = console.log;
     const originalConsoleError = console.error;
     const logs: string[] = [];
     const errors: string[] = [];
     process.exitCode = 0;
     console.log = (...args: unknown[]) => {
-        logs.push(args.map((value) => String(value)).join(' '));
+        logs.push(stripAnsi(args.map((value) => String(value)).join(' ')));
     };
     console.error = (...args: unknown[]) => {
-        errors.push(args.map((value) => String(value)).join(' '));
+        errors.push(stripAnsi(args.map((value) => String(value)).join(' ')));
     };
     try {
+        process.env.NO_COLOR = '1';
+        delete process.env.FORCE_COLOR;
         process.chdir(path.resolve(options.cwd || '.'));
         await runCliMainWithHandling(Array.from(argv));
         return {
@@ -55,6 +60,16 @@ export async function runCliWithCapturedOutput(
     } finally {
         console.log = originalConsoleLog;
         console.error = originalConsoleError;
+        if (previousNoColor === undefined) {
+            delete process.env.NO_COLOR;
+        } else {
+            process.env.NO_COLOR = previousNoColor;
+        }
+        if (previousForceColor === undefined) {
+            delete process.env.FORCE_COLOR;
+        } else {
+            process.env.FORCE_COLOR = previousForceColor;
+        }
         process.chdir(previousCwd);
         process.exitCode = previousExitCode;
     }
