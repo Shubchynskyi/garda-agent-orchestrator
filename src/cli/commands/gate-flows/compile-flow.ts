@@ -446,7 +446,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             );
         }
         if (preflightErrors.length === 0) {
-            const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, { timelinePath });
+            const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
+                taskModePath: options.taskModePath || '',
+                timelinePath
+            });
             const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, resolvedTaskId, { timelinePath });
             preflightErrors.push(...getHandshakeEvidenceViolations(handshakeEvidence));
             preflightErrors.push(...getShellSmokeEvidenceViolations(shellSmokeEvidence));
@@ -849,7 +852,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
         }
         if (!exceptionMessage) {
-            const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, { timelinePath });
+            const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
+                taskModePath: options.taskModePath || '',
+                timelinePath
+            });
             const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, resolvedTaskId, { timelinePath });
             const handshakeViolations = getHandshakeEvidenceViolations(handshakeEvidence);
             const shellSmokeViolations = getShellSmokeEvidenceViolations(shellSmokeEvidence);

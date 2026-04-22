@@ -139,6 +139,7 @@ export interface HandshakeDiagnosticsCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
     provider?: unknown;
+    taskModePath?: string;
     cliPath?: unknown;
     effectiveCwd?: unknown;
     canonicalEntrypoint?: unknown;
@@ -153,6 +154,7 @@ export interface ShellSmokePreflightCommandOptions {
     taskId?: unknown;
     provider?: unknown;
     routedTo?: unknown;
+    taskModePath?: string;
     effectiveCwd?: unknown;
     probeTimeoutMs?: unknown;
     artifactPath?: string;
@@ -165,6 +167,7 @@ export interface CommandTimeoutDiagnosticsCommandOptions {
     taskId?: unknown;
     provider?: unknown;
     routedTo?: unknown;
+    taskModePath?: string;
     effectiveCwd?: unknown;
     commandRecordsPath?: string;
     artifactPath?: string;
@@ -263,19 +266,25 @@ function buildGateCommandPrefix(repoRoot: string): string {
         : getBundleCliCommand(resolveBundleName());
 }
 
-function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: string): string {
-    return [
+function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: string, taskModePath = ''): string {
+    const parts = [
         `${buildGateCommandPrefix(repoRoot)} gate ${gateName}`,
         `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
         `--task-id ${quotePowerShellCliValue(taskId)}`
-    ].join(' ');
+    ];
+    const trimmedTaskModePath = String(taskModePath || '').trim();
+    if (trimmedTaskModePath) {
+        parts.push(`--task-mode-path ${quotePowerShellCliValue(trimmedTaskModePath)}`);
+    }
+    return parts.join(' ');
 }
 
 function buildLoadRulePackPostPreflightRemediationCommand(
     repoRoot: string,
     taskId: string,
     preflightPath: string | null,
-    requiredRuleFiles: string[]
+    requiredRuleFiles: string[],
+    taskModePath = ''
 ): string {
     const absoluteRepoRoot = path.resolve(repoRoot);
     const parts: string[] = [
@@ -290,6 +299,10 @@ function buildLoadRulePackPostPreflightRemediationCommand(
         );
         parts.push(`--preflight-path ${quotePowerShellCliValue(relativePreflightPath)}`);
     }
+    const trimmedTaskModePath = String(taskModePath || '').trim();
+    if (trimmedTaskModePath) {
+        parts.push(`--task-mode-path ${quotePowerShellCliValue(trimmedTaskModePath)}`);
+    }
     for (const ruleFile of requiredRuleFiles) {
         const relativeRuleFile = gateHelpers.normalizePath(
             path.relative(absoluteRepoRoot, path.resolve(ruleFile))
@@ -302,7 +315,8 @@ function buildLoadRulePackPostPreflightRemediationCommand(
 function buildTaskModeIdentitySuggestionCommand(
     repoRoot: string,
     taskId: string,
-    routingDecision: ReturnType<typeof readRoutingDecision>
+    routingDecision: ReturnType<typeof readRoutingDecision>,
+    artifactPath = ''
 ): string {
     const commandParts = [
         `${buildGateCommandPrefix(repoRoot)} gate enter-task-mode`,
@@ -328,6 +342,10 @@ function buildTaskModeIdentitySuggestionCommand(
     if (safeRoutedIdentityHint) {
         commandParts.push(`--routed-to ${quotePowerShellCliValue(safeRoutedIdentityHint)}`);
     }
+    const trimmedArtifactPath = String(artifactPath || '').trim();
+    if (trimmedArtifactPath) {
+        commandParts.push(`--artifact-path ${quotePowerShellCliValue(trimmedArtifactPath)}`);
+    }
     return commandParts.join(' ');
 }
 
@@ -336,7 +354,8 @@ function assertLaunchableReviewerSubagents(
     taskId: string,
     stageLabel: string,
     routingDecision: ReturnType<typeof readRoutingDecision>,
-    rerunGateName: string | null = null
+    rerunGateName: string | null = null,
+    taskModePath = ''
 ): void {
     const reviewerSubagentLaunchStatus = String(routingDecision.reviewerSubagentLaunchStatus || '').trim() || 'unknown';
     if (reviewerSubagentLaunchStatus === 'launchable') {
@@ -356,11 +375,11 @@ function assertLaunchableReviewerSubagents(
     }
     if (rerunGateName) {
         errorParts.push(
-            `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)} ; ` +
-            `${buildGateRerunCommand(repoRoot, taskId, rerunGateName)}`
+            `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)} ; ` +
+            `${buildGateRerunCommand(repoRoot, taskId, rerunGateName, taskModePath)}`
         );
     } else {
-        errorParts.push(`Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)}`);
+        errorParts.push(`Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)}`);
     }
     throw new Error(errorParts.join(' '));
 }
@@ -368,17 +387,18 @@ function assertLaunchableReviewerSubagents(
 function assertTaskModeRuntimeIdentity(
     repoRoot: string,
     taskId: string,
-    routingDecision: ReturnType<typeof readRoutingDecision>
+    routingDecision: ReturnType<typeof readRoutingDecision>,
+    artifactPath = ''
 ): void {
     if (!routingDecision.canonicalSourceOfTruth) {
         throw new Error(
             'Canonical SourceOfTruth is missing at task-mode entry. Re-run setup/reinit to restore canonical owner files ' +
-            `before starting '${taskId}'. Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)}`
+            `before starting '${taskId}'. Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, artifactPath)}`
         );
     }
 
     if (routingDecision.identityStatus === 'resolved') {
-        assertLaunchableReviewerSubagents(repoRoot, taskId, 'at task-mode entry', routingDecision);
+        assertLaunchableReviewerSubagents(repoRoot, taskId, 'at task-mode entry', routingDecision, null, artifactPath);
         return;
     }
 
@@ -391,7 +411,7 @@ function assertTaskModeRuntimeIdentity(
 
     throw new Error(
         `Runtime execution identity is '${routingDecision.identityStatus}' at task-mode entry.${violationText} ${remediation} ` +
-        `Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)}`
+        `Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, artifactPath)}`
     );
 }
 
@@ -399,18 +419,26 @@ function assertResolvedRuntimeIdentityForDependentPreflightGate(
     repoRoot: string,
     taskId: string,
     gateName: string,
-    routingDecision: ReturnType<typeof readRoutingDecision>
+    routingDecision: ReturnType<typeof readRoutingDecision>,
+    taskModePath = ''
 ): void {
     if (!routingDecision.canonicalSourceOfTruth) {
         throw new Error(
             `Canonical SourceOfTruth is missing before ${gateName}. Re-run setup/reinit to restore canonical owner files, ` +
-            `then re-enter task mode before ${gateName}. Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)} ; ` +
-            `${buildGateRerunCommand(repoRoot, taskId, gateName)}`
+            `then re-enter task mode before ${gateName}. Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)} ; ` +
+            `${buildGateRerunCommand(repoRoot, taskId, gateName, taskModePath)}`
         );
     }
 
     if (routingDecision.identityStatus === 'resolved') {
-        assertLaunchableReviewerSubagents(repoRoot, taskId, `before ${gateName}`, routingDecision, gateName);
+        assertLaunchableReviewerSubagents(
+            repoRoot,
+            taskId,
+            `before ${gateName}`,
+            routingDecision,
+            gateName,
+            taskModePath
+        );
         return;
     }
 
@@ -423,8 +451,8 @@ function assertResolvedRuntimeIdentityForDependentPreflightGate(
 
     throw new Error(
         `Runtime execution identity is '${routingDecision.identityStatus}' before ${gateName}.${violationText} ${remediation} ` +
-        `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision)} ; ` +
-        `${buildGateRerunCommand(repoRoot, taskId, gateName)}`
+        `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)} ; ` +
+        `${buildGateRerunCommand(repoRoot, taskId, gateName, taskModePath)}`
     );
 }
 
@@ -472,7 +500,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const artifactPath = resolveTaskModeArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
     // A new task-mode entry must never inherit runtime identity from an older task-mode artifact.
     const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
-    assertTaskModeRuntimeIdentity(repoRoot, taskId, routingDecision);
+    assertTaskModeRuntimeIdentity(repoRoot, taskId, routingDecision, artifactPath);
     const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot);
     const plannedChangedFiles = normalizePlannedChangedFiles(repoRoot, options.plannedChangedFiles);
     const protectedPlannedFiles = plannedChangedFiles.filter((entry) =>
@@ -789,7 +817,7 @@ export function runLoadRulePackCommand(options: LoadRulePackCommandOptions): { o
             failureLines.push(
                 'Remediation:',
                 `  ${buildLoadRulePackPostPreflightRemediationCommand(
-                    repoRoot, taskId, stageArtifact.preflight_path, stageArtifact.required_rule_files
+                    repoRoot, taskId, stageArtifact.preflight_path, stageArtifact.required_rule_files, String(options.taskModePath || '')
                 )}`
             );
         }
@@ -887,7 +915,13 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider, options.providerBridge, taskId);
+    const routingDecision = readRoutingDecision(
+        repoRoot,
+        options.provider,
+        options.providerBridge,
+        taskId,
+        options.taskModePath || ''
+    );
     const provider = routingDecision.provider;
     const sequenceLockPath = resolvePrePreflightSequenceLockPath(repoRoot, taskId);
 
@@ -898,8 +932,8 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
             ? [
                 `Current task cycle in '${gateHelpers.normalizePath(timelinePath)}' already has valid SHELL_SMOKE_PREFLIGHT_RECORDED evidence. ` +
                 'Re-running handshake-diagnostics now would invalidate the existing shell-smoke artifact for this cycle. ' +
-                `Suggested rerun commands for the next cycle: ${buildGateRerunCommand(repoRoot, taskId, 'handshake-diagnostics')} ; ` +
-                `${buildGateRerunCommand(repoRoot, taskId, 'shell-smoke-preflight')}.`
+                `Suggested rerun commands for the next cycle: ${buildGateRerunCommand(repoRoot, taskId, 'handshake-diagnostics', String(options.taskModePath || ''))} ; ` +
+                `${buildGateRerunCommand(repoRoot, taskId, 'shell-smoke-preflight', String(options.taskModePath || ''))}.`
             ]
             : [];
 
@@ -982,8 +1016,20 @@ export function runShellSmokePreflightCommand(options: ShellSmokePreflightComman
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo, taskId);
-    assertResolvedRuntimeIdentityForDependentPreflightGate(repoRoot, taskId, 'shell-smoke-preflight', routingDecision);
+    const routingDecision = readRoutingDecision(
+        repoRoot,
+        options.provider,
+        options.routedTo,
+        taskId,
+        options.taskModePath || ''
+    );
+    assertResolvedRuntimeIdentityForDependentPreflightGate(
+        repoRoot,
+        taskId,
+        'shell-smoke-preflight',
+        routingDecision,
+        String(options.taskModePath || '')
+    );
     const provider = routingDecision.provider;
 
     const sequenceLockPath = resolvePrePreflightSequenceLockPath(repoRoot, taskId);
@@ -996,10 +1042,13 @@ export function runShellSmokePreflightCommand(options: ShellSmokePreflightComman
             : resolveShellSmokeArtifactPath(repoRoot, taskId, '');
 
         const probeTimeoutMs = options.probeTimeoutMs ? parseInt(String(options.probeTimeoutMs), 10) : undefined;
-        const handshakeEvidence = getHandshakeEvidence(repoRoot, taskId, { timelinePath });
+        const handshakeEvidence = getHandshakeEvidence(repoRoot, taskId, {
+            taskModePath: options.taskModePath || '',
+            timelinePath
+        });
         const handshakeViolations = getHandshakeEvidenceViolations(handshakeEvidence).map((violation) => (
-            `${violation} Suggested rerun commands: ${buildGateRerunCommand(repoRoot, taskId, 'handshake-diagnostics')} ; ` +
-            `${buildGateRerunCommand(repoRoot, taskId, 'shell-smoke-preflight')}.`
+            `${violation} Suggested rerun commands: ${buildGateRerunCommand(repoRoot, taskId, 'handshake-diagnostics', String(options.taskModePath || ''))} ; ` +
+            `${buildGateRerunCommand(repoRoot, taskId, 'shell-smoke-preflight', String(options.taskModePath || ''))}.`
         ));
 
         const artifact = buildShellSmokePreflight({
@@ -1052,8 +1101,20 @@ export function runCommandTimeoutDiagnosticsCommand(options: CommandTimeoutDiagn
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
     const taskId = assertValidTaskId(String(options.taskId || '').trim());
-    const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo, taskId);
-    assertResolvedRuntimeIdentityForDependentPreflightGate(repoRoot, taskId, 'command-timeout-diagnostics', routingDecision);
+    const routingDecision = readRoutingDecision(
+        repoRoot,
+        options.provider,
+        options.routedTo,
+        taskId,
+        options.taskModePath || ''
+    );
+    assertResolvedRuntimeIdentityForDependentPreflightGate(
+        repoRoot,
+        taskId,
+        'command-timeout-diagnostics',
+        routingDecision,
+        String(options.taskModePath || '')
+    );
     const provider = routingDecision.provider;
 
     const artifactPath = options.artifactPath

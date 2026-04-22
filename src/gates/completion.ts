@@ -166,6 +166,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '');
     const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
         artifactPath: options.handshakePath || '',
+        taskModePath: options.taskModePath || '',
         timelinePath
     });
     const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, resolvedTaskId, {

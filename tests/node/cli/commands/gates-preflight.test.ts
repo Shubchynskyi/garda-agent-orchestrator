@@ -42,6 +42,10 @@ const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
     Antigravity: '.antigravity/agents/orchestrator.md'
 };
 
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
     if (String(options.provider || '').trim() || String(options.routedTo || '').trim()) {
         return options;
@@ -597,6 +601,70 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change accepts a legacy handshake artifact when the corroborating task-mode evidence is on a custom path', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-custom-task-mode-legacy-handshake.json');
+        const taskId = 'T-930-custom-task-mode-legacy-handshake';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Honor a custom task-mode path when legacy handshake launchability must be corroborated.',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+
+        writeHandshakeArtifact(repoRoot, taskId, 'Codex');
+        const orchestratorRoot = getOrchestratorRoot(repoRoot);
+        const handshakePath = path.join(getReviewsRoot(repoRoot), `${taskId}-handshake.json`);
+        const handshakeArtifact = JSON.parse(fs.readFileSync(handshakePath, 'utf8')) as Record<string, unknown>;
+        delete handshakeArtifact.reviewer_subagent_launch_status;
+        delete handshakeArtifact.reviewer_subagent_launch_route;
+        const handshakeContent = JSON.stringify(handshakeArtifact, null, 2);
+        fs.writeFileSync(handshakePath, handshakeContent, 'utf8');
+        const handshakeHash = createHash('sha256').update(handshakeContent).digest('hex');
+        appendTaskEvent(
+            orchestratorRoot,
+            taskId,
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'PASS',
+            'Legacy handshake diagnostics recorded for custom task-mode path compatibility coverage.',
+            {
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                execution_provider_source: 'provider_entrypoint',
+                execution_context: 'materialized-bundle',
+                cli_path: 'node garda-agent-orchestrator/bin/garda.js',
+                passed: true,
+                artifact_hash: handshakeHash
+            },
+            { actor: 'gate', passThru: true }
+        );
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId,
+            taskIntent: 'Honor a custom task-mode path when legacy handshake launchability must be corroborated.',
+            taskModePath: customTaskModePath,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, taskId);
+        assert.equal(payload.required_reviews.code, true);
+        assert.equal(fs.existsSync(outputPath), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classifies explicit changed files and writes preflight artifact', () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight.json');
@@ -780,6 +848,68 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('allows shell-smoke-preflight when runtime identity is resolved from a custom task-mode path and the handshake is legacy-compatible', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-custom-task-mode-legacy-handshake';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# routed workflow fixture\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow shell-smoke-preflight from a custom task-mode path without repeating provider flags',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+
+        writeHandshakeArtifact(repoRoot, taskId, 'Codex');
+        const orchestratorRoot = getOrchestratorRoot(repoRoot);
+        const handshakePath = path.join(getReviewsRoot(repoRoot), `${taskId}-handshake.json`);
+        const handshakeArtifact = JSON.parse(fs.readFileSync(handshakePath, 'utf8')) as Record<string, unknown>;
+        delete handshakeArtifact.reviewer_subagent_launch_status;
+        delete handshakeArtifact.reviewer_subagent_launch_route;
+        const handshakeContent = JSON.stringify(handshakeArtifact, null, 2);
+        fs.writeFileSync(handshakePath, handshakeContent, 'utf8');
+        const handshakeHash = createHash('sha256').update(handshakeContent).digest('hex');
+        appendTaskEvent(
+            orchestratorRoot,
+            taskId,
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'PASS',
+            'Legacy handshake diagnostics recorded for custom task-mode shell-smoke coverage.',
+            {
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                execution_provider_source: 'provider_entrypoint',
+                execution_context: 'materialized-bundle',
+                cli_path: 'node garda-agent-orchestrator/bin/garda.js',
+                passed: true,
+                artifact_hash: handshakeHash
+            },
+            { actor: 'gate', passThru: true }
+        );
+
+        const result = runShellSmokePreflightCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath
+        });
+
+        assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
+        assert.match(result.outputLines.join('\n'), /SHELL_SMOKE_PREFLIGHT_PASSED/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('rejects shell-smoke-preflight when runtime identity would fall back to canonical SourceOfTruth', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-shell-smoke-legacy-fallback';
@@ -794,6 +924,27 @@ describe('cli/commands/gates — preflight', () => {
         assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before shell-smoke-preflight/i);
         assert.match(error.message, /Re-enter task mode with explicit runtime identity via `--provider "<provider>"`/i);
         assert.match(error.message, /enter-task-mode/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps custom task-mode artifacts in shell-smoke identity-failure remediation commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-legacy-fallback-custom-task-mode';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const error = captureExpectedError(() => runShellSmokePreflightCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before shell-smoke-preflight/i);
+        assert.match(error.message, /--artifact-path/i);
+        assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
+        assert.match(error.message, /--task-mode-path/i);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -868,6 +1019,48 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('keeps custom task-mode artifacts in blocked-launchability remediation commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-launchability-blocked-custom-task-mode';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# routed workflow fixture\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block shell-smoke-preflight with custom task-mode artifact when delegated reviewer launchability is unavailable',
+            provider: 'Codex',
+            artifactPath: customTaskModePath
+        });
+        runHandshakeForTask(repoRoot, taskId, 'Codex');
+
+        const taskModeArtifact = JSON.parse(fs.readFileSync(customTaskModePath, 'utf8')) as Record<string, unknown>;
+        taskModeArtifact.reviewer_subagent_launch_status = 'blocked';
+        taskModeArtifact.reviewer_subagent_launch_reason = 'Reviewer subagent launch is blocked for the persisted task-mode runtime.';
+        taskModeArtifact.reviewer_subagent_launch_remediation = 'Re-enter task mode with a runtime session that can launch delegated reviewer subagents.';
+        fs.writeFileSync(customTaskModePath, JSON.stringify(taskModeArtifact, null, 2), 'utf8');
+
+        const error = captureExpectedError(() => runShellSmokePreflightCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath
+        }));
+
+        assert.match(error.message, /Reviewer subagent launchability is 'blocked' before shell-smoke-preflight/i);
+        assert.match(error.message, /--artifact-path/i);
+        assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
+        assert.match(error.message, /--task-mode-path/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails handshake-diagnostics when persisted task-mode launchability is blocked', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-handshake-launchability-blocked';
@@ -920,6 +1113,27 @@ describe('cli/commands/gates — preflight', () => {
         assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before command-timeout-diagnostics/i);
         assert.match(error.message, /Re-enter task mode with explicit runtime identity via `--provider "<provider>"`/i);
         assert.match(error.message, /command-timeout-diagnostics/i);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps custom task-mode artifacts in command-timeout identity-failure remediation commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-command-timeout-legacy-fallback-custom-task-mode';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const error = captureExpectedError(() => runCommandTimeoutDiagnosticsCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before command-timeout-diagnostics/i);
+        assert.match(error.message, /--artifact-path/i);
+        assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
+        assert.match(error.message, /--task-mode-path/i);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1069,6 +1283,64 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('keeps custom task-mode paths in handshake rerun remediation commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-handshake-remediation-custom-task-mode';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Preserve custom task-mode path in handshake rerun remediation',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const handshakeResult = runHandshakeDiagnosticsCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath
+        });
+        assert.equal(handshakeResult.exitCode, EXIT_GATE_FAILURE);
+        const outputText = handshakeResult.outputLines.join('\n');
+        assert.ok(outputText.includes('--task-mode-path'), outputText);
+        assert.ok(outputText.includes(customTaskModePath), outputText);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps custom task-mode paths in shell-smoke rerun remediation commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-shell-smoke-remediation-custom-task-mode';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Preserve custom task-mode path in shell-smoke rerun remediation',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+
+        const shellSmokeResult = runShellSmokePreflightCommand({
+            repoRoot,
+            taskId,
+            taskModePath: customTaskModePath
+        });
+        assert.equal(shellSmokeResult.exitCode, EXIT_GATE_FAILURE);
+        const outputText = shellSmokeResult.outputLines.join('\n');
+        assert.ok(outputText.includes('--task-mode-path'), outputText);
+        assert.ok(outputText.includes(customTaskModePath), outputText);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails classify-change when the latest handshake supersedes shell smoke evidence for the current task cycle', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-classify-handshake-shell-smoke-overlap';
@@ -1178,6 +1450,42 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('not the latest PREFLIGHT_CLASSIFIED evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps custom task-mode paths in POST_PREFLIGHT remediation commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-remediation-custom-task-mode';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Preserve custom task-mode path in POST_PREFLIGHT remediation',
+            artifactPath: customTaskModePath
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+
+        const result = runLoadRulePackCommand({
+            repoRoot,
+            taskId,
+            stage: 'POST_PREFLIGHT',
+            preflightPath,
+            taskModePath: customTaskModePath,
+            loadedRuleFiles: ['00-core.md'],
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
+        const outputText = result.outputLines.join('\n');
+        assert.ok(outputText.includes('Remediation:'), outputText);
+        assert.ok(outputText.includes('--task-mode-path'), outputText);
+        assert.ok(outputText.includes(customTaskModePath), outputText);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

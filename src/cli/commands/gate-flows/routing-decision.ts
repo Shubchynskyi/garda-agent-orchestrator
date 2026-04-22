@@ -4,7 +4,8 @@ export function readRoutingDecision(
     repoRoot: string,
     providerOverride?: unknown,
     routedToOverride?: unknown,
-    taskId?: string | null
+    taskId?: string | null,
+    taskModePath?: string | null
 ): {
     provider: string | null;
     routedTo: string | null;
@@ -23,6 +24,7 @@ export function readRoutingDecision(
     const identity = resolveRuntimeReviewerIdentity({
         repoRoot,
         taskId,
+        taskModePath,
         executionProvider: providerOverride,
         routedTo: routedToOverride,
         allowLegacyFallback: true

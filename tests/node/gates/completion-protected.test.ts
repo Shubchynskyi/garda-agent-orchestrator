@@ -90,6 +90,8 @@ describe('gates/completion — protected control-plane', () => {
                 provider: 'Codex',
                 canonical_source_of_truth: 'Codex',
                 execution_provider_source: 'provider_entrypoint',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'AGENTS.md',
                 runtime_identity_status: 'resolved',
                 routed_to: 'AGENTS.md',
                 actor: 'orchestrator'
@@ -156,6 +158,8 @@ describe('gates/completion — protected control-plane', () => {
                 provider_bridge: null,
                 provider_bridge_exists: false,
                 execution_provider_source: 'provider_entrypoint',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: 'AGENTS.md',
                 runtime_identity_status: 'resolved',
                 start_task_router_path: '.agents/workflows/start-task.md',
                 start_task_router_exists: true,
@@ -272,6 +276,70 @@ describe('gates/completion — protected control-plane', () => {
                     result.violations.some((entry) => String(entry).includes('Control-plane files were modified in a non-orchestrator task')),
                     false
                 );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('accepts legacy handshake compatibility through completion when task-mode evidence is supplied via a custom path', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const customTaskModePath = path.join(workspace.repoRoot, 'custom-artifacts', 'T-1010-task-mode.json');
+                fs.mkdirSync(path.dirname(customTaskModePath), { recursive: true });
+                fs.copyFileSync(workspace.taskModePath, customTaskModePath);
+                fs.rmSync(workspace.taskModePath, { force: true });
+
+                const timelineEntries = fs.readFileSync(workspace.timelinePath, 'utf8')
+                    .split('\n')
+                    .filter((line) => line.trim().length > 0)
+                    .map((line) => JSON.parse(line) as Record<string, unknown>);
+                const updatedTimelineEntries = timelineEntries.map((entry, index) => {
+                    if (index !== 0) {
+                        return entry;
+                    }
+                    return {
+                        ...entry,
+                        details: {
+                            artifact_path: normalizePath(customTaskModePath),
+                            reviewer_subagent_launch_status: 'launchable',
+                            runtime_identity_status: 'resolved'
+                        }
+                    };
+                });
+
+                const legacyHandshake = JSON.parse(fs.readFileSync(workspace.handshakePath, 'utf8')) as Record<string, unknown>;
+                delete legacyHandshake.reviewer_subagent_launch_status;
+                delete legacyHandshake.reviewer_subagent_launch_route;
+                writeJson(workspace.handshakePath, legacyHandshake);
+                const handshakeArtifactHash = fileSha256(workspace.handshakePath);
+                for (const entry of updatedTimelineEntries) {
+                    if (entry.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED') {
+                        entry.details = { artifact_hash: handshakeArtifactHash };
+                    }
+                }
+                fs.writeFileSync(
+                    workspace.timelinePath,
+                    updatedTimelineEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+                    'utf8'
+                );
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: customTaskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+                assert.equal(result.outcome, 'PASS');
             } finally {
                 fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
             }

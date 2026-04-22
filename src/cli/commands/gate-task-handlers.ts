@@ -157,6 +157,7 @@ export async function handleHandshakeDiagnostics(gateArgv: string[]): Promise<vo
     const defs = {
         '--task-id': { key: 'taskId', type: 'string' },
         '--provider': { key: 'provider', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--cli-path': { key: 'cliPath', type: 'string' },
         '--effective-cwd': { key: 'effectiveCwd', type: 'string' },
         '--canonical-entrypoint': { key: 'canonicalEntrypoint', type: 'string' },
@@ -178,6 +179,7 @@ export async function handleShellSmokePreflight(gateArgv: string[]): Promise<voi
     const defs = {
         '--task-id': { key: 'taskId', type: 'string' },
         '--provider': { key: 'provider', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--effective-cwd': { key: 'effectiveCwd', type: 'string' },
         '--probe-timeout-ms': { key: 'probeTimeoutMs', type: 'string' },
         '--artifact-path': { key: 'artifactPath', type: 'string' },
@@ -197,6 +199,7 @@ export async function handleCommandTimeoutDiagnostics(gateArgv: string[]): Promi
     const defs = {
         '--task-id': { key: 'taskId', type: 'string' },
         '--provider': { key: 'provider', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--effective-cwd': { key: 'effectiveCwd', type: 'string' },
         '--command-records-path': { key: 'commandRecordsPath', type: 'string' },
         '--artifact-path': { key: 'artifactPath', type: 'string' },

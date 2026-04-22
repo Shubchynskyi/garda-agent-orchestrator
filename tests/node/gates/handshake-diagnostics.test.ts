@@ -12,6 +12,7 @@ import {
     resolveHandshakeArtifactPath,
     type HandshakeDiagnosticsArtifact
 } from '../../../src/gates/handshake-diagnostics';
+import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-handshake-test-'));
@@ -780,6 +781,333 @@ describe('gates/handshake-diagnostics', () => {
             const evidence = getHandshakeEvidence(tempDir, 'T-HASHOK-01', { timelinePath });
             assert.equal(evidence.evidence_status, 'PASS');
             assert.equal(evidence.violations.length, 0);
+        });
+
+        it('accepts a legacy handshake artifact without launch status only when task-mode evidence corroborates launchability', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-HANDSHAKE-COMPAT-01',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                routed_to: 'AGENTS.md',
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-HANDSHAKE-COMPAT-01-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const taskModeArtifact = buildTaskModeArtifact({
+                taskId: 'T-HANDSHAKE-COMPAT-01',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Validate legacy handshake compatibility against task-mode evidence.',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                reviewerCapabilityLevel: 'delegation_required',
+                reviewerExpectedExecutionMode: 'delegated_subagent',
+                reviewerFallbackAllowed: false,
+                reviewerFallbackReasonRequired: false,
+                reviewerSubagentLaunchStatus: 'launchable',
+                reviewerSubagentLaunchRoute: 'AGENTS.md',
+                runtimeIdentityStatus: 'resolved',
+                routedTo: 'AGENTS.md'
+            });
+            const taskModePath = path.join(reviewsDir, 'T-HANDSHAKE-COMPAT-01-task-mode.json');
+            fs.writeFileSync(
+                taskModePath,
+                JSON.stringify(taskModeArtifact, null, 2),
+                'utf8'
+            );
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(timelineDir, { recursive: true });
+            const timelinePath = path.join(timelineDir, 'T-HANDSHAKE-COMPAT-01.jsonl');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-22T09:00:00.000Z',
+                    details: {
+                        artifact_path: taskModePath.replace(/\\/g, '/'),
+                        reviewer_subagent_launch_status: 'launchable',
+                        runtime_identity_status: 'resolved'
+                    }
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    timestamp_utc: new Date().toISOString(),
+                    details: { artifact_hash: hash }
+                })
+            ].join('\n') + '\n', 'utf8');
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-HANDSHAKE-COMPAT-01', { timelinePath });
+            assert.equal(evidence.evidence_status, 'PASS');
+            assert.equal(evidence.violations.length, 0);
+        });
+
+        it('accepts legacy handshake compatibility when corroborating task-mode evidence lives at a custom path', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-HANDSHAKE-COMPAT-01B',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                routed_to: 'AGENTS.md',
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-HANDSHAKE-COMPAT-01B-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const customTaskModePath = path.join(tempDir, 'custom-artifacts', 'task-mode', 'compat-01b.json');
+            fs.mkdirSync(path.dirname(customTaskModePath), { recursive: true });
+            const taskModeArtifact = buildTaskModeArtifact({
+                taskId: 'T-HANDSHAKE-COMPAT-01B',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Validate legacy handshake compatibility against a custom task-mode path.',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                reviewerCapabilityLevel: 'delegation_required',
+                reviewerExpectedExecutionMode: 'delegated_subagent',
+                reviewerFallbackAllowed: false,
+                reviewerFallbackReasonRequired: false,
+                reviewerSubagentLaunchStatus: 'launchable',
+                reviewerSubagentLaunchRoute: 'AGENTS.md',
+                runtimeIdentityStatus: 'resolved',
+                routedTo: 'AGENTS.md'
+            });
+            fs.writeFileSync(
+                customTaskModePath,
+                JSON.stringify(taskModeArtifact, null, 2),
+                'utf8'
+            );
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(timelineDir, { recursive: true });
+            const timelinePath = path.join(timelineDir, 'T-HANDSHAKE-COMPAT-01B.jsonl');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-22T09:00:00.000Z',
+                    details: {
+                        artifact_path: customTaskModePath.replace(/\\/g, '/'),
+                        reviewer_subagent_launch_status: 'launchable',
+                        runtime_identity_status: 'resolved'
+                    }
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    timestamp_utc: new Date().toISOString(),
+                    details: { artifact_hash: hash }
+                })
+            ].join('\n') + '\n', 'utf8');
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-HANDSHAKE-COMPAT-01B', {
+                timelinePath,
+                taskModePath: customTaskModePath
+            });
+            assert.equal(evidence.evidence_status, 'PASS');
+            assert.equal(evidence.violations.length, 0);
+        });
+
+        it('keeps legacy handshake artifacts without launch status invalid when task-mode evidence cannot corroborate launchability', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-HANDSHAKE-COMPAT-02',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                routed_to: 'AGENTS.md',
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-HANDSHAKE-COMPAT-02-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(timelineDir, { recursive: true });
+            const timelinePath = path.join(timelineDir, 'T-HANDSHAKE-COMPAT-02.jsonl');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-22T09:00:00.000Z'
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    timestamp_utc: new Date().toISOString(),
+                    details: { artifact_hash: hash }
+                })
+            ].join('\n') + '\n', 'utf8');
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-HANDSHAKE-COMPAT-02', { timelinePath });
+            assert.equal(evidence.evidence_status, 'EVIDENCE_RUNTIME_SESSION_INVALID');
+            assert.ok(evidence.violations.some((violation) => violation.includes("reviewer_subagent_launch_status is 'unknown'")));
+        });
+
+        it('does not let a later task-mode cycle revive a legacy handshake artifact that omitted launch status', () => {
+            const artifact: HandshakeDiagnosticsArtifact = {
+                schema_version: 1,
+                timestamp_utc: new Date().toISOString(),
+                event_source: 'handshake-diagnostics',
+                task_id: 'T-HANDSHAKE-COMPAT-03',
+                status: 'PASSED',
+                outcome: 'PASS',
+                provider: 'Codex',
+                execution_provider: 'Codex',
+                canonical_source_of_truth: 'Codex',
+                canonical_entrypoint: 'AGENTS.md',
+                canonical_entrypoint_exists: true,
+                provider_bridge: null,
+                provider_bridge_exists: false,
+                routed_to: 'AGENTS.md',
+                execution_provider_source: 'explicit_provider',
+                runtime_identity_status: 'resolved',
+                start_task_router_path: '.agents/workflows/start-task.md',
+                start_task_router_exists: true,
+                execution_context: 'source-checkout',
+                cli_path: 'node bin/garda.js',
+                effective_cwd: '/test',
+                workspace_root: '/test',
+                diagnostics: [],
+                violations: []
+            };
+
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const artifactPath = path.join(reviewsDir, 'T-HANDSHAKE-COMPAT-03-handshake.json');
+            fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
+
+            const taskModeArtifact = buildTaskModeArtifact({
+                taskId: 'T-HANDSHAKE-COMPAT-03',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Ensure newer task-mode cycles do not revive old handshake evidence.',
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                reviewerCapabilityLevel: 'delegation_required',
+                reviewerExpectedExecutionMode: 'delegated_subagent',
+                reviewerFallbackAllowed: false,
+                reviewerFallbackReasonRequired: false,
+                reviewerSubagentLaunchStatus: 'launchable',
+                reviewerSubagentLaunchRoute: 'AGENTS.md',
+                runtimeIdentityStatus: 'resolved',
+                routedTo: 'AGENTS.md'
+            });
+            const taskModePath = path.join(reviewsDir, 'T-HANDSHAKE-COMPAT-03-task-mode.json');
+            fs.writeFileSync(
+                taskModePath,
+                JSON.stringify(taskModeArtifact, null, 2),
+                'utf8'
+            );
+
+            const crypto = require('node:crypto');
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(artifactPath)).digest('hex');
+
+            const timelineDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(timelineDir, { recursive: true });
+            const timelinePath = path.join(timelineDir, 'T-HANDSHAKE-COMPAT-03.jsonl');
+            fs.writeFileSync(timelinePath, [
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-22T09:00:00.000Z',
+                    details: {
+                        artifact_path: taskModePath.replace(/\\/g, '/'),
+                        reviewer_subagent_launch_status: 'launchable',
+                        runtime_identity_status: 'resolved'
+                    }
+                }),
+                JSON.stringify({
+                    event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                    timestamp_utc: '2026-04-22T09:01:00.000Z',
+                    details: { artifact_hash: hash }
+                }),
+                JSON.stringify({
+                    event_type: 'TASK_MODE_ENTERED',
+                    timestamp_utc: '2026-04-22T09:02:00.000Z',
+                    details: {
+                        artifact_path: taskModePath.replace(/\\/g, '/'),
+                        reviewer_subagent_launch_status: 'launchable',
+                        runtime_identity_status: 'resolved'
+                    }
+                })
+            ].join('\n') + '\n', 'utf8');
+
+            const evidence = getHandshakeEvidence(tempDir, 'T-HANDSHAKE-COMPAT-03', { timelinePath });
+            assert.equal(evidence.evidence_status, 'EVIDENCE_TIMELINE_UNBOUND');
+            assert.ok(evidence.violations.some((violation) => violation.includes('predates the latest TASK_MODE_ENTERED')));
         });
 
         it('accepts bridge-based provider artifacts that claim provider_entrypoint launchability via the root entrypoint', () => {

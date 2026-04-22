@@ -1,13 +1,16 @@
+<!-- garda-agent-orchestrator:managed-start -->
 ---
-description: "Mandatory router for any Antigravity task execution through Garda orchestration."
+description: "Mandatory shared router for any task execution through Garda orchestration."
 ---
 
 # Start Task
 
-This checklist routes to the canonical Garda workflow. It does not replace `80-task-workflow.md` or the orchestration skill.
+This checklist is the shared start-task router for root entrypoints and provider bridges.
+It routes to the canonical Garda workflow and does not replace `80-task-workflow.md` or the orchestration skill.
 
 Before any code changes:
-- Open `AGENTS.md`, `TASK.md`, and `.antigravity/agents/orchestrator.md`.
+- Open `AGENTS.md` and `TASK.md`.
+- If an active provider bridge exists, open it too before implementation.
 - Fresh main-agent task runs must begin with exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits and then list the first mandatory gates to run.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - Enter orchestrator mode with the canonical command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
@@ -15,8 +18,17 @@ Before any code changes:
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.
 - Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.
 
+## Copy-Paste Start Commands
+- Source checkout (`--provider`): `node bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --repo-root "."`
+- Source checkout (`--provider` + `--routed-to`, optional telemetry): `node bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."`
+- Source checkout (`TASK_ENTRY` rules): `node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md" --repo-root "."`
+- Deployed workspace (`--provider`): `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --repo-root "."`
+- Deployed workspace (`--provider` + `--routed-to`, optional telemetry): `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."`
+- Deployed workspace (`TASK_ENTRY` rules): `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md" --repo-root "."`
+- Required runtime identity: use `--provider "<runtime-provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned.
+
 Mandatory gate order:
-1. `gate enter-task-mode`
+1. `gate enter-task-mode` with explicit runtime identity via `--provider "<provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned, and never rely on canonical SourceOfTruth fallback
 2. `gate load-rule-pack --stage TASK_ENTRY`
 3. `gate handshake-diagnostics`
 4. `gate shell-smoke-preflight`
@@ -33,7 +45,10 @@ Mandatory gate order:
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
 - Do not make code edits before `enter-task-mode`; unscoped pre-task diffs must be isolated first.
+- Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
+- Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as `npm run build:node-foundation` -> direct `node --test .node-build/...` must use the guarded workflow path or run strictly sequentially, never in parallel.
 - Do not mark `DONE` without `COMPLETION_GATE_PASSED`.
 - Do not create fake review artifacts or bypass reviewer routing.
 - The `40-commands.md` preference to avoid ad-hoc manual commands does NOT exempt mandatory gates. Gates such as `compile-gate` must execute their underlying build/test commands when the workflow requires them.
+<!-- garda-agent-orchestrator:managed-end -->

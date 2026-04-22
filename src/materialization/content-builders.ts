@@ -655,7 +655,6 @@ Before any code changes:
 - If an active provider bridge exists, open it too before implementation.
 - ${buildFreshMainAgentStartBannerSentence()}
 - ${START_BANNER_EXEMPTION_RULE}
-- Move the task to \`IN_PROGRESS\`.
 - Enter orchestrator mode with the canonical command: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
 - Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.

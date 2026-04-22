@@ -529,7 +529,8 @@ function buildStartupCommands(
         '<task-id>': taskId,
         '<1|2|3>': String(depth),
         '<task summary>': sanitizeCliValue(taskSummary),
-        '<runtime-provider>': provider
+        '<runtime-provider>': provider,
+        '<provider>': provider
     });
     const enterTaskModeCommand = orchestratorWork
         ? enterTaskModeBase.replace('--provider', '--orchestrator-work --provider')

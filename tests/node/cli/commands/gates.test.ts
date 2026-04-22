@@ -6093,6 +6093,78 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('CLI dependent-preflight handlers accept --task-mode-path and honor a custom task-mode artifact location', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904b-cli-dependent-preflight-custom-task-mode';
+        const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            artifactPath: customTaskModePath,
+            taskSummary: 'Honor custom task-mode path through CLI dependent-preflight handlers',
+            provider: 'Codex'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId, customTaskModePath).exitCode, 0);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        let handshakeExitCode = 0;
+        let shellSmokeExitCode = 0;
+        let commandTimeoutExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+
+            await runCliMainWithHandling([
+                'gate',
+                'handshake-diagnostics',
+                '--repo-root', repoRoot,
+                '--task-id', taskId,
+                '--task-mode-path', customTaskModePath
+            ]);
+            handshakeExitCode = Number(process.exitCode ?? 0);
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'shell-smoke-preflight',
+                '--repo-root', repoRoot,
+                '--task-id', taskId,
+                '--task-mode-path', customTaskModePath
+            ]);
+            shellSmokeExitCode = Number(process.exitCode ?? 0);
+
+            process.exitCode = 0;
+            await runCliMainWithHandling([
+                'gate',
+                'command-timeout-diagnostics',
+                '--repo-root', repoRoot,
+                '--task-id', taskId,
+                '--task-mode-path', customTaskModePath
+            ]);
+            commandTimeoutExitCode = Number(process.exitCode ?? 0);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(handshakeExitCode, 0);
+        assert.equal(shellSmokeExitCode, 0);
+        assert.equal(commandTimeoutExitCode, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('build-review-context and record-review-result honor explicit custom task-mode paths for downstream test-review dependency checks', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904b-custom-task-mode-downstream-test';

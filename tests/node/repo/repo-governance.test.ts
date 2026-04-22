@@ -1,7 +1,8 @@
-import test from 'node:test';
+import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
@@ -9,6 +10,15 @@ import {
     buildProviderOrchestratorAgentContent,
     buildSharedStartTaskWorkflowContent
 } from '../../../src/materialization/content-builders';
+import { runInit } from '../../../src/materialization/init';
+import { runInstall } from '../../../src/materialization/install';
+
+interface MaterializedWorkspace {
+    projectRoot: string;
+    bundleRoot: string;
+}
+
+let materializedWorkspace: MaterializedWorkspace | null = null;
 
 function readRepoFile(relativePath: string): string {
     const repoRoot = getRepoRoot();
@@ -18,8 +28,8 @@ function readRepoFile(relativePath: string): string {
 }
 
 function readGeneratedRepoFile(relativePath: string): string {
-    const repoRoot = getRepoRoot();
-    const filePath = path.join(repoRoot, relativePath);
+    assert.ok(materializedWorkspace !== null, 'materialized workspace must be initialized before reading generated files');
+    const filePath = path.join(materializedWorkspace.projectRoot, relativePath);
     assertRepoFileIgnoredAndNotTracked(relativePath);
     assert.ok(fs.existsSync(filePath), `${relativePath} must exist in the materialized repo surface`);
     return fs.readFileSync(filePath, 'utf8');
@@ -96,6 +106,78 @@ function assertRepoFileIgnoredAndNotTracked(relativePath: string): void {
         `${relativePath} must remain ignored by root .gitignore.\n${ignoredResult.stdout || ignoredResult.stderr}`
     );
 }
+
+function copyDirRecursive(src: string, dst: string): void {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        const srcPath = path.join(src, entry.name);
+        const dstPath = path.join(dst, entry.name);
+        if (entry.isDirectory()) {
+            copyDirRecursive(srcPath, dstPath);
+        } else {
+            fs.copyFileSync(srcPath, dstPath);
+        }
+    }
+}
+
+function setupMaterializedWorkspace(): MaterializedWorkspace {
+    const repoRoot = getRepoRoot();
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-repo-governance-'));
+    const bundleRoot = path.join(projectRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    fs.mkdirSync(bundleRoot, { recursive: true });
+    fs.copyFileSync(path.join(repoRoot, 'VERSION'), path.join(bundleRoot, 'VERSION'));
+    copyDirRecursive(path.join(repoRoot, 'template'), path.join(bundleRoot, 'template'));
+    fs.mkdirSync(path.join(bundleRoot, 'runtime'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, '.git', 'hooks'), { recursive: true });
+
+    fs.writeFileSync(initAnswersPath, JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'GitHubCopilot',
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE',
+        ActiveAgentFiles: '.github/copilot-instructions.md, CLAUDE.md'
+    }, null, 2), 'utf8');
+
+    runInstall({
+        targetRoot: projectRoot,
+        bundleRoot,
+        assistantLanguage: 'English',
+        assistantBrevity: 'concise',
+        sourceOfTruth: 'GitHubCopilot',
+        initAnswersPath,
+        runInit: true,
+        initRunner: (options) => {
+            runInit({
+                targetRoot: options.targetRoot,
+                bundleRoot,
+                assistantLanguage: options.assistantLanguage,
+                assistantBrevity: options.assistantBrevity,
+                sourceOfTruth: options.sourceOfTruth,
+                enforceNoAutoCommit: options.enforceNoAutoCommit,
+                tokenEconomyEnabled: options.tokenEconomyEnabled
+            });
+        }
+    });
+
+    return { projectRoot, bundleRoot };
+}
+
+before(() => {
+    materializedWorkspace = setupMaterializedWorkspace();
+});
+
+after(() => {
+    if (!materializedWorkspace) {
+        return;
+    }
+    fs.rmSync(materializedWorkspace.projectRoot, { recursive: true, force: true });
+    materializedWorkspace = null;
+});
 
 test('repo governance files use the current owner handle and root-relative paths', () => {
     const codeowners = readRepoFile('.github/CODEOWNERS');
@@ -177,6 +259,9 @@ test('start-banner contract stays synced across canonical guidance files', () =>
     const startBannerToken = '--start-banner "<repo-owned-banner>"';
     const listGateText = 'list the first mandatory gates to run';
     const legacyStartMarker = 'files not modified yet';
+    const normalize = (content: string) => content.replace(/\r\n/g, '\n').trim();
+    const expectedTemplateSharedRouterContent = normalize(buildSharedStartTaskWorkflowContent('AGENTS.md'));
+    const expectedMaterializedSharedRouterContent = normalize(buildSharedStartTaskWorkflowContent('.github/copilot-instructions.md'));
 
     const trackedCanonicalFiles = [
         'template/skills/orchestration/SKILL.md',
@@ -185,6 +270,7 @@ test('start-banner contract stays synced across canonical guidance files', () =>
     ] as const;
 
     const materializedGeneratedFiles = [
+        '.agents/workflows/start-task.md',
         'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
         'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md',
         'garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md',
@@ -221,6 +307,12 @@ test('start-banner contract stays synced across canonical guidance files', () =>
         assert.ok(!content.includes(legacyStartMarker), `${relativePath} must not keep the legacy start marker`);
     }
 
+    assert.equal(
+        normalize(readRepoFile('template/.agents/workflows/start-task.md')),
+        expectedTemplateSharedRouterContent,
+        'template/.agents/workflows/start-task.md must stay in exact parity with canonical builder output'
+    );
+
     for (const relativePath of materializedGeneratedFiles) {
         const content = readGeneratedRepoFile(relativePath);
         if (
@@ -233,15 +325,29 @@ test('start-banner contract stays synced across canonical guidance files', () =>
         if (
             relativePath.endsWith('/skills/orchestration/SKILL.md')
             || relativePath.endsWith('/skills/orchestration-depth1/SKILL.md')
+            || relativePath === '.agents/workflows/start-task.md'
             || relativePath.endsWith('/.agents/workflows/start-task.md')
         ) {
             assert.ok(content.includes(listGateText), `${relativePath} must preserve the start-banner gate-list instruction`);
+        }
+        if (
+            relativePath === '.agents/workflows/start-task.md'
+            || relativePath.endsWith('/template/.agents/workflows/start-task.md')
+        ) {
+            assert.equal(
+                normalize(content),
+                relativePath === '.agents/workflows/start-task.md'
+                    ? expectedMaterializedSharedRouterContent
+                    : expectedTemplateSharedRouterContent,
+                `${relativePath} must stay in exact parity with canonical builder output`
+            );
         }
         if (
             relativePath.endsWith('/template/CLAUDE.md')
             || relativePath.endsWith('/docs/agent-rules/80-task-workflow.md')
             || relativePath.endsWith('/skills/orchestration/SKILL.md')
             || relativePath.endsWith('/skills/orchestration-depth1/SKILL.md')
+            || relativePath === '.agents/workflows/start-task.md'
             || relativePath.endsWith('/.agents/workflows/start-task.md')
         ) {
             assert.ok(!content.includes(legacyStartMarker), `${relativePath} must not keep the legacy start marker`);

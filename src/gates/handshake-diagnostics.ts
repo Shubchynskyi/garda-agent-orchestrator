@@ -18,6 +18,7 @@ import {
     resolveReviewerRoutingPolicy,
     resolveRuntimeReviewerIdentity
 } from './reviewer-routing';
+import { getTaskModeEvidence } from './task-mode';
 import {
     describePrePreflightCycleAnchor,
     getLatestPrePreflightCycleAnchor
@@ -121,6 +122,59 @@ function isAttestedReviewerSubagentExecutionSource(source: string | null): boole
         || source === 'provider_entrypoint'
         || source === 'explicit_provider'
         || source === 'task_mode';
+}
+
+function resolveCompatibilityReviewerSubagentLaunchStatus(
+    repoRoot: string,
+    taskId: string,
+    taskModePath: string,
+    artifactProvider: string | null,
+    routedTo: string | null,
+    executionProviderSource: string | null,
+    runtimeIdentityStatus: string | null,
+    recordedStatus: string | null
+): string | null {
+    const normalizedRecordedStatus = String(recordedStatus || '').trim().toLowerCase() || null;
+    if (normalizedRecordedStatus) {
+        return normalizedRecordedStatus;
+    }
+    if (runtimeIdentityStatus !== 'resolved' || !isAttestedReviewerSubagentExecutionSource(executionProviderSource)) {
+        return null;
+    }
+
+    // Legacy handshake fixtures may omit launchability metadata, but only task-mode
+    // evidence from the same task may corroborate a delegated reviewer launch path.
+    const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, taskModePath);
+    const normalizedTaskModeEvidencePath = String(taskModeEvidence.evidence_path || '').trim().toLowerCase() || null;
+    const normalizedTaskModeTimelineArtifactPath = String(taskModeEvidence.timeline_artifact_path || '').trim().toLowerCase() || null;
+    if (
+        taskModeEvidence.evidence_status !== 'PASS'
+        || taskModeEvidence.evidence_outcome !== 'PASS'
+        || !taskModeEvidence.declares_runtime_identity_metadata
+        || !taskModeEvidence.timeline_declares_runtime_identity_metadata
+        || !normalizedTaskModeEvidencePath
+        || !normalizedTaskModeTimelineArtifactPath
+        || normalizedTaskModeEvidencePath !== normalizedTaskModeTimelineArtifactPath
+        || taskModeEvidence.runtime_identity_status !== 'resolved'
+        || taskModeEvidence.reviewer_subagent_launch_status !== 'launchable'
+    ) {
+        return null;
+    }
+
+    if (
+        artifactProvider
+        && taskModeEvidence.provider
+        && taskModeEvidence.provider !== artifactProvider
+    ) {
+        return null;
+    }
+
+    const normalizedTaskModeRoute = normalizeRoutePath(taskModeEvidence.routed_to);
+    if (routedTo && normalizedTaskModeRoute && routedTo !== normalizedTaskModeRoute) {
+        return null;
+    }
+
+    return 'launchable';
 }
 
 function resolveCliPath(repoRoot: string, isSourceCheckout: boolean): string {
@@ -514,6 +568,7 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
 
 export interface GetHandshakeEvidenceOptions {
     artifactPath?: string;
+    taskModePath?: string;
     timelinePath?: string;
 }
 
@@ -639,10 +694,20 @@ export function getHandshakeEvidence(repoRoot: string, taskId: string | null, ar
 
     const status = String(artifact.status || '').trim().toUpperCase();
     const outcome = String(artifact.outcome || '').trim().toUpperCase();
+    const artifactProvider = String(artifact.execution_provider || artifact.provider || '').trim() || null;
     const executionProviderSource = String(artifact.execution_provider_source || '').trim().toLowerCase() || null;
     const routedTo = normalizeRoutePath(artifact.routed_to);
     const runtimeIdentityStatus = String(artifact.runtime_identity_status || '').trim().toLowerCase() || null;
-    const reviewerSubagentLaunchStatus = String(artifact.reviewer_subagent_launch_status || '').trim().toLowerCase() || null;
+    const reviewerSubagentLaunchStatus = resolveCompatibilityReviewerSubagentLaunchStatus(
+        repoRoot,
+        resolvedTaskId,
+        String(opts.taskModePath || '').trim(),
+        artifactProvider,
+        routedTo,
+        executionProviderSource,
+        runtimeIdentityStatus,
+        String(artifact.reviewer_subagent_launch_status || '').trim()
+    );
     if (!isAttestedReviewerSubagentExecutionSource(executionProviderSource)) {
         result.evidence_status = 'EVIDENCE_RUNTIME_SESSION_INVALID';
         result.violations.push(

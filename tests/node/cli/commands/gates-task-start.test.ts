@@ -690,6 +690,28 @@ describe('cli/commands/gates — task-start', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('keeps custom task-mode artifact paths in task-mode entry legacy-fallback remediation', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-stale-routing-custom-artifact';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+
+        const error = captureExpectedError(() => runEnterTaskModeCommand({
+            repoRoot,
+            taskId,
+            taskSummary: 'Preserve custom task-mode artifact path in legacy-fallback remediation',
+            artifactPath: customTaskModePath
+        }));
+
+        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' at task-mode entry/i);
+        assert.match(error.message, /--artifact-path/i);
+        assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
+        assert.equal(fs.existsSync(customTaskModePath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('rejects enter-task-mode when explicit runtime identity is contradictory', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900c-contradictory-routing';
@@ -824,6 +846,27 @@ describe('cli/commands/gates — task-start', () => {
         assert.match(error.message, /setup\/reinit/i);
         assert.match(error.message, /--task-summary "<task-summary>"/i);
         assert.equal(fs.existsSync(artifactPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps custom task-mode artifact paths when canonical SourceOfTruth is missing at task-mode entry', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-missing-routing-custom-artifact';
+        const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+
+        const error = captureExpectedError(() => runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Preserve custom task-mode artifact path when canonical owner files are missing',
+            artifactPath: customTaskModePath
+        }));
+
+        assert.match(error.message, /Canonical SourceOfTruth is missing at task-mode entry/i);
+        assert.match(error.message, /--artifact-path/i);
+        assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
+        assert.equal(fs.existsSync(customTaskModePath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
