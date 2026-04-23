@@ -5,7 +5,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 ## Repository Structure
 ```text
 <ProjectRoot>/
-├── AGENTS.md                     # Codex entrypoint; canonical only when source-of-truth=Codex (recommended gitignore)
+├── AGENTS.md                     # Shared Codex/Cursor entrypoint; canonical only when source-of-truth=Codex or Cursor (recommended gitignore)
 ├── CLAUDE.md                     # Claude entrypoint; canonical only when source-of-truth=Claude
 ├── GEMINI.md                     # Gemini entrypoint; canonical only when source-of-truth=Gemini
 ├── QWEN.md                       # Qwen entrypoint; canonical only when source-of-truth=Qwen
@@ -62,7 +62,7 @@ Primary entry point: selected source-of-truth entrypoint (depends on configured 
 
 ## Core Documents
 - Source-of-truth entrypoint file (selected at install): canonical routing index for agent rules.
-- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `QWEN.md` - supported root entrypoint files; only the selected source-of-truth file is canonical.
+- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `QWEN.md` - supported root entrypoint files; `AGENTS.md` is intentionally shared by Codex and Cursor, and only the selected source-of-truth file is canonical.
 - `.claude/settings.local.json` - optional (when `ClaudeOrchestratorFullAccess=true`): Claude Code local permission allowlist for the Node CLI.
 - `.qwen/settings.json` - optional Qwen context bootstrap for `TASK.md` plus the current canonical entrypoint (only updated when the file already exists).
 - `TASK.md` - canonical task list for agent execution workflow.

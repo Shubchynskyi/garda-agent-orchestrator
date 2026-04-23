@@ -318,6 +318,56 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('keeps shared AGENTS.md routed_to resolved for Cursor when provider is explicit in task-mode', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-cursor-shared-entrypoint-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Cursor'
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-cursor-shared-entrypoint', {
+                provider: 'Cursor',
+                canonicalSourceOfTruth: 'Cursor',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+
+            const result = resolveRuntimeReviewerIdentity({
+                repoRoot,
+                taskId: 'T-901-cursor-shared-entrypoint',
+                allowLegacyFallback: false
+            });
+
+            assert.equal(result.execution_provider, 'Cursor');
+            assert.equal(result.execution_provider_source, 'provider_entrypoint');
+            assert.equal(result.routed_to, 'AGENTS.md');
+            assert.equal(result.identity_status, 'resolved');
+            assert.equal(result.reviewer_subagent_launch_status, 'launchable');
+            assert.deepEqual(result.violations, []);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('flags shared AGENTS.md route as ambiguous when no provider disambiguates it', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-shared-route-ambiguous-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Cursor'
+            }, null, 2), 'utf8');
+
+            const result = resolveRuntimeReviewerIdentity({
+                repoRoot,
+                routedTo: 'AGENTS.md',
+                allowLegacyFallback: false
+            });
+
+            assert.equal(result.execution_provider, null);
+            assert.equal(result.identity_status, 'contradictory');
+            assert.ok(result.violations.some((violation) => violation.includes('shared by multiple providers')));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('builds required review-contexts when task-mode uses a direct explicit_provider session', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-launch-blocked-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

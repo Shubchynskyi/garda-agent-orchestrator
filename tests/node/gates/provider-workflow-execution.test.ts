@@ -202,6 +202,13 @@ describe('provider-workflow-execution: handshake per provider family', () => {
         const bridgeProfile = BRIDGE_PROFILES.find((p) => p.entrypointFile === canonicalFile);
         const hasBridge = !!bridgeProfile;
         const routedTo = bridgeProfile?.orchestratorRelativePath ?? canonicalFile;
+        const sharedEntrypointProviders = ALL_PROVIDERS.filter((candidate) => (
+            getCanonicalEntrypointFile(candidate) === canonicalFile
+        ));
+        const requiresExplicitProviderForSharedEntrypoint = sharedEntrypointProviders.length > 1;
+        const expectedRouteOnlyExecutionProviderSource = hasBridge
+            ? 'provider_bridge'
+            : 'provider_entrypoint';
 
         describe(`${provider} (entrypoint=${canonicalFile})`, () => {
             it('PASS in source-checkout context with all required files', () => {
@@ -211,7 +218,8 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     const result = buildHandshakeDiagnostics({
                         taskId: `T-EXEC-${provider}-SC`,
                         repoRoot: dir,
-                        routedTo
+                        routedTo,
+                        provider: requiresExplicitProviderForSharedEntrypoint ? provider : undefined
                     });
                     assert.equal(result.status, 'PASSED', `${provider} should pass handshake in source-checkout`);
                     assert.equal(result.outcome, 'PASS');
@@ -220,7 +228,7 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     assert.equal(result.canonical_source_of_truth, provider);
                     assert.equal(result.canonical_entrypoint, canonicalFile);
                     assert.equal(result.canonical_entrypoint_exists, true);
-                    assert.equal(result.execution_provider_source, hasBridge ? 'provider_bridge' : 'provider_entrypoint');
+                    assert.equal(result.execution_provider_source, expectedRouteOnlyExecutionProviderSource);
                     assert.equal(result.runtime_identity_status, 'resolved');
                     assert.equal(result.reviewer_subagent_launch_status, 'launchable');
                     assert.equal(result.execution_context, 'source-checkout');
@@ -248,12 +256,13 @@ describe('provider-workflow-execution: handshake per provider family', () => {
                     const result = buildHandshakeDiagnostics({
                         taskId: `T-EXEC-${provider}-MB`,
                         repoRoot: dir,
-                        routedTo
+                        routedTo,
+                        provider: requiresExplicitProviderForSharedEntrypoint ? provider : undefined
                     });
                     assert.equal(result.status, 'PASSED', `${provider} should pass handshake in materialized-bundle`);
                     assert.equal(result.execution_provider, provider);
                     assert.equal(result.canonical_source_of_truth, provider);
-                    assert.equal(result.execution_provider_source, hasBridge ? 'provider_bridge' : 'provider_entrypoint');
+                    assert.equal(result.execution_provider_source, expectedRouteOnlyExecutionProviderSource);
                     assert.equal(result.runtime_identity_status, 'resolved');
                     assert.equal(result.reviewer_subagent_launch_status, 'launchable');
                     assert.equal(result.execution_context, 'materialized-bundle');
@@ -750,15 +759,22 @@ describe('provider-workflow-execution: cross-provider execution context', () => 
     beforeEach(() => { tempDir = createTempDir(); });
     afterEach(() => { removeTempDir(tempDir); });
 
-    it('every provider resolves to exactly one canonical entrypoint', () => {
-        const seen = new Set<string>();
+    it('shared canonical entrypoints stay explicit and limited to the approved provider set', () => {
+        const providersByEntrypoint = new Map<string, string[]>();
         for (const provider of ALL_PROVIDERS) {
             const file = getCanonicalEntrypointFile(provider);
             assert.ok(file, `${provider} should resolve to an entrypoint`);
-            assert.ok(!seen.has(file), `Entrypoint ${file} should be unique across providers`);
-            seen.add(file);
+            const providers = providersByEntrypoint.get(file) || [];
+            providers.push(provider);
+            providersByEntrypoint.set(file, providers);
         }
-        assert.equal(seen.size, ALL_PROVIDERS.length);
+        assert.deepEqual(providersByEntrypoint.get('AGENTS.md'), ['Codex', 'Cursor']);
+        for (const [entrypoint, providers] of providersByEntrypoint.entries()) {
+            if (entrypoint === 'AGENTS.md') {
+                continue;
+            }
+            assert.equal(providers.length, 1, `Entrypoint ${entrypoint} should stay unique outside the approved shared-entrypoint contract`);
+        }
     });
 
     it('bridge providers are a strict subset of all providers', () => {
@@ -1123,9 +1139,11 @@ describe('provider-workflow-execution: compliance format output', () => {
 // ===========================================================================
 
 describe('provider-workflow-execution: structural invariants', () => {
-    it('SOURCE_OF_TRUTH_VALUES count matches ALL_AGENT_ENTRYPOINT_FILES count', () => {
-        assert.equal(ALL_PROVIDERS.length, ALL_AGENT_ENTRYPOINT_FILES.length,
-            'Provider count must match entrypoint file count');
+    it('shared-entrypoint providers keep more providers than unique entrypoint files', () => {
+        assert.ok(
+            ALL_PROVIDERS.length > ALL_AGENT_ENTRYPOINT_FILES.length,
+            'Provider count should exceed unique entrypoint file count once shared entrypoints are supported'
+        );
     });
 
     it('every provider in SOURCE_OF_TRUTH_VALUES resolves to a valid entrypoint', () => {
@@ -1150,8 +1168,8 @@ describe('provider-workflow-execution: structural invariants', () => {
         assert.equal(BRIDGE_PROFILES.length, 4);
     });
 
-    it('root-entrypoint-only providers are exactly Claude, Codex, Gemini, Qwen', () => {
-        const expected = new Set(['Claude', 'Codex', 'Gemini', 'Qwen']);
+    it('root-entrypoint-only providers are exactly Claude, Codex, Cursor, Gemini, Qwen', () => {
+        const expected = new Set(['Claude', 'Codex', 'Cursor', 'Gemini', 'Qwen']);
         const actual = new Set(ROOT_ONLY_PROVIDERS);
         assert.deepEqual(actual, expected);
     });
@@ -1160,7 +1178,7 @@ describe('provider-workflow-execution: structural invariants', () => {
         assert.equal(SHARED_START_TASK_WORKFLOW_RELATIVE_PATH, '.agents/workflows/start-task.md');
     });
 
-    it('provider count is exactly 8', () => {
-        assert.equal(ALL_PROVIDERS.length, 8);
+    it('provider count is exactly 9', () => {
+        assert.equal(ALL_PROVIDERS.length, 9);
     });
 });

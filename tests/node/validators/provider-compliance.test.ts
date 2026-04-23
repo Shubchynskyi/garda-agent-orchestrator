@@ -473,6 +473,11 @@ test('scanProviderCompliance normalizes provider aliases to canonical entrypoint
         assert.equal(result.passed, false, 'Codex alias must resolve to AGENTS.md and detect violations');
         assert.ok(result.entrypoints.some((entry) => entry.file === 'AGENTS.md'));
         assert.ok(result.violations.some((violation) => violation.includes('AGENTS.md') && violation.includes('start-task router')));
+
+        const cursorResult = scanProviderCompliance(tmpDir, ['Cursor']);
+        assert.equal(cursorResult.passed, false, 'Cursor alias must also resolve to AGENTS.md and detect violations');
+        assert.ok(cursorResult.entrypoints.some((entry) => entry.file === 'AGENTS.md'));
+        assert.ok(cursorResult.violations.some((violation) => violation.includes('AGENTS.md') && violation.includes('start-task router')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

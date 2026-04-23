@@ -37,7 +37,7 @@ bin/garda.js
 | File | Purpose |
 |---|---|
 | `CLAUDE.md` | Claude Code entrypoint |
-| `AGENTS.md` | Codex entrypoint |
+| `AGENTS.md` | Shared Codex and Cursor entrypoint |
 | `GEMINI.md` | Gemini entrypoint |
 | `QWEN.md` | Qwen entrypoint |
 | `.github/copilot-instructions.md` | GitHub Copilot entrypoint |

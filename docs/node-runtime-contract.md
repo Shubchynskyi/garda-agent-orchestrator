@@ -1,7 +1,7 @@
 # Node Runtime Contract
 
 Version source: VERSION
-Frozen: 2026-03-27
+Frozen: 2026-04-23
 
 This document captures the current Node-only runtime surface.
 
@@ -45,12 +45,15 @@ Zero-argument invocation prints the safe overview. Unknown first positional fall
 |---|---|
 | Claude | `CLAUDE.md` |
 | Codex | `AGENTS.md` |
+| Cursor | `AGENTS.md` |
 | Gemini | `GEMINI.md` |
 | Qwen | `QWEN.md` |
 | GitHubCopilot | `.github/copilot-instructions.md` |
 | Windsurf | `.windsurf/rules/rules.md` |
 | Junie | `.junie/guidelines.md` |
 | Antigravity | `.antigravity/rules.md` |
+
+`Codex` and `Cursor` intentionally share `AGENTS.md`; runtime identity must come from explicit provider metadata, not path-only inference.
 
 ## Init Answers Contract
 

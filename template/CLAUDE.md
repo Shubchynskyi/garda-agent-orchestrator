@@ -5,7 +5,7 @@
 # Garda Agent Orchestrator Rule Index
 
 This file can serve as the source of truth for agent workflow rules.
-At setup, source of truth is selected via `-SourceOfTruth` (`Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
+At setup, source of truth is selected via `-SourceOfTruth` (`Claude`, `Codex`, `Cursor`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, or `Antigravity`).
 Non-selected entrypoint files must only redirect to the selected source-of-truth file.
 
 ## How To Use This File

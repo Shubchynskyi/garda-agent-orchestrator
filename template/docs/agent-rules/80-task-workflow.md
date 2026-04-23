@@ -162,6 +162,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Mandatory reviews must be spawned as fresh-context sub-agents on every provider. The implementation agent must not satisfy a required review in-place.
 - Provider launch contract:
   - Codex: use sub-agents with isolated review context.
+  - Cursor: use delegated reviewer sub-agents with isolated context.
   - Claude Code: use Agent tool/sub-agents with `fork_context=false`.
   - Gemini: use delegated reviewer sub-agents with isolated context.
   - Qwen: use delegated reviewer sub-agents with isolated context.

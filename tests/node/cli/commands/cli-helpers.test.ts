@@ -277,6 +277,7 @@ test('tryParseBooleanText returns fallback for invalid', () => {
 test('normalizeSourceOfTruth normalizes case-insensitive values', () => {
     assert.equal(normalizeSourceOfTruth('claude'), 'Claude');
     assert.equal(normalizeSourceOfTruth('CODEX'), 'Codex');
+    assert.equal(normalizeSourceOfTruth('cursor'), 'Cursor');
     assert.equal(normalizeSourceOfTruth('qwen'), 'Qwen');
     assert.equal(normalizeSourceOfTruth('GitHubCopilot'), 'GitHubCopilot');
 });
@@ -320,6 +321,7 @@ test('tryNormalizeAssistantBrevity returns fallback for empty/invalid', () => {
 test('normalizeAgentEntrypointToken maps shorthand names', () => {
     assert.equal(normalizeAgentEntrypointToken('claude'), 'CLAUDE.md');
     assert.equal(normalizeAgentEntrypointToken('codex'), 'AGENTS.md');
+    assert.equal(normalizeAgentEntrypointToken('cursor'), 'AGENTS.md');
     assert.equal(normalizeAgentEntrypointToken('gemini'), 'GEMINI.md');
     assert.equal(normalizeAgentEntrypointToken('qwen'), 'QWEN.md');
     assert.equal(normalizeAgentEntrypointToken('qwen.md'), 'QWEN.md');
@@ -354,6 +356,7 @@ test('normalizeAgentEntrypointToken returns null for unknown', () => {
 test('convertSourceOfTruthToEntrypoint maps known values', () => {
     assert.equal(convertSourceOfTruthToEntrypoint('Claude'), 'CLAUDE.md');
     assert.equal(convertSourceOfTruthToEntrypoint('Codex'), 'AGENTS.md');
+    assert.equal(convertSourceOfTruthToEntrypoint('Cursor'), 'AGENTS.md');
     assert.equal(convertSourceOfTruthToEntrypoint('Qwen'), 'QWEN.md');
     assert.equal(convertSourceOfTruthToEntrypoint('GitHubCopilot'), '.github/copilot-instructions.md');
 });

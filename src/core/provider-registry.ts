@@ -139,6 +139,16 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         aliases: ['codex', 'agents', 'agents.md']
     },
     {
+        id: 'Cursor',
+        displayLabel: 'Cursor',
+        reviewerLaunchLabel: 'Cursor',
+        entrypointFile: 'AGENTS.md',
+        reviewerCapabilityTier: 'delegation_required',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
+        bridge: null,
+        aliases: ['cursor']
+    },
+    {
         id: 'Gemini',
         displayLabel: 'Gemini',
         reviewerLaunchLabel: 'Gemini',
@@ -287,12 +297,27 @@ export function getProviderEntrypointMap(): Readonly<Record<string, string>> {
 
 /** Ordered entrypoint file list. */
 export function getProviderEntrypointFiles(): readonly string[] {
-    return PROVIDER_ENTRIES.map((entry) => entry.entrypointFile);
+    const files = new Set<string>();
+    for (const entry of PROVIDER_ENTRIES) {
+        files.add(entry.entrypointFile);
+    }
+    return Object.freeze([...files]);
 }
 
 /** Returns the canonical entrypoint file for one provider id. */
 export function getProviderEntrypointFileById(providerId: string): string | null {
     return getProviderEntryById(providerId)?.entrypointFile ?? null;
+}
+
+/** Returns every provider entry that shares one canonical entrypoint file. */
+export function getProviderEntriesByEntrypointFile(entrypointFile: string): readonly ProviderEntry[] {
+    const normalizedEntrypointFile = String(entrypointFile || '').trim().replace(/\\/g, '/').toLowerCase();
+    if (!normalizedEntrypointFile) {
+        return Object.freeze([]);
+    }
+    return Object.freeze(PROVIDER_ENTRIES.filter((entry) => (
+        entry.entrypointFile.replace(/\\/g, '/').toLowerCase() === normalizedEntrypointFile
+    )));
 }
 
 /** Alias map: normalized alias → canonical entrypoint file. */

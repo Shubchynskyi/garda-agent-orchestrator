@@ -255,6 +255,8 @@ describe('cross-provider-router-matrix: provider orchestrator bridges', () => {
             antigravity.providerLabel, 'CLAUDE.md', antigravity.orchestratorRelativePath
         );
         assert.ok(content.includes('Antigravity Agent: Orchestrator'));
+        assert.ok(content.includes('delegated_subagent'));
+        assert.ok(content.includes('stale fallback metadata cannot satisfy a fresh cycle'));
         assert.ok(!content.includes('## Required Execution Contract'));
         assert.ok(content.includes('.agents/workflows/start-task.md'));
     });
@@ -300,6 +302,33 @@ describe('cross-provider-router-matrix: provider orchestrator bridges', () => {
             );
             assert.ok(content.includes('Reviewer Launch Mapping'));
             assert.ok(content.includes('delegation'));
+        }
+    });
+
+    it('all provider bridges reject stale same_agent_fallback wording', () => {
+        for (const profile of PROVIDER_BRIDGE_PROFILES) {
+            const content = buildProviderOrchestratorAgentContent(
+                profile.providerLabel, 'CLAUDE.md', profile.orchestratorRelativePath
+            );
+            assert.ok(!content.includes('same_agent_fallback'), `${profile.providerLabel} reintroduced same_agent_fallback wording`);
+        }
+    });
+
+    it('non-Antigravity bridges pin delegated-only receipt wording', () => {
+        const nonAntigravity = PROVIDER_BRIDGE_PROFILES.filter(
+            (p) => p.orchestratorRelativePath !== '.antigravity/agents/orchestrator.md'
+        );
+        for (const profile of nonAntigravity) {
+            const content = buildProviderOrchestratorAgentContent(
+                profile.providerLabel, 'CLAUDE.md', profile.orchestratorRelativePath
+            );
+            assert.ok(content.includes('reviewer_execution_mode'), `${profile.providerLabel} missing reviewer_execution_mode contract`);
+            assert.ok(content.includes('delegated_subagent'), `${profile.providerLabel} missing delegated_subagent contract`);
+            assert.ok(content.includes('reviewer_identity'), `${profile.providerLabel} missing reviewer_identity contract`);
+            assert.ok(
+                content.includes('cannot satisfy a fresh mandatory review cycle'),
+                `${profile.providerLabel} missing delegated-only receipt durability wording`
+            );
         }
     });
 
@@ -507,7 +536,7 @@ describe('cross-provider-router-matrix: mixed active-agent setups', () => {
         assert.equal(files[1], 'AGENTS.md');
     });
 
-    it('all 8 providers can coexist in active list', () => {
+    it('all providers can coexist in active list', () => {
         const allFiles = ALL_AGENT_ENTRYPOINT_FILES.join(', ');
         const files = getActiveAgentEntrypointFiles(allFiles, 'Claude');
         assert.equal(files.length, ALL_AGENT_ENTRYPOINT_FILES.length);
@@ -583,8 +612,8 @@ describe('cross-provider-router-matrix: mixed active-agent setups', () => {
 // ===========================================================================
 
 describe('cross-provider-router-matrix: drift detection', () => {
-    it('SOURCE_OF_TRUTH_VALUES has exactly 8 providers', () => {
-        assert.equal(ALL_PROVIDERS.length, 8);
+    it('SOURCE_OF_TRUTH_VALUES has exactly 9 providers', () => {
+        assert.equal(ALL_PROVIDERS.length, 9);
     });
 
     it('SOURCE_TO_ENTRYPOINT_MAP covers all SOURCE_OF_TRUTH_VALUES', () => {
@@ -596,9 +625,16 @@ describe('cross-provider-router-matrix: drift detection', () => {
         }
     });
 
-    it('ALL_AGENT_ENTRYPOINT_FILES matches SOURCE_TO_ENTRYPOINT_MAP values', () => {
-        const mapValues = Object.values(SOURCE_TO_ENTRYPOINT_MAP);
+    it('ALL_AGENT_ENTRYPOINT_FILES matches unique SOURCE_TO_ENTRYPOINT_MAP values', () => {
+        const mapValues = [...new Set(Object.values(SOURCE_TO_ENTRYPOINT_MAP))];
         assert.deepEqual([...ALL_AGENT_ENTRYPOINT_FILES].sort(), [...mapValues].sort());
+    });
+
+    it('shared-entrypoint providers keep more providers than unique entrypoint files', () => {
+        assert.ok(
+            ALL_PROVIDERS.length > ALL_AGENT_ENTRYPOINT_FILES.length,
+            'Provider count should exceed unique entrypoint file count once shared entrypoints are supported'
+        );
     });
 
     it('every entrypoint file appears in INSTALL_BACKUP_CANDIDATE_PATHS', () => {

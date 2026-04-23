@@ -12,6 +12,7 @@ see the [Evidence Sources](#evidence-sources) section for traceability.
 |---|---|---|---|
 | Claude | `CLAUDE.md` | — | `.claude/settings.local.json` |
 | Codex | `AGENTS.md` | — | — |
+| Cursor | `AGENTS.md` (shared with Codex) | — | — |
 | Gemini | `GEMINI.md` | — | — |
 | Qwen | `QWEN.md` | — | optional `.qwen/settings.json` |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/orchestrator.md` | — |
@@ -19,35 +20,37 @@ see the [Evidence Sources](#evidence-sources) section for traceability.
 | Junie | `.junie/guidelines.md` | `.junie/agents/orchestrator.md` | — |
 | Antigravity | `.antigravity/rules.md` | `.antigravity/agents/orchestrator.md` | — |
 
+`Codex` and `Cursor` intentionally share the same root entrypoint file while remaining distinct runtime providers.
+
 ## Core Feature Matrix
 
-| Feature | Claude | Codex | Gemini | Qwen | Copilot | Windsurf | Junie | Antigravity |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Entrypoint materialization | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Managed-block injection | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Redirect entrypoints | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Start-task router | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Orchestrator bridge profile | — | — | — | — | ✅ | ✅ | ✅ | ✅ |
-| Skill bridge agents | — | — | — | — | ✅ | — | — | — |
-| Token economy | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Scoped diffs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Compact-command protocol | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Feature | Claude | Codex | Cursor | Gemini | Qwen | Copilot | Windsurf | Junie | Antigravity |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Entrypoint materialization | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Managed-block injection | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Redirect entrypoints | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Start-task router | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Orchestrator bridge profile | — | — | — | — | — | ✅ | ✅ | ✅ | ✅ |
+| Skill bridge agents | — | — | — | — | — | ✅ | — | — | — |
+| Token economy | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Scoped diffs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Compact-command protocol | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Gate Sequence Compliance
 
-All 8 providers share the same mandatory gate sequence.
+All 9 providers share the same mandatory gate sequence.
 Tests verify that each materialized entrypoint and start-task router includes the full ordered gate set.
 
-| Gate | Claude | Codex | Gemini | Qwen | Copilot | Windsurf | Junie | Antigravity |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `enter-task-mode` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `load-rule-pack` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `classify-change` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `compile-gate` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `build-review-context` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `required-reviews-check` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `doc-impact-gate` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `completion-gate` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Gate | Claude | Codex | Cursor | Gemini | Qwen | Copilot | Windsurf | Junie | Antigravity |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `enter-task-mode` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `load-rule-pack` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `classify-change` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `compile-gate` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `build-review-context` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `required-reviews-check` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `doc-impact-gate` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `completion-gate` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Review Delegation
 
@@ -57,6 +60,7 @@ Required reviews run as independent fresh-context delegated sub-agents on every 
 |---|---|---|:---:|
 | Claude | Delegated sub-agent | Agent tool (`fork_context=false`) | ✅ |
 | Codex | Delegated sub-agent | Native sub-agents | ✅ |
+| Cursor | Delegated sub-agent | Delegated reviewer sub-agents with isolated context | ✅ |
 | GitHub Copilot | Delegated sub-agent | `task` tool (`agent_type="general-purpose"`) | ✅ |
 | Windsurf | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
 | Junie | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
@@ -89,27 +93,27 @@ not the provider.
 ## Test Coverage by Provider
 
 The execution-path test suite (`tests/node/gates/provider-workflow-execution.test.ts`) validates
-all 8 provider families across multiple dimensions.
+all 9 providers across multiple dimensions.
 
 | Test Dimension | Tests per Provider | Total |
 |---|:---:|:---:|
-| Handshake diagnostics | 5 | 40 |
-| Evidence lifecycle | 2 | 16 |
-| Provider compliance | 4 | 32 |
-| Gate sequence verification | 5 | 40 |
+| Handshake diagnostics | 5 | 45 |
+| Evidence lifecycle | 2 | 18 |
+| Provider compliance | 4 | 36 |
+| Gate sequence verification | 5 | 45 |
 | Bridge execution contracts | 5 (bridge only) | 20 |
 | Cross-provider context | — | 6 |
 | Multi-provider workspace | — | 3 |
-| Redirect entrypoints | 2 | 16 |
+| Redirect entrypoints | 2 | 18 |
 | Structural invariants | — | 8 |
 | Compliance format output | — | 2 |
-| **Total** | | **~194** |
+| **Total** | | **~201** |
 
 Additional provider-relevant test suites:
 
 | Suite | Path | Scope |
 |---|---|---|
-| Cross-provider router matrix | `tests/node/materialization/cross-provider-router-matrix.test.ts` | Entrypoint canonicalization across 8 families |
+| Cross-provider router matrix | `tests/node/materialization/cross-provider-router-matrix.test.ts` | Entrypoint canonicalization across 9 providers and 8 unique entrypoints |
 | Provider compliance validators | `tests/node/validators/provider-compliance.test.ts` | Managed-block and structure validation |
 | CLI provider routing | `tests/node/cli/commands/gates.test.ts` | `--provider` option dispatch |
 

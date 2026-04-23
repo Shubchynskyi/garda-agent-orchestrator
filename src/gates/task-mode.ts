@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { SOURCE_OF_TRUTH_VALUES } from '../core/constants';
+import { getProviderEntriesByEntrypointFile } from '../core/provider-registry';
 import {
     normalizeOrchestratorStartBanner,
     ORCHESTRATOR_START_BANNER_CONTRACT_EFFECTIVE_AT_UTC,
@@ -9,7 +10,7 @@ import {
     selectRandomOrchestratorStartBanner
 } from '../core/orchestrator-start-banner';
 import { assertValidTaskId } from '../gate-runtime/task-events';
-import { getCanonicalEntrypointFile, getProviderOrchestratorProfileDefinitions } from '../materialization/common';
+import { getProviderOrchestratorProfileDefinitions } from '../materialization/common';
 import {
     normalizeDirtyWorkspaceBaseline,
     type DirtyWorkspaceBaseline
@@ -358,17 +359,14 @@ function resolveLegacyRouteIdentity(routedTo: string | null): {
         }
     }
 
-    for (const providerLabel of SOURCE_OF_TRUTH_VALUES) {
-        try {
-            if (normalizeLegacyRoutePath(getCanonicalEntrypointFile(providerLabel)) === normalizedRoute) {
-                return {
-                    provider: providerLabel,
-                    routeKind: 'provider_entrypoint'
-                };
-            }
-        } catch {
-            // Ignore unmaterialized entrypoints in compatibility inference.
-        }
+    const sharedEntrypointProviders = getProviderEntriesByEntrypointFile(normalizedRoute)
+        .map((entry) => normalizeLegacySourceOfTruthValue(entry.id))
+        .filter((provider): provider is string => provider !== null);
+    if (sharedEntrypointProviders.length === 1) {
+        return {
+            provider: sharedEntrypointProviders[0],
+            routeKind: 'provider_entrypoint'
+        };
     }
 
     return {

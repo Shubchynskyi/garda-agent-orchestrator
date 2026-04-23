@@ -1,7 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SOURCE_OF_TRUTH_VALUES, resolveBundleName } from '../core/constants';
-import { getReviewerCapabilityTier } from '../core/provider-registry';
+import {
+    getProviderEntriesByEntrypointFile,
+    getReviewerCapabilityTier
+} from '../core/provider-registry';
 import { getCanonicalEntrypointFile, getProviderOrchestratorProfileDefinitions } from '../materialization/common';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
@@ -291,13 +294,15 @@ function resolveExecutionProviderFromRoutePath(routedTo: string | null): {
     provider: string | null;
     routeKind: Extract<RuntimeProviderIdentitySource, 'provider_bridge' | 'provider_entrypoint'> | null;
     bridgePath: string | null;
+    providerCandidates: readonly string[];
 } {
     const normalizedRoutedTo = normalizeRoutePath(routedTo);
     if (!normalizedRoutedTo) {
         return {
             provider: null,
             routeKind: null,
-            bridgePath: null
+            bridgePath: null,
+            providerCandidates: Object.freeze([])
         };
     }
     for (const profile of getProviderOrchestratorProfileDefinitions()) {
@@ -305,35 +310,37 @@ function resolveExecutionProviderFromRoutePath(routedTo: string | null): {
             return {
                 provider: normalizeSourceOfTruthValue(profile.providerId),
                 routeKind: 'provider_bridge',
-                bridgePath: profile.orchestratorRelativePath
+                bridgePath: profile.orchestratorRelativePath,
+                providerCandidates: Object.freeze([profile.providerId])
             };
         }
     }
-    for (const [providerLabel, entrypointFile] of Object.entries(getCanonicalEntrypointMap())) {
-        if (normalizeRoutePath(entrypointFile) === normalizedRoutedTo) {
-            const normalizedProvider = normalizeSourceOfTruthValue(providerLabel);
-            return {
-                provider: normalizedProvider,
-                routeKind: 'provider_entrypoint',
-                bridgePath: resolveKnownBridgePath(normalizedProvider)
-            };
-        }
+    const providerCandidates = getProviderEntriesByEntrypointFile(normalizedRoutedTo)
+        .map((entry) => normalizeSourceOfTruthValue(entry.id))
+        .filter((candidate): candidate is string => candidate !== null);
+    if (providerCandidates.length === 1) {
+        const normalizedProvider = providerCandidates[0];
+        return {
+            provider: normalizedProvider,
+            routeKind: 'provider_entrypoint',
+            bridgePath: resolveKnownBridgePath(normalizedProvider),
+            providerCandidates: Object.freeze([...providerCandidates])
+        };
+    }
+    if (providerCandidates.length > 1) {
+        return {
+            provider: null,
+            routeKind: 'provider_entrypoint',
+            bridgePath: null,
+            providerCandidates: Object.freeze([...providerCandidates])
+        };
     }
     return {
         provider: null,
         routeKind: null,
-        bridgePath: null
+        bridgePath: null,
+        providerCandidates: Object.freeze([])
     };
-}
-
-function getCanonicalEntrypointMap(): Record<string, string> {
-    return SOURCE_OF_TRUTH_VALUES.reduce<Record<string, string>>((acc, providerLabel) => {
-        const entrypoint = resolveCanonicalEntrypoint(providerLabel);
-        if (entrypoint) {
-            acc[providerLabel] = entrypoint;
-        }
-        return acc;
-    }, {});
 }
 
 export function resolveRuntimeReviewerIdentity(options: {
@@ -414,7 +421,12 @@ export function resolveRuntimeReviewerIdentity(options: {
             `Use one of the supported providers: ${SOURCE_OF_TRUTH_VALUES.join(', ')}.`
         );
     }
-    if (explicitRoutedToRaw && !routeIdentity.provider) {
+    if (explicitRoutedToRaw && routeIdentity.providerCandidates.length > 1 && !explicitProvider) {
+        violations.push(
+            `Runtime route override '${explicitRoutedToRaw}' is shared by multiple providers ` +
+            `(${routeIdentity.providerCandidates.join(', ')}). Pass explicit --provider to disambiguate the shared entrypoint.`
+        );
+    } else if (explicitRoutedToRaw && !routeIdentity.provider && routeIdentity.providerCandidates.length === 0) {
         violations.push(
             `Runtime route override '${explicitRoutedToRaw}' is not a recognized provider bridge or canonical entrypoint.`
         );
@@ -450,10 +462,32 @@ export function resolveRuntimeReviewerIdentity(options: {
             `which identifies provider '${routeIdentity.provider}'.`
         );
     }
+    if (
+        !routeIdentity.provider
+        && routeIdentity.providerCandidates.length > 1
+        && explicitProvider
+        && !routeIdentity.providerCandidates.includes(explicitProvider)
+    ) {
+        violations.push(
+            `Runtime execution provider '${explicitProvider}' contradicts shared routed path '${routedTo}' ` +
+            `which is only valid for providers ${routeIdentity.providerCandidates.join(', ')}.`
+        );
+    }
 
     if (routeIdentity.provider && taskModeProvider && routeIdentity.provider !== taskModeProvider) {
         violations.push(
             `Runtime route '${routedTo}' identifies provider '${routeIdentity.provider}', ` +
+            `but task-mode provider is '${taskModeProvider}'.`
+        );
+    }
+    if (
+        !routeIdentity.provider
+        && routeIdentity.providerCandidates.length > 1
+        && taskModeProvider
+        && !routeIdentity.providerCandidates.includes(taskModeProvider)
+    ) {
+        violations.push(
+            `Runtime route '${routedTo}' is shared by providers ${routeIdentity.providerCandidates.join(', ')}, ` +
             `but task-mode provider is '${taskModeProvider}'.`
         );
     }
@@ -464,6 +498,20 @@ export function resolveRuntimeReviewerIdentity(options: {
     if (routeIdentity.provider) {
         executionProvider = routeIdentity.provider;
         executionProviderSource = routeIdentity.routeKind;
+    } else if (
+        routeIdentity.routeKind === 'provider_entrypoint'
+        && explicitProvider
+        && routeIdentity.providerCandidates.includes(explicitProvider)
+    ) {
+        executionProvider = explicitProvider;
+        executionProviderSource = 'provider_entrypoint';
+    } else if (
+        routeIdentity.routeKind === 'provider_entrypoint'
+        && taskModeProvider
+        && routeIdentity.providerCandidates.includes(taskModeProvider)
+    ) {
+        executionProvider = taskModeProvider;
+        executionProviderSource = 'provider_entrypoint';
     } else if (explicitProvider) {
         executionProvider = explicitProvider;
         executionProviderSource = 'explicit_provider';

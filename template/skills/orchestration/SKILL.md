@@ -204,6 +204,7 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
 - Do not use provider-default reviewer agents that bypass this contract.
 - Provider delegation capability and platform launch mapping:
   - Codex (delegation-capable): use sub-agents with isolated review context.
+  - Cursor (delegation-capable): use delegated reviewer sub-agents with isolated context.
   - Claude Code (delegation-capable): use Agent tool/sub-agents with `fork_context=false`.
   - Gemini (delegation-capable): use delegated reviewer sub-agents with isolated context.
   - Qwen (delegation-capable): use delegated reviewer sub-agents with isolated context.

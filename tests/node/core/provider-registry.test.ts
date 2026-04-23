@@ -17,6 +17,7 @@ import {
     getProviderBridgeRelativePaths,
     getProviderEntrypointMap,
     getProviderEntrypointFiles,
+    getProviderEntriesByEntrypointFile,
     getProviderAliasMap,
     getProviderBridgeEntries,
     getRequiredProviderEntryByBridgePath,
@@ -51,9 +52,14 @@ describe('provider-registry: internal consistency', () => {
         assert.strictEqual(ids.length, new Set(ids).size);
     });
 
-    it('has no duplicate entrypoint files', () => {
+    it('derived entrypoint file list stays deduplicated even when providers share one entrypoint', () => {
         const files = getProviderEntrypointFiles();
         assert.strictEqual(files.length, new Set(files).size);
+    });
+
+    it('shared AGENTS.md entrypoint is owned by both Codex and Cursor', () => {
+        const entries = getProviderEntriesByEntrypointFile('AGENTS.md');
+        assert.deepStrictEqual(entries.map((entry) => entry.id), ['Codex', 'Cursor']);
     });
 
     it('every entry has at least one alias', () => {
@@ -316,7 +322,7 @@ describe('provider-registry: reviewer routing sync', () => {
             .sort();
         assert.deepStrictEqual(
             delegationRequired,
-            ['Antigravity', 'Claude', 'Codex', 'Gemini', 'GitHubCopilot', 'Junie', 'Qwen', 'Windsurf']
+            ['Antigravity', 'Claude', 'Codex', 'Cursor', 'Gemini', 'GitHubCopilot', 'Junie', 'Qwen', 'Windsurf']
         );
     });
 

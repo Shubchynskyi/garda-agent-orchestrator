@@ -16,6 +16,7 @@ describe('getCanonicalEntrypointFile', () => {
     it('maps all source-of-truth values to entrypoint files', () => {
         assert.equal(getCanonicalEntrypointFile('Claude'), 'CLAUDE.md');
         assert.equal(getCanonicalEntrypointFile('Codex'), 'AGENTS.md');
+        assert.equal(getCanonicalEntrypointFile('Cursor'), 'AGENTS.md');
         assert.equal(getCanonicalEntrypointFile('Gemini'), 'GEMINI.md');
         assert.equal(getCanonicalEntrypointFile('Qwen'), 'QWEN.md');
         assert.equal(getCanonicalEntrypointFile('GitHubCopilot'), '.github/copilot-instructions.md');

@@ -127,7 +127,7 @@ test('serialized init-answers without ActiveAgentFiles validates against initAns
 });
 
 test('all SourceOfTruth enum values pass schema validation', () => {
-    const sourceValues = ['Claude', 'Codex', 'Gemini', 'Qwen', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity'];
+    const sourceValues = ['Claude', 'Codex', 'Cursor', 'Gemini', 'Qwen', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity'];
     for (const source of sourceValues) {
         const doc = {
             AssistantLanguage: 'English',

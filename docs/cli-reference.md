@@ -152,7 +152,7 @@ garda verify --target-root "." --source-of-truth "Codex" --init-answers-path "ga
 garda verify --target-root "." --source-of-truth "Codex" --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --compact
 ```
 
-Provider values: `Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
+Provider values: `Claude`, `Codex`, `Cursor`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
 
 Notes:
 - `verify --compact` preserves failure output but reduces the green path to `Verification: PASS | paths=<count> | violations=0`.
