@@ -4,11 +4,6 @@ import * as path from 'node:path';
 import { resolveBundleName } from '../../core/constants';
 import { redactPath, redactHostname, redactEnvObject } from '../../core/redaction';
 
-// ---------------------------------------------------------------------------
-// Environment snapshot — collects high-signal operator triage data
-// ---------------------------------------------------------------------------
-
-/** Keys from `process.env` that are safe and useful for triage. */
 const TRIAGE_ENV_KEYS: readonly string[] = Object.freeze([
     'NODE_ENV',
     'CI',
@@ -41,10 +36,7 @@ export interface DebugEnvSnapshot {
     env: Record<string, string>;
 }
 
-/**
- * Collect the environment snapshot used for `garda debug env`.
- * All paths and hostnames are redacted through the central redaction module.
- */
+// Paths and hostnames are redacted through the central redaction module.
 export function collectDebugEnvSnapshot(
     targetRoot: string,
     cliVersion: string
@@ -68,7 +60,6 @@ export function collectDebugEnvSnapshot(
 
     const repoRoot = path.resolve(targetRoot);
 
-    // Collect only triage-relevant env vars, redact secrets and path values
     const relevantEnv: Record<string, string | undefined> = {};
     for (const key of TRIAGE_ENV_KEYS) {
         if (process.env[key] !== undefined) {
@@ -76,11 +67,11 @@ export function collectDebugEnvSnapshot(
         }
     }
     const secretRedacted = redactEnvObject(relevantEnv);
-    // Path-redact values that may contain user home directories or usernames
-    const PATH_VALUE_KEYS = new Set(['SHELL', 'COMSPEC', 'EDITOR']);
+    // Path-redact shell/editor values that may contain usernames or home directories.
+    const pathValueKeys = new Set(['SHELL', 'COMSPEC', 'EDITOR']);
     const redactedEnv: Record<string, string> = {};
     for (const [key, value] of Object.entries(secretRedacted)) {
-        redactedEnv[key] = PATH_VALUE_KEYS.has(key) ? redactPath(value, repoRoot) : value;
+        redactedEnv[key] = pathValueKeys.has(key) ? redactPath(value, repoRoot) : value;
     }
 
     const rawShell = process.env.SHELL || process.env.COMSPEC || null;
@@ -103,14 +94,6 @@ export function collectDebugEnvSnapshot(
     };
 }
 
-// ---------------------------------------------------------------------------
-// Formatters
-// ---------------------------------------------------------------------------
-
-/**
- * Format snapshot as a human-readable block that operators can paste
- * directly into bug reports.
- */
 export function formatDebugEnvText(snapshot: DebugEnvSnapshot): string {
     const lines: string[] = [];
     lines.push('GARDA_DEBUG_ENV');
@@ -141,9 +124,6 @@ export function formatDebugEnvText(snapshot: DebugEnvSnapshot): string {
     return lines.join('\n');
 }
 
-/**
- * Format snapshot as machine-readable JSON.
- */
 export function formatDebugEnvJson(snapshot: DebugEnvSnapshot): string {
     return JSON.stringify(snapshot, null, 2);
 }

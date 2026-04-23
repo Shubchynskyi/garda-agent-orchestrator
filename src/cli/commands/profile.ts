@@ -111,10 +111,6 @@ function getProfileEntry(data: ProfilesData, name: string): ProfileEntry | null 
     return null;
 }
 
-// ---------------------------------------------------------------------------
-// Output builders
-// ---------------------------------------------------------------------------
-
 export function buildProfileListOutput(data: ProfilesData, bundleRoot: string, jsonMode: boolean): string {
     if (jsonMode) {
         return JSON.stringify({
@@ -259,10 +255,6 @@ function formatSkills(skills: Record<string, boolean>): string {
         .join(', ');
 }
 
-// ---------------------------------------------------------------------------
-// Validation logic
-// ---------------------------------------------------------------------------
-
 function validateProfilesIntegrity(data: ProfilesData): string[] {
     const issues: string[] = [];
     const allNames = getAllProfileNames(data);
@@ -288,10 +280,6 @@ function validateProfilesIntegrity(data: ProfilesData): string[] {
     }
     return issues;
 }
-
-// ---------------------------------------------------------------------------
-// Profile name validation
-// ---------------------------------------------------------------------------
 
 const PROFILE_NAME_PATTERN = /^[a-z](?:[a-z0-9\-]*[a-z0-9])?$/;
 
@@ -319,10 +307,6 @@ function normalizeReviewPromptValue(value: boolean | 'auto' | undefined): boolea
 function cloneProfileEntry(entry: ProfileEntry): ProfileEntry {
     return JSON.parse(JSON.stringify(entry)) as ProfileEntry;
 }
-
-// ---------------------------------------------------------------------------
-// Default profile entry
-// ---------------------------------------------------------------------------
 
 function buildDefaultProfileEntry(description: string, depth: number): ProfileEntry {
     return {
@@ -534,10 +518,6 @@ async function resolveInteractiveCreateInput(
     return { name, entry };
 }
 
-// ---------------------------------------------------------------------------
-// Subcommand handlers
-// ---------------------------------------------------------------------------
-
 function handleList(options: ParsedOptionsRecord, bundleRoot: string): void {
     const profilesPath = resolveProfilesPath(bundleRoot);
     const data = readProfilesData(profilesPath);
@@ -687,10 +667,6 @@ interface ProfileValidateResult {
     passed: boolean;
     issues: string[];
 }
-
-// ---------------------------------------------------------------------------
-// Main handler
-// ---------------------------------------------------------------------------
 
 export function handleProfile(commandArgv: string[], packageJson: PackageJsonLike): MaybePromise<ProfileValidateResult | null> {
     const firstArg = String(commandArgv[0] || '').trim();

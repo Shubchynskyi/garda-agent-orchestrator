@@ -1,9 +1,5 @@
 import { NODE_ENGINE_RANGE } from '../core/constants';
 
-// ---------------------------------------------------------------------------
-// Runtime mismatch check
-// ---------------------------------------------------------------------------
-
 export interface RuntimeMismatchEvidence {
     passed: boolean;
     current_node_version: string;

@@ -17,10 +17,6 @@ const DEFAULT_SUMMARY_LOCK_TIMEOUT_MS = 500;
 const DEFAULT_SUMMARY_LOCK_RETRY_MS = 25;
 const DEFAULT_SUMMARY_LOCK_STALE_MS = 30 * 1000;
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface TimelineSummaryEntry {
     task_id: string;
     file_size_bytes: number;
@@ -58,10 +54,6 @@ export function __setTimelineSummaryTestHooks(hooks: TimelineSummaryTestHooks | 
     timelineSummaryTestHooks = hooks;
 }
 
-// ---------------------------------------------------------------------------
-// Collected results for status and doctor consumers
-// ---------------------------------------------------------------------------
-
 export interface StatusTimelineSummary {
     taskCount: number;
     healthy: number;
@@ -85,10 +77,6 @@ export interface DoctorTimelineSummary {
     warnings: string[];
 }
 
-// ---------------------------------------------------------------------------
-// Path helpers
-// ---------------------------------------------------------------------------
-
 export function getTimelineSummaryPath(eventsRoot: string): string {
     return path.join(eventsRoot, SUMMARY_FILE_NAME);
 }
@@ -105,10 +93,6 @@ function withTimelineSummaryLock<T>(eventsRoot: string, callback: () => T): T {
     }, callback);
     return result;
 }
-
-// ---------------------------------------------------------------------------
-// Read / Write
-// ---------------------------------------------------------------------------
 
 export function readTimelineSummaryIndex(eventsRoot: string): TimelineSummaryIndex | null {
     try {
@@ -214,10 +198,6 @@ export function writeTimelineSummaryIndex(eventsRoot: string, index: TimelineSum
     }
 }
 
-// ---------------------------------------------------------------------------
-// Staleness check
-// ---------------------------------------------------------------------------
-
 export function isTimelineSummaryEntryCurrent(
     entry: TimelineSummaryEntry,
     timelinePath: string,
@@ -239,10 +219,6 @@ export function isTimelineSummaryEntryCurrent(
         return false;
     }
 }
-
-// ---------------------------------------------------------------------------
-// Build a fresh entry for a single task (used by write-side)
-// ---------------------------------------------------------------------------
 
 export function buildTimelineSummaryEntry(
     timelinePath: string,
@@ -294,13 +270,9 @@ export function buildTimelineSummaryEntry(
     };
 }
 
-// ---------------------------------------------------------------------------
-// Write-side: update a single task entry in the aggregate summary.
 // Called after appendTaskEvent, best-effort. Summary mutations are
 // serialized under a dedicated summary lock so append and cleanup do
 // not clobber each other.
-// ---------------------------------------------------------------------------
-
 export function updateTimelineSummaryForTask(
     eventsRoot: string,
     taskId: string,
@@ -506,10 +478,6 @@ export function pruneTimelineSummaryEntries(eventsRoot: string): void {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Read-side helpers (no writes)
-// ---------------------------------------------------------------------------
-
 function listTimelineJsonlFiles(eventsRoot: string): string[] {
     try {
         return fs.readdirSync(eventsRoot).filter(
@@ -545,11 +513,7 @@ function detectCodeChangedFromPreflight(bundlePath: string, taskId: string): boo
     }
 }
 
-// ---------------------------------------------------------------------------
-// Status read-side: collect timeline health summary.
 // Read-only — never writes to disk.
-// ---------------------------------------------------------------------------
-
 export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimelineSummary {
     const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
     const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
@@ -609,11 +573,7 @@ export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimel
     return { taskCount: files.length, healthy, warnings };
 }
 
-// ---------------------------------------------------------------------------
-// Doctor read-side: collect detailed timeline evidence.
 // Read-only — never writes to disk.
-// ---------------------------------------------------------------------------
-
 export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimelineSummary {
     const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
     const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;

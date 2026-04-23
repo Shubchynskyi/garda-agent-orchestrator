@@ -2,10 +2,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
 
-// ---------------------------------------------------------------------------
-// Permission check
-// ---------------------------------------------------------------------------
-
 export interface PermissionCheckEvidence {
     passed: boolean;
     checks: PermissionCheckEntry[];

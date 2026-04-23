@@ -8,10 +8,6 @@ import * as path from 'node:path';
  * module instead of maintaining separate hardcoded lists.
  */
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
 export type ReviewerCapabilityTier = 'delegation_required' | 'delegation_conditional' | 'single_agent_only';
 export type ProviderBridgeProfileVariant = 'standard' | 'compact_router';
 export type ProviderBridgeSelfReferenceRequirement = 'none' | 'bridge_path';
@@ -44,10 +40,6 @@ export interface ProviderBridgeDefinition {
     readonly reviewSkillBridgeHost: boolean;
     readonly selfReferenceRequirement: ProviderBridgeSelfReferenceRequirement;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Registry data
-// ─────────────────────────────────────────────────────────────────────────────
 
 function deepFreeze<T>(obj: T): T {
     Object.freeze(obj);
@@ -242,10 +234,6 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
     }
 ]);
 validateProviderEntries(PROVIDER_ENTRIES);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public accessors
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** Returns the full frozen registry. */
 export function getProviderEntries(): readonly ProviderEntry[] {

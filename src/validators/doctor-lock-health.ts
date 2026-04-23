@@ -16,10 +16,6 @@ import {
     type CompletionGateFinalizationLockScanResult
 } from '../gates/finalization-lock';
 
-// ---------------------------------------------------------------------------
-// Lock-health evidence collection
-// ---------------------------------------------------------------------------
-
 export interface LockHealthEvidence {
     lockHealth: TaskEventLockScanResult;
     lockCleanup: TaskEventLockCleanupResult | null;

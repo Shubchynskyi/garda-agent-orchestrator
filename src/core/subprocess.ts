@@ -2,18 +2,10 @@ import * as childProcess from 'node:child_process';
 import * as path from 'node:path';
 import type { ChildProcess, SpawnSyncReturns, SpawnSyncOptions, StdioOptions } from 'node:child_process';
 
-// ---------------------------------------------------------------------------
-// Default timeout constants (milliseconds)
-// ---------------------------------------------------------------------------
-
 export const DEFAULT_GIT_TIMEOUT_MS = 60_000;         // 60 s for routine git ops
 export const DEFAULT_GIT_CLONE_TIMEOUT_MS = 300_000;  // 5 min for clone/fetch
 export const DEFAULT_NPM_TIMEOUT_MS = 300_000;        // 5 min for npm operations
 export const DEFAULT_COMPILE_TIMEOUT_MS = 600_000;    // 10 min for compile/test/lint
-
-// ---------------------------------------------------------------------------
-// spawnStreamed – async subprocess with streaming, timeout & cancellation
-// ---------------------------------------------------------------------------
 
 export interface SpawnStreamedOptions {
     cwd?: string;
@@ -329,9 +321,6 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
     });
 }
 
-// ---------------------------------------------------------------------------
-// spawnShellCommand – internal allowlist helper for Windows batch files
-// ---------------------------------------------------------------------------
 // Shell execution is intentionally NOT exposed in the general-purpose
 // SpawnStreamedOptions interface.  This helper confines shell semantics
 // to the single scenario that genuinely requires them: running Windows
@@ -505,10 +494,6 @@ export function spawnShellCommand(
         });
     });
 }
-
-// ---------------------------------------------------------------------------
-// spawnSyncWithTimeout – thin wrapper adding timeout to spawnSync
-// ---------------------------------------------------------------------------
 
 export interface SpawnSyncWithTimeoutOptions extends SpawnSyncOptions {
     timeoutMs?: number;

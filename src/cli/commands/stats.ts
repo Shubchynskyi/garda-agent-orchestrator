@@ -6,10 +6,6 @@ import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult
 import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
 import { parseTimestamp, getOutputTelemetryFromPayload } from '../../gates/task-events-summary';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface TokenContribution {
     label: string;
     estimated_saved_tokens: number;
@@ -56,10 +52,7 @@ export interface AggregateStatsResult {
     per_task: TaskStatsResult[];
 }
 
-// ---------------------------------------------------------------------------
-// Review context labels (kept local to avoid coupling)
-// ---------------------------------------------------------------------------
-
+// Review context labels — kept local to avoid coupling.
 const REVIEW_CONTEXT_LABELS: Record<string, string> = {
     code: 'code review context',
     db: 'DB review context',
@@ -91,10 +84,6 @@ const GATE_FAIL_EVENTS = new Set([
     'DOC_IMPACT_ASSESSMENT_FAILED',
     'COMPLETION_GATE_FAILED'
 ]);
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function safeReadJson(filePath: string): Record<string, unknown> | null {
     try {
@@ -155,10 +144,6 @@ function getCommandOutputLabel(eventType: string): string {
     return 'gate output';
 }
 
-// ---------------------------------------------------------------------------
-// Core: build stats for a single task
-// ---------------------------------------------------------------------------
-
 export function buildTaskStats(
     taskId: string,
     repoRoot: string,
@@ -176,7 +161,6 @@ export function buildTaskStats(
 
     const taskEventFile = path.join(resolvedEventsRoot, `${safeTaskId}.jsonl`);
 
-    // Parse events
     const events: Record<string, unknown>[] = [];
     if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
         forEachJsonlLine(taskEventFile, (line: string) => {
@@ -195,7 +179,6 @@ export function buildTaskStats(
         return ta.getTime() - tb.getTime();
     });
 
-    // Timestamps
     const firstDate = events.length > 0 ? parseTimestamp(events[0].timestamp_utc) : null;
     const lastDate = events.length > 0 ? parseTimestamp(events[events.length - 1].timestamp_utc) : null;
     const firstUtc = firstDate && firstDate.getTime() > 0 ? firstDate.toISOString() : null;
@@ -215,7 +198,6 @@ export function buildTaskStats(
         if (GATE_FAIL_EVENTS.has(eventType)) gateFail += 1;
     }
 
-    // Preflight data
     let pathMode: string | null = null;
     let requiredReviews: string[] = [];
     let changedFilesCount = 0;
@@ -238,7 +220,6 @@ export function buildTaskStats(
         }
     }
 
-    // Depth and budget forecast from preflight
     let requestedDepth: number | null = null;
     let effectiveDepth: number | null = null;
     let depthEscalated = false;
@@ -266,7 +247,6 @@ export function buildTaskStats(
         }
     }
 
-    // Also check task-mode artifact for depth
     const taskModePath = path.join(resolvedReviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
     if (taskMode) {
@@ -281,10 +261,8 @@ export function buildTaskStats(
         }
     }
 
-    // Token economy
     const tokenEconomy = buildTokenEconomy(events, resolvedRepoRoot, resolvedReviewsRoot, safeTaskId);
 
-    // Budget comparison
     const budgetComparison = buildBudgetComparison(
         safeTaskId,
         budgetForecast,
@@ -333,7 +311,6 @@ function buildTokenEconomy(
         return resolved ? toPosix(resolved) : rawPath;
     }
 
-    // Scan events for gate output telemetry
     for (let i = 0; i < events.length; i += 1) {
         const event = events[i];
         const rawDetails = event && typeof event === 'object' ? event.details : null;
@@ -373,7 +350,6 @@ function buildTokenEconomy(
         }
     }
 
-    // Also scan review-context artifacts directly from reviews root
     const reviewTypes = ['code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency'];
     for (const rt of reviewTypes) {
         const contextPath = path.join(reviewsRoot, `${taskId}-${rt}-review-context.json`);
@@ -438,10 +414,6 @@ function collectReviewContextFromContainer(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Aggregate stats across multiple tasks
-// ---------------------------------------------------------------------------
-
 export function buildAggregateStats(
     repoRoot: string,
     eventsRoot?: string | null,
@@ -452,7 +424,6 @@ export function buildAggregateStats(
         ? resolvePathInsideRepo(eventsRoot, resolvedRepoRoot, { allowMissing: true }) || eventsRoot
         : joinOrchestratorPath(resolvedRepoRoot, path.join('runtime', 'task-events'));
 
-    // Discover task-id JSONL files
     const taskIds: string[] = [];
     if (fs.existsSync(resolvedEventsRoot) && fs.statSync(resolvedEventsRoot).isDirectory()) {
         for (const entry of fs.readdirSync(resolvedEventsRoot)) {
@@ -488,10 +459,6 @@ export function buildAggregateStats(
         per_task: perTask
     };
 }
-
-// ---------------------------------------------------------------------------
-// Text formatters
-// ---------------------------------------------------------------------------
 
 function formatWallClock(seconds: number | null): string {
     if (seconds == null || seconds <= 0) return '(unknown)';

@@ -3,10 +3,6 @@ import * as path from 'node:path';
 import { pathExists } from '../core/fs';
 import { getBundlePath } from './workspace-layout';
 
-// ---------------------------------------------------------------------------
-// Profile health check
-// ---------------------------------------------------------------------------
-
 export interface ProfileHealthEvidence {
     passed: boolean;
     active_profile: string | null;

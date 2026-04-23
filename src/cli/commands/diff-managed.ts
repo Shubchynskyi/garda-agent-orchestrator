@@ -15,10 +15,6 @@ import {
     INSTALL_BACKUP_CANDIDATE_PATHS
 } from '../../materialization/content-builders';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface ManagedFileMarkerSet {
     startMarker: string;
     endMarker: string;
@@ -47,16 +43,9 @@ export interface DiffManagedResult {
     entries: ManagedFileEntry[];
 }
 
-// ---------------------------------------------------------------------------
-// Marker resolution
-// ---------------------------------------------------------------------------
-
 const COMMIT_GUARD_PATHS = new Set(['.git/hooks/pre-commit']);
 
-/**
- * Resolve the managed-block marker pair for a given file path.
- * Shell scripts use comment-based markers; everything else uses HTML comment markers.
- */
+// Shell scripts use comment-based markers; everything else uses HTML comment markers.
 export function resolveMarkers(relativePath: string): ManagedFileMarkerSet {
     const normalized = relativePath.replace(/\\/g, '/');
     if (COMMIT_GUARD_PATHS.has(normalized)) {
@@ -65,18 +54,11 @@ export function resolveMarkers(relativePath: string): ManagedFileMarkerSet {
     return { startMarker: MANAGED_START, endMarker: MANAGED_END };
 }
 
-// ---------------------------------------------------------------------------
-// Core scan
-// ---------------------------------------------------------------------------
-
 function countNonEmptyLines(text: string): number {
     if (!text) return 0;
     return normalizeLineEndings(text, '\n').split('\n').filter(function (l) { return l.trim().length > 0; }).length;
 }
 
-/**
- * Scan managed-block ownership across all candidate files in the target root.
- */
 export function collectManagedDiff(targetRoot: string): DiffManagedResult {
     const resolvedRoot = path.resolve(targetRoot);
     const entries: ManagedFileEntry[] = [];
@@ -159,10 +141,6 @@ export function collectManagedDiff(targetRoot: string): DiffManagedResult {
         entries
     };
 }
-
-// ---------------------------------------------------------------------------
-// Formatters
-// ---------------------------------------------------------------------------
 
 export function formatDiffManagedText(result: DiffManagedResult): string {
     const lines: string[] = [];

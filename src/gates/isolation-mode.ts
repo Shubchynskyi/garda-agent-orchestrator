@@ -10,8 +10,6 @@ import {
     type ProtectedControlPlaneManifestEvidence
 } from './helpers';
 
-// ── Configuration ────────────────────────────────────────────────────
-
 export const ISOLATION_ENFORCEMENT_MODES = Object.freeze([
     'STRICT',
     'LOG_ONLY'
@@ -40,8 +38,6 @@ const DEFAULT_CONFIG: IsolationModeConfig = Object.freeze({
         'rewrite ACLs, or replace source files before running gates. ' +
         'Enable isolation mode to reduce accidental mutation, not to prevent a determined adversary.'
 });
-
-// ── Config Loading ───────────────────────────────────────────────────
 
 export function resolveIsolationModeConfigPath(repoRoot: string): string {
     return joinOrchestratorPath(repoRoot, path.join('live', 'config', 'isolation-mode.json'));
@@ -79,8 +75,6 @@ function normalizeEnforcementMode(value: unknown): IsolationEnforcementMode {
     }
     return 'LOG_ONLY';
 }
-
-// ── Isolation Evidence ───────────────────────────────────────────────
 
 export interface IsolationModeEvidence {
     isolation_enabled: boolean;

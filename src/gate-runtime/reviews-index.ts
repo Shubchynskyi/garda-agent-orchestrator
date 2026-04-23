@@ -2,16 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { withFilesystemLock } from './task-events-locking';
 
-// ---------------------------------------------------------------------------
-// Reviews Index — bounded metadata cache for runtime/reviews artifacts
-// ---------------------------------------------------------------------------
-//
-// Avoids full `readdirSync` scans growing linearly with historical
-// handshake/task-mode artifacts. The index is a JSON file that stores
-// per-artifact metadata (task id, artifact type, mtime, size) and is
-// refreshed only when the directory mtime changes or when the index
-// itself is stale.
-// ---------------------------------------------------------------------------
+// Bounded metadata cache for runtime/reviews artifacts.
+// Avoids full readdirSync scans growing linearly with historical
+// handshake/task-mode artifacts; refreshed when the directory mtime
+// changes or when the index is stale.
 
 const INDEX_FILE_NAME = 'reviews-index.json';
 const DEFAULT_INDEX_LOCK_TIMEOUT_MS = 1000;
@@ -85,10 +79,6 @@ export interface ReviewsIndexLoadResult {
     source: 'cache' | 'rebuilt';
 }
 
-// ---------------------------------------------------------------------------
-// Staleness check
-// ---------------------------------------------------------------------------
-
 function getDirectoryTimestampSnapshot(dirPath: string): { mtimeMs: number; ctimeMs: number } {
     try {
         const stat = fs.statSync(dirPath);
@@ -153,10 +143,6 @@ export function isIndexStale(
 
     return false;
 }
-
-// ---------------------------------------------------------------------------
-// Rebuild
-// ---------------------------------------------------------------------------
 
 export function parseReviewArtifactFileName(fileName: string): { taskId: string; artifactType: string } | null {
     if (!fileName.startsWith('T-')) return null;
@@ -275,10 +261,6 @@ export function writeIndex(indexPath: string, index: ReviewsIndex): void {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Load (cache-first with rebuild-on-stale)
-// ---------------------------------------------------------------------------
-
 export function resolveIndexPath(reviewsDir: string): string {
     return path.join(reviewsDir, INDEX_FILE_NAME);
 }
@@ -337,10 +319,6 @@ export function loadIndex(
     });
 }
 
-// ---------------------------------------------------------------------------
-// Incremental upsert — used after writing a single artifact
-// ---------------------------------------------------------------------------
-
 /**
  * Add or update a single entry in the index without a full rebuild.
  * If the index doesn't exist or is corrupt, a full rebuild is triggered.
@@ -395,10 +373,6 @@ export function upsertEntry(reviewsDir: string, fileName: string): void {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Removal — used after cleanup deletes artifacts
-// ---------------------------------------------------------------------------
-
 /**
  * Remove entries for the given file names from the index.
  * If none of the names are in the index, this is a no-op.
@@ -444,10 +418,6 @@ export function invalidateIndex(reviewsDir: string): void {
         }
     });
 }
-
-// ---------------------------------------------------------------------------
-// Query helpers — operate on a loaded index without filesystem access
-// ---------------------------------------------------------------------------
 
 /**
  * Get all entries for a specific task id.

@@ -57,10 +57,6 @@ import { validateManifest } from '../../validators/validate-manifest';
 import { runVerify } from '../../validators/verify';
 import { writeProtectedControlPlaneManifest } from '../../gates/helpers';
 
-// ---------------------------------------------------------------------------
-// Flag definitions
-// ---------------------------------------------------------------------------
-
 export const SETUP_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
     '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
@@ -116,10 +112,6 @@ interface SetupAnswers {
     providerMinimalism: boolean | string;
     activeAgentFiles: string | null;
 }
-
-// ---------------------------------------------------------------------------
-// Setup answer defaults & interactive collection
-// ---------------------------------------------------------------------------
 
 function resolveSetupActiveAgentFiles(
     sourceOfTruth: string,
@@ -240,10 +232,6 @@ export async function collectSetupAnswersInteractively(
     };
 }
 
-// ---------------------------------------------------------------------------
-// Setup handoff message
-// ---------------------------------------------------------------------------
-
 export function printSetupHandoff(snapshot: StatusSnapshot): void {
     console.log(buildSetupHandoffText(snapshot));
 }
@@ -297,10 +285,6 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     return lines.join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// Setup banner builder (testable)
-// ---------------------------------------------------------------------------
-
 export function buildSetupStepsText(
     targetRoot: string,
     canUseInteractivePrompts: boolean,
@@ -324,20 +308,7 @@ export function buildSetupStepsText(
     return lines.join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// CLI handler
-// ---------------------------------------------------------------------------
-
-/**
- * Handle the `setup` command.
- *
- * Contract markers:
- *   - GARDA_SETUP at the start
- *   - [1/3], [2/3], [3/3] step markers
- *   - GARDA_SETUP_STATUS after completion
- *   - Agent handoff message if agent init is incomplete
- *   - Exit code 0 on success
- */
+// Emits GARDA_SETUP, [1/3]/[2/3]/[3/3] step markers, GARDA_SETUP_STATUS, and agent handoff if needed.
 export async function handleSetup(
     commandArgv: string[],
     packageJson: PackageJsonLike,

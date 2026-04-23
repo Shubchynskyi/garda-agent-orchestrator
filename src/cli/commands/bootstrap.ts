@@ -9,10 +9,6 @@ import {
     printHelp
 } from './cli-helpers';
 
-// ---------------------------------------------------------------------------
-// Flag definitions
-// ---------------------------------------------------------------------------
-
 export const BOOTSTRAP_DEFINITIONS = {
     '--destination': { key: 'destination', type: 'string' },
     '--target': { key: 'destination', type: 'string' },
@@ -20,14 +16,7 @@ export const BOOTSTRAP_DEFINITIONS = {
     '--branch': { key: 'branch', type: 'string' }
 };
 
-// ---------------------------------------------------------------------------
-// Output builders (testable without stdout capture)
-// ---------------------------------------------------------------------------
-
-/**
- * Build the success output text for a completed bootstrap.
- * Returns a string matching the GARDA_BOOTSTRAP_OK contract.
- */
+// Emits GARDA_BOOTSTRAP_OK contract output.
 export function buildBootstrapSuccessOutput(packageJson: PackageJsonLike, bundleVersion: string, destinationPath: string): string {
     const targetRoot = path.dirname(destinationPath);
     const bundleRelativePath = path.relative(targetRoot, destinationPath) || path.basename(destinationPath);
@@ -59,25 +48,10 @@ export function buildBootstrapSuccessOutput(packageJson: PackageJsonLike, bundle
     return lines.join('\n');
 }
 
-/**
- * Print bootstrap success to stdout.
- */
 export function printBootstrapSuccess(packageJson: PackageJsonLike, bundleVersion: string, destinationPath: string): void {
     console.log(buildBootstrapSuccessOutput(packageJson, bundleVersion, destinationPath));
 }
 
-// ---------------------------------------------------------------------------
-// CLI handler
-// ---------------------------------------------------------------------------
-
-/**
- * Handle the `bootstrap` command.
- * Deploys a fresh bundle to the destination path.
- *
- * Contract markers:
- *   - GARDA_BOOTSTRAP_OK on success
- *   - Exit code 0 on success
- */
 export async function handleBootstrap(commandArgv: string[], packageJson: PackageJsonLike, packageRoot: string): Promise<void> {
     const { options, positionals } = parseOptions(commandArgv, BOOTSTRAP_DEFINITIONS, {
         allowPositionals: true,

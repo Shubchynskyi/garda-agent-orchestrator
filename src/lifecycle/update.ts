@@ -51,10 +51,6 @@ interface RunUpdateOptions {
     trustContext?: UpdateTrustContext | null;
 }
 
-/**
- * Computes the list of relative paths that should be included in an update rollback.
- * Returns the rollback item set for the Node update lifecycle.
- */
 export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath: string): string[] {
     const items = [
         ...ALL_AGENT_ENTRYPOINT_FILES,
@@ -81,7 +77,6 @@ export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath
         resolveBundleName() + '/VERSION'
     ];
 
-    // Add the init answers file as a relative path
     const rootResolved = path.resolve(rootPath);
     const answersResolved = path.resolve(initAnswersResolvedPath);
     const rel = path.relative(rootResolved, answersResolved).replace(/\\/g, '/');
@@ -90,24 +85,6 @@ export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath
     return [...new Set(items)].sort();
 }
 
-/**
- * Runs the update pipeline.
- * Node implementation of the update lifecycle.
- *
- * @param {object} options
- * @param {string} options.targetRoot - Project root directory
- * @param {string} options.bundleRoot - Orchestrator bundle directory (source of scripts/template)
- * @param {string} [options.initAnswersPath]
- * @param {boolean} [options.dryRun=false]
- * @param {boolean} [options.skipVerify=false]
- * @param {boolean} [options.skipManifestValidation=false]
- * @param {Function} [options.installRunner] - Optional override for install step
- * @param {Function} [options.materializationRunner] - Optional override for live/ materialization step
- * @param {Function} [options.verifyRunner] - Optional override for verify step
- * @param {Function} [options.manifestRunner] - Optional override for manifest validation step
- * @param {Function} [options.contractMigrationRunner] - Optional override for contract migration step
- * @returns {object} Update result
- */
 export function runUpdate(options: RunUpdateOptions) {
     const {
         targetRoot,
@@ -127,9 +104,7 @@ export function runUpdate(options: RunUpdateOptions) {
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
     return withLifecycleOperationLock(normalizedTarget, 'update', () => {
 
-    // Source resolution
     const sources = resolveUpdateSources(normalizedTarget, initAnswersPath, bundleRoot);
-
     const timestamp = getTimestamp();
     const rollbackSnapshotRelativePath = `${resolveBundleName()}/runtime/update-rollbacks/update-${timestamp}`;
     const rollbackSnapshotPath = path.join(normalizedTarget, rollbackSnapshotRelativePath);
@@ -149,7 +124,6 @@ export function runUpdate(options: RunUpdateOptions) {
         sourceReference: 'unknown'
     };
 
-    // Create rollback snapshot (not in dry-run)
     if (!dryRun) {
         fs.mkdirSync(path.dirname(rollbackSnapshotPath), { recursive: true });
         const rollbackItems = getUpdateRollbackItems(normalizedTarget, sources.initAnswersResolvedPath);
@@ -159,7 +133,6 @@ export function runUpdate(options: RunUpdateOptions) {
         rollbackSnapshotCreated = true;
     }
 
-    // Execute pipeline stages with rollback support
     const stageResult = executeUpdatePipelineStages({
         normalizedTarget,
         bundleRoot,
@@ -186,7 +159,6 @@ export function runUpdate(options: RunUpdateOptions) {
             warnings: []
         };
 
-    // Generate update report
     if (!dryRun) {
         writeUpdateReport(updateReportPath, {
             normalizedTarget,

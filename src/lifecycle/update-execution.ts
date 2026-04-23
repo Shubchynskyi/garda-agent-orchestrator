@@ -141,7 +141,6 @@ export function executeUpdatePipelineStages(options: {
     let currentStage = 'INSTALL';
 
     try {
-        // Install step
         currentStage = 'INSTALL';
         if (installRunner) {
             installRunner({
@@ -173,7 +172,6 @@ export function executeUpdatePipelineStages(options: {
             verifyStatus = 'SKIPPED_DRY_RUN';
             manifestStatus = 'SKIPPED_DRY_RUN';
         } else {
-            // Materialization
             currentStage = 'MATERIALIZATION';
             if (materializationRunner) {
                 materializationRunner({
@@ -205,7 +203,6 @@ export function executeUpdatePipelineStages(options: {
             }
             materializationStatus = 'PASS';
 
-            // Contract migrations
             currentStage = 'CONTRACT_MIGRATIONS';
             if (contractMigrationRunner) {
                 const migResult = contractMigrationRunner({ rootPath: normalizedTarget });
@@ -216,7 +213,6 @@ export function executeUpdatePipelineStages(options: {
                 contractMigrationStatus = 'SKIPPED_NO_RUNNER';
             }
 
-            // Verify
             currentStage = 'VERIFY';
             if (skipVerify) {
                 verifyStatus = 'SKIPPED';
@@ -231,7 +227,6 @@ export function executeUpdatePipelineStages(options: {
                 verifyStatus = 'SKIPPED_NO_RUNNER';
             }
 
-            // Manifest validation
             currentStage = 'MANIFEST_VALIDATION';
             if (skipManifestValidation) {
                 manifestStatus = 'SKIPPED';
@@ -242,7 +237,6 @@ export function executeUpdatePipelineStages(options: {
                 manifestStatus = 'SKIPPED_NO_RUNNER';
             }
 
-            // Bundle invariant check
             currentStage = 'INVARIANT_CHECK';
             const invariantResult = validateBundleInvariants(
                 path.join(normalizedTarget, resolveBundleName()),
@@ -254,7 +248,6 @@ export function executeUpdatePipelineStages(options: {
             invariantStatus = 'PASS';
             writeProtectedControlPlaneManifest(normalizedTarget);
 
-            // Sync agent init state after successful update
             const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);
             const previousAgentInitState = previousAgentInitStateResult.state;
             const activeEntryFiles = getActiveAgentEntrypointFiles(
@@ -268,7 +261,6 @@ export function executeUpdatePipelineStages(options: {
                 ActiveAgentFiles: activeEntryFiles
             });
 
-            // Automatic stale lock cleanup during update.
             try {
                 cleanupStaleTaskEventLocks(
                     path.join(normalizedTarget, resolveBundleName()),
@@ -291,7 +283,6 @@ export function executeUpdatePipelineStages(options: {
                 autoAcceptRules: true
             }));
 
-            // Re-read updated version
             if (pathExists(sources.liveVersionPath)) {
                 try {
                     const newLiveVersion = getLiveVersionPayload(readJsonFile(sources.liveVersionPath));

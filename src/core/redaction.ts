@@ -11,17 +11,9 @@ import * as crypto from 'node:crypto';
  * output without leaking real values.
  */
 
-// ---------------------------------------------------------------------------
-// Short deterministic token (first 8 hex chars of SHA-256)
-// ---------------------------------------------------------------------------
-
 function shortHash(value: string): string {
     return crypto.createHash('sha256').update(value, 'utf8').digest('hex').substring(0, 8);
 }
-
-// ---------------------------------------------------------------------------
-// Hostname redaction
-// ---------------------------------------------------------------------------
 
 /**
  * Replace a hostname with a deterministic redacted token.
@@ -37,10 +29,6 @@ export function redactHostname(hostname: string | null | undefined): string | nu
     }
     return `<host-${shortHash(trimmed)}>`;
 }
-
-// ---------------------------------------------------------------------------
-// Username / home-directory redaction
-// ---------------------------------------------------------------------------
 
 let cachedHomedir: string | null = null;
 let cachedUsername: string | null = null;
@@ -66,10 +54,6 @@ function getUsername(): string {
     }
     return cachedUsername;
 }
-
-// ---------------------------------------------------------------------------
-// Path redaction
-// ---------------------------------------------------------------------------
 
 /**
  * Redact absolute paths that may reveal user home directories or usernames.
@@ -126,10 +110,6 @@ export function redactPath(absolutePath: string, repoRoot?: string): string {
     return absolutePath;
 }
 
-// ---------------------------------------------------------------------------
-// Environment-variable secret patterns
-// ---------------------------------------------------------------------------
-
 const SECRET_ENV_PATTERNS: RegExp[] = [
     /(?:secret|token|password|credential|api[_-]?key|auth|private[_-]?key)/i,
 ];
@@ -149,10 +129,6 @@ export function redactEnvObject(env: Record<string, string | undefined>): Record
     }
     return result;
 }
-
-// ---------------------------------------------------------------------------
-// Diagnostic text redaction
-// ---------------------------------------------------------------------------
 
 /**
  * Scrub a free-form diagnostic string of hostnames, home-directory paths,
@@ -211,10 +187,6 @@ export function redactDiagnosticText(text: string, repoRoot?: string): string {
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// RedactionContext – reusable per-task/per-gate redaction scope
-// ---------------------------------------------------------------------------
-
 export interface RedactionContext {
     readonly repoRoot: string | undefined;
     redactHostname(hostname: string | null | undefined): string | null;
@@ -239,10 +211,6 @@ export function createRedactionContext(repoRoot?: string): RedactionContext {
         },
     };
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function replaceAll(source: string, search: string, replacement: string): string {
     if (!search) {

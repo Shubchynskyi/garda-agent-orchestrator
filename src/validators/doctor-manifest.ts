@@ -5,10 +5,6 @@ import {
     type ProtectedControlPlaneManifestEvidence
 } from '../gates/helpers';
 
-// ---------------------------------------------------------------------------
-// Manifest evidence collection
-// ---------------------------------------------------------------------------
-
 export interface ManifestEvidence {
     manifestResult: ReturnType<typeof validateManifest> | null;
     manifestError: string | null;

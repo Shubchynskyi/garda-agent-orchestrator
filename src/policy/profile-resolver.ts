@@ -1,10 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface ProfileReviewPolicy {
     code: boolean | 'auto';
     db: boolean | 'auto';
@@ -123,10 +119,6 @@ export interface ResolveOptions {
     scopeCategory?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Mandatory review safety floors for code-changing work
-// ---------------------------------------------------------------------------
-
 /**
  * Safety floors enforced when the task scope involves code changes.
  * These reviews are mandatory regardless of profile settings.
@@ -143,10 +135,6 @@ const CODE_CHANGING_SAFETY_FLOORS: ReadonlyMap<string, boolean> = new Map([
  * Only these non-code categories allow profiles to relax mandatory reviews.
  */
 const LIGHTENABLE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only']);
-
-// ---------------------------------------------------------------------------
-// Profile review decision diagnostics
-// ---------------------------------------------------------------------------
 
 export interface ProfileReviewDecision {
     review_type: string;
@@ -165,10 +153,6 @@ export interface ProfileGuardrailResult {
     decisions: ProfileReviewDecision[];
     safety_floors_applied: string[];
 }
-
-// ---------------------------------------------------------------------------
-// Config file loaders (read-only, never write)
-// ---------------------------------------------------------------------------
 
 function readJsonFile<T>(filePath: string): T | null {
     if (!fs.existsSync(filePath)) return null;
@@ -272,10 +256,6 @@ export function loadPathsConfig(configPath: string): PathsConfig {
     return defaults;
 }
 
-// ---------------------------------------------------------------------------
-// Profile lookup
-// ---------------------------------------------------------------------------
-
 export function getProfileEntry(data: ProfilesData, name: string): ProfileEntry | null {
     if (Object.hasOwn(data.built_in_profiles, name)) return data.built_in_profiles[name];
     if (Object.hasOwn(data.user_profiles, name)) return data.user_profiles[name];
@@ -287,10 +267,6 @@ export function getProfileSource(data: ProfilesData, name: string): 'built_in' |
     if (Object.hasOwn(data.user_profiles, name)) return 'user';
     return null;
 }
-
-// ---------------------------------------------------------------------------
-// Merge logic
-// ---------------------------------------------------------------------------
 
 /**
  * Merge profile review_policy overlay onto review-capabilities config.
@@ -477,10 +453,6 @@ export function mergeSkills(
     };
 }
 
-// ---------------------------------------------------------------------------
-// Config path resolution
-// ---------------------------------------------------------------------------
-
 export function resolveConfigPaths(bundleRoot: string): {
     profiles: string;
     reviewCapabilities: string;
@@ -497,10 +469,6 @@ export function resolveConfigPaths(bundleRoot: string): {
         paths: path.join(configDir, 'paths.json')
     };
 }
-
-// ---------------------------------------------------------------------------
-// Main resolver
-// ---------------------------------------------------------------------------
 
 /**
  * Resolve the effective task policy by merging the active profile overlays

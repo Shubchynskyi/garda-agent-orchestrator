@@ -290,10 +290,6 @@ function matchesConfiguredRoot(pathValue: string, roots: string[], options: Matc
     return semanticCandidates.some((candidate) => matchesSemanticRoot(candidate, rootTokens));
 }
 
-// ---------------------------------------------------------------------------
-// Scope category classification
-// ---------------------------------------------------------------------------
-
 const DOC_LIKE_REGEXES = [
     '\\.(md|mdx|txt|rst|adoc|asciidoc|textile)$',
     '(^|/)docs?/',

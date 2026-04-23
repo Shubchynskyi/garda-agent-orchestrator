@@ -22,13 +22,12 @@ export interface ExplainResult {
  * Canonical remediation database for known failure IDs.
  * IDs are normalised to upper-case before lookup.
  */
-let _cachedExplainDatabase: readonly ExplainEntry[] | null = null;
+let cachedExplainDatabase: readonly ExplainEntry[] | null = null;
 
 function getExplainDatabase(): readonly ExplainEntry[] {
-    if (_cachedExplainDatabase) return _cachedExplainDatabase;
+    if (cachedExplainDatabase) return cachedExplainDatabase;
     const bn = resolveBundleName();
-    _cachedExplainDatabase = Object.freeze([
-    // ── Init / setup failures ─────────────────────────────────────────────
+    cachedExplainDatabase = Object.freeze([
     {
         id: 'BUNDLE_MISSING',
         title: 'Deployed bundle not found',
@@ -142,7 +141,6 @@ function getExplainDatabase(): readonly ExplainEntry[] {
             `Fix the listed violations, then run '${PRIMARY_CLI_NAME} verify' and '${PRIMARY_CLI_NAME} doctor' again.`
         ]
     },
-    // ── Verify / manifest failures ────────────────────────────────────────
     {
         id: 'MISSING_PATHS',
         title: 'Required paths are missing from the workspace',
@@ -182,7 +180,6 @@ function getExplainDatabase(): readonly ExplainEntry[] {
             `Then run '${PRIMARY_CLI_NAME} doctor' again.`
         ]
     },
-    // ── Timeline / gate failures ──────────────────────────────────────────
     {
         id: 'TASK_MODE_NOT_ENTERED',
         title: 'Task mode was not explicitly entered',
@@ -270,7 +267,7 @@ function getExplainDatabase(): readonly ExplainEntry[] {
         ]
     }
     ]);
-    return _cachedExplainDatabase;
+    return cachedExplainDatabase;
 }
 
 function normalizeFailureId(rawId: string): string {
@@ -289,19 +286,18 @@ function findSuggestions(normalizedId: string): string[] {
 
 export function explainFailure(rawFailureId: string): ExplainResult {
     const normalizedId = normalizeFailureId(rawFailureId);
-    const entry = getExplainDatabase().find(function (e) { return e.id === normalizedId; }) || null;
+    const entry = getExplainDatabase().find((e) => e.id === normalizedId) || null;
 
     if (entry) {
         return { found: true, failureId: normalizedId, entry, suggestions: [] };
     }
 
-    // Not found — provide fuzzy suggestions
     const suggestions = findSuggestions(normalizedId);
     return { found: false, failureId: normalizedId, entry: null, suggestions };
 }
 
 export function listExplainIds(): string[] {
-    return getExplainDatabase().map(function (e) { return e.id; });
+    return getExplainDatabase().map((e) => e.id);
 }
 
 export function formatExplainResult(result: ExplainResult): string {
@@ -362,9 +358,7 @@ export function scanRuntimeForKnownFailures(bundlePath: string): string[] {
 
     let entries: string[];
     try {
-        entries = fs.readdirSync(reviewsRoot).filter(function (name: string) {
-            return name.endsWith('.json');
-        });
+        entries = fs.readdirSync(reviewsRoot).filter((name: string) => name.endsWith('.json'));
     } catch {
         return knownIds;
     }
@@ -380,7 +374,6 @@ export function scanRuntimeForKnownFailures(bundlePath: string): string[] {
 
         const status = String(parsed.status || parsed.outcome || '').toUpperCase();
         if (status === 'FAILED' || status === 'FAIL') {
-            // Map common artifact statuses to canonical failure IDs
             if (entry.includes('-task-mode')) {
                 knownIds.push('TASK_MODE_NOT_ENTERED');
             } else if (entry.includes('-rule-pack')) {

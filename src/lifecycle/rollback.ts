@@ -148,11 +148,6 @@ export function findSnapshotByVersion(targetRoot: string, targetVersion: string)
     return null;
 }
 
-// ---------------------------------------------------------------------------
-// Version-based rollback: acquires the target version's bundle content and
-// re-runs install + materialization to bring the workspace to that version.
-// ---------------------------------------------------------------------------
-
 export async function runRollbackToVersion(options: RunRollbackToVersionOptions) {
     const {
         targetRoot,
@@ -536,10 +531,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     };
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot-based rollback (original flow, unchanged).
-// ---------------------------------------------------------------------------
-
 export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
     const {
         targetRoot,
@@ -714,25 +705,6 @@ export function runSnapshotRollback(options: RunSnapshotRollbackOptions) {
     };
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point — routes to version-based or snapshot-based flow.
-// ---------------------------------------------------------------------------
-
-/**
- * @param {object} options
- * @param {string}   options.targetRoot
- * @param {string}   options.bundleRoot
- * @param {string}   [options.targetVersion]   - Target version for version-based rollback
- * @param {string}   [options.snapshotPath]    - Explicit snapshot path (snapshot-based)
- * @param {string}   [options.sourcePath]      - Local bundle path for version-based rollback source
- * @param {string}   [options.packageSpec]     - npm spec override for version-based rollback source
- * @param {string}   [options.initAnswersPath] - Required for version-based rollback
- * @param {boolean}  [options.dryRun=false]
- * @param {boolean}  [options.skipVerify=false]
- * @param {boolean}  [options.skipManifestValidation=false]
- * @param {Function} [options.installRunner]
- * @param {Function} [options.materializationRunner]
- */
 export async function runRollback(options: RunRollbackOptions) {
     const normalizedTarget = validateTargetRoot(options.targetRoot, options.bundleRoot);
     return await withLifecycleOperationLockAsync(normalizedTarget, 'rollback', async () => {

@@ -53,10 +53,6 @@ export interface ApplyOutputFilterProfileOptions {
     budgetTokens?: number | null;
 }
 
-// ---------------------------------------------------------------------------
-// Budget-tier types
-// ---------------------------------------------------------------------------
-
 export interface BudgetTierConfig {
     label: string;
     max_tokens: number | null;

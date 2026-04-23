@@ -1,11 +1,3 @@
-// ---------------------------------------------------------------------------
-// Offline / no-network mode policy — T-060
-//
-// When activated (--offline flag, GARDA_OFFLINE env, or config), blocks
-// commands that require network access unless explicitly overridden with
-// --force-network.
-// ---------------------------------------------------------------------------
-
 /**
  * Commands that perform or may perform network operations.
  * Sorted for binary-search readability; enforcement uses a Set.

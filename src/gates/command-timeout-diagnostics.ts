@@ -12,10 +12,6 @@ import {
     toPosix
 } from './helpers';
 
-// ---------------------------------------------------------------------------
-// Timeout phase constants
-// ---------------------------------------------------------------------------
-
 export type TimeoutPhase =
     | 'pre_launch'
     | 'launch_pending'
@@ -30,10 +26,6 @@ export type SuspectedLayer =
     | 'provider_callback'
     | 'gate'
     | 'unknown';
-
-// ---------------------------------------------------------------------------
-// Artifact types
-// ---------------------------------------------------------------------------
 
 export interface CommandPhaseRecord {
     command_label: string;
@@ -78,10 +70,6 @@ export interface CommandTimeoutEvidenceResult {
     provider: string | null;
     violations: string[];
 }
-
-// ---------------------------------------------------------------------------
-// Build options
-// ---------------------------------------------------------------------------
 
 export interface BuildCommandTimeoutDiagnosticsOptions {
     taskId: string;
@@ -180,10 +168,6 @@ function detectValidationChainOverlapViolations(commands: readonly CommandPhaseR
     return [...violations];
 }
 
-// ---------------------------------------------------------------------------
-// Phase tracker — used by callers to build CommandPhaseRecord instances
-// ---------------------------------------------------------------------------
-
 export class CommandPhaseTracker {
     private readonly label: string;
     private readonly commandText: string;
@@ -281,10 +265,6 @@ export class CommandPhaseTracker {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Phase and layer classification
-// ---------------------------------------------------------------------------
-
 export function classifyTimeoutPhase(
     startTime: number | null,
     firstOutputTime: number | null,
@@ -344,10 +324,6 @@ function buildDiagnosis(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Artifact path resolution
-// ---------------------------------------------------------------------------
-
 export function resolveCommandTimeoutArtifactPath(repoRoot: string, taskId: string, artifactPath = ''): string {
     const explicit = String(artifactPath || '').trim();
     if (explicit) {
@@ -359,10 +335,6 @@ export function resolveCommandTimeoutArtifactPath(repoRoot: string, taskId: stri
     }
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-command-timeout.json`));
 }
-
-// ---------------------------------------------------------------------------
-// Build artifact
-// ---------------------------------------------------------------------------
 
 export function buildCommandTimeoutDiagnostics(options: BuildCommandTimeoutDiagnosticsOptions): CommandTimeoutDiagnosticsArtifact {
     const taskId = assertValidTaskId(options.taskId);
@@ -427,10 +399,6 @@ export function buildCommandTimeoutDiagnostics(options: BuildCommandTimeoutDiagn
         summary
     };
 }
-
-// ---------------------------------------------------------------------------
-// Evidence verification
-// ---------------------------------------------------------------------------
 
 export interface GetCommandTimeoutEvidenceOptions {
     artifactPath?: string;
@@ -577,10 +545,6 @@ function verifyCommandTimeoutTimelineBinding(
     return [];
 }
 
-// ---------------------------------------------------------------------------
-// Violation helpers
-// ---------------------------------------------------------------------------
-
 export function getCommandTimeoutEvidenceViolations(result: CommandTimeoutEvidenceResult): string[] {
     switch (result.evidence_status) {
         case 'PASS':
@@ -602,10 +566,6 @@ export function getCommandTimeoutEvidenceViolations(result: CommandTimeoutEviden
             return ['Command timeout diagnostics evidence is missing or invalid. Run command-timeout-diagnostics gate.'];
     }
 }
-
-// ---------------------------------------------------------------------------
-// Formatting
-// ---------------------------------------------------------------------------
 
 export function formatCommandTimeoutDiagnosticsResult(artifact: CommandTimeoutDiagnosticsArtifact): string[] {
     const lines: string[] = [

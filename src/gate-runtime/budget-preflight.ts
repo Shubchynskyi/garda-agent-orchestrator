@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface ReviewBudgetEstimate {
     review_type: string;
     estimated_tokens: number;
@@ -78,10 +74,6 @@ export interface RiskAwareDepthResult {
     compression: CompressionProfile;
 }
 
-// ---------------------------------------------------------------------------
-// Constants — heuristic token-cost baselines per review type
-// ---------------------------------------------------------------------------
-
 const BASE_REVIEW_TOKENS: Record<string, number> = {
     code: 800,
     db: 400,
@@ -101,10 +93,6 @@ const COMPILE_GATE_TOKENS_PER_FILE = 40;
 
 // Approximate savings ratio when token economy is active
 const TOKEN_ECONOMY_SAVINGS_RATIO = 0.35;
-
-// ---------------------------------------------------------------------------
-// Depth escalation
-// ---------------------------------------------------------------------------
 
 export function resolveDepthEscalation(input: BudgetForecastInput): DepthEscalationRecord {
     const requested = input.requestedDepth;
@@ -142,10 +130,6 @@ export function resolveDepthEscalation(input: BudgetForecastInput): DepthEscalat
         escalation_triggers: triggers
     };
 }
-
-// ---------------------------------------------------------------------------
-// Risk-aware depth auto-promotion
-// ---------------------------------------------------------------------------
 
 const HIGH_RISK_TRIGGERS: ReadonlySet<string> = new Set(['security', 'infra']);
 const MEDIUM_RISK_TRIGGERS: ReadonlySet<string> = new Set(['db', 'refactor', 'api', 'performance']);
@@ -283,10 +267,6 @@ export function resolveRiskAwareDepth(
     };
 }
 
-// ---------------------------------------------------------------------------
-// Budget forecasting
-// ---------------------------------------------------------------------------
-
 function estimateReviewTokens(reviewType: string, changedFilesCount: number, changedLinesTotal: number): number {
     const base = BASE_REVIEW_TOKENS[reviewType] || 400;
     const fileCost = changedFilesCount * TOKENS_PER_CHANGED_FILE;
@@ -343,10 +323,6 @@ export function buildBudgetForecast(input: BudgetForecastInput): BudgetForecast 
         effective_forecast_tokens: effectiveForecast
     };
 }
-
-// ---------------------------------------------------------------------------
-// Requested-vs-effective comparison (for stats)
-// ---------------------------------------------------------------------------
 
 export interface BudgetComparisonResult {
     task_id: string;
@@ -409,10 +385,6 @@ export function buildBudgetComparison(
         summary_line: parts.length > 0 ? parts.join(', ') : 'no forecast data'
     };
 }
-
-// ---------------------------------------------------------------------------
-// Format helpers
-// ---------------------------------------------------------------------------
 
 export function formatBudgetForecastText(forecast: BudgetForecast): string {
     const lines: string[] = [];

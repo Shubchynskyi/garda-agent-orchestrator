@@ -7,10 +7,6 @@ import {
     type NestedBundleDuplicationResult
 } from './workspace-layout';
 
-// ---------------------------------------------------------------------------
-// Compliance evidence collection
-// ---------------------------------------------------------------------------
-
 export interface ComplianceEvidence {
     providerComplianceResult: ProviderComplianceResult | null;
     nestedBundleDuplication: NestedBundleDuplicationResult;

@@ -7,8 +7,6 @@ import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess
 const CACHE_VERSION = 1;
 const CACHE_RELATIVE_PATH = path.join('runtime', 'cache', 'workspace-snapshot.json');
 
-// ── Types ────────────────────────────────────────────────────────────
-
 export type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
 
 export interface WorkspaceSnapshotCacheEntry {
@@ -35,8 +33,6 @@ export interface WorkspaceSnapshotCacheOptions {
     /** Skip writing the cache file after a fresh computation. Default: false. */
     readOnly?: boolean;
 }
-
-// ── Fingerprint ──────────────────────────────────────────────────────
 
 /**
  * Read HEAD SHA cheaply via git rev-parse.
@@ -326,8 +322,6 @@ export function computeSnapshotFingerprint(
     };
 }
 
-// ── Cache I/O ────────────────────────────────────────────────────────
-
 /**
  * Resolve the on-disk cache file path.
  */
@@ -388,8 +382,6 @@ export function invalidateSnapshotCache(repoRoot: string): boolean {
         return false;
     }
 }
-
-// ── Cached Snapshot Accessor ─────────────────────────────────────────
 
 /**
  * Get a workspace snapshot, returning a cached result when the relevant

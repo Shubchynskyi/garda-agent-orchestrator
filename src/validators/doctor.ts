@@ -76,10 +76,6 @@ interface DoctorOptions {
     activeAgentFiles?: readonly string[];
 }
 
-// ---------------------------------------------------------------------------
-// Partial-state detection
-// ---------------------------------------------------------------------------
-
 export interface PartialStateEvidence {
     passed: boolean;
     update_sentinel: UpdateSentinelMetadata | null;
@@ -93,7 +89,6 @@ export function checkPartialState(targetRoot: string): PartialStateEvidence {
     const bundlePath = getBundlePath(targetRoot);
     const violations: string[] = [];
 
-    // Check for interrupted update
     const updateSentinel = readUpdateSentinel(bundlePath);
     if (updateSentinel) {
         const fromVer = updateSentinel.fromVersion || 'unknown';
@@ -105,7 +100,6 @@ export function checkPartialState(targetRoot: string): PartialStateEvidence {
         );
     }
 
-    // Check for interrupted uninstall
     const uninstallSentinel = readUninstallSentinel(targetRoot);
     if (uninstallSentinel) {
         const operation = uninstallSentinel.operation || 'uninstall';
@@ -116,7 +110,6 @@ export function checkPartialState(targetRoot: string): PartialStateEvidence {
         );
     }
 
-    // Check for stale lifecycle operation lock
     const lockPath = getLifecycleOperationLockPath(targetRoot);
     const lockExists = fs.existsSync(lockPath);
     let lockOwner: Record<string, unknown> | null = null;
@@ -144,10 +137,6 @@ export function checkPartialState(targetRoot: string): PartialStateEvidence {
         violations
     };
 }
-
-// ---------------------------------------------------------------------------
-// Rollback health check
-// ---------------------------------------------------------------------------
 
 export interface RollbackHealthEvidence {
     passed: boolean;
@@ -246,9 +235,9 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function runDoctor(options: DoctorOptions): DoctorResult {
-    var targetRoot = path.resolve(options.targetRoot);
-    var initAnswersPath = options.initAnswersPath || resolveInitAnswersRelativePath();
-    var bundlePath = getBundlePath(targetRoot);
+    const targetRoot = path.resolve(options.targetRoot);
+    const initAnswersPath = options.initAnswersPath || resolveInitAnswersRelativePath();
+    const bundlePath = getBundlePath(targetRoot);
 
     if (!pathExists(bundlePath)) {
         throw new Error(
@@ -257,69 +246,73 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         );
     }
 
-    var verifyResult = runVerify({
+    const verifyResult = runVerify({
         targetRoot: targetRoot,
         sourceOfTruth: options.sourceOfTruth,
         initAnswersPath: initAnswersPath
     });
 
-    // T-121: delegate manifest + protected manifest evidence collection
-    var manifestEvidence = collectManifestEvidence(bundlePath, targetRoot);
-    var manifestResult = manifestEvidence.manifestResult;
-    var manifestError = manifestEvidence.manifestError;
-    var protectedManifestEvidence = manifestEvidence.protectedManifestEvidence;
+    const manifestEvidence = collectManifestEvidence(bundlePath, targetRoot);
+    const manifestResult = manifestEvidence.manifestResult;
+    const manifestError = manifestEvidence.manifestError;
+    const protectedManifestEvidence = manifestEvidence.protectedManifestEvidence;
 
-    // Detect stale deployed bundle in self-hosted checkouts.
-    var parityResult = getSourceBundleParity(targetRoot);
+    const parityResult = getSourceBundleParity(targetRoot);
 
-    // T-002: use aggregate timeline summary for cheap health check (read-only)
-    var timelineScan = collectTimelineSummaryForDoctor(bundlePath);
+    const timelineScan = collectTimelineSummaryForDoctor(bundlePath);
 
-    // T-023: delegate lock-health evidence collection
-    var lockEvidence = collectLockHealth({
+    const lockEvidence = collectLockHealth({
         bundlePath: bundlePath,
         cleanupStaleLocks: options.cleanupStaleLocks,
         dryRun: options.dryRun
     });
-    var lockHealth = lockEvidence.lockHealth;
-    var lockCleanup = lockEvidence.lockCleanup;
-    var reviewLockHealth = lockEvidence.reviewLockHealth;
-    var reviewLockCleanup = lockEvidence.reviewLockCleanup;
-    var completionFinalizationLockHealth = lockEvidence.completionFinalizationLockHealth;
+    const lockHealth = lockEvidence.lockHealth;
+    const lockCleanup = lockEvidence.lockCleanup;
+    const reviewLockHealth = lockEvidence.reviewLockHealth;
+    const reviewLockCleanup = lockEvidence.reviewLockCleanup;
+    const completionFinalizationLockHealth = lockEvidence.completionFinalizationLockHealth;
 
-    // T-121: delegate compliance evidence collection
-    var activeAgentFiles = options.activeAgentFiles || [];
-    var complianceEvidence = collectComplianceEvidence(targetRoot, activeAgentFiles);
-    var providerComplianceResult = complianceEvidence.providerComplianceResult;
-    var nestedBundleDuplication = complianceEvidence.nestedBundleDuplication;
+    const activeAgentFiles = options.activeAgentFiles || [];
+    const complianceEvidence = collectComplianceEvidence(targetRoot, activeAgentFiles);
+    const providerComplianceResult = complianceEvidence.providerComplianceResult;
+    const nestedBundleDuplication = complianceEvidence.nestedBundleDuplication;
 
-    // T-012: runtime mismatch check
-    var runtimeMismatchEvidence = checkRuntimeMismatch();
+    const runtimeMismatchEvidence = checkRuntimeMismatch();
 
-    // T-121: delegate permission checks on critical paths
-    var permissionEvidence = checkPermissions(targetRoot);
+    const permissionEvidence = checkPermissions(targetRoot);
 
-    // T-012: partial-state detection (interrupted updates/uninstalls, stale locks)
-    var partialStateEvidence = checkPartialState(targetRoot);
+    const partialStateEvidence = checkPartialState(targetRoot);
 
-    // T-012: rollback snapshot health
-    var rollbackHealthEvidence = checkRollbackHealth(targetRoot);
+    const rollbackHealthEvidence = checkRollbackHealth(targetRoot);
 
-    // T-055: profile health check
-    var profileHealthEvidence: ProfileHealthEvidence | null = null;
+    let profileHealthEvidence: ProfileHealthEvidence | null = null;
     try {
         profileHealthEvidence = checkProfileHealth(targetRoot);
     } catch {
         // profile health check failure is non-fatal
     }
 
-    var manifestPassed = manifestResult ? manifestResult.passed : false;
-    var compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
-    var protectedManifestOk = protectedManifestEvidence === null
+    const manifestPassed = manifestResult ? manifestResult.passed : false;
+    const compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
+    const protectedManifestOk = protectedManifestEvidence === null
         || protectedManifestEvidence.status === 'MATCH'
         || protectedManifestEvidence.status === 'MISSING';
-    var profileHealthOk = profileHealthEvidence === null || !profileHealthEvidence.config_exists || profileHealthEvidence.passed;
-    var passed = verifyResult.passed && manifestPassed && !manifestError && lockHealth.stale_count === 0 && reviewLockHealth.stale_count === 0 && completionFinalizationLockHealth.stale_count === 0 && !parityResult.isStale && compliancePassed && !nestedBundleDuplication.duplicatesFound && protectedManifestOk && runtimeMismatchEvidence.passed && permissionEvidence.passed && partialStateEvidence.passed && rollbackHealthEvidence.passed && profileHealthOk;
+    const profileHealthOk = profileHealthEvidence === null || !profileHealthEvidence.config_exists || profileHealthEvidence.passed;
+    const passed = verifyResult.passed
+        && manifestPassed
+        && !manifestError
+        && lockHealth.stale_count === 0
+        && reviewLockHealth.stale_count === 0
+        && completionFinalizationLockHealth.stale_count === 0
+        && !parityResult.isStale
+        && compliancePassed
+        && !nestedBundleDuplication.duplicatesFound
+        && protectedManifestOk
+        && runtimeMismatchEvidence.passed
+        && permissionEvidence.passed
+        && partialStateEvidence.passed
+        && rollbackHealthEvidence.passed
+        && profileHealthOk;
 
     return {
         passed: passed,

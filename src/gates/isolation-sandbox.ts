@@ -14,12 +14,8 @@ import {
 } from './helpers';
 import { loadIsolationModeConfig, type IsolationModeConfig } from './isolation-mode';
 
-// ── Constants ────────────────────────────────────────────────────────
-
 export const ISOLATION_SANDBOX_DIR = '.isolation-sandbox';
 const SANDBOX_MANIFEST_NAME = 'sandbox-manifest.json';
-
-// ── Types ────────────────────────────────────────────────────────────
 
 export interface SandboxManifest {
     schema_version: 1;
@@ -69,8 +65,6 @@ const SANDBOX_EXCLUDE_DIRS = new Set([
     'runtime',
     '.isolation-sandbox'
 ]);
-
-// ── Sandbox Lifecycle ────────────────────────────────────────────────
 
 /**
  * Resolve the sandbox root directory for a given workspace.
@@ -223,8 +217,6 @@ export function resolveIsolatedOrchestratorRoot(
         reason: 'Using isolation sandbox for gate execution.'
     };
 }
-
-// ── Sandbox Validation ───────────────────────────────────────────────
 
 export interface SandboxValidationResult {
     exists: boolean;
@@ -384,8 +376,6 @@ export function compareSandboxToLive(repoRoot: string): {
     };
 }
 
-// ── Gate Execution Path Resolution ───────────────────────────────────
-
 // Control-plane path prefixes: files under these roots are read-only
 // inputs that define gate behavior and should come from the sandbox
 // when isolation mode is active.
@@ -457,8 +447,6 @@ export function resolveGateExecutionPathPosix(
 ): string {
     return toPosix(resolveGateExecutionPath(repoRoot, relativePath, resolution));
 }
-
-// ── Internal Helpers ─────────────────────────────────────────────────
 
 function copyDirectoryRecursive(
     sourceDir: string,
