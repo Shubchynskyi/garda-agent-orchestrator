@@ -7,47 +7,32 @@ import {
     resolveWorkspaceDisplayVersion
 } from './cli-helpers';
 
-// ---------------------------------------------------------------------------
-// Pure-function output builder (testable without stdout capture)
-// ---------------------------------------------------------------------------
+function resolveOverviewTargetRoot(targetRoot?: string): string {
+    return targetRoot === undefined ? normalizePathValue('.') : targetRoot;
+}
 
-/**
- * Build the full overview text as a string.
- * Mirrors printOverview() but returns a string instead of writing to stdout.
- */
 export function buildOverviewOutput(packageJson: PackageJsonLike, targetRoot?: string): string {
-    if (targetRoot === undefined) targetRoot = normalizePathValue('.');
-    const snapshot = getStatusSnapshot(targetRoot);
-    const lines = [];
+    const resolvedTargetRoot = resolveOverviewTargetRoot(targetRoot);
+    const snapshot = getStatusSnapshot(resolvedTargetRoot);
+    const lines: string[] = [];
+
     lines.push('GARDA_OVERVIEW');
-    lines.push(buildBannerText(packageJson, 'Workspace overview', targetRoot, {
-        versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
-    }));
+    lines.push(
+        buildBannerText(packageJson, 'Workspace overview', resolvedTargetRoot, {
+            versionOverride: resolveWorkspaceDisplayVersion(resolvedTargetRoot, packageJson.version)
+        })
+    );
     lines.push(formatStatusSnapshot(snapshot, { heading: 'GARDA_STATUS' }));
     lines.push('');
     lines.push(...buildCommandSummaryLines());
+
     return lines.join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// Side-effecting handler (writes to stdout)
-// ---------------------------------------------------------------------------
-
-/**
- * Print the workspace overview to stdout.
- * Matches bin/garda.js printOverview() output contract:
- *   - GARDA_OVERVIEW marker
- *   - Banner
- *   - GARDA_STATUS block
- *   - Available Commands
- */
 export function printOverview(packageJson: PackageJsonLike, targetRoot?: string): void {
     console.log(buildOverviewOutput(packageJson, targetRoot));
 }
 
-/**
- * CLI handler: called when garda is invoked with no arguments.
- */
 export function handleOverview(packageJson: PackageJsonLike, targetRoot?: string): void {
     printOverview(packageJson, targetRoot);
 }
