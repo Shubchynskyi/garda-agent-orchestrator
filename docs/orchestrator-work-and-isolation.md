@@ -89,6 +89,12 @@ When the workspace is an orchestrator source checkout the same directories
 are also protected at the repository root (`src/bin/`, `src/cli/`, …,
 `bin/`, `dist/`, `live/docs/agent-rules/`).
 
+`status` and `doctor` still surface trusted protected-manifest drift in this
+self-hosted mode, but they now distinguish informational source-checkout
+drift from blocking lifecycle drift more explicitly. The task-start,
+compile, and completion gates remain the authoritative enforcement layer for
+unexpected pre-start or widened protected drift.
+
 ---
 
 ## Fail-Closed Behavior

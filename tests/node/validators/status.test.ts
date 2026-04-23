@@ -118,6 +118,36 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
     }
 }
 
+function seedMatchingSourceCheckoutParity(tmpDir: string) {
+    const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+    writeStatusFixtureFile(
+        path.join(tmpDir, 'package.json'),
+        JSON.stringify({ name: 'garda-agent-orchestrator', version: '1.0.0' }, null, 2)
+    );
+    writeStatusFixtureFile(path.join(tmpDir, 'VERSION'), '1.0.0\n');
+    writeStatusFixtureFile(path.join(tmpDir, 'src', 'index.ts'), 'export {};\n');
+    writeStatusFixtureFile(path.join(tmpDir, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
+    writeStatusFixtureFile(path.join(tmpDir, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'template', 'AGENTS.md'), '# template\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'template', 'config', 'garda.config.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'review-capabilities.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'paths.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'token-economy.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'output-filters.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'skill-packs.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'optional-skill-selection-policy.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'isolation-mode.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'profiles.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'skills-index.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'skills-headlines.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'garda.config.json'), '{}\n');
+
+    const now = new Date();
+    fs.utimesSync(path.join(tmpDir, 'bin', 'garda.js'), now, now);
+    fs.utimesSync(path.join(bundlePath, 'bin', 'garda.js'), now, now);
+}
+
 test('resolveInitAnswersPath resolves relative path inside root', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {
@@ -770,6 +800,55 @@ test('getStatusSnapshot surfaces protected-manifest DRIFT and blocks readyForTas
         assert.ok(output.includes('[ ] Protected manifest'));
         assert.ok(output.includes('Drift:'));
         assert.ok(output.includes('Fix: Run setup/update/reinit'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot treats source-checkout protected-manifest DRIFT as informational', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-pm-source-drift-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        seedMatchingSourceCheckoutParity(tmpDir);
+        writeProtectedControlPlaneManifest(tmpDir);
+
+        writeStatusFixtureFile(
+            path.join(tmpDir, 'src', 'cli', 'status-helper.ts'),
+            'export const changed = true;\n'
+        );
+        writeStatusFixtureFile(
+            path.join(tmpDir, 'dist', 'src', 'index.js'),
+            'module.exports = { changed: true };\n'
+        );
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.ok(snapshot.protectedManifestEvidence !== null);
+        assert.equal(snapshot.protectedManifestEvidence!.status, 'DRIFT');
+        assert.ok(snapshot.protectedManifestAssessment !== null);
+        assert.equal(snapshot.protectedManifestAssessment!.code, 'INFO_SOURCE_CHECKOUT');
+        assert.equal(snapshot.parityResult.isSourceCheckout, true);
+        assert.equal(snapshot.parityResult.isStale, false);
+        assert.equal(snapshot.readyForTasks, true);
+        assert.ok(!snapshot.recommendedNextCommand.includes('garda-agent-orchestrator update'));
+
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Protected manifest (DRIFT)'));
+        assert.ok(output.includes('[~] Protected manifest'));
+        assert.ok(output.includes('Assessment: INFO_SOURCE_CHECKOUT'));
+        assert.ok(output.includes('workspace ready') || output.includes('Workspace ready'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

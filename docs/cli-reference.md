@@ -62,6 +62,7 @@ garda status why-blocked --target-root "."
 
 Notes:
 - `status` prints the normal workspace readiness snapshot.
+- In a self-hosted source checkout, `status` still shows trusted protected-manifest `DRIFT`, but when the trusted manifest itself was recorded as `is_source_checkout=true` that drift is downgraded to informational instead of forcing readiness to `false` on its own.
 - `status --compact` preserves the not-ready output but reduces the green path to a single summary line: `GARDA_STATUS: ready | source=<provider>`.
 - `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
 - `status why-blocked` also surfaces task-event locks that can block timeline writes and review-artifact locks that can block `runtime/reviews` artifact persistence.
@@ -81,6 +82,7 @@ garda doctor explain --list
 
 Notes:
 - `doctor` remains the aggregate verify + manifest + timeline health command.
+- In a self-hosted source checkout, trusted protected-manifest `DRIFT` remains visible in `doctor`, but source-checkout drift is reported as informational unless the task-context gates classify it as real pre-start or lifecycle drift.
 - `doctor --compact` preserves failure diagnostics but reduces the green path to a single line: `Doctor: PASS | verify=PASS | manifest=PASS`.
 - `doctor` reports task-event lock health under `garda-agent-orchestrator/runtime/task-events/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
 - `doctor` also reports review-artifact lock health under `garda-agent-orchestrator/runtime/reviews/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.

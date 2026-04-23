@@ -59,6 +59,9 @@ import {
     getProtectedDirtyWorkspaceScopeFromPreflight
 } from '../../../gates/dirty-worktree-protection';
 import {
+    assessProtectedManifest
+} from '../../../validators/protected-manifest-assessment';
+import {
     evaluateProtectedManifestBaselineAllowance,
     getProtectedManifestLifecycleGuard
 } from '../../../gates/protected-manifest-guard';
@@ -330,6 +333,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     (result.triggers as any).protected_control_plane_manifest_status = protectedManifestEvidence.status;
     (result.triggers as any).protected_control_plane_manifest_path = protectedManifestEvidence.manifest_path;
     (result.triggers as any).protected_control_plane_manifest_changed_files = protectedManifestEvidence.changed_files;
+    let protectedManifestAssessment = assessProtectedManifest({
+        evidence: protectedManifestEvidence
+    });
 
     const isolationConfig = loadIsolationModeConfig(repoRoot);
     (result.triggers as any).isolation_mode_enabled = isolationConfig.enabled;
@@ -409,6 +415,11 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         });
         (result.triggers as any).protected_control_plane_manifest_baseline_allowance_status =
             protectedManifestBaselineAllowance.status;
+        protectedManifestAssessment = assessProtectedManifest({
+            evidence: protectedManifestEvidence,
+            baselineAllowanceStatus: protectedManifestBaselineAllowance.status,
+            orchestratorWork: taskModeEvidence.orchestrator_work === true
+        });
 
         const rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'TASK_ENTRY', {
             artifactPath: String(options.rulePackPath || '')
@@ -496,6 +507,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     } else if (isolationViolationMessage) {
         throw new Error(`Control-plane isolation (STRICT) blocked preflight: ${isolationViolationMessage}`);
     }
+
+    (result.triggers as any).protected_control_plane_manifest_assessment =
+        protectedManifestAssessment?.code || null;
 
     if (resolvedTaskId) {
         const taskModeForBudget = getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath);

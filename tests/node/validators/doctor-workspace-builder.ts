@@ -158,6 +158,7 @@ export function buildFakeDoctorResult(overrides?: Record<string, unknown>): Doct
         providerComplianceResult: null,
         nestedBundleDuplication: { duplicatesFound: false, duplicatePaths: [] },
         protectedManifestEvidence: null,
+        protectedManifestAssessment: null,
         ...DEFAULT_NEW_EVIDENCE,
         ...overrides
     };

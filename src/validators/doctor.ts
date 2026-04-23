@@ -44,6 +44,10 @@ import {
 import type { ProtectedControlPlaneManifestEvidence } from '../gates/helpers';
 import type { ProviderComplianceResult } from './provider-compliance';
 import type { NestedBundleDuplicationResult } from './workspace-layout';
+import {
+    assessProtectedManifest,
+    type ProtectedManifestAssessment
+} from './protected-manifest-assessment';
 
 // Re-export extracted collectors for backward compatibility
 export { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor-runtime';
@@ -223,6 +227,7 @@ export interface DoctorResult {
     providerComplianceResult: ProviderComplianceResult | null;
     nestedBundleDuplication: NestedBundleDuplicationResult;
     protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
+    protectedManifestAssessment: ProtectedManifestAssessment | null;
     runtimeMismatchEvidence: RuntimeMismatchEvidence;
     permissionEvidence: PermissionCheckEvidence;
     partialStateEvidence: PartialStateEvidence;
@@ -258,6 +263,11 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     const protectedManifestEvidence = manifestEvidence.protectedManifestEvidence;
 
     const parityResult = getSourceBundleParity(targetRoot);
+    const protectedManifestAssessment = assessProtectedManifest({
+        evidence: protectedManifestEvidence,
+        parityResult,
+        allowSourceCheckoutInfo: true
+    });
 
     const timelineScan = collectTimelineSummaryForDoctor(bundlePath);
 
@@ -294,9 +304,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
 
     const manifestPassed = manifestResult ? manifestResult.passed : false;
     const compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
-    const protectedManifestOk = protectedManifestEvidence === null
-        || protectedManifestEvidence.status === 'MATCH'
-        || protectedManifestEvidence.status === 'MISSING';
+    const protectedManifestOk = protectedManifestAssessment === null || !protectedManifestAssessment.blocks;
     const profileHealthOk = profileHealthEvidence === null || !profileHealthEvidence.config_exists || profileHealthEvidence.passed;
     const passed = verifyResult.passed
         && manifestPassed
@@ -331,6 +339,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         providerComplianceResult: providerComplianceResult,
         nestedBundleDuplication: nestedBundleDuplication,
         protectedManifestEvidence: protectedManifestEvidence,
+        protectedManifestAssessment: protectedManifestAssessment,
         runtimeMismatchEvidence: runtimeMismatchEvidence,
         permissionEvidence: permissionEvidence,
         partialStateEvidence: partialStateEvidence,

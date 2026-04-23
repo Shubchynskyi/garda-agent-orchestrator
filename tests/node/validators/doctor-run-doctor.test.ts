@@ -13,6 +13,48 @@ import {
 } from '../../../src/gates/helpers';
 import { createDoctorWorkspace, seedStaleLock } from './doctor-workspace-builder';
 
+function writeDoctorFixtureFile(filePath: string, content: string) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function seedMatchingSourceCheckoutParity(tmpDir: string, bundlePath: string) {
+    writeDoctorFixtureFile(
+        path.join(tmpDir, 'package.json'),
+        JSON.stringify({ name: 'garda-agent-orchestrator', version: '1.0.0' }, null, 2)
+    );
+    writeDoctorFixtureFile(path.join(tmpDir, 'VERSION'), '1.0.0\n');
+    writeDoctorFixtureFile(path.join(tmpDir, 'src', 'index.ts'), 'export {};\n');
+    writeDoctorFixtureFile(path.join(tmpDir, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
+    writeDoctorFixtureFile(path.join(tmpDir, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'VERSION'), '1.0.0\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2));
+    writeDoctorFixtureFile(path.join(bundlePath, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'template', 'AGENTS.md'), '# template\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'template', 'config', 'garda.config.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'runtime', 'init-answers.json'), JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'Claude'
+    }, null, 2));
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'review-capabilities.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'paths.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'token-economy.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'output-filters.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'skill-packs.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'optional-skill-selection-policy.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'isolation-mode.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'profiles.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'skills-index.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'skills-headlines.json'), '{}\n');
+    writeDoctorFixtureFile(path.join(bundlePath, 'live', 'config', 'garda.config.json'), '{}\n');
+
+    const now = new Date();
+    fs.utimesSync(path.join(tmpDir, 'bin', 'garda.js'), now, now);
+    fs.utimesSync(path.join(bundlePath, 'bin', 'garda.js'), now, now);
+}
+
 // ---------------------------------------------------------------------------
 // runDoctor: bundle detection and manifest validation
 // ---------------------------------------------------------------------------
@@ -363,6 +405,32 @@ test('runDoctor surfaces protected-manifest DRIFT and fails overall', () => {
         assert.ok(output.includes('Status: DRIFT'));
         assert.ok(output.includes('DriftCount:'));
         assert.ok(output.includes('Doctor: FAIL'));
+    } finally {
+        ws.cleanup();
+    }
+});
+
+test('runDoctor classifies source-checkout protected-manifest DRIFT as informational', () => {
+    const ws = createDoctorWorkspace();
+    seedMatchingSourceCheckoutParity(ws.tmpDir, ws.bundlePath);
+    writeProtectedControlPlaneManifest(ws.tmpDir);
+    writeDoctorFixtureFile(path.join(ws.tmpDir, 'src', 'cli', 'doctor-helper.ts'), 'export const changed = true;\n');
+    writeDoctorFixtureFile(path.join(ws.tmpDir, 'dist', 'src', 'index.js'), 'module.exports = { changed: true };\n');
+
+    try {
+        const result = runDoctor({
+            targetRoot: ws.tmpDir,
+            sourceOfTruth: 'Claude'
+        });
+        assert.ok(result.protectedManifestEvidence !== null);
+        assert.equal(result.protectedManifestEvidence!.status, 'DRIFT');
+        assert.ok(result.protectedManifestAssessment !== null);
+        assert.equal(result.protectedManifestAssessment!.code, 'INFO_SOURCE_CHECKOUT');
+        assert.equal(result.protectedManifestAssessment!.blocks, false);
+
+        const output = formatDoctorResult(result);
+        assert.ok(output.includes('Protected Control-Plane Manifest'));
+        assert.ok(output.includes('Assessment: INFO_SOURCE_CHECKOUT'));
     } finally {
         ws.cleanup();
     }

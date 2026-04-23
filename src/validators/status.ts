@@ -34,6 +34,10 @@ import {
     type ToxinStatusSummary
 } from '../runtime/toxin-metrics';
 import { buildProfileAwareExecuteTaskNextCommand } from './task-command';
+import {
+    assessProtectedManifest,
+    type ProtectedManifestAssessment
+} from './protected-manifest-assessment';
 
 type InitAnswers = ReturnType<typeof validateInitAnswers>;
 
@@ -73,6 +77,7 @@ export interface StatusSnapshot extends CliStatusSnapshot {
     parityResult: ReturnType<typeof detectSourceBundleParity>;
     providerComplianceResult: ProviderComplianceResult | null;
     protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
+    protectedManifestAssessment: ProtectedManifestAssessment | null;
     toxinMetricsSummary: ToxinStatusSummary | null;
 }
 
@@ -430,7 +435,7 @@ function buildRecommendedNextCommand(options: {
     readyForTasks: boolean;
     bundlePath: string;
     parityResult: ReturnType<typeof detectSourceBundleParity>;
-    protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
+    protectedManifestAssessment: ProtectedManifestAssessment | null;
     primaryInitializationComplete: boolean;
     agentInitializationPendingReason: AgentInitializationPendingReason;
     bundlePresent: boolean;
@@ -443,7 +448,7 @@ function buildRecommendedNextCommand(options: {
         readyForTasks,
         bundlePath,
         parityResult,
-        protectedManifestEvidence,
+        protectedManifestAssessment,
         primaryInitializationComplete,
         agentInitializationPendingReason,
         bundlePresent,
@@ -460,8 +465,7 @@ function buildRecommendedNextCommand(options: {
         return parityResult.remediation;
     }
 
-    const protectedManifestNeedsRepair = protectedManifestEvidence !== null
-        && (protectedManifestEvidence.status === 'DRIFT' || protectedManifestEvidence.status === 'INVALID');
+    const protectedManifestNeedsRepair = protectedManifestAssessment?.requires_refresh === true;
     if (protectedManifestNeedsRepair) {
         return `npx garda-agent-orchestrator update --target-root "${resolvedTargetRoot}"`;
     }
@@ -492,6 +496,17 @@ function buildHeadlineText(snapshot: StatusSnapshot): string {
 
 function buildBadge(enabled: boolean): string {
     return enabled ? '[x]' : '[ ]';
+}
+
+function buildSeverityBadge(severity: 'pass' | 'warn' | 'fail'): string {
+    switch (severity) {
+        case 'pass':
+            return '[x]';
+        case 'warn':
+            return '[~]';
+        default:
+            return '[ ]';
+    }
 }
 
 function appendParityLines(lines: string[], snapshot: StatusSnapshot): void {
@@ -530,8 +545,24 @@ function appendProtectedManifestLines(lines: string[], snapshot: StatusSnapshot)
     }
 
     const manifestStatus = snapshot.protectedManifestEvidence.status;
-    const manifestHealthy = manifestStatus === 'MATCH' || manifestStatus === 'MISSING';
-    lines.push(`  ${buildBadge(manifestHealthy)} Protected manifest (${manifestStatus})`);
+    const manifestAssessment = snapshot.protectedManifestAssessment;
+    const manifestSeverity = manifestAssessment?.severity
+        || (manifestStatus === 'MATCH' || manifestStatus === 'MISSING' ? 'pass' : 'fail');
+    lines.push(`  ${buildSeverityBadge(manifestSeverity)} Protected manifest (${manifestStatus})`);
+
+    if (manifestAssessment?.code === 'INFO_SOURCE_CHECKOUT') {
+        lines.push('    Assessment: INFO_SOURCE_CHECKOUT');
+        lines.push('    Info: self-hosted source-checkout drift is informational while protected source and generated bundle files evolve together.');
+        lines.push('    Impact: status keeps the workspace ready, while task-start gates still enforce dirty-baseline and manifest guardrails for true pre-start drift.');
+        lines.push('    Optional: Run setup/update/reinit after intentional control-plane changes settle and you want to refresh the trusted baseline.');
+        return;
+    }
+
+    if (manifestAssessment?.code === 'INFO_TASK_CONTEXT_ALLOWED_DRIFT') {
+        lines.push('    Assessment: INFO_TASK_CONTEXT_ALLOWED_DRIFT');
+        lines.push('    Info: current task context already explains this protected-manifest drift.');
+        return;
+    }
 
     if (manifestStatus === 'DRIFT') {
         const driftCount = snapshot.protectedManifestEvidence.changed_files.length;
@@ -657,19 +688,20 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         currentActiveAgentFiles
     );
     const protectedManifestEvidence = readProtectedManifestEvidence(resolvedTargetRoot, bundlePresent);
+    const protectedManifestAssessment = assessProtectedManifest({
+        evidence: protectedManifestEvidence,
+        parityResult,
+        allowSourceCheckoutInfo: true
+    });
     const agentInitializationComplete = primaryInitializationComplete && agentInitializationPendingReason === null;
     const compliancePassed = providerComplianceResult === null || providerComplianceResult.passed;
-    const protectedManifestOk = (
-        protectedManifestEvidence === null
-        || protectedManifestEvidence.status === 'MATCH'
-        || protectedManifestEvidence.status === 'MISSING'
-    );
+    const protectedManifestOk = protectedManifestAssessment === null || !protectedManifestAssessment.blocks;
     const readyForTasks = agentInitializationComplete && !parityResult.isStale && compliancePassed && protectedManifestOk;
     const recommendedNextCommand = buildRecommendedNextCommand({
         readyForTasks,
         bundlePath,
         parityResult,
-        protectedManifestEvidence,
+        protectedManifestAssessment,
         primaryInitializationComplete,
         agentInitializationPendingReason,
         bundlePresent,
@@ -722,6 +754,7 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         parityResult,
         providerComplianceResult,
         protectedManifestEvidence,
+        protectedManifestAssessment,
         toxinMetricsSummary,
         mandatoryFullSuiteEnabled,
         latestUpdateNotice

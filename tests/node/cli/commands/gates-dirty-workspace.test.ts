@@ -520,6 +520,10 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
             payload.triggers.protected_control_plane_manifest_baseline_allowance_status,
             'INHERITED_BASELINE_ONLY'
         );
+        assert.equal(
+            payload.triggers.protected_control_plane_manifest_assessment,
+            'INFO_TASK_CONTEXT_ALLOWED_DRIFT'
+        );
         assert.equal(fs.existsSync(outputPath), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

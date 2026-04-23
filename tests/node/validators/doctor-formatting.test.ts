@@ -126,6 +126,38 @@ test('formatDoctorResult includes protected manifest section in clean output', (
     assert.ok(output.includes('Doctor: PASS'));
 });
 
+test('formatDoctorResult treats source-checkout protected-manifest drift as informational', () => {
+    const fakeResult = buildFakeDoctorResult({
+        protectedManifestEvidence: {
+            status: 'DRIFT' as const,
+            manifest_path: '/tmp/test/garda-agent-orchestrator/runtime/protected-control-plane-manifest.json',
+            changed_files: ['src/cli/status-helper.ts', 'dist/src/index.js'],
+            manifest: {
+                schema_version: 1,
+                event_source: 'refresh-protected-control-plane-manifest' as const,
+                timestamp_utc: '2026-04-23T00:00:00.000Z',
+                workspace_root: '/tmp/test',
+                orchestrator_root: '/tmp/test/garda-agent-orchestrator',
+                protected_roots: ['src/cli/', 'dist/'],
+                protected_snapshot: {},
+                is_source_checkout: true
+            }
+        },
+        protectedManifestAssessment: {
+            code: 'INFO_SOURCE_CHECKOUT' as const,
+            severity: 'warn' as const,
+            blocks: false,
+            requires_refresh: false
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Protected Control-Plane Manifest'));
+    assert.ok(output.includes('Assessment: INFO_SOURCE_CHECKOUT'));
+    assert.ok(output.includes('Informational in a self-hosted source checkout'));
+    assert.ok(output.includes('Doctor: PASS'));
+});
+
 // ---------------------------------------------------------------------------
 // formatDoctorResult: runtime compatibility
 // ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@
 - hardened runtime concurrency and lock recovery across cleanup, review indexes, aggregate task logs, timeline summaries, Windows lock release, foreign-host stale locks, and build-root stale locks
 - improved validation and execution correctness with preserved targeted test filters, stricter producer-consumer artifact sequencing, safer Windows shell-backed gate execution, and same-version self-hosted update refresh for live rule-contract changes
 - refined operator UX with clearer onboarding and task-start guidance, profile-aware recommendations, automatic `TASK.md` status sync, and conventional commit suggestions in final reports
+- reduced noisy self-hosted protected-manifest `DRIFT` diagnostics by downgrading source-checkout status/doctor drift to informational and adding explicit preflight assessment for task-context-allowed manifest drift
 
 ## 1.0.0
 - first public Garda release

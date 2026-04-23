@@ -45,7 +45,16 @@ export function formatDoctorResult(result: DoctorResult): string {
             for (var dfi = 0; dfi < driftFiles.length; dfi++) {
                 lines.push('  - '+driftFiles[dfi]);
             }
-            lines.push('  Fix: Re-run setup/update/reinit to refresh the trusted manifest, or verify changes are intentional.');
+            if (result.protectedManifestAssessment?.code === 'INFO_SOURCE_CHECKOUT') {
+                lines.push('  Assessment: INFO_SOURCE_CHECKOUT');
+                lines.push('  Impact: Informational in a self-hosted source checkout while protected source and generated bundle files evolve together.');
+                lines.push('  Fix: Optional: re-run setup/update/reinit after intentional control-plane changes settle and you want to refresh the trusted manifest.');
+            } else if (result.protectedManifestAssessment?.code === 'INFO_TASK_CONTEXT_ALLOWED_DRIFT') {
+                lines.push('  Assessment: INFO_TASK_CONTEXT_ALLOWED_DRIFT');
+                lines.push('  Impact: Informational because the current task context already explains this inherited protected drift.');
+            } else {
+                lines.push('  Fix: Re-run setup/update/reinit to refresh the trusted manifest, or verify changes are intentional.');
+            }
         } else if (result.protectedManifestEvidence.status === 'INVALID') {
             lines.push('  Fix: Re-run setup/update/reinit to regenerate the trusted manifest.');
         }
