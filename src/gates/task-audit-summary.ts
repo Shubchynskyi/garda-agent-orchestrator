@@ -34,10 +34,6 @@ import {
 import { buildCommitCommandSuggestion, formatFinalCloseoutMarkdown } from './task-audit-summary-renderers';
 export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
 
-// ---------------------------------------------------------------------------
-// Types — public composite shapes used by external consumers
-// ---------------------------------------------------------------------------
-
 export interface TaskAuditSummaryOptions {
     taskId: string;
     repoRoot: string;
@@ -112,10 +108,6 @@ export interface PointInTimeSnapshot {
     subsystem_scope_note?: string | null;
     acquisition_policy?: CompletionGateFinalizationLockPolicy | null;
 }
-
-// ---------------------------------------------------------------------------
-// Lifecycle gate ordering used for audit
-// ---------------------------------------------------------------------------
 
 const BASE_LIFECYCLE_GATES: ReadonlyArray<{ gate: string; pass_event: string; fail_events: string[] }> = [
     { gate: 'enter-task-mode', pass_event: 'TASK_MODE_ENTERED', fail_events: [] },
@@ -200,10 +192,6 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'dependency-receipt', suffix: '-dependency-receipt.json' }
 ];
 
-// ---------------------------------------------------------------------------
-// Core builder
-// ---------------------------------------------------------------------------
-
 export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAuditSummaryResult {
     const repoRoot = path.resolve(options.repoRoot);
     const safeTaskId = assertValidTaskId(options.taskId);
@@ -213,10 +201,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId);
     const taskPath = path.join(repoRoot, 'TASK.md');
     const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
-
-    // -----------------------------------------------------------------------
-    // 1. Parse task events timeline
-    // -----------------------------------------------------------------------
     const taskEventFile = path.join(eventsRoot, `${safeTaskId}.jsonl`);
     const events: Record<string, unknown>[] = [];
     let eventsCount = 0;
@@ -245,13 +229,11 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const firstEventUtc = eventsCount > 0 ? formatTimestamp(events[0].timestamp_utc) : null;
     const lastEventUtc = eventsCount > 0 ? formatTimestamp(events[eventsCount - 1].timestamp_utc) : null;
 
-    // Build a set of event types present
     const eventTypesPresent = new Set<string>();
     const eventByType = new Map<string, Record<string, unknown>>();
     for (const event of events) {
         const eventType = String(event.event_type || '');
         eventTypesPresent.add(eventType);
-        // Keep last occurrence per type
         eventByType.set(eventType, event);
     }
     const fullSuiteValidationEnabled = resolveFullSuiteValidationRequirementForOrderedTaskEvents(
@@ -260,10 +242,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     ).required;
     const workspaceStatusSnapshot = getStatusSnapshot(repoRoot);
     const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled);
-
-    // -----------------------------------------------------------------------
-    // 2. Integrity check
-    // -----------------------------------------------------------------------
     let integrityStatus = 'UNKNOWN';
     if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
         try {
@@ -275,10 +253,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     } else {
         integrityStatus = 'MISSING';
     }
-
-    // -----------------------------------------------------------------------
-    // 3. Gate outcomes
-    // -----------------------------------------------------------------------
     const gates: GateOutcome[] = [];
     const blockers: BlockerEntry[] = [];
     let pointInTimeSnapshot: PointInTimeSnapshot = {
@@ -298,7 +272,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     };
 
     for (const { gate, pass_event, fail_events } of lifecycleGates) {
-        // Also accept REVIEW_GATE_PASSED_WITH_OVERRIDE as a pass
         const passEvents = [pass_event];
         if (pass_event === 'REVIEW_GATE_PASSED') {
             passEvents.push('REVIEW_GATE_PASSED_WITH_OVERRIDE');
@@ -306,7 +279,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             passEvents.push('FULL_SUITE_VALIDATION_WARNED');
         }
 
-        // Find latest pass and latest fail
         let latestPass: Record<string, unknown> | undefined;
         let latestPassType: string | undefined;
         for (const pe of passEvents) {
@@ -331,7 +303,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             }
         }
 
-        // Use whichever is more recent
         if (latestPass && latestFail) {
             const passTime = parseTimestamp(latestPass.timestamp_utc).getTime();
             const failTime = parseTimestamp(latestFail.timestamp_utc).getTime();
@@ -370,10 +341,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             gates.push({ gate, status: 'MISSING', event_type: pass_event });
         }
     }
-
-    // -----------------------------------------------------------------------
-    // 4. Changed files from preflight
-    // -----------------------------------------------------------------------
     let changedFiles: string[] = [];
     let changedFilesCount = 0;
     let changedLinesTotal = 0;
@@ -406,10 +373,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             scopeCategory = preflight.scope_category;
         }
     }
-
-    // -----------------------------------------------------------------------
-    // 4b. Profile review decisions from task-mode artifact
-    // -----------------------------------------------------------------------
     let profileReviewDecisions: ProfileReviewDecisionSummary | null = null;
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
@@ -514,10 +477,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // 5. Evidence artifacts
-    // -----------------------------------------------------------------------
     const tokenEconomy = buildTokenEconomySummary(events, repoRoot);
     const evidence: EvidenceArtifact[] = [];
     for (const { kind, suffix } of ARTIFACT_PATTERNS) {
@@ -538,10 +497,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         exists: fs.existsSync(taskEventFile),
         sha256: fs.existsSync(taskEventFile) ? fileSha256(taskEventFile) : null
     });
-
-    // -----------------------------------------------------------------------
-    // 6. Determine overall status
-    // -----------------------------------------------------------------------
     const hasCompletionPass = gates.some(
         (g) => g.gate === 'completion-gate' && g.status === 'PASS'
     );
@@ -791,10 +746,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         final_closeout: finalCloseout
     };
 }
-
-// ---------------------------------------------------------------------------
-// Final closeout artifact
-// ---------------------------------------------------------------------------
 
 export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResult): TaskAuditSummaryResult {
     const jsonPath = summary.final_closeout.artifact_paths.json;

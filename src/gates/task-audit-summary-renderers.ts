@@ -8,10 +8,6 @@ import {
     type AgentReportLocale
 } from '../cli/commands/cli-format-output';
 
-// ---------------------------------------------------------------------------
-// Commit command inference helpers
-// ---------------------------------------------------------------------------
-
 function normalizeCommitToken(value: string): string {
     return String(value || '')
         .trim()
@@ -119,10 +115,6 @@ export function buildCommitCommandSuggestion(
         suggestion: `git commit -m "${type}(${scope}): ${subject}"`
     };
 }
-
-// ---------------------------------------------------------------------------
-// Final closeout markdown renderer
-// ---------------------------------------------------------------------------
 
 function buildLocalizedCloseoutReviewMode(
     closeout: FinalCloseoutArtifact,
@@ -246,10 +238,6 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     return lines.join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// Audit summary text renderer
-// ---------------------------------------------------------------------------
-
 export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): string {
     const lines: string[] = [];
 
@@ -260,7 +248,6 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     if (summary.first_event_utc) lines.push(`FirstEvent: ${summary.first_event_utc}`);
     if (summary.last_event_utc) lines.push(`LastEvent: ${summary.last_event_utc}`);
 
-    // Gates
     lines.push('');
     lines.push('Gates:');
     for (const gate of summary.gates) {
@@ -269,14 +256,12 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         lines.push(`  ${marker} ${gate.gate}${ts}`);
     }
 
-    // Changed files
     lines.push('');
     lines.push(`ChangedFiles: ${summary.changed_files_count} (${summary.changed_lines_total} lines)`);
     for (const file of summary.changed_files) {
         lines.push(`  - ${file}`);
     }
 
-    // Required reviews
     const activeReviews = Object.entries(summary.required_reviews)
         .filter(([, v]) => v)
         .map(([k]) => k);
@@ -285,12 +270,10 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         lines.push(`RequiredReviews: ${activeReviews.join(', ')}`);
     }
 
-    // Scope category
     if (summary.scope_category) {
         lines.push(`ScopeCategory: ${summary.scope_category}`);
     }
 
-    // Profile review decisions
     if (summary.profile_review_decisions) {
         const prd = summary.profile_review_decisions;
         lines.push('');
@@ -315,7 +298,6 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         }
     }
 
-    // Evidence (always shown to expose expected artifact paths)
     const presentEvidence = summary.evidence.filter((e) => e.exists);
     const missingEvidence = summary.evidence.filter((e) => !e.exists);
     lines.push('');
@@ -327,7 +309,6 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         lines.push(`  [ ] ${e.kind}: ${e.path}`);
     }
 
-    // Blockers
     if (summary.blockers.length > 0) {
         lines.push('');
         lines.push('Blockers:');

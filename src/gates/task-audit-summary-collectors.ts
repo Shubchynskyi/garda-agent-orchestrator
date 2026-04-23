@@ -12,10 +12,6 @@ import {
 } from '../runtime/optional-skill-selection';
 import { buildReviewTrustSummary, type ReviewTrustSummary } from './review-trust-summary';
 
-// ---------------------------------------------------------------------------
-// Types — source-level payload shapes used by collectors and the main builder
-// ---------------------------------------------------------------------------
-
 export interface TaskQueueMetadata {
     area: string | null;
     title: string | null;
@@ -112,10 +108,6 @@ const REVIEW_TRUST_COMPATIBILITY_TYPES = [
     'dependency'
 ] as const;
 
-// ---------------------------------------------------------------------------
-// Path resolution utilities
-// ---------------------------------------------------------------------------
-
 export function safeReadJson(filePath: string): Record<string, unknown> | null {
     try {
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
@@ -140,10 +132,6 @@ export function resolveEventsRoot(repoRoot: string, explicit?: string | null): s
     }
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
 }
-
-// ---------------------------------------------------------------------------
-// Data collectors — each reads a single source to avoid duplicate file reads
-// ---------------------------------------------------------------------------
 
 export function readTaskQueueMetadata(repoRoot: string, taskId: string): TaskQueueMetadata | null {
     const taskPath = path.join(repoRoot, 'TASK.md');
