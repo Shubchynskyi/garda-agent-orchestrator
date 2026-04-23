@@ -495,6 +495,87 @@ describe('runUpdate', () => {
         }
     });
 
+    it('preserves explicit workflow-config values during update (T-208)', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN',
+                        auto_open_report: true
+                    },
+                    future_toggle_group: {
+                        sticky_notice_enabled: true
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.deepEqual(workflowConfig.full_suite_validation, {
+                enabled: true,
+                command: 'npm run test:full',
+                timeout_ms: 123456,
+                green_summary_max_lines: 7,
+                red_failure_chunk_lines: 42,
+                out_of_scope_failure_policy: 'AUDIT_AND_WARN',
+                auto_open_report: true
+            });
+            assert.deepEqual(workflowConfig.future_toggle_group, {
+                sticky_notice_enabled: true
+            });
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('applies disabled workflow-config defaults when update materializes a missing config (T-208)', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.rmSync(workflowConfigPath, { force: true });
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.deepEqual(workflowConfig.full_suite_validation, {
+                enabled: false,
+                command: '__FULL_SUITE_COMMAND_UNCONFIGURED__',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            });
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('rolls back on materialization failure', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {

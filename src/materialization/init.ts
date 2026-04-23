@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { cloneJsonValue, isPlainObject, mergeConfig } from '../core/config-merge';
 import { readJsonFile } from '../core/json';
 import { ALL_AGENT_ENTRYPOINT_FILES , resolveBundleName} from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
@@ -30,6 +31,7 @@ import {
 import { getNodeHumanCommitCommand, getNodeInteractiveUpdateCommand, getNodeNonInteractiveUpdateCommand } from './command-constants';
 import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
 import { withLifecycleOperationLock } from '../lifecycle/common';
+export { mergeConfig } from '../core/config-merge';
 
 interface RunInitOptions {
     targetRoot: string;
@@ -92,14 +94,6 @@ interface BuildUsageOptions {
     brevity: string;
     canonicalEntrypoint: string;
     enforceNoAutoCommit: boolean;
-}
-
-function cloneJsonValue<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
@@ -453,43 +447,6 @@ export function runInit(options: RunInitOptions) {
         usagePath
     };
     });
-}
-
-/**
- * Simple recursive config merge: template keys are baseline, existing values take precedence.
- */
-export function mergeConfig(template: Record<string, unknown>, existing: Record<string, unknown> | null): Record<string, unknown> {
-    if (!isPlainObject(existing)) {
-        return cloneJsonValue(template);
-    }
-
-    if (Array.isArray(template)) {
-        return Array.isArray(existing) ? cloneJsonValue(existing) as unknown as Record<string, unknown> : cloneJsonValue(template);
-    }
-
-    const result: Record<string, unknown> = {};
-    // Copy all template keys, using existing values where present
-    for (const key of Object.keys(template)) {
-        const existingKey = Object.keys(existing).find((k) => k.toLowerCase() === key.toLowerCase());
-        if (existingKey !== undefined && existing[existingKey] !== undefined) {
-            if (isPlainObject(template[key]) && isPlainObject(existing[existingKey])) {
-                result[key] = mergeConfig(template[key] as Record<string, unknown>, existing[existingKey] as Record<string, unknown>);
-            } else {
-                result[key] = cloneJsonValue(existing[existingKey]);
-            }
-        } else {
-            result[key] = cloneJsonValue(template[key]);
-        }
-    }
-
-    // Preserve unknown keys from existing
-    for (const key of Object.keys(existing)) {
-        if (!Object.keys(result).find((k) => k.toLowerCase() === key.toLowerCase())) {
-            result[key] = cloneJsonValue(existing[key]);
-        }
-    }
-
-    return result;
 }
 
 interface CopyDirectoryOptions {

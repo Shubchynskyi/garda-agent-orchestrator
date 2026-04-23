@@ -6,6 +6,8 @@ import {
 } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { readJsonFile, writeJsonFile } from '../core/json';
+import { isPlainObject } from '../core/config-merge';
+import { getWorkflowConfigPath, syncWorkflowConfigWithTemplate } from '../core/workflow-config';
 import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
 import { convertActiveAgentEntrypointFilesToString, getActiveAgentEntrypointFiles } from '../materialization/common';
 import { resolveSuggestedFullSuiteValidationCommand } from '../materialization/project-discovery';
@@ -76,17 +78,9 @@ export interface AgentInitResult {
     state: AgentInitState;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function normalizeOptionalCommand(value: unknown): string | null {
     const text = String(value || '').trim();
     return text || null;
-}
-
-function getWorkflowConfigPath(bundleRoot: string): string {
-    return path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
 }
 
 function seedWorkflowConfigFullSuiteCommand(
@@ -97,16 +91,7 @@ function seedWorkflowConfigFullSuiteCommand(
     const detectedCommand = resolveSuggestedFullSuiteValidationCommand(targetRoot)
         || UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND;
     const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
-
-    let rawConfig: Record<string, unknown> = {};
-    if (pathExists(workflowConfigPath)) {
-        try {
-            const parsed = readJsonFile(workflowConfigPath);
-            rawConfig = isPlainObject(parsed) ? parsed : {};
-        } catch {
-            rawConfig = {};
-        }
-    }
+    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot);
 
     const existingSection = isPlainObject(rawConfig.full_suite_validation)
         ? rawConfig.full_suite_validation as Record<string, unknown>
@@ -126,20 +111,9 @@ function seedWorkflowConfigFullSuiteCommand(
     const nextConfig = {
         ...rawConfig,
         full_suite_validation: {
+            ...existingSection,
             enabled: existingSection.enabled === true,
             command: nextCommand,
-            timeout_ms: typeof existingSection.timeout_ms === 'number' && existingSection.timeout_ms > 0
-                ? existingSection.timeout_ms
-                : 600_000,
-            green_summary_max_lines: typeof existingSection.green_summary_max_lines === 'number' && existingSection.green_summary_max_lines > 0
-                ? existingSection.green_summary_max_lines
-                : 5,
-            red_failure_chunk_lines: typeof existingSection.red_failure_chunk_lines === 'number' && existingSection.red_failure_chunk_lines > 0
-                ? existingSection.red_failure_chunk_lines
-                : 50,
-            out_of_scope_failure_policy: typeof existingSection.out_of_scope_failure_policy === 'string' && existingSection.out_of_scope_failure_policy.trim()
-                ? existingSection.out_of_scope_failure_policy
-                : 'AUDIT_AND_BLOCK'
         }
     };
 
