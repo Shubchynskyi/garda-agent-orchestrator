@@ -51,6 +51,7 @@ interface RunInstallOptions {
     assistantBrevity: string;
     sourceOfTruth: string;
     initAnswersPath: string;
+    lifecycleLockAlreadyHeld?: boolean;
     initRunner?: (options: {
         targetRoot: string;
         assistantLanguage: string;
@@ -135,6 +136,7 @@ export function runInstall(options: RunInstallOptions) {
         assistantBrevity,
         sourceOfTruth,
         initAnswersPath,
+        lifecycleLockAlreadyHeld = false,
         initRunner
     } = options;
 
@@ -161,8 +163,11 @@ export function runInstall(options: RunInstallOptions) {
     }
     const trimmedBrevity = (assistantBrevity || '').trim().toLowerCase();
     const trimmedSourceOfTruth = (sourceOfTruth || '').trim();
+    const runWithLock = <T>(callback: () => T): T => lifecycleLockAlreadyHeld
+        ? callback()
+        : withLifecycleOperationLock(normalizedTarget, 'install', callback);
 
-    return withLifecycleOperationLock(normalizedTarget, 'install', () => {
+    return runWithLock(() => {
     // Read and validate init answers
     const resolvedInitPath = resolvePathInsideRoot(targetRoot, initAnswersPath);
     if (!pathExists(resolvedInitPath)) {

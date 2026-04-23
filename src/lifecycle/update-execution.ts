@@ -26,6 +26,7 @@ export interface InstallRunnerOptions {
     assistantBrevity: string;
     sourceOfTruth: string;
     initAnswersPath: string;
+    lifecycleLockAlreadyHeld?: boolean;
 }
 
 export interface MaterializationRunnerOptions {
@@ -40,6 +41,7 @@ export interface MaterializationRunnerOptions {
     tokenEconomyEnabled: boolean;
     providerMinimalism: boolean;
     activeAgentFilesSeed: string | null;
+    lifecycleLockAlreadyHeld?: boolean;
 }
 
 export interface VerifyRunnerOptions {
@@ -99,6 +101,7 @@ export function executeUpdatePipelineStages(options: {
     dryRun: boolean;
     skipVerify: boolean;
     skipManifestValidation: boolean;
+    lifecycleLockAlreadyHeld: boolean;
     sources: ResolvedUpdateSources;
     runners: UpdatePipelineRunners;
     rollbackSnapshotCreated: boolean;
@@ -111,6 +114,7 @@ export function executeUpdatePipelineStages(options: {
         dryRun,
         skipVerify,
         skipManifestValidation,
+        lifecycleLockAlreadyHeld,
         sources,
         runners,
         rollbackSnapshotCreated,
@@ -150,7 +154,8 @@ export function executeUpdatePipelineStages(options: {
                 assistantLanguage: sources.assistantLanguage,
                 assistantBrevity: sources.assistantBrevity,
                 sourceOfTruth: sources.sourceOfTruth,
-                initAnswersPath: sources.initAnswersResolvedPath
+                initAnswersPath: sources.initAnswersResolvedPath,
+                lifecycleLockAlreadyHeld
             });
         } else {
             runInstall({
@@ -161,7 +166,8 @@ export function executeUpdatePipelineStages(options: {
                 assistantLanguage: sources.assistantLanguage,
                 assistantBrevity: sources.assistantBrevity,
                 sourceOfTruth: sources.sourceOfTruth,
-                initAnswersPath: sources.initAnswersResolvedPath
+                initAnswersPath: sources.initAnswersResolvedPath,
+                lifecycleLockAlreadyHeld
             });
         }
         installStatus = 'PASS';
@@ -184,7 +190,8 @@ export function executeUpdatePipelineStages(options: {
                     claudeOrchestratorFullAccess: sources.claudeOrchestratorFullAccess,
                     tokenEconomyEnabled: sources.tokenEconomyEnabled,
                     providerMinimalism: sources.providerMinimalism,
-                    activeAgentFilesSeed: sources.activeAgentFilesSeed
+                    activeAgentFilesSeed: sources.activeAgentFilesSeed,
+                    lifecycleLockAlreadyHeld
                 });
             } else {
                 runInit({
@@ -198,7 +205,8 @@ export function executeUpdatePipelineStages(options: {
                     claudeOrchestratorFullAccess: sources.claudeOrchestratorFullAccess,
                     tokenEconomyEnabled: sources.tokenEconomyEnabled,
                     providerMinimalism: sources.providerMinimalism,
-                    activeAgentFilesSeed: sources.activeAgentFilesSeed
+                    activeAgentFilesSeed: sources.activeAgentFilesSeed,
+                    lifecycleLockAlreadyHeld
                 });
             }
             materializationStatus = 'PASS';

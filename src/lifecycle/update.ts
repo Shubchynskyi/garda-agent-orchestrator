@@ -49,6 +49,7 @@ interface RunUpdateOptions {
     manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
     contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;
     trustContext?: UpdateTrustContext | null;
+    lifecycleLockAlreadyHeld?: boolean;
 }
 
 export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath: string): string[] {
@@ -85,9 +86,12 @@ export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath
     return [...new Set(items)].sort();
 }
 
-export function runUpdate(options: RunUpdateOptions) {
+function runValidatedUpdate(
+    normalizedTarget: string,
+    options: Omit<RunUpdateOptions, 'targetRoot' | 'lifecycleLockAlreadyHeld'>,
+    lifecycleLockAlreadyHeld: boolean
+) {
     const {
-        targetRoot,
         bundleRoot,
         initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         dryRun = false,
@@ -100,10 +104,6 @@ export function runUpdate(options: RunUpdateOptions) {
         contractMigrationRunner = null,
         trustContext = null
     } = options;
-
-    const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
-    return withLifecycleOperationLock(normalizedTarget, 'update', () => {
-
     const sources = resolveUpdateSources(normalizedTarget, initAnswersPath, bundleRoot);
     const timestamp = getTimestamp();
     const rollbackSnapshotRelativePath = `${resolveBundleName()}/runtime/update-rollbacks/update-${timestamp}`;
@@ -139,6 +139,7 @@ export function runUpdate(options: RunUpdateOptions) {
         dryRun,
         skipVerify,
         skipManifestValidation,
+        lifecycleLockAlreadyHeld,
         sources,
         runners: {
             installRunner,
@@ -189,5 +190,21 @@ export function runUpdate(options: RunUpdateOptions) {
         updateReportRelativePath,
         announcements
     });
-    });
+}
+
+export function runUpdate(options: RunUpdateOptions) {
+    const {
+        targetRoot,
+        lifecycleLockAlreadyHeld = false,
+        ...validatedOptions
+    } = options;
+
+    const normalizedTarget = validateTargetRoot(targetRoot, validatedOptions.bundleRoot);
+    if (lifecycleLockAlreadyHeld) {
+        return runValidatedUpdate(normalizedTarget, validatedOptions, true);
+    }
+
+    return withLifecycleOperationLock(normalizedTarget, 'update', () => (
+        runValidatedUpdate(normalizedTarget, validatedOptions, false)
+    ));
 }

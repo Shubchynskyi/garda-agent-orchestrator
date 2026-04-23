@@ -356,6 +356,7 @@ export function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: b
                 sourceType: runnerOptions.sourceType,
                 sourceReference: runnerOptions.sourceReference
             },
+            lifecycleLockAlreadyHeld: runnerOptions.lifecycleLockAlreadyHeld === true,
             contractMigrationRunner(options) {
                 return effectiveRunContractMigrations(options);
             },

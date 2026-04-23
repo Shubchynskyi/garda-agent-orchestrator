@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
+import { buildUpdateLifecycleRunner } from '../../../src/cli/commands/shared-command-utils';
 import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import {
     BUNDLE_SYNC_ITEMS,
@@ -85,6 +86,16 @@ function setupCheckUpdateWorkspace(
 
     // Create runtime dir
     fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(bundle, 'runtime', 'init-answers.json'), JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'Codex',
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE'
+    }, null, 2), 'utf8');
+    fs.mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
 
     return { projectRoot: tmpDir, bundleRoot: bundle };
 }
@@ -214,6 +225,30 @@ describe('runCheckUpdate', () => {
             assert.ok(applyResult.syncedItems.includes('template'));
         } finally {
             removePathRecursive(sourceRoot);
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('applies update through the deployed lifecycle runner without self-locking', async () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1', {
+            syncSurfaceFrom: repoRoot
+        });
+
+        try {
+            const result = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: repoRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner: buildUpdateLifecycleRunner(bundleRoot, false)
+            });
+
+            assert.equal(result.checkUpdateResult, 'UPDATED');
+            assert.equal(result.updateApplied, true);
+            assert.notEqual(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), '0.0.1');
+        } finally {
             removePathRecursive(projectRoot);
         }
     });

@@ -81,6 +81,7 @@ export interface CheckUpdateRunnerOptions {
     trustOverrideSource: string;
     sourceType: string;
     sourceReference: string;
+    lifecycleLockAlreadyHeld?: boolean;
 }
 
 interface CheckUpdateOptions {
@@ -871,7 +872,8 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                             trustOverrideUsed: result.trustOverrideUsed,
                             trustOverrideSource: result.trustOverrideSource,
                             sourceType: result.sourceType,
-                            sourceReference: result.sourceReference
+                            sourceReference: result.sourceReference,
+                            lifecycleLockAlreadyHeld: true
                         });
                     }
 

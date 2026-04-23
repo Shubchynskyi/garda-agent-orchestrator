@@ -43,6 +43,7 @@ interface RunInitOptions {
     tokenEconomyEnabled?: boolean;
     providerMinimalism?: boolean;
     activeAgentFilesSeed?: string | null;
+    lifecycleLockAlreadyHeld?: boolean;
 }
 
 interface RuleSourceMapEntry {
@@ -130,7 +131,8 @@ export function runInit(options: RunInitOptions) {
         claudeOrchestratorFullAccess = false,
         tokenEconomyEnabled = true,
         providerMinimalism = true,
-        activeAgentFilesSeed = null
+        activeAgentFilesSeed = null,
+        lifecycleLockAlreadyHeld = false
     } = options;
 
     const templateRoot = path.join(bundleRoot, 'template');
@@ -150,8 +152,11 @@ export function runInit(options: RunInitOptions) {
             `TargetRoot points to orchestrator bundle directory '${bundleRoot}'. Use the project root parent directory instead.`
         );
     }
+    const runWithLock = <T>(callback: () => T): T => lifecycleLockAlreadyHeld
+        ? callback()
+        : withLifecycleOperationLock(normalizedTarget, 'init', callback);
 
-    return withLifecycleOperationLock(normalizedTarget, 'init', () => {
+    return runWithLock(() => {
     const projectName = path.basename(normalizedTarget);
     const timestampIso = new Date().toISOString();
     let gitignoreEntriesAdded = 0;
