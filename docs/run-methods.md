@@ -22,12 +22,6 @@ node .\bin\garda.js agent-init --target-root . --init-answers-path "garda-agent-
 node .\bin\garda.js doctor --target-root . --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"
 ```
 
-Deprecated compatibility launcher still shipped during migration:
-
-```text
-node .\bin\garda.js status --target-root .
-```
-
 ## 2. Global Install From Published npm Package
 
 Use this for normal day-to-day CLI usage.
@@ -93,14 +87,6 @@ npx garda-agent-orchestrator status --target-root .
 ## 6. Run Local Binary After `npm install`
 
 Useful when you want to avoid `npx`.
-
-```text
-.\node_modules\.bin\garda.cmd
-.\node_modules\.bin\gao.cmd
-.\node_modules\.bin\garda-agent-orchestrator.cmd
-```
-
-Deprecated compatibility shims remain available during migration:
 
 ```text
 .\node_modules\.bin\garda.cmd
