@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as gateHelpers from '../../gates/helpers';
+import { assertValidTaskId } from '../../gate-runtime/task-events';
+import { resolveActiveTaskIds } from '../../core/active-task-state';
 import { resolveCanonicalReviewContextPath } from '../../gates/review-context-paths';
 import { writeReviewArtifactJson, writeReviewArtifactText } from '../../gate-runtime/review-artifacts';
 
@@ -9,9 +11,30 @@ export interface TerminalLogCleanupResult {
     attempted_paths: number;
     discovered_paths: string[];
     deleted_paths: string[];
+    stale_deleted_paths: string[];
     missing_paths: string[];
+    retained_paths: string[];
     errors: string[];
 }
+
+interface ReviewTempOwnership {
+    task_id: string | null;
+    task_id_key: string | null;
+    review_type: string | null;
+}
+
+const REVIEW_TEMP_STALE_AGE_MS = 24 * 60 * 60 * 1000;
+const REVIEW_TEMP_REVIEW_TYPES = [
+    'code',
+    'db',
+    'security',
+    'refactor',
+    'api',
+    'test',
+    'performance',
+    'infra',
+    'dependency'
+] as const;
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -30,7 +53,9 @@ function createTerminalCleanupResult(triggered: boolean): TerminalLogCleanupResu
         attempted_paths: 0,
         discovered_paths: [],
         deleted_paths: [],
+        stale_deleted_paths: [],
         missing_paths: [],
+        retained_paths: [],
         errors: []
     };
 }
@@ -60,6 +85,166 @@ function pruneEmptyDirectoriesUpToRoot(startDirectory: string, rootDirectory: st
             break;
         }
         currentDirectory = parentDirectory;
+    }
+}
+
+function normalizeTaskIdForComparison(taskId: unknown): string | null {
+    const rawTaskId = String(taskId || '').trim();
+    if (!rawTaskId) {
+        return null;
+    }
+    try {
+        return assertValidTaskId(rawTaskId).toLowerCase();
+    } catch {
+        return null;
+    }
+}
+
+function normalizeReviewTypeForComparison(reviewType: string | null | undefined): string | null {
+    const normalized = String(reviewType || '').trim().toLowerCase();
+    return REVIEW_TEMP_REVIEW_TYPES.includes(normalized as typeof REVIEW_TEMP_REVIEW_TYPES[number])
+        ? normalized
+        : null;
+}
+
+function parseReviewTempFileNameOwnership(fileName: string): ReviewTempOwnership {
+    const normalizedFileName = String(fileName || '').trim();
+    const normalizedLowerFileName = normalizedFileName.toLowerCase();
+    for (const reviewType of REVIEW_TEMP_REVIEW_TYPES) {
+        for (const marker of [`-${reviewType}-`, `-${reviewType}.`]) {
+            const markerIndex = normalizedLowerFileName.indexOf(marker);
+            if (markerIndex <= 0) {
+                continue;
+            }
+            const candidateTaskId = normalizedFileName.slice(0, markerIndex);
+            const candidateTaskIdKey = normalizeTaskIdForComparison(candidateTaskId);
+            if (!candidateTaskIdKey) {
+                continue;
+            }
+            return {
+                task_id: candidateTaskId,
+                task_id_key: candidateTaskIdKey,
+                review_type: reviewType
+            };
+        }
+    }
+
+    return {
+        task_id: null,
+        task_id_key: null,
+        review_type: null
+    };
+}
+
+function getReviewTempRelativeSegments(reviewTempRoot: string, candidatePath: string): string[] {
+    const resolvedReviewTempRoot = path.resolve(reviewTempRoot);
+    const resolvedCandidatePath = path.resolve(candidatePath);
+    if (!isPathInsideRoot(resolvedCandidatePath, resolvedReviewTempRoot)) {
+        return [];
+    }
+    const relativePath = gateHelpers.normalizePath(path.relative(resolvedReviewTempRoot, resolvedCandidatePath));
+    if (!relativePath || relativePath === '.') {
+        return [];
+    }
+    return relativePath.split('/').filter((segment) => segment.length > 0);
+}
+
+function inspectReviewTempOwnership(reviewTempRoot: string, candidatePath: string): ReviewTempOwnership {
+    const relativeSegments = getReviewTempRelativeSegments(reviewTempRoot, candidatePath);
+    let taskId: string | null = null;
+    let taskIdKey: string | null = null;
+    let reviewType: string | null = null;
+    const lastSegmentIndex = relativeSegments.length - 1;
+
+    for (let index = 0; index < lastSegmentIndex; index += 1) {
+        const segment = relativeSegments[index];
+        const segmentTaskIdKey = normalizeTaskIdForComparison(segment);
+        const nextSegmentReviewType = normalizeReviewTypeForComparison(relativeSegments[index + 1] || '');
+        if (segmentTaskIdKey && nextSegmentReviewType) {
+            taskId = segment;
+            taskIdKey = segmentTaskIdKey;
+            reviewType = nextSegmentReviewType;
+        }
+    }
+
+    const fileNameOwnership = parseReviewTempFileNameOwnership(path.basename(candidatePath));
+    if (!taskIdKey && fileNameOwnership.task_id_key) {
+        taskId = fileNameOwnership.task_id;
+        taskIdKey = fileNameOwnership.task_id_key;
+    }
+    if (!reviewType && fileNameOwnership.review_type) {
+        reviewType = fileNameOwnership.review_type;
+    }
+
+    return {
+        task_id: taskId,
+        task_id_key: taskIdKey,
+        review_type: reviewType
+    };
+}
+
+function isReviewTempPathOwnedByTask(reviewTempRoot: string, candidatePath: string, taskId: string): boolean {
+    const normalizedTaskId = normalizeTaskIdForComparison(taskId);
+    if (!normalizedTaskId) {
+        return false;
+    }
+
+    const ownership = inspectReviewTempOwnership(reviewTempRoot, candidatePath);
+    if (ownership.task_id_key === normalizedTaskId) {
+        return true;
+    }
+
+    const relativeSegments = getReviewTempRelativeSegments(reviewTempRoot, candidatePath);
+    if (relativeSegments.some((segment) => segment.toLowerCase() === normalizedTaskId)) {
+        return true;
+    }
+
+    return path.basename(candidatePath).toLowerCase().startsWith(`${normalizedTaskId}-`);
+}
+
+export function isTaskOwnedReviewTempPath(repoRoot: string, taskId: string, candidatePath: string): boolean {
+    const reviewTempRoot = path.resolve(repoRoot, '.review-temp');
+    let resolvedCandidatePath: string | null;
+    try {
+        resolvedCandidatePath = gateHelpers.resolvePathInsideRepo(candidatePath, repoRoot, { allowMissing: true });
+    } catch {
+        return false;
+    }
+    if (!resolvedCandidatePath || !isPathInsideRoot(resolvedCandidatePath, reviewTempRoot)) {
+        return false;
+    }
+    return isReviewTempPathOwnedByTask(reviewTempRoot, resolvedCandidatePath, taskId);
+}
+
+function resolveReviewTempActiveTaskIdKeys(repoRoot: string, currentTaskId: string): Set<string> {
+    const activeTaskIds = resolveActiveTaskIds(repoRoot, gateHelpers.joinOrchestratorPath(repoRoot, ''));
+    const currentTaskIdKey = normalizeTaskIdForComparison(currentTaskId);
+    const activeTaskIdKeys = new Set<string>();
+    for (const activeTaskId of activeTaskIds) {
+        const activeTaskIdKey = normalizeTaskIdForComparison(activeTaskId);
+        if (!activeTaskIdKey || activeTaskIdKey === currentTaskIdKey) {
+            continue;
+        }
+        activeTaskIdKeys.add(activeTaskIdKey);
+    }
+    return activeTaskIdKeys;
+}
+
+function isReviewTempPathOwnedByAnyTask(reviewTempRoot: string, candidatePath: string, taskIdKeys: ReadonlySet<string>): boolean {
+    for (const taskIdKey of taskIdKeys) {
+        if (isReviewTempPathOwnedByTask(reviewTempRoot, candidatePath, taskIdKey)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function isReviewTempFileStale(candidatePath: string, nowMs: number): boolean {
+    try {
+        const stat = fs.statSync(candidatePath);
+        return nowMs - stat.mtimeMs >= REVIEW_TEMP_STALE_AGE_MS;
+    } catch {
+        return false;
     }
 }
 
@@ -179,7 +364,7 @@ export function cleanupReviewTempSourceArtifact(
     if (!isPathInsideRoot(resolvedSourcePath, reviewTempRoot)) {
         return;
     }
-    if (!path.basename(resolvedSourcePath).startsWith(`${taskId}-`)) {
+    if (!isReviewTempPathOwnedByTask(reviewTempRoot, resolvedSourcePath, taskId)) {
         return;
     }
 
@@ -327,8 +512,11 @@ export function cleanupTerminalReviewTempOutputs(repoRoot: string, taskId: strin
     }
 
     const candidatePaths = new Set<string>();
+    const staleCandidatePaths = new Set<string>();
+    const retainedPaths = new Set<string>();
     const directoryQueue = [reviewTempRoot];
-    const fileNamePrefix = `${taskId}-`;
+    const nowMs = Date.now();
+    const activeTaskIdKeys = resolveReviewTempActiveTaskIdKeys(repoRoot, taskId);
 
     while (directoryQueue.length > 0) {
         const currentDirectory = directoryQueue.pop() as string;
@@ -351,15 +539,39 @@ export function cleanupTerminalReviewTempOutputs(repoRoot: string, taskId: strin
             if (!entry.isFile()) {
                 continue;
             }
-            if (entry.name.startsWith(fileNamePrefix)) {
+            if (isReviewTempPathOwnedByTask(reviewTempRoot, entryPath, taskId)) {
                 candidatePaths.add(entryPath);
+                continue;
             }
+            if (!isReviewTempFileStale(entryPath, nowMs)) {
+                retainedPaths.add(gateHelpers.normalizePath(entryPath));
+                continue;
+            }
+
+            if (isReviewTempPathOwnedByAnyTask(reviewTempRoot, entryPath, activeTaskIdKeys)) {
+                retainedPaths.add(gateHelpers.normalizePath(entryPath));
+                continue;
+            }
+            const ownership = inspectReviewTempOwnership(reviewTempRoot, entryPath);
+            if (!ownership.task_id_key) {
+                retainedPaths.add(gateHelpers.normalizePath(entryPath));
+                continue;
+            }
+            staleCandidatePaths.add(entryPath);
         }
     }
 
     for (const candidatePath of [...candidatePaths].sort()) {
         cleanupCandidateFilePath(repoRoot, candidatePath, result, 'Review temp output');
     }
+    for (const candidatePath of [...staleCandidatePaths].sort()) {
+        const deletedPathsBeforeCleanup = result.deleted_paths.length;
+        cleanupCandidateFilePath(repoRoot, candidatePath, result, 'Review temp stale output');
+        if (result.deleted_paths.length > deletedPathsBeforeCleanup) {
+            result.stale_deleted_paths.push(gateHelpers.normalizePath(candidatePath));
+        }
+    }
+    result.retained_paths = [...retainedPaths].sort();
     pruneEmptyDirectoriesUpToRoot(reviewTempRoot, reviewTempRoot);
 
     return result;

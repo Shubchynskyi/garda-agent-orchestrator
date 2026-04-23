@@ -137,7 +137,9 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
         attempted_paths: 0,
         discovered_paths: [],
         deleted_paths: [],
+        stale_deleted_paths: [],
         missing_paths: [],
+        retained_paths: [],
         errors: []
     };
     let terminalReviewTempCleanup: TerminalLogCleanupResult = {
@@ -145,7 +147,9 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
         attempted_paths: 0,
         discovered_paths: [],
         deleted_paths: [],
+        stale_deleted_paths: [],
         missing_paths: [],
+        retained_paths: [],
         errors: []
     };
     const isTerminalEvent = eventType === 'TASK_DONE' || eventType === 'TASK_BLOCKED';

@@ -37,7 +37,8 @@ import {
     isTrivialReview
 } from '../../../gates/completion';
 import {
-    cleanupReviewTempSourceArtifact
+    cleanupReviewTempSourceArtifact,
+    isTaskOwnedReviewTempPath
 } from '../gates-artifacts';
 import {
     parseOptions,
@@ -218,6 +219,19 @@ async function resolveReviewOutputInput(
         }
         if (!fs.existsSync(resolvedReviewOutputPath) || !fs.statSync(resolvedReviewOutputPath).isFile()) {
             throw new Error(`Review output not found: ${normalizePath(resolvedReviewOutputPath)}.`);
+        }
+        const reviewTempRoot = path.resolve(repoRoot, '.review-temp');
+        const relativeReviewTempPath = path.relative(reviewTempRoot, resolvedReviewOutputPath);
+        const isInsideReviewTemp = relativeReviewTempPath.length > 0
+            && !relativeReviewTempPath.startsWith('..')
+            && !path.isAbsolute(relativeReviewTempPath);
+        if (isInsideReviewTemp
+            && !isTaskOwnedReviewTempPath(repoRoot, taskId, resolvedReviewOutputPath)) {
+            throw new Error(
+                `ReviewOutputPath inside '.review-temp' must encode the current task id '${taskId}' ` +
+                `so cleanup can attribute it safely. Use '.review-temp/${taskId}/${reviewType}/review-output.md' ` +
+                `or '.review-temp/${taskId}-${reviewType}-output.md'.`
+            );
         }
         reviewOutputSourcePath = resolvedReviewOutputPath;
         reviewContent = fs.readFileSync(resolvedReviewOutputPath, 'utf8');

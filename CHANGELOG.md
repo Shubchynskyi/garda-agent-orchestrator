@@ -20,6 +20,7 @@
 - improved validation and execution correctness with preserved targeted test filters, stricter producer-consumer artifact sequencing, safer Windows shell-backed gate execution, and same-version self-hosted update refresh for live rule-contract changes
 - refined operator UX with clearer onboarding and task-start guidance, profile-aware recommendations, automatic `TASK.md` status sync, and conventional commit suggestions in final reports
 - reduced noisy self-hosted protected-manifest `DRIFT` diagnostics by downgrading source-checkout status/doctor drift to informational and adding explicit preflight assessment for task-context-allowed manifest drift
+- made `.review-temp` a deterministic reviewer staging area by recognizing task-owned nested staging paths, cleaning successful review source artifacts reliably, and sweeping aged orphaned temp files without deleting artifacts that still belong to active tasks
 
 ## 1.0.0
 - first public Garda release

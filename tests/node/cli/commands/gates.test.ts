@@ -2099,14 +2099,39 @@ describe('cli/commands/gates', () => {
         for (const eventType of ['TASK_DONE', 'TASK_BLOCKED'] as const) {
             const repoRoot = createTempRepo();
             const taskId = `T-904-${eventType.toLowerCase()}`;
+            const activeForeignTaskId = 'T-foreign-active';
+            const staleForeignTaskId = 'T-foreign-stale';
             const reviewsRoot = getReviewsRoot(repoRoot);
             fs.mkdirSync(reviewsRoot, { recursive: true });
             const reviewTempRoot = path.join(repoRoot, '.review-temp');
-            const stagedReviewOutputPath = path.join(reviewTempRoot, `${taskId}-code-output.md`);
-            const foreignReviewOutputPath = path.join(reviewTempRoot, 'T-foreign-code-output.md');
-            fs.mkdirSync(reviewTempRoot, { recursive: true });
+            const stagedReviewOutputPath = path.join(reviewTempRoot, taskId, 'code', 'review-output.md');
+            const foreignReviewOutputPath = path.join(reviewTempRoot, 'scratch-output.md');
+            const activeForeignReviewOutputPath = path.join(reviewTempRoot, 'session-1', activeForeignTaskId, 'code', 'review-output.md');
+            const staleForeignReviewOutputPath = path.join(reviewTempRoot, `${staleForeignTaskId}-code-output.md`);
+            const unattributedStaleReviewOutputPath = path.join(reviewTempRoot, 'session-42', 'review-output.md');
+            fs.mkdirSync(path.dirname(stagedReviewOutputPath), { recursive: true });
+            fs.mkdirSync(path.dirname(activeForeignReviewOutputPath), { recursive: true });
+            fs.mkdirSync(path.dirname(unattributedStaleReviewOutputPath), { recursive: true });
             fs.writeFileSync(stagedReviewOutputPath, 'temporary reviewer output\n', 'utf8');
             fs.writeFileSync(foreignReviewOutputPath, 'leave unrelated reviewer output alone\n', 'utf8');
+            fs.writeFileSync(activeForeignReviewOutputPath, 'keep active foreign reviewer output\n', 'utf8');
+            fs.writeFileSync(staleForeignReviewOutputPath, 'delete stale foreign reviewer output\n', 'utf8');
+            fs.writeFileSync(unattributedStaleReviewOutputPath, 'retain unattributed stale reviewer output\n', 'utf8');
+            ageFixturePath(activeForeignReviewOutputPath, 25 * 60 * 60 * 1000);
+            ageFixturePath(staleForeignReviewOutputPath, 25 * 60 * 60 * 1000);
+            ageFixturePath(unattributedStaleReviewOutputPath, 25 * 60 * 60 * 1000);
+            appendTaskEvent(getOrchestratorRoot(repoRoot), activeForeignTaskId, 'TASK_MODE_ENTERED', 'PASS', 'foreign task started', {});
+            appendTaskEvent(getOrchestratorRoot(repoRoot), activeForeignTaskId, 'STATUS_CHANGED', 'INFO', 'foreign task entered review', {
+                previous_status: 'IN_PROGRESS',
+                new_status: 'IN_REVIEW'
+            });
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                `| ${taskId} | IN_REVIEW | P1 | test | Current review task | unassigned | 2026-03-28 | default | fixture |`,
+                `| ${activeForeignTaskId} | DONE | P1 | test | Active foreign review task with stale queue status | unassigned | 2026-03-28 | default | fixture |`,
+                `| ${staleForeignTaskId} | DONE | P1 | test | Stale foreign review task | unassigned | 2026-03-28 | default | fixture |`
+            ].join('\n'), 'utf8');
             const compileOutputPath = path.join(reviewsRoot, `${taskId}-compile-output.log`);
             fs.writeFileSync(compileOutputPath, 'temporary compile output\n', 'utf8');
             fs.writeFileSync(path.join(reviewsRoot, `${taskId}-compile-gate.json`), JSON.stringify({
@@ -2130,10 +2155,22 @@ describe('cli/commands/gates', () => {
             assert.equal(payload.status, 'TASK_EVENT_LOGGED');
             assert.equal(payload.command_policy_audit.warning_count > 0, true);
             assert.equal(payload.terminal_log_cleanup.deleted_paths.length, 1);
-            assert.equal(payload.terminal_review_temp_cleanup.deleted_paths.length, 1);
+            assert.equal(payload.terminal_review_temp_cleanup.deleted_paths.length, 2);
+            assert.equal(payload.terminal_review_temp_cleanup.stale_deleted_paths.length, 1);
+            assert.deepEqual(
+                payload.terminal_review_temp_cleanup.retained_paths,
+                [
+                    activeForeignReviewOutputPath.replace(/\\/g, '/'),
+                    foreignReviewOutputPath.replace(/\\/g, '/'),
+                    unattributedStaleReviewOutputPath.replace(/\\/g, '/')
+                ].sort()
+            );
             assert.equal(fs.existsSync(compileOutputPath), false);
             assert.equal(fs.existsSync(stagedReviewOutputPath), false);
             assert.equal(fs.existsSync(foreignReviewOutputPath), true);
+            assert.equal(fs.existsSync(activeForeignReviewOutputPath), true);
+            assert.equal(fs.existsSync(staleForeignReviewOutputPath), false);
+            assert.equal(fs.existsSync(unattributedStaleReviewOutputPath), true);
 
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
@@ -2283,8 +2320,8 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
-        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
             '# Review',
@@ -2670,6 +2707,80 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects .review-temp sources that do not encode the current task id', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-review-temp-orphan';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Codex')
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp', 'session-42');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated reviewer materialization input ownership enforcement and confirmed that a .review-temp source path without the current task identifier is rejected before canonical artifact persistence or receipt materialization can occur.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(fs.existsSync(rawReviewOutputPath), false);
+        assert.equal(fs.existsSync(reviewOutputPath), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -3796,6 +3907,17 @@ describe('cli/commands/gates', () => {
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        const cleanupResult = runLogTaskEventCommand({
+            repoRoot,
+            taskId,
+            eventType: 'TASK_BLOCKED',
+            outcome: 'BLOCKED'
+        });
+        const cleanupPayload = JSON.parse(cleanupResult.outputText);
+        assert.equal(cleanupResult.exitCode, 0);
+        assert.equal(cleanupPayload.terminal_review_temp_cleanup.deleted_paths.includes(reviewOutputPath.replace(/\\/g, '/')), true);
+        assert.equal(fs.existsSync(reviewOutputPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
