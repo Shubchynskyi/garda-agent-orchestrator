@@ -13,6 +13,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task queue source: `TASK.md`.
 - Status lifecycle: `TODO -> IN_PROGRESS -> IN_REVIEW -> DONE` or `BLOCKED`.
 - Visual markers in `TASK.md` status are allowed (`🟦 TODO`, `🟨 IN_PROGRESS`, `🟧 IN_REVIEW`, `🟩 DONE`, `🟥 BLOCKED`), but canonical status token must remain present.
+- Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`; agents should update non-status `TASK.md` metadata and keep `BLOCKED` as an explicit stop state when the workflow fails closed.
 - If provider-native agent directories are present, use their orchestrator bridge profile before any implementation:
   - `.github/agents/orchestrator.md`
   - `.windsurf/agents/orchestrator.md`

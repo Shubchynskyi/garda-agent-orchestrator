@@ -394,3 +394,51 @@ test('integrity-priority wording stays synced across tracked and materialized ru
         assert.equal(sectionContent.trim(), expectedSection, `${relativePath} must preserve exact integrity-priority section parity`);
     }
 });
+
+test('task-status ownership wording stays synced across orchestration guidance files', () => {
+    const trackedFiles = [
+        'template/skills/orchestration/SKILL.md',
+        'template/skills/orchestration-depth1/SKILL.md',
+        'template/skills/orchestration/references/stage-gates.md',
+        'template/docs/agent-rules/80-task-workflow.md'
+    ] as const;
+
+    const materializedFiles = [
+        'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md',
+        'garda-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md',
+        'garda-agent-orchestrator/live/skills/orchestration/references/stage-gates.md',
+        'garda-agent-orchestrator/template/skills/orchestration/references/stage-gates.md',
+        'garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md'
+    ] as const;
+
+    for (const relativePath of trackedFiles) {
+        const content = readRepoFile(relativePath);
+        assert.ok(!content.includes('Move task to `IN_REVIEW`.'), `${relativePath} must not instruct manual IN_REVIEW transitions`);
+        assert.ok(!content.includes('moved to `IN_PROGRESS`.'), `${relativePath} must not describe IN_PROGRESS as a manual move`);
+        assert.ok(!content.includes('Task marked `DONE`.'), `${relativePath} must not describe DONE as a hand-authored step`);
+        assert.ok(!content.includes('Set task status to `BLOCKED` when gate cannot be satisfied now.'), `${relativePath} must not instruct manual BLOCKED wording`);
+    }
+
+    for (const relativePath of materializedFiles) {
+        const content = readGeneratedRepoFile(relativePath);
+        assert.ok(!content.includes('Move task to `IN_REVIEW`.'), `${relativePath} must not instruct manual IN_REVIEW transitions`);
+        assert.ok(!content.includes('moved to `IN_PROGRESS`.'), `${relativePath} must not describe IN_PROGRESS as a manual move`);
+        assert.ok(!content.includes('Task marked `DONE`.'), `${relativePath} must not describe DONE as a hand-authored step`);
+        assert.ok(!content.includes('Set task status to `BLOCKED` when gate cannot be satisfied now.'), `${relativePath} must not instruct manual BLOCKED wording`);
+    }
+
+    const trackedExpectedSnippets = new Map<string, string>([
+        ['template/skills/orchestration/SKILL.md', 'reconciles it to `IN_PROGRESS`'],
+        ['template/skills/orchestration-depth1/SKILL.md', 'gate flow owns `IN_PROGRESS`, `IN_REVIEW`, and `DONE`'],
+        ['template/skills/orchestration/references/stage-gates.md', 'Completion finalization reconciles the task to `DONE`.'],
+        ['template/docs/agent-rules/80-task-workflow.md', 'Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`']
+    ]);
+
+    for (const [relativePath, expectedSnippet] of trackedExpectedSnippets) {
+        const content = readRepoFile(relativePath);
+        assert.ok(content.includes(expectedSnippet), `${relativePath} must preserve gate-owned status wording`);
+    }
+});

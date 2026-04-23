@@ -2,7 +2,7 @@
 
 ## Gate 1: Task Selection
 Pass criteria:
-- Task exists in `TODO` and moved to `IN_PROGRESS`.
+- Task exists in `TODO` before entry, and successful `enter-task-mode` reconciles it to `IN_PROGRESS`.
 
 ## Gate 2: Plan
 Pass criteria:
@@ -40,7 +40,7 @@ Pass criteria:
 
 ## Gate 8: Independent Reviews
 Pass criteria:
-- Task moved to `IN_REVIEW`.
+- Successful review-gate flow reconciles the task to `IN_REVIEW`.
 - Code review verdict `REVIEW PASSED` when `required_reviews.code=true`, otherwise `NOT_REQUIRED`.
 - DB review verdict `DB REVIEW PASSED` when `required_reviews.db=true`, otherwise `NOT_REQUIRED`.
 - Security review verdict `SECURITY REVIEW PASSED` when `required_reviews.security=true`, otherwise `NOT_REQUIRED`.
@@ -65,11 +65,11 @@ Pass criteria:
 - Timeline contains `TASK_MODE_ENTERED`.
 - Timeline contains `COMPLETION_GATE_PASSED`.
 - Final PASS review artifacts keep active `Findings by Severity` and `Residual Risks` empty (`none`), or record accepted non-blocking follow-up only in `Deferred Findings` with `Justification:`.
-- Task marked `DONE`.
+- Completion finalization reconciles the task to `DONE`.
 - Artifact contract fields are valid for path mode, required verdicts, and evidence.
 - User report is delivered in mandatory order: implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.
 
 ## Failure Policy
 - Any failed gate blocks next gates.
-- Set task status to `BLOCKED` when gate cannot be satisfied now.
+- Stop in explicit `BLOCKED` state when a gate cannot be satisfied now.
 - Resume only after blocker is resolved.
