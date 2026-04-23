@@ -364,7 +364,6 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         return;
     }
 
-    // Group items by category for compact output
     const byCategory = new Map<string, number>();
     for (const item of removedOrSkipped) {
         byCategory.set(item.category, (byCategory.get(item.category) || 0) + 1);
@@ -450,7 +449,6 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         }
     }
 
-    // Category filter
     const categories: string[] = [];
     if (Array.isArray(options.category)) {
         for (const cat of options.category) {
@@ -487,7 +485,6 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         return;
     }
 
-    // Per-category summary
     for (const [category, summary] of Object.entries(gcResult.categories)) {
         const catMB = (summary.bytes / (1024 * 1024)).toFixed(2);
         const action = gcResult.dryRun ? 'Would remove' : 'Removed';

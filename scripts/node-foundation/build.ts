@@ -312,7 +312,6 @@ export function buildNodeFoundation(): BuildResult {
         copyScriptRuntimeSupportFiles(buildRoot, repoRoot);
         const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
 
-        // Collect compiled files from all source roots
         const allFiles: string[] = [];
 
         for (const subdir of ['src', 'tests/node', 'scripts/node-foundation']) {
