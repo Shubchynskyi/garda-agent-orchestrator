@@ -105,6 +105,30 @@ Notes:
 - If the workspace is dirty but no reusable staged scope or existing preflight scope is available, the output reports that blocker instead of inventing a misleading `--use-staged` classify command.
 - Output stays bounded: review-artifact and changed-file arrays include counts plus truncation metadata instead of dumping arbitrarily large lists.
 
+### `garda debug env`
+
+Show environment and runtime triage details for debugging CLI or workspace issues.
+
+```text
+garda debug env --target-root "."
+garda debug env --target-root "." --json
+```
+
+Notes:
+- `debug env` is the public `debug` subcommand surface.
+- `--json` emits the same environment snapshot in machine-readable form.
+
+### `garda stats`
+
+Show token-overhead and runtime analytics for the workspace or a single task.
+
+```text
+garda stats --target-root "."
+garda stats --target-root "." --json
+garda stats --task-id "T-137" --target-root "."
+garda stats --task-id "T-137" --target-root "." --json
+```
+
 ### `garda bootstrap`
 
 Deploy the bundle without running install.
@@ -265,6 +289,35 @@ Notes:
 - `cleanup policy edit` is the dialog-first editor for retention mode, compression threshold, and receipt preservation. `cleanup policy --edit` is an alias.
 - `cleanup policy reset` restores the bundled default policy template. `cleanup policy --reset` is an alias.
 
+### `garda gc`
+
+Extended cleanup helper with dry-run default, category filters, and `clean` alias support.
+
+```text
+garda gc --target-root "."
+garda gc --target-root "." --dry-run
+garda gc --target-root "." --confirm --category reviews --category task-events
+garda clean --target-root "." --confirm
+```
+
+Notes:
+- `gc` is dry-run by default; pass `--confirm` to apply removals.
+- `clean` is a public alias for `gc`.
+
+### `garda workflow`
+
+Show or change repo-local workflow configuration.
+
+```text
+garda workflow --target-root "."
+garda workflow show --target-root "." --json
+garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test"
+```
+
+Notes:
+- `workflow` with no subcommand behaves like `workflow show`.
+- The current surface manages repo-local `full_suite_validation` settings in `live/config/workflow-config.json`.
+
 ### `garda profile`
 
 Manage the active workspace profile and user-defined profile presets.
@@ -318,9 +371,20 @@ Rules:
 - After user selection, the chosen pack is installed into `live/skills/**` without reading its full optional `SKILL.md` immediately.
 - Full optional `SKILL.md` files are loaded only when a selected skill is actually activated for a task or a hard activation rule requires it.
 
+### `garda diff-managed`
+
+Show managed vs user-owned block ownership across workspace files.
+
+```text
+garda diff-managed --target-root "."
+garda diff-managed --target-root "." --json
+```
+
 ---
 
 ## Gate Commands
+
+### `garda gate`
 
 Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`.
 

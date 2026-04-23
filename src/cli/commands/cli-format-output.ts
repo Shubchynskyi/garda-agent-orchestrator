@@ -779,6 +779,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             'Commands:',
             '  setup         First-run onboarding: deploy/refresh bundle, collect init answers, run install, and validate manifest.',
             '  agent-init    Finalize mandatory agent onboarding after AGENT_INIT_PROMPT work is complete.',
+            '  preprompt     Read-only task bootstrap context and exact next commands.',
             '  status        Show current project status without changing files.',
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  debug env     Show environment and runtime triage snapshot for bug reports.',
