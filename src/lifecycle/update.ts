@@ -1,11 +1,14 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES, resolveBundleName } from '../core/constants';
 import { getProviderBridgeDirectoryPaths } from '../core/provider-registry';
 import {
     createRollbackSnapshot,
+    getLifecycleOperationLockPath,
     getTimestamp,
     getRollbackRecordsPath,
+    readUpdateSentinel,
     withLifecycleOperationLock,
     validateTargetRoot,
     writeRollbackRecords
@@ -84,6 +87,36 @@ export function getUpdateRollbackItems(rootPath: string, initAnswersResolvedPath
     items.push(rel);
 
     return [...new Set(items)].sort();
+}
+
+function normalizeHostnameValue(value: unknown): string {
+    return String(value ?? '').trim().toLowerCase();
+}
+
+function hasLegacyOuterUpdateLock(normalizedTarget: string, bundleRoot: string): boolean {
+    if (!readUpdateSentinel(path.resolve(bundleRoot))) {
+        return false;
+    }
+
+    const ownerPath = path.join(getLifecycleOperationLockPath(normalizedTarget), 'owner.json');
+    if (!fs.existsSync(ownerPath)) {
+        return false;
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(ownerPath, 'utf8')) as Record<string, unknown>;
+        const ownerTarget = typeof parsed.target_root === 'string' && parsed.target_root.trim()
+            ? path.resolve(String(parsed.target_root))
+            : null;
+
+        return typeof parsed.pid === 'number'
+            && parsed.pid === process.pid
+            && normalizeHostnameValue(parsed.hostname) === normalizeHostnameValue(os.hostname())
+            && String(parsed.operation || '').trim() === 'update'
+            && ownerTarget === normalizedTarget;
+    } catch {
+        return false;
+    }
 }
 
 function runValidatedUpdate(
@@ -200,7 +233,10 @@ export function runUpdate(options: RunUpdateOptions) {
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, validatedOptions.bundleRoot);
-    if (lifecycleLockAlreadyHeld) {
+    const effectiveLifecycleLockAlreadyHeld = lifecycleLockAlreadyHeld
+        || hasLegacyOuterUpdateLock(normalizedTarget, validatedOptions.bundleRoot);
+
+    if (effectiveLifecycleLockAlreadyHeld) {
         return runValidatedUpdate(normalizedTarget, validatedOptions, true);
     }
 

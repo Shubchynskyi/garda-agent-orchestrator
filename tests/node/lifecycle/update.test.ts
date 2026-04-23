@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
-import { getLifecycleOperationLockPath, removePathRecursive } from '../../../src/lifecycle/common';
+import { getLifecycleOperationLockPath, removePathRecursive, writeUpdateSentinel } from '../../../src/lifecycle/common';
 import { formatManifestResult, validateManifest } from '../../../src/validators/validate-manifest';
 import { formatVerifyResult, runVerify } from '../../../src/validators/verify';
 
@@ -292,6 +292,31 @@ describe('runUpdate', () => {
 
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim());
             assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'apply must stop before bundle sync starts');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('does not bypass foreign-host lifecycle locks when legacy update sentinel is present (T-230)', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            seedLifecycleOperationLock(projectRoot, process.pid, 'foreign-build-host');
+            writeUpdateSentinel(bundleRoot, {
+                startedAt: new Date().toISOString(),
+                fromVersion: '0.0.1',
+                toVersion: fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim()
+            });
+
+            assert.throws(
+                () => runUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    initAnswersPath: answersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true
+                }),
+                /Another lifecycle operation is already running/
+            );
         } finally {
             removePathRecursive(projectRoot);
         }

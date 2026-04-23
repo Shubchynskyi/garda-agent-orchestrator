@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -12,6 +13,8 @@ import {
     getUpdateSentinelPath,
     withLifecycleOperationLockAsync
 } from '../../../src/lifecycle/common';
+const FIRST_NPM_RELEASE_PACKAGE_SPEC = process.env.GARDA_FIRST_NPM_RELEASE_PACKAGE_SPEC || 'garda-agent-orchestrator@1.0.0';
+const NEXT_RELEASE_TEST_VERSION = process.env.GARDA_NEXT_RELEASE_TEST_VERSION || '1.0.1';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -45,6 +48,231 @@ function seedBundleSyncSurface(sourceRoot: string, bundleRoot: string) {
         }
         copyPathRecursive(sourceItemPath, path.join(bundleRoot, item));
     }
+}
+
+function quoteWindowsArgument(argument: string): string {
+    const text = String(argument || '');
+    if (!text || !/[ \t"]/u.test(text)) {
+        return text;
+    }
+
+    let escaped = '"';
+    let backslashCount = 0;
+    for (const character of text) {
+        if (character === '\\') {
+            backslashCount += 1;
+            continue;
+        }
+        if (character === '"') {
+            escaped += '\\'.repeat(backslashCount * 2 + 1);
+            escaped += '"';
+            backslashCount = 0;
+            continue;
+        }
+        if (backslashCount > 0) {
+            escaped += '\\'.repeat(backslashCount);
+            backslashCount = 0;
+        }
+        escaped += character;
+    }
+    if (backslashCount > 0) {
+        escaped += '\\'.repeat(backslashCount * 2);
+    }
+    escaped += '"';
+    return escaped;
+}
+
+function spawnNpm(args: string[], cwd: string) {
+    if (process.platform === 'win32') {
+        const commandLine = ['npm.cmd', ...args].map(quoteWindowsArgument).join(' ');
+        return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
+            cwd,
+            encoding: 'utf8',
+            timeout: 120_000,
+            windowsHide: true
+        });
+    }
+
+    return spawnSync('npm', args, {
+        cwd,
+        encoding: 'utf8',
+        timeout: 120_000,
+        windowsHide: true
+    });
+}
+
+function getTypescriptCliPath(repoRoot: string): string {
+    return path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+}
+
+function syncGeneratedCliEntrypoint(repoRoot: string): void {
+    const compiledCliPath = path.join(repoRoot, 'dist', 'src', 'bin', 'garda.js');
+    if (!fs.existsSync(compiledCliPath)) {
+        throw new Error(`compiled CLI launcher not found: ${compiledCliPath}`);
+    }
+
+    const repoCliPath = path.join(repoRoot, 'bin', 'garda.js');
+    fs.mkdirSync(path.dirname(repoCliPath), { recursive: true });
+    fs.copyFileSync(compiledCliPath, repoCliPath);
+}
+
+function loadPackFixtureItems(repoRoot: string): string[] {
+    const pkgJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const items = new Set<string>(pkgJson.files || []);
+    items.delete('dist');
+    items.delete('bin');
+    items.add('package.json');
+    items.add('scripts/node-foundation');
+    items.add('tsconfig.build.json');
+    items.add('tsconfig.scripts.json');
+    return Array.from(items).sort();
+}
+
+function copyPackFixture(repoRoot: string, fixtureRoot: string): void {
+    fs.mkdirSync(fixtureRoot, { recursive: true });
+    for (const relativePath of loadPackFixtureItems(repoRoot)) {
+        const sourcePath = path.join(repoRoot, relativePath);
+        if (!fs.existsSync(sourcePath)) {
+            continue;
+        }
+        fs.cpSync(sourcePath, path.join(fixtureRoot, relativePath), { recursive: true });
+    }
+
+    const realNodeModules = path.join(repoRoot, 'node_modules');
+    const fixtureNodeModules = path.join(fixtureRoot, 'node_modules');
+    if (fs.existsSync(realNodeModules) && !fs.existsSync(fixtureNodeModules)) {
+        fs.symlinkSync(realNodeModules, fixtureNodeModules, 'junction');
+    }
+}
+
+function buildPublishRuntimeInRepo(repoRoot: string): void {
+    const result = spawnSync(process.execPath, [getTypescriptCliPath(repoRoot), '-p', 'tsconfig.build.json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 120_000,
+        windowsHide: true
+    });
+
+    if (result.status !== 0) {
+        throw new Error(`publish runtime build failed:\n${result.stderr || result.stdout}`);
+    }
+
+    syncGeneratedCliEntrypoint(repoRoot);
+}
+
+function rewriteFixtureReleaseVersion(fixtureRoot: string, version: string): void {
+    const packageJsonPath = path.join(fixtureRoot, 'package.json');
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
+    packageJson.version = version;
+    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'VERSION'), `${version}\n`, 'utf8');
+}
+
+function createCandidateTarball(repoRoot: string) {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-checkupdate-candidate-pack-'));
+    const fixtureRoot = path.join(tempRoot, 'pack-repo');
+    copyPackFixture(repoRoot, fixtureRoot);
+    rewriteFixtureReleaseVersion(fixtureRoot, NEXT_RELEASE_TEST_VERSION);
+    buildPublishRuntimeInRepo(fixtureRoot);
+
+    const packResult = spawnNpm(['pack', '--ignore-scripts', '--pack-destination', fixtureRoot], fixtureRoot);
+    if (packResult.status !== 0) {
+        throw new Error(`npm pack failed:\n${packResult.stderr || packResult.stdout}`);
+    }
+
+    const lines = String(packResult.stdout || '').trim().split(/\r?\n/).filter(Boolean);
+    const tarballFilename = lines[lines.length - 1]?.trim();
+    if (!tarballFilename) {
+        throw new Error('npm pack did not produce a tarball filename.');
+    }
+
+    return {
+        tempRoot,
+        tarballPath: path.join(fixtureRoot, tarballFilename)
+    };
+}
+
+function installPackageSpec(packageSpec: string, installRoot: string): string {
+    fs.mkdirSync(installRoot, { recursive: true });
+    fs.writeFileSync(
+        path.join(installRoot, 'package.json'),
+        JSON.stringify({ name: 'gao-checkupdate-release-seed', version: '0.0.0', private: true }, null, 2),
+        'utf8'
+    );
+
+    const installResult = spawnNpm([
+        'install',
+        '--prefer-offline',
+        '--no-save',
+        '--ignore-scripts',
+        '--package-lock=false',
+        '--fund=false',
+        '--audit=false',
+        '--no-progress',
+        packageSpec
+    ], installRoot);
+    if (installResult.status !== 0) {
+        throw new Error(`npm install failed for '${packageSpec}':\n${installResult.stderr || installResult.stdout}`);
+    }
+
+    const installedPackageRoot = path.join(installRoot, 'node_modules', 'garda-agent-orchestrator');
+    if (!fs.existsSync(installedPackageRoot)) {
+        throw new Error(`Installed package root not found after npm install: ${installedPackageRoot}`);
+    }
+    return installedPackageRoot;
+}
+
+function setupPublishedReleaseSeededCheckUpdateWorkspace(releasePackageSpec: string) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-checkupdate-release-seeded-'));
+    const bundle = path.join(tmpDir, 'garda-agent-orchestrator');
+    const installRoot = path.join(tmpDir, 'legacy-release-install');
+    fs.mkdirSync(bundle, { recursive: true });
+    copyPathRecursive(installPackageSpec(releasePackageSpec, installRoot), bundle);
+    removePathRecursive(installRoot);
+
+    fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
+    fs.writeFileSync(path.join(bundle, 'runtime', 'init-answers.json'), JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'Codex',
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE'
+    }, null, 2), 'utf8');
+    fs.mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
+
+    return { projectRoot: tmpDir, bundleRoot: bundle };
+}
+
+function loadLegacyUpdateCaller(bundleRoot: string) {
+    const legacyCheckUpdatePath = path.join(bundleRoot, 'dist', 'src', 'lifecycle', 'check-update.js');
+    const legacySharedUtilsPath = path.join(bundleRoot, 'dist', 'src', 'cli', 'commands', 'shared-command-utils.js');
+
+    for (const modulePath of [legacyCheckUpdatePath, legacySharedUtilsPath]) {
+        try {
+            delete require.cache[require.resolve(modulePath)];
+        } catch {
+            // ignore cache miss
+        }
+    }
+
+    const legacyCheckUpdateModule = require(legacyCheckUpdatePath) as { runCheckUpdate?: typeof runCheckUpdate };
+    const legacySharedUtilsModule = require(legacySharedUtilsPath) as {
+        buildUpdateLifecycleRunner?: typeof buildUpdateLifecycleRunner;
+    };
+
+    if (typeof legacyCheckUpdateModule.runCheckUpdate !== 'function') {
+        throw new Error(`Legacy runCheckUpdate export not found: ${legacyCheckUpdatePath}`);
+    }
+    if (typeof legacySharedUtilsModule.buildUpdateLifecycleRunner !== 'function') {
+        throw new Error(`Legacy buildUpdateLifecycleRunner export not found: ${legacySharedUtilsPath}`);
+    }
+
+    return {
+        runLegacyCheckUpdate: legacyCheckUpdateModule.runCheckUpdate,
+        buildLegacyUpdateLifecycleRunner: legacySharedUtilsModule.buildUpdateLifecycleRunner
+    };
 }
 
 function createSourcePathFixture(repoRoot: string): string {
@@ -250,6 +478,75 @@ describe('runCheckUpdate', () => {
             assert.notEqual(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), '0.0.1');
         } finally {
             removePathRecursive(projectRoot);
+        }
+    });
+
+    it('applies update through a legacy lifecycle runner that omits lifecycleLockAlreadyHeld (T-230)', async () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1', {
+            syncSurfaceFrom: repoRoot
+        });
+
+        try {
+            const legacyRunner = buildUpdateLifecycleRunner(bundleRoot, false);
+            const result = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: repoRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner(runnerOptions) {
+                    legacyRunner({
+                        ...runnerOptions,
+                        lifecycleLockAlreadyHeld: undefined
+                    });
+                }
+            });
+
+            assert.equal(result.checkUpdateResult, 'UPDATED');
+            assert.equal(result.updateApplied, true);
+            assert.notEqual(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), '0.0.1');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('updates a workspace seeded from the published 1.0.0 npm release through the npm-backed legacy caller path (T-230)', async () => {
+        const candidateTarball = createCandidateTarball(repoRoot);
+        try {
+            const { projectRoot, bundleRoot } = setupPublishedReleaseSeededCheckUpdateWorkspace(FIRST_NPM_RELEASE_PACKAGE_SPEC);
+            try {
+                const legacyUpdateSourceBefore = fs.readFileSync(path.join(bundleRoot, 'src', 'lifecycle', 'update.ts'), 'utf8');
+                assert.doesNotMatch(legacyUpdateSourceBefore, /hasLegacyOuterUpdateLock/);
+
+                const {
+                    runLegacyCheckUpdate,
+                    buildLegacyUpdateLifecycleRunner
+                } = loadLegacyUpdateCaller(bundleRoot);
+
+                const result = await runLegacyCheckUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    packageSpec: candidateTarball.tarballPath,
+                    noPrompt: true,
+                    apply: true,
+                    trustOverride: true,
+                    updateRunner: buildLegacyUpdateLifecycleRunner(bundleRoot, false)
+                });
+
+                assert.equal(result.sourceType, 'npm');
+                assert.equal(result.currentVersion, '1.0.0');
+                assert.equal(result.latestVersion, NEXT_RELEASE_TEST_VERSION);
+                assert.equal(result.checkUpdateResult, 'UPDATED');
+                assert.equal(result.updateApplied, true);
+
+                const updatedSource = fs.readFileSync(path.join(bundleRoot, 'src', 'lifecycle', 'update.ts'), 'utf8');
+                assert.match(updatedSource, /hasLegacyOuterUpdateLock/);
+            } finally {
+                removePathRecursive(projectRoot);
+            }
+        } finally {
+            removePathRecursive(candidateTarball.tempRoot);
         }
     });
 
