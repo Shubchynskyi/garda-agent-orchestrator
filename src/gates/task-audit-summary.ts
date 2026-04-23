@@ -109,7 +109,36 @@ export interface PointInTimeSnapshot {
     acquisition_policy?: CompletionGateFinalizationLockPolicy | null;
 }
 
-const BASE_LIFECYCLE_GATES: ReadonlyArray<{ gate: string; pass_event: string; fail_events: string[] }> = [
+type TaskAuditEvent = Record<string, unknown>;
+
+interface LifecycleGateSpec {
+    gate: string;
+    pass_event: string;
+    fail_events: string[];
+}
+
+interface OrderedTaskEvents {
+    events: TaskAuditEvent[];
+    count: number;
+    firstEventUtc: string | null;
+    lastEventUtc: string | null;
+    eventTypesPresent: Set<string>;
+    eventByType: Map<string, TaskAuditEvent>;
+}
+
+interface PreflightSummary {
+    path: string;
+    sha256: string | null;
+    raw: Record<string, unknown> | null;
+    changedFiles: string[];
+    changedFilesCount: number;
+    changedLinesTotal: number;
+    requiredReviews: Record<string, boolean>;
+    scopeCategory: string | null;
+    pathMode: string | null;
+}
+
+const BASE_LIFECYCLE_GATES: ReadonlyArray<LifecycleGateSpec> = [
     { gate: 'enter-task-mode', pass_event: 'TASK_MODE_ENTERED', fail_events: [] },
     { gate: 'load-rule-pack', pass_event: 'RULE_PACK_LOADED', fail_events: ['RULE_PACK_LOAD_FAILED'] },
     { gate: 'handshake-diagnostics', pass_event: 'HANDSHAKE_DIAGNOSTICS_RECORDED', fail_events: [] },
@@ -122,7 +151,7 @@ const BASE_LIFECYCLE_GATES: ReadonlyArray<{ gate: string; pass_event: string; fa
     { gate: 'completion-gate', pass_event: 'COMPLETION_GATE_PASSED', fail_events: ['COMPLETION_GATE_FAILED'] }
 ];
 
-function getLifecycleGates(fullSuiteValidationEnabled: boolean): Array<{ gate: string; pass_event: string; fail_events: string[] }> {
+function getLifecycleGates(fullSuiteValidationEnabled: boolean): LifecycleGateSpec[] {
     const gates = BASE_LIFECYCLE_GATES.map((entry) => ({
         gate: entry.gate,
         pass_event: entry.pass_event,
@@ -144,6 +173,339 @@ function getLifecycleGates(fullSuiteValidationEnabled: boolean): Array<{ gate: s
         gates.splice(completionIndex, 0, fullSuiteGate);
     }
     return gates;
+}
+
+function readOrderedTaskEvents(taskEventFile: string): OrderedTaskEvents {
+    const events: TaskAuditEvent[] = [];
+
+    if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
+        const rawLines = fs.readFileSync(taskEventFile, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim());
+        for (const line of rawLines) {
+            try {
+                const event = JSON.parse(line);
+                if (event != null) {
+                    events.push(event);
+                }
+            } catch {
+                // Skip malformed event lines so one bad write does not hide the rest of the timeline.
+            }
+        }
+    }
+
+    events.sort((a, b) => {
+        const ta = parseTimestamp(a.timestamp_utc);
+        const tb = parseTimestamp(b.timestamp_utc);
+        return ta.getTime() - tb.getTime();
+    });
+
+    const eventTypesPresent = new Set<string>();
+    const eventByType = new Map<string, TaskAuditEvent>();
+    for (const event of events) {
+        const eventType = String(event.event_type || '');
+        eventTypesPresent.add(eventType);
+        eventByType.set(eventType, event);
+    }
+
+    return {
+        events,
+        count: events.length,
+        firstEventUtc: events.length > 0 ? formatTimestamp(events[0].timestamp_utc) : null,
+        lastEventUtc: events.length > 0 ? formatTimestamp(events[events.length - 1].timestamp_utc) : null,
+        eventTypesPresent,
+        eventByType
+    };
+}
+
+function findLatestEventForTypes(
+    eventTypes: string[],
+    eventTypesPresent: Set<string>,
+    eventByType: Map<string, TaskAuditEvent>
+): { event: TaskAuditEvent; eventType: string } | null {
+    let latestMatch: { event: TaskAuditEvent; eventType: string } | null = null;
+
+    for (const eventType of eventTypes) {
+        if (!eventTypesPresent.has(eventType)) {
+            continue;
+        }
+        const event = eventByType.get(eventType);
+        if (!event) {
+            continue;
+        }
+        if (
+            latestMatch == null
+            || parseTimestamp(event.timestamp_utc).getTime() > parseTimestamp(latestMatch.event.timestamp_utc).getTime()
+        ) {
+            latestMatch = { event, eventType };
+        }
+    }
+
+    return latestMatch;
+}
+
+function resolveLifecycleGateStatus(
+    gateSpec: LifecycleGateSpec,
+    eventTypesPresent: Set<string>,
+    eventByType: Map<string, TaskAuditEvent>
+): { gateOutcome: GateOutcome; blocker: BlockerEntry | null } {
+    const passEvents = gateSpec.pass_event === 'REVIEW_GATE_PASSED'
+        ? [gateSpec.pass_event, 'REVIEW_GATE_PASSED_WITH_OVERRIDE']
+        : gateSpec.pass_event === 'FULL_SUITE_VALIDATION_PASSED'
+            ? [gateSpec.pass_event, 'FULL_SUITE_VALIDATION_WARNED']
+            : [gateSpec.pass_event];
+    const latestPass = findLatestEventForTypes(passEvents, eventTypesPresent, eventByType);
+    const latestFail = findLatestEventForTypes(gateSpec.fail_events, eventTypesPresent, eventByType);
+
+    if (latestPass && latestFail) {
+        const passTime = parseTimestamp(latestPass.event.timestamp_utc).getTime();
+        const failTime = parseTimestamp(latestFail.event.timestamp_utc).getTime();
+        if (failTime > passTime) {
+            return {
+                gateOutcome: {
+                    gate: gateSpec.gate,
+                    status: 'FAIL',
+                    event_type: latestFail.eventType,
+                    timestamp_utc: formatTimestamp(latestFail.event.timestamp_utc)
+                },
+                blocker: {
+                    gate: gateSpec.gate,
+                    reason: `Gate emitted ${latestFail.eventType} after earlier pass`
+                }
+            };
+        }
+    }
+
+    if (latestPass) {
+        return {
+            gateOutcome: {
+                gate: gateSpec.gate,
+                status: 'PASS',
+                event_type: latestPass.eventType,
+                timestamp_utc: formatTimestamp(latestPass.event.timestamp_utc)
+            },
+            blocker: null
+        };
+    }
+
+    if (latestFail) {
+        return {
+            gateOutcome: {
+                gate: gateSpec.gate,
+                status: 'FAIL',
+                event_type: latestFail.eventType,
+                timestamp_utc: formatTimestamp(latestFail.event.timestamp_utc)
+            },
+            blocker: {
+                gate: gateSpec.gate,
+                reason: `Gate emitted ${latestFail.eventType}`
+            }
+        };
+    }
+
+    return {
+        gateOutcome: {
+            gate: gateSpec.gate,
+            status: 'MISSING',
+            event_type: gateSpec.pass_event
+        },
+        blocker: null
+    };
+}
+
+function buildLifecycleGateOutcomes(
+    lifecycleGates: LifecycleGateSpec[],
+    eventTypesPresent: Set<string>,
+    eventByType: Map<string, TaskAuditEvent>
+): { gates: GateOutcome[]; blockers: BlockerEntry[] } {
+    const gates: GateOutcome[] = [];
+    const blockers: BlockerEntry[] = [];
+
+    for (const gateSpec of lifecycleGates) {
+        const resolvedGate = resolveLifecycleGateStatus(gateSpec, eventTypesPresent, eventByType);
+        gates.push(resolvedGate.gateOutcome);
+        if (resolvedGate.blocker) {
+            blockers.push(resolvedGate.blocker);
+        }
+    }
+
+    return { gates, blockers };
+}
+
+function readPreflightSummary(reviewsRoot: string, taskId: string): PreflightSummary {
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    const preflight = safeReadJson(preflightPath);
+    const requiredReviews: Record<string, boolean> = {};
+
+    if (preflight?.required_reviews && typeof preflight.required_reviews === 'object') {
+        for (const [key, value] of Object.entries(preflight.required_reviews as Record<string, unknown>)) {
+            requiredReviews[key] = value === true;
+        }
+    }
+
+    const changedFiles = Array.isArray(preflight?.changed_files)
+        ? preflight.changed_files.map((changedFile: unknown) => String(changedFile))
+        : [];
+    const metrics = preflight?.metrics && typeof preflight.metrics === 'object'
+        ? preflight.metrics as Record<string, unknown>
+        : null;
+
+    return {
+        path: preflightPath,
+        sha256: fs.existsSync(preflightPath) ? fileSha256(preflightPath) : null,
+        raw: preflight,
+        changedFiles,
+        changedFilesCount: changedFiles.length,
+        changedLinesTotal: metrics ? Number(metrics.changed_lines_total) || 0 : 0,
+        requiredReviews,
+        scopeCategory: typeof preflight?.scope_category === 'string' ? preflight.scope_category : null,
+        pathMode: typeof preflight?.mode === 'string' && preflight.mode.trim() ? preflight.mode.trim() : null
+    };
+}
+
+function readProfileReviewDecisions(
+    taskMode: Record<string, unknown> | null,
+    preflight: Record<string, unknown> | null,
+    scopeCategory: string | null
+): ProfileReviewDecisionSummary | null {
+    if (!taskMode || typeof taskMode.active_profile !== 'string' || !taskMode.active_profile) {
+        return null;
+    }
+
+    const baseSummary = {
+        profile_name: String(taskMode.active_profile || ''),
+        scope_category: scopeCategory
+    };
+    const guardrails = preflight?.profile_guardrails && typeof preflight.profile_guardrails === 'object'
+        ? preflight.profile_guardrails as Record<string, unknown>
+        : null;
+
+    if (!guardrails) {
+        return {
+            ...baseSummary,
+            guardrails_active: false,
+            lightening_eligible: false,
+            safety_floors_applied: [],
+            decisions: []
+        };
+    }
+
+    const decisions = Array.isArray(guardrails.decisions)
+        ? guardrails.decisions.flatMap((decision): Array<{ review_type: string; effective_value: boolean; decision: string }> => {
+            if (!decision || typeof decision !== 'object') {
+                return [];
+            }
+            const record = decision as Record<string, unknown>;
+            return [{
+                review_type: String(record.review_type || ''),
+                effective_value: record.effective_value === true,
+                decision: String(record.decision || '')
+            }];
+        })
+        : [];
+    const safetyFloorsApplied = Array.isArray(guardrails.safety_floors_applied)
+        ? guardrails.safety_floors_applied.map((entry) => String(entry))
+        : [];
+
+    return {
+        ...baseSummary,
+        guardrails_active: guardrails.guardrails_active === true,
+        lightening_eligible: guardrails.lightening_eligible === true,
+        safety_floors_applied: safetyFloorsApplied,
+        decisions
+    };
+}
+
+function buildRequiredReviewBlocker(reviewType: string, taskId: string, reviewsRoot: string): BlockerEntry | null {
+    const gate = `${reviewType}-review`;
+    const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+    const reviewPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+    const hasReceipt = fs.existsSync(receiptPath);
+    const hasReview = fs.existsSync(reviewPath);
+
+    if (!hasReceipt && !hasReview) {
+        return { gate, reason: `Required ${reviewType} review artifact not found` };
+    }
+    if (!hasReceipt) {
+        return {
+            gate,
+            reason: `Required ${reviewType} review receipt not found (review markdown exists but receipt is missing)`
+        };
+    }
+    if (!hasReview) {
+        return {
+            gate,
+            reason: `Required ${reviewType} review markdown not found (receipt exists but review document is missing)`
+        };
+    }
+
+    const receipt = safeReadJson(receiptPath);
+    if (!receipt) {
+        return {
+            gate,
+            reason: `Required ${reviewType} review receipt is malformed or unreadable`
+        };
+    }
+    if (receipt.task_id !== taskId) {
+        return {
+            gate,
+            reason: `Required ${reviewType} review receipt belongs to a different task: ${receipt.task_id}`
+        };
+    }
+    if (receipt.review_type !== reviewType) {
+        return {
+            gate,
+            reason: `Required ${reviewType} review receipt has mismatched review type: ${receipt.review_type}`
+        };
+    }
+    if (typeof receipt.review_artifact_sha256 === 'string' && receipt.review_artifact_sha256) {
+        const actualHash = fileSha256(reviewPath);
+        if (actualHash && receipt.review_artifact_sha256 !== actualHash) {
+            return {
+                gate,
+                reason: `Required ${reviewType} review artifact was modified after receipt was issued`
+            };
+        }
+    }
+
+    return null;
+}
+
+function collectRequiredReviewBlockers(
+    requiredReviews: Record<string, boolean>,
+    taskId: string,
+    reviewsRoot: string
+): BlockerEntry[] {
+    return Object.entries(requiredReviews)
+        .flatMap(([reviewType, required]) => {
+            if (!required) {
+                return [];
+            }
+            const blocker = buildRequiredReviewBlocker(reviewType, taskId, reviewsRoot);
+            return blocker ? [blocker] : [];
+        });
+}
+
+function collectEvidenceArtifacts(reviewsRoot: string, taskId: string, taskEventFile: string): EvidenceArtifact[] {
+    const evidence = ARTIFACT_PATTERNS.map(({ kind, suffix }) => {
+        const artifactPath = path.join(reviewsRoot, `${taskId}${suffix}`);
+        const exists = fs.existsSync(artifactPath);
+        return {
+            kind,
+            path: toPosix(artifactPath),
+            exists,
+            sha256: exists ? fileSha256(artifactPath) : null
+        };
+    });
+
+    evidence.push({
+        kind: 'task-events',
+        path: toPosix(taskEventFile),
+        exists: fs.existsSync(taskEventFile),
+        sha256: fs.existsSync(taskEventFile) ? fileSha256(taskEventFile) : null
+    });
+
+    return evidence;
 }
 
 // Artifact name patterns relative to reviews root, keyed by kind.
@@ -202,40 +564,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const taskPath = path.join(repoRoot, 'TASK.md');
     const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
     const taskEventFile = path.join(eventsRoot, `${safeTaskId}.jsonl`);
-    const events: Record<string, unknown>[] = [];
-    let eventsCount = 0;
-
-    if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
-        const rawLines = fs.readFileSync(taskEventFile, 'utf8')
-            .split('\n')
-            .filter((line) => line.trim());
-        for (const line of rawLines) {
-            try {
-                const event = JSON.parse(line);
-                if (event != null) events.push(event);
-            } catch {
-                // skip parse errors
-            }
-        }
-    }
-
-    events.sort((a, b) => {
-        const ta = parseTimestamp(a.timestamp_utc);
-        const tb = parseTimestamp(b.timestamp_utc);
-        return ta.getTime() - tb.getTime();
-    });
-
-    eventsCount = events.length;
-    const firstEventUtc = eventsCount > 0 ? formatTimestamp(events[0].timestamp_utc) : null;
-    const lastEventUtc = eventsCount > 0 ? formatTimestamp(events[eventsCount - 1].timestamp_utc) : null;
-
-    const eventTypesPresent = new Set<string>();
-    const eventByType = new Map<string, Record<string, unknown>>();
-    for (const event of events) {
-        const eventType = String(event.event_type || '');
-        eventTypesPresent.add(eventType);
-        eventByType.set(eventType, event);
-    }
+    const orderedEvents = readOrderedTaskEvents(taskEventFile);
+    const events = orderedEvents.events;
     const fullSuiteValidationEnabled = resolveFullSuiteValidationRequirementForOrderedTaskEvents(
         events.map((event) => String(event.event_type || '')),
         liveFullSuiteValidationEnabled
@@ -253,8 +583,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     } else {
         integrityStatus = 'MISSING';
     }
-    const gates: GateOutcome[] = [];
-    const blockers: BlockerEntry[] = [];
+    const lifecycleStatus = buildLifecycleGateOutcomes(
+        lifecycleGates,
+        orderedEvents.eventTypesPresent,
+        orderedEvents.eventByType
+    );
+    const gates = [...lifecycleStatus.gates];
+    const blockers = [...lifecycleStatus.blockers];
     let pointInTimeSnapshot: PointInTimeSnapshot = {
         status: 'STABLE',
         gate: null,
@@ -271,232 +606,22 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         acquisition_policy: null
     };
 
-    for (const { gate, pass_event, fail_events } of lifecycleGates) {
-        const passEvents = [pass_event];
-        if (pass_event === 'REVIEW_GATE_PASSED') {
-            passEvents.push('REVIEW_GATE_PASSED_WITH_OVERRIDE');
-        } else if (pass_event === 'FULL_SUITE_VALIDATION_PASSED') {
-            passEvents.push('FULL_SUITE_VALIDATION_WARNED');
-        }
-
-        let latestPass: Record<string, unknown> | undefined;
-        let latestPassType: string | undefined;
-        for (const pe of passEvents) {
-            if (eventTypesPresent.has(pe)) {
-                const evt = eventByType.get(pe)!;
-                if (!latestPass || parseTimestamp(evt.timestamp_utc).getTime() > parseTimestamp(latestPass.timestamp_utc).getTime()) {
-                    latestPass = evt;
-                    latestPassType = pe;
-                }
-            }
-        }
-
-        let latestFail: Record<string, unknown> | undefined;
-        let latestFailType: string | undefined;
-        for (const fe of fail_events) {
-            if (eventTypesPresent.has(fe)) {
-                const evt = eventByType.get(fe)!;
-                if (!latestFail || parseTimestamp(evt.timestamp_utc).getTime() > parseTimestamp(latestFail.timestamp_utc).getTime()) {
-                    latestFail = evt;
-                    latestFailType = fe;
-                }
-            }
-        }
-
-        if (latestPass && latestFail) {
-            const passTime = parseTimestamp(latestPass.timestamp_utc).getTime();
-            const failTime = parseTimestamp(latestFail.timestamp_utc).getTime();
-            if (failTime > passTime) {
-                gates.push({
-                    gate,
-                    status: 'FAIL',
-                    event_type: latestFailType,
-                    timestamp_utc: formatTimestamp(latestFail.timestamp_utc)
-                });
-                blockers.push({ gate, reason: `Gate emitted ${latestFailType} after earlier pass` });
-            } else {
-                gates.push({
-                    gate,
-                    status: 'PASS',
-                    event_type: latestPassType,
-                    timestamp_utc: formatTimestamp(latestPass.timestamp_utc)
-                });
-            }
-        } else if (latestPass) {
-            gates.push({
-                gate,
-                status: 'PASS',
-                event_type: latestPassType,
-                timestamp_utc: formatTimestamp(latestPass.timestamp_utc)
-            });
-        } else if (latestFail) {
-            gates.push({
-                gate,
-                status: 'FAIL',
-                event_type: latestFailType,
-                timestamp_utc: formatTimestamp(latestFail.timestamp_utc)
-            });
-            blockers.push({ gate, reason: `Gate emitted ${latestFailType}` });
-        } else {
-            gates.push({ gate, status: 'MISSING', event_type: pass_event });
-        }
-    }
-    let changedFiles: string[] = [];
-    let changedFilesCount = 0;
-    let changedLinesTotal = 0;
-    let requiredReviews: Record<string, boolean> = {};
-    let scopeCategory: string | null = null;
-    let pathMode: string | null = null;
-
-    const preflightPath = path.join(reviewsRoot, `${safeTaskId}-preflight.json`);
-    const preflight = safeReadJson(preflightPath);
-    const preflightSha256 = fs.existsSync(preflightPath) ? fileSha256(preflightPath) : null;
-    if (preflight) {
-        if (typeof preflight.mode === 'string' && preflight.mode.trim()) {
-            pathMode = preflight.mode.trim();
-        }
-        if (Array.isArray(preflight.changed_files)) {
-            changedFiles = preflight.changed_files.map((f: unknown) => String(f));
-            changedFilesCount = changedFiles.length;
-        }
-        const metrics = preflight.metrics as Record<string, unknown> | null | undefined;
-        if (metrics && typeof metrics === 'object') {
-            changedLinesTotal = Number(metrics.changed_lines_total) || 0;
-        }
-        if (preflight.required_reviews && typeof preflight.required_reviews === 'object') {
-            const rr = preflight.required_reviews as Record<string, unknown>;
-            for (const [key, val] of Object.entries(rr)) {
-                requiredReviews[key] = val === true;
-            }
-        }
-        if (typeof preflight.scope_category === 'string') {
-            scopeCategory = preflight.scope_category;
-        }
-    }
-    let profileReviewDecisions: ProfileReviewDecisionSummary | null = null;
+    const preflightSummary = readPreflightSummary(reviewsRoot, safeTaskId);
+    const changedFiles = preflightSummary.changedFiles;
+    const changedFilesCount = preflightSummary.changedFilesCount;
+    const changedLinesTotal = preflightSummary.changedLinesTotal;
+    const requiredReviews = preflightSummary.requiredReviews;
+    const scopeCategory = preflightSummary.scopeCategory;
+    const pathMode = preflightSummary.pathMode;
+    const preflightPath = preflightSummary.path;
+    const preflight = preflightSummary.raw;
+    const preflightSha256 = preflightSummary.sha256;
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
-    if (taskMode && typeof taskMode.active_profile === 'string' && taskMode.active_profile) {
-        const decisions: Array<{ review_type: string; effective_value: boolean; decision: string }> = [];
-        // Extract profile review decisions from preflight if guardrail data is present
-        if (preflight && preflight.profile_guardrails && typeof preflight.profile_guardrails === 'object') {
-            const guardrails = preflight.profile_guardrails as Record<string, unknown>;
-            const rawDecisions = guardrails.decisions;
-            if (Array.isArray(rawDecisions)) {
-                for (const d of rawDecisions) {
-                    if (d && typeof d === 'object') {
-                        const dObj = d as Record<string, unknown>;
-                        decisions.push({
-                            review_type: String(dObj.review_type || ''),
-                            effective_value: dObj.effective_value === true,
-                            decision: String(dObj.decision || '')
-                        });
-                    }
-                }
-            }
-            const safetyFloors: string[] = [];
-            if (Array.isArray(guardrails.safety_floors_applied)) {
-                for (const f of guardrails.safety_floors_applied) {
-                    safetyFloors.push(String(f));
-                }
-            }
-            profileReviewDecisions = {
-                profile_name: String(taskMode.active_profile || ''),
-                scope_category: scopeCategory,
-                guardrails_active: guardrails.guardrails_active === true,
-                lightening_eligible: guardrails.lightening_eligible === true,
-                safety_floors_applied: safetyFloors,
-                decisions
-            };
-        } else {
-            profileReviewDecisions = {
-                profile_name: String(taskMode.active_profile || ''),
-                scope_category: scopeCategory,
-                guardrails_active: false,
-                lightening_eligible: false,
-                safety_floors_applied: [],
-                decisions
-            };
-        }
-    }
-
-    // Check required review evidence: receipt + review markdown must both exist,
-    // receipt must parse, and receipt integrity fields must be consistent.
-    // Schema v2 receipts do not carry a verdict field; the passing verdict lives
-    // in the review markdown and is validated by required-reviews-check.  Here we
-    // verify artifact-level integrity only: task_id, review_type, and
-    // review_artifact_sha256 must match the actual review file on disk.
-
-    for (const [reviewType, required] of Object.entries(requiredReviews)) {
-        if (!required) continue;
-        const receiptPath = path.join(reviewsRoot, `${safeTaskId}-${reviewType}-receipt.json`);
-        const reviewPath = path.join(reviewsRoot, `${safeTaskId}-${reviewType}.md`);
-        const hasReceiptFile = fs.existsSync(receiptPath);
-        const hasReview = fs.existsSync(reviewPath);
-
-        if (!hasReceiptFile && !hasReview) {
-            blockers.push({
-                gate: `${reviewType}-review`,
-                reason: `Required ${reviewType} review artifact not found`
-            });
-        } else if (!hasReceiptFile) {
-            blockers.push({
-                gate: `${reviewType}-review`,
-                reason: `Required ${reviewType} review receipt not found (review markdown exists but receipt is missing)`
-            });
-        } else if (!hasReview) {
-            blockers.push({
-                gate: `${reviewType}-review`,
-                reason: `Required ${reviewType} review markdown not found (receipt exists but review document is missing)`
-            });
-        } else {
-            const receipt = safeReadJson(receiptPath);
-            if (!receipt) {
-                blockers.push({
-                    gate: `${reviewType}-review`,
-                    reason: `Required ${reviewType} review receipt is malformed or unreadable`
-                });
-            } else if (receipt.task_id !== safeTaskId) {
-                blockers.push({
-                    gate: `${reviewType}-review`,
-                    reason: `Required ${reviewType} review receipt belongs to a different task: ${receipt.task_id}`
-                });
-            } else if (receipt.review_type !== reviewType) {
-                blockers.push({
-                    gate: `${reviewType}-review`,
-                    reason: `Required ${reviewType} review receipt has mismatched review type: ${receipt.review_type}`
-                });
-            } else if (typeof receipt.review_artifact_sha256 === 'string' && receipt.review_artifact_sha256) {
-                const actualHash = fileSha256(reviewPath);
-                if (actualHash && receipt.review_artifact_sha256 !== actualHash) {
-                    blockers.push({
-                        gate: `${reviewType}-review`,
-                        reason: `Required ${reviewType} review artifact was modified after receipt was issued`
-                    });
-                }
-            }
-        }
-    }
+    const profileReviewDecisions = readProfileReviewDecisions(taskMode, preflight, scopeCategory);
+    blockers.push(...collectRequiredReviewBlockers(requiredReviews, safeTaskId, reviewsRoot));
     const tokenEconomy = buildTokenEconomySummary(events, repoRoot);
-    const evidence: EvidenceArtifact[] = [];
-    for (const { kind, suffix } of ARTIFACT_PATTERNS) {
-        const artifactPath = path.join(reviewsRoot, `${safeTaskId}${suffix}`);
-        const exists = fs.existsSync(artifactPath);
-        evidence.push({
-            kind,
-            path: toPosix(artifactPath),
-            exists,
-            sha256: exists ? fileSha256(artifactPath) : null
-        });
-    }
-
-    // Also include the task events file
-    evidence.push({
-        kind: 'task-events',
-        path: toPosix(taskEventFile),
-        exists: fs.existsSync(taskEventFile),
-        sha256: fs.existsSync(taskEventFile) ? fileSha256(taskEventFile) : null
-    });
+    const evidence = collectEvidenceArtifacts(reviewsRoot, safeTaskId, taskEventFile);
     const hasCompletionPass = gates.some(
         (g) => g.gate === 'completion-gate' && g.status === 'PASS'
     );
@@ -728,9 +853,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         task_id: safeTaskId,
         generated_utc: finalCloseout.generated_utc,
         status,
-        events_count: eventsCount,
-        first_event_utc: firstEventUtc,
-        last_event_utc: lastEventUtc,
+        events_count: orderedEvents.count,
+        first_event_utc: orderedEvents.firstEventUtc,
+        last_event_utc: orderedEvents.lastEventUtc,
         integrity_status: integrityStatus,
         gates,
         changed_files: changedFiles,
