@@ -145,23 +145,17 @@ function getOrchestratorRoot(repoRoot: string): string {
 }
 
 function resolveReviewerExecutionFixture(
-    taskId: string,
+    _taskId: string,
     sourceOfTruth = 'Codex',
     executionProviderSource: 'provider_entrypoint' | 'provider_bridge' = 'provider_entrypoint',
     delegatedIdentity = 'agent:test-reviewer'
 ) {
     const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth, executionProviderSource);
     const reviewerExecutionMode = routingPolicy.expected_execution_mode;
-    const reviewerIdentity = reviewerExecutionMode === 'delegated_subagent'
-        ? delegatedIdentity
-        : `self:${taskId}`;
-    const reviewerFallbackReason = reviewerExecutionMode === 'same_agent_fallback'
-        ? `direct ${sourceOfTruth} ${executionProviderSource} execution cannot supply attested reviewer launch evidence`
-        : null;
     return {
         reviewerExecutionMode,
-        reviewerIdentity,
-        reviewerFallbackReason,
+        reviewerIdentity: delegatedIdentity,
+        reviewerFallbackReason: null,
         trustLevel: 'LOCAL_ASSERTED'
     } as const;
 }
@@ -524,12 +518,9 @@ function refreshReviewReceiptProvenance(
     repoRoot: string,
     taskId: string,
     reviewKey: string,
-    reviewerExecutionMode: 'delegated_subagent' | 'same_agent_fallback',
+    reviewerExecutionMode: 'delegated_subagent',
     reviewerIdentity: string
 ): void {
-    if (reviewerExecutionMode !== 'delegated_subagent') {
-        return;
-    }
     const reviewsRoot = getReviewsRoot(repoRoot);
     const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-receipt.json`);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;

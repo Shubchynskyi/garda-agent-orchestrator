@@ -62,25 +62,20 @@ function createReviewerRoutingFixture(
 }
 
 function resolveReviewerExecutionFixture(
-    taskId: string,
+    _taskId: string,
     sourceOfTruth = 'Codex',
     delegatedIdentity = 'agent:test-reviewer'
 ): {
-    reviewerExecutionMode: 'delegated_subagent' | 'same_agent_fallback';
+    reviewerExecutionMode: 'delegated_subagent';
     reviewerIdentity: string;
-    reviewerFallbackReason: string | null;
+    reviewerFallbackReason: null;
     trustLevel: 'LOCAL_ASSERTED';
 } {
-    const policy = resolveReviewerRoutingPolicy(sourceOfTruth, 'provider_entrypoint');
-    const reviewerExecutionMode = policy.expected_execution_mode;
+    const reviewerExecutionMode = resolveReviewerRoutingPolicy(sourceOfTruth, 'provider_entrypoint').expected_execution_mode;
     return {
         reviewerExecutionMode,
-        reviewerIdentity: reviewerExecutionMode === 'same_agent_fallback'
-            ? `self:${taskId}`
-            : delegatedIdentity,
-        reviewerFallbackReason: reviewerExecutionMode === 'same_agent_fallback'
-            ? `${sourceOfTruth} provider_entrypoint fixtures cannot supply attested reviewer launch evidence.`
-            : null,
+        reviewerIdentity: delegatedIdentity,
+        reviewerFallbackReason: null,
         trustLevel: 'LOCAL_ASSERTED'
     };
 }

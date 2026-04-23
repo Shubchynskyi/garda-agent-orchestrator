@@ -425,7 +425,7 @@ REVIEW PASSED
             assert.ok(result.violations.some((entry: string) => entry.includes('inconsistent reviewer identity')));
         });
 
-        it('fails deprecated same_agent_fallback evidence for providers that previously used conditional routing', () => {
+        it('fails deprecated same_agent_fallback evidence for tampered bridge-backed provider artifacts', () => {
             const content = '# Review\nChecked `src/gate-runtime/lifecycle-events.ts` receipt telemetry integration with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {
@@ -469,7 +469,7 @@ REVIEW PASSED
             assert.ok(result.violations.some((entry: string) => entry.includes('same_agent_fallback')));
         });
 
-        it('fails deprecated same_agent_fallback evidence for providers that previously used single-agent routing', () => {
+        it('fails deprecated same_agent_fallback evidence for tampered direct-entrypoint provider artifacts', () => {
             const content = '# Review\nChecked `src/gates/reviewer-routing.ts` enforcement with concrete file references.\n## Findings by Severity\nnone\n## Residual Risks\nnone\n## Verdict\nREVIEW PASSED';
             const reviewContext = {
                 reviewer_routing: {

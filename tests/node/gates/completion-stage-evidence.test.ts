@@ -1104,7 +1104,7 @@ describe('gates/completion — stage and evidence validation', () => {
             assert.ok(result.violations.some((entry) => entry.includes('missing identity_status')));
         });
 
-        it('allows delegated_subagent for providers that previously used single-agent fallback', () => {
+        it('allows delegated_subagent for Qwen after fallback removal', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1),
@@ -2130,7 +2130,7 @@ describe('gates/completion — stage and evidence validation', () => {
             assert.ok(result.violations.some(v => v.includes('deprecated same_agent_fallback execution')));
         });
 
-        it('allows delegated_subagent on providers that previously used single-agent fallback', () => {
+        it('allows delegated_subagent on direct-entrypoint providers after fallback removal', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),
                 makeEvent('REVIEW_PHASE_STARTED', 1),

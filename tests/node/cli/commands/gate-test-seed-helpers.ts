@@ -388,29 +388,23 @@ function readSeededSourceOfTruth(repoRoot: string): string {
     }
 }
 
-function resolveDefaultReviewerEvidence(repoRoot: string, taskId: string, reviewKey: string): {
+function resolveDefaultReviewerEvidence(repoRoot: string, _taskId: string, reviewKey: string): {
     sourceOfTruth: string;
-    executionMode: 'delegated_subagent' | 'same_agent_fallback';
+    executionMode: 'delegated_subagent';
     reviewerIdentity: string;
-    reviewerFallbackReason: string | null;
+    reviewerFallbackReason: null;
     routingOverrides: Record<string, unknown>;
 } {
     const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
     const policy = resolveReviewerRoutingPolicy(sourceOfTruth, 'provider_entrypoint');
-    const executionMode = policy.expected_execution_mode === 'same_agent_fallback'
-        ? 'same_agent_fallback'
-        : 'delegated_subagent';
+    const executionMode = 'delegated_subagent';
     const delegatedReviewerIdentity = reviewKey === 'code'
         ? 'agent:code-reviewer'
         : reviewKey === 'test'
             ? 'agent:test-reviewer'
             : `agent:${reviewKey}-reviewer`;
-    const reviewerIdentity = executionMode === 'same_agent_fallback'
-        ? `self:${taskId}`
-        : delegatedReviewerIdentity;
-    const reviewerFallbackReason = executionMode === 'same_agent_fallback'
-        ? 'attested reviewer launch unavailable in direct provider session'
-        : null;
+    const reviewerIdentity = delegatedReviewerIdentity;
+    const reviewerFallbackReason = null;
     return {
         sourceOfTruth,
         executionMode,
@@ -573,24 +567,9 @@ export function seedReusableReviewEvidence(
         outputPath: reviewContextPath,
         repoRoot
     });
-    const builtReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
-    const builtReviewerRouting = builtReviewContext.reviewer_routing
-        && typeof builtReviewContext.reviewer_routing === 'object'
-        && !Array.isArray(builtReviewContext.reviewer_routing)
-        ? builtReviewContext.reviewer_routing as Record<string, unknown>
-        : {};
-    const expectedExecutionMode = typeof builtReviewerRouting.expected_execution_mode === 'string'
-        ? builtReviewerRouting.expected_execution_mode.trim()
-        : 'delegated_subagent';
-    const executionMode = expectedExecutionMode === 'same_agent_fallback'
-        ? 'same_agent_fallback'
-        : 'delegated_subagent';
-    const resolvedReviewerIdentity = executionMode === 'same_agent_fallback'
-        ? `self:${taskId}`
-        : reviewerIdentity;
-    const reviewerFallbackReason = executionMode === 'same_agent_fallback'
-        ? 'attested reviewer launch unavailable in direct provider session'
-        : null;
+    const executionMode = 'delegated_subagent';
+    const resolvedReviewerIdentity = reviewerIdentity;
+    const reviewerFallbackReason = null;
     applyReviewerRoutingMetadata(reviewContextPath, {
         actualExecutionMode: executionMode,
         reviewerSessionId: resolvedReviewerIdentity,

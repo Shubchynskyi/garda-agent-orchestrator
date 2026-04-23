@@ -51,24 +51,22 @@ Tests verify that each materialized entrypoint and start-task router includes th
 
 ## Review Delegation
 
-Reviewer delegation determines whether required reviews run as independent fresh-context sub-agents
-or fall back to sequential isolated passes in the same agent thread.
+Required reviews run as independent fresh-context delegated sub-agents on every supported provider.
 
 | Provider | Delegation Mode | Mechanism | Status |
 |---|---|---|:---:|
 | Claude | Delegated sub-agent | Agent tool (`fork_context=false`) | ✅ |
 | Codex | Delegated sub-agent | Native sub-agents | ✅ |
 | GitHub Copilot | Delegated sub-agent | `task` tool (`agent_type="general-purpose"`) | ✅ |
-| Windsurf | Conditional delegation | Provider sub-agent support at runtime | 🔬 |
-| Junie | Conditional delegation | Provider sub-agent support at runtime | 🔬 |
-| Antigravity | Conditional delegation | Provider sub-agent support at runtime | 🔬 |
-| Gemini | Same-agent fallback | Sequential isolated review passes | 🟡 |
-| Qwen | Same-agent fallback | Sequential isolated review passes | 🟡 |
+| Windsurf | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
+| Junie | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
+| Antigravity | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
+| Gemini | Delegated sub-agent | Delegated reviewer sub-agents with isolated context | ✅ |
+| Qwen | Delegated sub-agent | Delegated reviewer sub-agents with isolated context | ✅ |
 
 **Notes:**
-- Delegation-capable providers must use `delegated_subagent` mode; same-agent self-review is invalid when delegation is available.
-- Same-agent fallback providers run independent reviewer passes sequentially with explicit scope isolation.
-- Conditional providers (Windsurf, Junie, Antigravity) default to delegation when the platform supports it at runtime; fallback otherwise.
+- Required reviews must use `delegated_subagent` mode on every supported provider.
+- Providers or bridges that cannot launch delegated reviewer sub-agents cannot satisfy the mandatory review workflow.
 
 ## Review Type Support
 
@@ -120,8 +118,8 @@ Additional provider-relevant test suites:
 | Badge | Meaning |
 |---|---|
 | ✅ Tested | Validated by automated tests and/or confirmed through real task execution. |
-| 🟡 Partial | Core features work; advanced capabilities (e.g., reviewer delegation) fall back to a simpler mode. |
-| 🔬 Experimental | Designed and materialized; delegation support depends on runtime provider capabilities not yet fully validated. |
+| 🟡 Partial | Core workflow exists, but some documented surfaces or non-critical capability details still need follow-up before the provider story is fully consistent. |
+| 🔬 Experimental | Designed and materialized, but broader real-task evidence is still limited. |
 | — | Feature does not apply to this provider (e.g., bridge profiles for root-entrypoint-only providers). |
 
 ## Evidence Sources

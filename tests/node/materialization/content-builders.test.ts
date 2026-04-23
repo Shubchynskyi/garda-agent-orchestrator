@@ -327,6 +327,22 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('build:node-foundation'));
     });
 
+    it('pins delegated-only review receipt contract in full provider bridges', () => {
+        const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'CLAUDE.md', '.github/agents/orchestrator.md');
+        assert.ok(result!.includes('reviewer_execution_mode'));
+        assert.ok(result!.includes('delegated_subagent'));
+        assert.ok(result!.includes('reviewer_identity'));
+        assert.ok(result!.includes('cannot satisfy a fresh mandatory review cycle'));
+        assert.ok(!result!.includes('same_agent_fallback'));
+    });
+
+    it('keeps legacy same_agent_fallback wording out of compact provider bridges too', () => {
+        const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result.includes('delegated_subagent'));
+        assert.ok(result.includes('stale fallback metadata cannot satisfy a fresh cycle'));
+        assert.ok(!result.includes('same_agent_fallback'));
+    });
+
     it('builds a compact Antigravity router instead of a full duplicate workflow', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result.includes('Antigravity Agent: Orchestrator'));

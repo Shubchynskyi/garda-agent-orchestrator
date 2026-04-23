@@ -60,23 +60,17 @@ function createReviewerRoutingFixture(
 }
 
 function resolveReviewerExecutionFixture(
-    taskId: string,
+    _taskId: string,
     sourceOfTruth = 'Codex',
     executionProviderSource: 'provider_entrypoint' | 'provider_bridge' = 'provider_entrypoint',
     delegatedIdentity = 'agent:test-reviewer'
 ) {
     const routingPolicy = resolveReviewerRoutingPolicy(sourceOfTruth, executionProviderSource);
     const reviewerExecutionMode = routingPolicy.expected_execution_mode;
-    const reviewerIdentity = reviewerExecutionMode === 'delegated_subagent'
-        ? delegatedIdentity
-        : `self:${taskId}`;
-    const reviewerFallbackReason = reviewerExecutionMode === 'same_agent_fallback'
-        ? `direct ${sourceOfTruth} ${executionProviderSource} execution cannot supply attested reviewer launch evidence`
-        : null;
     return {
         reviewerExecutionMode,
-        reviewerIdentity,
-        reviewerFallbackReason,
+        reviewerIdentity: delegatedIdentity,
+        reviewerFallbackReason: null,
         trustLevel: 'LOCAL_ASSERTED'
     } as const;
 }

@@ -5,7 +5,7 @@ import { getReviewerCapabilityTier } from '../core/provider-registry';
 import { getCanonicalEntrypointFile, getProviderOrchestratorProfileDefinitions } from '../materialization/common';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from './task-mode';
 
-export type ReviewerExecutionMode = 'delegated_subagent' | 'same_agent_fallback';
+export type ReviewerExecutionMode = 'delegated_subagent';
 export type ReviewerCapabilityLevel = 'delegation_required' | 'delegation_conditional' | 'single_agent_only' | 'unknown';
 export type RuntimeProviderIdentityStatus = 'resolved' | 'legacy_fallback' | 'missing' | 'contradictory';
 export type ReviewerSubagentLaunchStatus = 'launchable' | 'blocked' | 'unknown';
@@ -140,7 +140,7 @@ export function resolveReviewerRoutingPolicy(
             fallback_allowed: false,
             fallback_reason_required: false,
             expected_execution_mode: 'delegated_subagent',
-            note: `${normalized} requires delegated_subagent execution for mandatory reviews. Same-agent fallback is invalid.`
+            note: `${normalized} requires delegated_subagent execution for mandatory reviews.`
         };
     }
 
