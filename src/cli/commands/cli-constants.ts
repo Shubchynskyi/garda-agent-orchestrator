@@ -1,6 +1,8 @@
+type CommandSummaryEntry = readonly [command: string, summary: string];
+
 export const DEFAULT_REPO_URL = 'https://github.com/Shubchynskyi/garda-agent-orchestrator.git';
 
-export const SKIPPED_ENTRY_NAMES = new Set([
+export const SKIPPED_ENTRY_NAMES = new Set<string>([
     '__pycache__',
     '.pytest_cache'
 ]);
@@ -31,7 +33,7 @@ export const COMPILED_RUNTIME_DEPLOY_CANDIDATES = Object.freeze([
     '.node-build'
 ]);
 
-export const COMMAND_SUMMARY = Object.freeze([
+export const COMMAND_SUMMARY = Object.freeze<readonly CommandSummaryEntry[]>([
     ['setup', 'First-run onboarding'],
     ['agent-init', 'Finalize mandatory agent onboarding'],
     ['preprompt', 'Read-only task bootstrap context and exact next commands'],

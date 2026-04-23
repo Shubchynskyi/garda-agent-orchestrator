@@ -1,8 +1,4 @@
-/**
- * Registry of public Node gate commands used by the CLI surface.
- */
-
-export const GATE_COMMANDS = Object.freeze([
+const SHIMMED_GATE_NAME_VALUES = [
     'validate-manifest',
     'enter-task-mode',
     'restart-coherent-cycle',
@@ -31,8 +27,12 @@ export const GATE_COMMANDS = Object.freeze([
     'validate-isolation',
     'prepare-isolation',
     'validate-config'
-]);
+] as const;
 
-export function getAllShimmedGateNames() {
-    return GATE_COMMANDS.slice();
+export type ShimmedGateName = (typeof SHIMMED_GATE_NAME_VALUES)[number];
+
+export const GATE_COMMANDS = Object.freeze<readonly string[]>([...SHIMMED_GATE_NAME_VALUES]);
+
+export function getAllShimmedGateNames(): string[] {
+    return [...GATE_COMMANDS];
 }

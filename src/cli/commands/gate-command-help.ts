@@ -14,6 +14,11 @@ interface GateHelpEntry {
     taskIdRemediation: boolean;
 }
 
+interface GateHelpCatalogContext {
+    bundleName: string;
+    cliPrefix: string;
+}
+
 export interface GateHelpInfo {
     summary: string;
     usage: readonly string[];
@@ -40,6 +45,26 @@ const BOOLEAN_GATE_OPTIONS = new Set([
 const HELP_PREFERRED_VALUE_OPTIONS = new Set([
     '--task-id'
 ]);
+
+function createGateHelpEntry(
+    summary: string,
+    usage: readonly string[],
+    taskIdRemediation: boolean
+): GateHelpEntry {
+    return {
+        summary,
+        usage: Object.freeze([...usage]),
+        taskIdRemediation
+    };
+}
+
+function createSingleUsageEntry(
+    summary: string,
+    usage: string,
+    taskIdRemediation: boolean
+): GateHelpEntry {
+    return createGateHelpEntry(summary, [usage], taskIdRemediation);
+}
 
 function buildCliPrefix(repoRoot: string): string {
     return isOrchestratorSourceCheckout(repoRoot)
@@ -68,6 +93,13 @@ function resolveGateHelpRepoRoot(startDir: string): string {
 
 function buildBundleRelativePath(bundleName: string, relativePath: string): string {
     return `${bundleName}/${relativePath}`;
+}
+
+function buildGateHelpCatalogContext(repoRoot: string): GateHelpCatalogContext {
+    return {
+        bundleName: resolveBundleNameForTarget(repoRoot),
+        cliPrefix: buildCliPrefix(repoRoot)
+    };
 }
 
 function buildTaskEntryRulePackSnippet(cliPrefix: string, bundleName: string): string {
@@ -99,261 +131,301 @@ function buildPostPreflightRulePackSnippet(cliPrefix: string, bundleName: string
     ].join(' ');
 }
 
-function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<Record<string, GateHelpEntry>> {
-    return Object.freeze({
+function buildPreflightGateHelpEntries(
+    cliPrefix: string,
+    bundleName: string
+): Record<string, GateHelpEntry> {
+    return {
         'validate-manifest': {
-            summary: 'Validate MANIFEST.md for traversal, duplicates, and out-of-root entries.',
-            usage: Object.freeze([
+            ...createGateHelpEntry('Validate MANIFEST.md for traversal, duplicates, and out-of-root entries.', [
                 `${cliPrefix} gate validate-manifest --manifest-path "${buildBundleRelativePath(bundleName, 'MANIFEST.md')}"`,
                 `${cliPrefix} gate validate-manifest --manifest-path "<manifest-path>" --repo-root "."`
-            ]),
-            taskIdRemediation: false
+            ], false)
         },
         'validate-config': {
-            summary: 'Validate a Garda JSON config artifact against the expected schema.',
-            usage: Object.freeze([
+            ...createGateHelpEntry('Validate a Garda JSON config artifact against the expected schema.', [
                 `${cliPrefix} gate validate-config --config-path "${buildBundleRelativePath(bundleName, 'live/config/<name>.json')}"`,
                 `${cliPrefix} gate validate-config --config-path "<config-path>" --repo-root "."`
-            ]),
-            taskIdRemediation: false
+            ], false)
         },
         'enter-task-mode': {
-            summary: 'Enter explicit task mode before any implementation, with runtime identity pinned through explicit provider selection and optional route telemetry.',
-            usage: Object.freeze([
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Enter explicit task mode before any implementation, with runtime identity pinned through explicit provider selection and optional route telemetry.',
+                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] --repo-root "."`,
+                true
+            )
         },
         'load-rule-pack': {
-            summary: 'Record the exact downstream rule files that were opened for the current task cycle.',
-            usage: Object.freeze([
+            ...createGateHelpEntry('Record the exact downstream rule files that were opened for the current task cycle.', [
                 buildTaskEntryRulePackSnippet(cliPrefix, bundleName),
                 buildPostPreflightRulePackSnippet(cliPrefix, bundleName)
-            ]),
-            taskIdRemediation: true
+            ], true)
         },
         'record-no-op': {
-            summary: 'Record an audited no-op classification when the task intentionally produces no code changes.',
-            usage: Object.freeze([
-                `${cliPrefix} gate record-no-op --task-id "${TASK_ID_PLACEHOLDER}" --classification "BASELINE_ONLY" --reason "<why no code changed>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Record an audited no-op classification when the task intentionally produces no code changes.',
+                `${cliPrefix} gate record-no-op --task-id "${TASK_ID_PLACEHOLDER}" --classification "BASELINE_ONLY" --reason "<why no code changed>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                true
+            )
         },
         'handshake-diagnostics': {
-            summary: 'Verify runtime identity, reviewer-subagent launchability, router presence, and CLI path before preflight.',
-            usage: Object.freeze([
-                `${cliPrefix} gate handshake-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Verify runtime identity, reviewer-subagent launchability, router presence, and CLI path before preflight.',
+                `${cliPrefix} gate handshake-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
+                true
+            )
         },
         'shell-smoke-preflight': {
-            summary: 'Run lightweight launchability and filesystem probes before classify-change.',
-            usage: Object.freeze([
-                `${cliPrefix} gate shell-smoke-preflight --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Run lightweight launchability and filesystem probes before classify-change.',
+                `${cliPrefix} gate shell-smoke-preflight --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
+                true
+            )
         },
         'command-timeout-diagnostics': {
-            summary: 'Inspect command timeout records for the active task/runtime identity.',
-            usage: Object.freeze([
-                `${cliPrefix} gate command-timeout-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Inspect command timeout records for the active task/runtime identity.',
+                `${cliPrefix} gate command-timeout-diagnostics --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
+                true
+            )
         },
         'classify-change': {
-            summary: 'Classify the intended scope before implementation and determine required review types.',
-            usage: Object.freeze([
+            ...createGateHelpEntry('Classify the intended scope before implementation and determine required review types.', [
                 `${cliPrefix} gate classify-change --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
                 `${cliPrefix} gate classify-change --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --use-staged --output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ], true)
         },
         'restart-coherent-cycle': {
-            summary: 'Refresh preflight and downstream compile evidence for the current task after scope drift.',
-            usage: Object.freeze([
-                `${cliPrefix} gate restart-coherent-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Refresh preflight and downstream compile evidence for the current task after scope drift.',
+                `${cliPrefix} gate restart-coherent-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --repo-root "."`,
+                true
+            )
         },
         'restart-review-cycle': {
-            summary: 'Refresh preflight and downstream review evidence for the current task after review-era drift.',
-            usage: Object.freeze([
-                `${cliPrefix} gate restart-review-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Refresh preflight and downstream review evidence for the current task after review-era drift.',
+                `${cliPrefix} gate restart-review-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --repo-root "."`,
+                true
+            )
         },
         'compile-gate': {
-            summary: 'Run the mandatory build/typecheck/test commands selected by the guarded compile flow.',
-            usage: Object.freeze([
+            ...createGateHelpEntry('Run the mandatory build/typecheck/test commands selected by the guarded compile flow.', [
                 `${cliPrefix} gate compile-gate --task-id "${TASK_ID_PLACEHOLDER}" --commands-path "${buildBundleRelativePath(bundleName, 'live/docs/agent-rules/40-commands.md')}" --repo-root "."`,
                 `${cliPrefix} gate compile-gate --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ], true)
         },
         'build-scoped-diff': {
-            summary: 'Materialize a review-type-specific scoped diff plus metadata for downstream reviewers.',
-            usage: Object.freeze([
-                `${cliPrefix} gate build-scoped-diff --review-type "<db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-scoped.diff`)}" --repo-root "."`
-            ]),
-            taskIdRemediation: false
+            ...createSingleUsageEntry(
+                'Materialize a review-type-specific scoped diff plus metadata for downstream reviewers.',
+                `${cliPrefix} gate build-scoped-diff --review-type "<db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-scoped.diff`)}" --repo-root "."`,
+                false
+            )
         },
         'build-review-context': {
-            summary: 'Prepare reviewer rule context and emit mandatory review-skill telemetry before a review run.',
-            usage: Object.freeze([
-                `${cliPrefix} gate build-review-context --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth "<1|2|3>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
-            ]),
-            taskIdRemediation: false
+            ...createSingleUsageEntry(
+                'Prepare reviewer rule context and emit mandatory review-skill telemetry before a review run.',
+                `${cliPrefix} gate build-review-context --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth "<1|2|3>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                false
+            )
         },
         'activate-optional-skill': {
-            summary: 'Validate and record a selected optional skill activation before opening its SKILL.md for implementation work.',
-            usage: Object.freeze([
-                `${cliPrefix} gate activate-optional-skill --task-id "${TASK_ID_PLACEHOLDER}" --skill-id "<selected-skill-id>" --repo-root "."`
-            ]),
-            taskIdRemediation: true
-        },
+            ...createSingleUsageEntry(
+                'Validate and record a selected optional skill activation before opening its SKILL.md for implementation work.',
+                `${cliPrefix} gate activate-optional-skill --task-id "${TASK_ID_PLACEHOLDER}" --skill-id "<selected-skill-id>" --repo-root "."`,
+                true
+            )
+        }
+    };
+}
+
+function buildReviewGateHelpEntries(
+    cliPrefix: string,
+    bundleName: string
+): Record<string, GateHelpEntry> {
+    return {
         'required-reviews-check': {
-            summary: 'Validate that every required current-cycle review artifact and receipt is present and clean.',
-            usage: Object.freeze([
-                `${cliPrefix} gate required-reviews-check --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Validate that every required current-cycle review artifact and receipt is present and clean.',
+                `${cliPrefix} gate required-reviews-check --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                true
+            )
         },
         'doc-impact-gate': {
-            summary: 'Record documentation impact evidence before completion.',
-            usage: Object.freeze([
-                `${cliPrefix} gate doc-impact-gate --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Record documentation impact evidence before completion.',
+                `${cliPrefix} gate doc-impact-gate --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>" --repo-root "."`,
+                true
+            )
         },
         'record-review-result': {
-            summary: 'Materialize reviewer output into canonical artifacts, receipts, and routing telemetry.',
-            usage: Object.freeze([
-                `${cliPrefix} gate record-review-result --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-output.md`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Materialize reviewer output into canonical artifacts, receipts, and routing telemetry.',
+                `${cliPrefix} gate record-review-result --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-output.md`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
+                true
+            )
         },
         'record-review-routing': {
-            summary: 'Record reviewer routing metadata for a prepared review context.',
-            usage: Object.freeze([
-                `${cliPrefix} gate record-review-routing --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Record reviewer routing metadata for a prepared review context.',
+                `${cliPrefix} gate record-review-routing --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
+                true
+            )
         },
         'record-review-receipt': {
-            summary: 'Record a review receipt when verdict capture and routing were completed externally.',
-            usage: Object.freeze([
-                `${cliPrefix} gate record-review-receipt --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`
-            ]),
-            taskIdRemediation: true
-        },
+            ...createSingleUsageEntry(
+                'Record a review receipt when verdict capture and routing were completed externally.',
+                `${cliPrefix} gate record-review-receipt --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
+                true
+            )
+        }
+    };
+}
+
+function buildLifecycleGateHelpEntries(
+    cliPrefix: string,
+    bundleName: string
+): Record<string, GateHelpEntry> {
+    return {
         'completion-gate': {
-            summary: 'Validate final lifecycle evidence and mark the task DONE only after all mandatory gates passed.',
-            usage: Object.freeze([
-                `${cliPrefix} gate completion-gate --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Validate final lifecycle evidence and mark the task DONE only after all mandatory gates passed.',
+                `${cliPrefix} gate completion-gate --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                true
+            )
         },
         'full-suite-validation': {
-            summary: 'Run repository-wide test suite as part of mandatory closeout (when enabled). Configuration: edit garda-agent-orchestrator/live/config/workflow-config.json to set full_suite_validation.enabled=true. Integrated into completion-gate when enabled.',
-            usage: Object.freeze([
-                `${cliPrefix} gate full-suite-validation --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Run repository-wide test suite as part of mandatory closeout (when enabled). Configuration: edit garda-agent-orchestrator/live/config/workflow-config.json to set full_suite_validation.enabled=true. Integrated into completion-gate when enabled.',
+                `${cliPrefix} gate full-suite-validation --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                true
+            )
         },
         'log-task-event': {
-            summary: 'Append a structured lifecycle event to the current task timeline.',
-            usage: Object.freeze([
-                `${cliPrefix} gate log-task-event --task-id "${TASK_ID_PLACEHOLDER}" --event-type "PLAN_CREATED" --outcome "INFO" --message "<message>" --actor "orchestrator" --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ...createSingleUsageEntry(
+                'Append a structured lifecycle event to the current task timeline.',
+                `${cliPrefix} gate log-task-event --task-id "${TASK_ID_PLACEHOLDER}" --event-type "PLAN_CREATED" --outcome "INFO" --message "<message>" --actor "orchestrator" --repo-root "."`,
+                true
+            )
         },
         'task-events-summary': {
-            summary: 'Summarize task timeline events for audit and debugging.',
-            usage: Object.freeze([
+            ...createGateHelpEntry('Summarize task timeline events for audit and debugging.', [
                 `${cliPrefix} gate task-events-summary --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate task-events-summary --task-id "${TASK_ID_PLACEHOLDER}" --as-json --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ], true)
         },
         'task-audit-summary': {
-            summary: 'Build the final gate audit summary, including canonical final-closeout artifacts on PASS.',
-            usage: Object.freeze([
+            ...createGateHelpEntry('Build the final gate audit summary, including canonical final-closeout artifacts on PASS.', [
                 `${cliPrefix} gate task-audit-summary --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate task-audit-summary --task-id "${TASK_ID_PLACEHOLDER}" --as-json --repo-root "."`
-            ]),
-            taskIdRemediation: true
+            ], true)
         },
         'human-commit': {
-            summary: 'Run a human-authorized commit through the guarded helper path.',
-            usage: Object.freeze([
-                `${cliPrefix} gate human-commit --message "<commit message>" --repo-root "."`
-            ]),
-            taskIdRemediation: false
+            ...createSingleUsageEntry(
+                'Run a human-authorized commit through the guarded helper path.',
+                `${cliPrefix} gate human-commit --message "<commit message>" --repo-root "."`,
+                false
+            )
         },
         'validate-isolation': {
-            summary: 'Validate isolation-mode configuration and task sandbox prerequisites.',
-            usage: Object.freeze([
-                `${cliPrefix} gate validate-isolation --repo-root "."`
-            ]),
-            taskIdRemediation: false
+            ...createSingleUsageEntry(
+                'Validate isolation-mode configuration and task sandbox prerequisites.',
+                `${cliPrefix} gate validate-isolation --repo-root "."`,
+                false
+            )
         },
         'prepare-isolation': {
-            summary: 'Prepare an isolation sandbox and emit preparation telemetry.',
-            usage: Object.freeze([
-                `${cliPrefix} gate prepare-isolation --repo-root "."`
-            ]),
-            taskIdRemediation: false
+            ...createSingleUsageEntry(
+                'Prepare an isolation sandbox and emit preparation telemetry.',
+                `${cliPrefix} gate prepare-isolation --repo-root "."`,
+                false
+            )
         }
+    };
+}
+
+function buildGateHelpEntries(cliPrefix: string, bundleName: string): Readonly<Record<string, GateHelpEntry>> {
+    return Object.freeze({
+        ...buildPreflightGateHelpEntries(cliPrefix, bundleName),
+        ...buildReviewGateHelpEntries(cliPrefix, bundleName),
+        ...buildLifecycleGateHelpEntries(cliPrefix, bundleName)
     });
 }
 
-function getTaskIdSyntaxMistake(argv: readonly string[]): { kind: 'flag' | 'positional'; taskId: string | null } | null {
+function getGateHelpEntries(repoRoot: string): Readonly<Record<string, GateHelpEntry>> {
+    const { bundleName, cliPrefix } = buildGateHelpCatalogContext(repoRoot);
+    return buildGateHelpEntries(cliPrefix, bundleName);
+}
+
+function isHelpFlag(argument: string): boolean {
+    return argument === '-h' || argument === '--help';
+}
+
+function isVersionFlag(argument: string): boolean {
+    return argument === '-v' || argument === '--version';
+}
+
+function canFlagConsumeNextValue(argument: string): boolean {
+    return !argument.includes('=')
+        && !BOOLEAN_GATE_OPTIONS.has(argument)
+        && !isHelpFlag(argument)
+        && !isVersionFlag(argument);
+}
+
+function buildTaskIdSyntaxMistake(
+    kind: 'flag' | 'positional',
+    taskId: string | null
+): { kind: 'flag' | 'positional'; taskId: string | null } {
+    return {
+        kind,
+        taskId
+    };
+}
+
+function extractTaskIdFromLegacyFlag(argument: string, nextValue: string | null): string | null {
+    if (argument === '--task') {
+        return nextValue && TASK_ID_POSITIONAL_RE.test(nextValue) ? nextValue : null;
+    }
+    if (argument.startsWith('--task=')) {
+        const rawValue = argument.slice('--task='.length).trim();
+        return rawValue && TASK_ID_POSITIONAL_RE.test(rawValue) ? rawValue : null;
+    }
+    return null;
+}
+
+function isPositionalTaskId(argument: string): boolean {
+    return !argument.startsWith('-') && TASK_ID_POSITIONAL_RE.test(argument);
+}
+
+function getTaskIdSyntaxMistake(
+    argv: readonly string[]
+): { kind: 'flag' | 'positional'; taskId: string | null } | null {
     for (let index = 0; index < argv.length;) {
         const argument = String(argv[index] || '').trim();
         if (!argument) {
             index += 1;
             continue;
         }
-        if (argument === '--task') {
-            const nextValue = index + 1 < argv.length && !String(argv[index + 1] || '').startsWith('-')
-                ? String(argv[index + 1] || '').trim()
-                : null;
-            return {
-                kind: 'flag',
-                taskId: nextValue && TASK_ID_POSITIONAL_RE.test(nextValue) ? nextValue : null
-            };
+
+        const nextValue = index + 1 < argv.length && !String(argv[index + 1] || '').startsWith('-')
+            ? String(argv[index + 1] || '').trim()
+            : null;
+        const legacyTaskId = extractTaskIdFromLegacyFlag(argument, nextValue);
+        if (legacyTaskId !== null || argument === '--task' || argument.startsWith('--task=')) {
+            return buildTaskIdSyntaxMistake('flag', legacyTaskId);
         }
-        if (argument.startsWith('--task=')) {
-            const rawValue = argument.slice('--task='.length).trim();
-            return {
-                kind: 'flag',
-                taskId: rawValue && TASK_ID_POSITIONAL_RE.test(rawValue) ? rawValue : null
-            };
-        }
+
         if (argument.startsWith('-')) {
-            const consumesNextValue = (
-                !argument.includes('=')
-                && !BOOLEAN_GATE_OPTIONS.has(argument)
-                && argument !== '-h'
-                && argument !== '--help'
-                && argument !== '-v'
-                && argument !== '--version'
-            );
-            if (consumesNextValue && index + 1 < argv.length && !String(argv[index + 1] || '').startsWith('-')) {
-                index += 2;
-                continue;
-            }
-            index += 1;
+            index += canFlagConsumeNextValue(argument) && nextValue ? 2 : 1;
             continue;
         }
-        if (!argument.startsWith('-') && TASK_ID_POSITIONAL_RE.test(argument)) {
-            return {
-                kind: 'positional',
-                taskId: argument
-            };
+
+        if (isPositionalTaskId(argument)) {
+            return buildTaskIdSyntaxMistake('positional', argument);
         }
         index += 1;
     }
+
     return null;
 }
 
@@ -366,7 +438,7 @@ function resolveSuggestedCommand(entry: GateHelpEntry, mistakenTaskId: string | 
 
 export function buildGateCommandOverviewText(repoRoot = process.cwd()): string {
     const resolvedRepoRoot = resolveGateHelpRepoRoot(repoRoot);
-    const cliPrefix = buildCliPrefix(resolvedRepoRoot);
+    const { cliPrefix } = buildGateHelpCatalogContext(resolvedRepoRoot);
     return [
         'GARDA_COMMAND_HELP',
         cyan('gate'),
@@ -405,10 +477,7 @@ export function buildGateHelpText(gateName: string, repoRoot = process.cwd()): s
 
 export function getGateHelpEntry(gateName: string, repoRoot = process.cwd()): GateHelpInfo {
     const resolvedRepoRoot = resolveGateHelpRepoRoot(repoRoot);
-    const entry = buildGateHelpEntries(
-        buildCliPrefix(resolvedRepoRoot),
-        resolveBundleNameForTarget(resolvedRepoRoot)
-    )[gateName];
+    const entry = getGateHelpEntries(resolvedRepoRoot)[gateName];
     if (!entry) {
         throw new Error(`Unknown gate: ${gateName}`);
     }
@@ -421,19 +490,11 @@ export function getGateHelpEntry(gateName: string, repoRoot = process.cwd()): Ga
 export function hasStandaloneGateHelpFlag(argv: readonly string[]): boolean {
     for (let index = 0; index < argv.length; index += 1) {
         const argument = String(argv[index] || '').trim();
-        if (argument !== '-h' && argument !== '--help') {
+        if (!isHelpFlag(argument)) {
             continue;
         }
         const previous = String(argv[index - 1] || '').trim();
-        if (
-            previous.startsWith('-')
-            && !previous.includes('=')
-            && !BOOLEAN_GATE_OPTIONS.has(previous)
-            && previous !== '-h'
-            && previous !== '--help'
-            && previous !== '-v'
-            && previous !== '--version'
-        ) {
+        if (previous.startsWith('-') && canFlagConsumeNextValue(previous)) {
             if (
                 HELP_PREFERRED_VALUE_OPTIONS.has(previous)
                 && index === argv.length - 1
@@ -453,10 +514,7 @@ export function buildTaskIdSyntaxRemediationMessage(
     repoRoot = process.cwd()
 ): string | null {
     const resolvedRepoRoot = resolveGateHelpRepoRoot(repoRoot);
-    const entry = buildGateHelpEntries(
-        buildCliPrefix(resolvedRepoRoot),
-        resolveBundleNameForTarget(resolvedRepoRoot)
-    )[gateName];
+    const entry = getGateHelpEntries(resolvedRepoRoot)[gateName];
     if (!entry || !entry.taskIdRemediation) {
         return null;
     }
