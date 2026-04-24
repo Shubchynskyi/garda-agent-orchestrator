@@ -20,6 +20,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'log-task-event',
     'task-events-summary',
     'task-audit-summary',
+    'next-step',
     'human-commit',
     'handshake-diagnostics',
     'shell-smoke-preflight',

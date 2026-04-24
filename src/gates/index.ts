@@ -8,6 +8,7 @@ import * as docImpact from './doc-impact';
 import * as fullSuiteValidation from './full-suite-validation';
 import * as completion from './completion';
 import * as taskEventsSummary from './task-events-summary';
+import * as nextStep from './next-step';
 import * as taskMode from './task-mode';
 import * as rulePack from './rule-pack';
 import * as handshakeDiagnostics from './handshake-diagnostics';
@@ -28,6 +29,7 @@ export {
     fullSuiteValidation,
     completion,
     taskEventsSummary,
+    nextStep,
     taskMode,
     rulePack,
     handshakeDiagnostics,

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added `gate next-step` as a deterministic lifecycle navigator that reports the next mandatory command, effective full-suite configuration, review policy, missing artifacts, and review trust state for agent task runs
 - blocked mandatory review preparation only when runtime identity is unresolved or still relies on canonical SourceOfTruth fallback, while keeping delegated reviewer-subagent execution valid regardless of which explicit orchestrator entry surface was used
 - removed same-agent fallback from the mandatory review workflow so required reviews must come from delegated sub-agents, and deprecated fallback artifacts now degrade to unavailable trust diagnostics instead of satisfying active review summaries
 - fixed localized agent reports so confirmed `agent-init` language now overrides stale setup answers, and report labels now follow the configured assistant language instead of silently falling back to English

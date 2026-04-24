@@ -6,6 +6,7 @@ IMPORTANT: The user prefers running ad-hoc commands manually. Do not execute ad-
 Exception — mandatory gates always run: `compile-gate`, `required-reviews-check`, `doc-impact-gate`, `completion-gate`, and any other gate in the mandatory sequence must execute their underlying commands (including builds, tests, or type-checks) regardless of this preference. The preference applies only to ad-hoc command execution outside the gate pipeline.
 Exception: You may run tests and iterate only when the user explicitly requests this workflow.
 Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name>`.
+When the next mandatory command is unclear, run `node garda-agent-orchestrator/bin/garda.js gate next-step --task-id "<task-id>" --repo-root "."` and follow its single recommended command instead of guessing from defaults or stale artifacts.
 
 ### Ad-Hoc vs Mandatory Gate Commands
 The "prefer manual commands" preference and mandatory gate execution are separate concerns:
@@ -212,6 +213,8 @@ node garda-agent-orchestrator/bin/garda.js gate log-task-event --task-id "<task-
 node garda-agent-orchestrator/bin/garda.js gate task-events-summary --task-id "<task-id>"
 node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>"
 node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json
+node garda-agent-orchestrator/bin/garda.js gate next-step --task-id "<task-id>"
+node garda-agent-orchestrator/bin/garda.js gate next-step --task-id "<task-id>" --as-json
 node garda-agent-orchestrator/bin/garda.js gate build-scoped-diff --review-type "<db|security|refactor>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.diff" --metadata-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json"
 node garda-agent-orchestrator/bin/garda.js gate build-review-context --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --depth <1|2|3> --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --scoped-diff-metadata-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-scoped.json" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-context.json"
 node garda-agent-orchestrator/bin/garda.js gate record-review-result --task-id "<task-id>" --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --review-output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>"
@@ -263,6 +266,7 @@ Notes:
 - Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.
 - Human-readable timeline can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-events-summary`; summary output includes `IntegrityStatus`.
 - Compact task audit summary can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>"`; it shows status, gates, changed files, evidence paths, blockers, and final closeout contract data. Use `--as-json` for structured output; on `PASS` it also materializes canonical `runtime/reviews/<task-id>-final-closeout.{json,md}` artifacts. Non-zero exit when status is not `PASS`.
+- Deterministic next-step guidance can be generated with `node garda-agent-orchestrator/bin/garda.js gate next-step --task-id "<task-id>"`; it reports the next gate command, effective `full_suite_validation` config path/value, review execution policy, missing artifacts, and review trust status. Use this before reading default config templates or synthesizing review artifacts.
 
 ## Project Discovery Snapshot
 - Discovery source: git_index_and_worktree

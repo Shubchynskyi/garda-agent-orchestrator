@@ -4,6 +4,7 @@ import {
 } from '../../gate-runtime/lifecycle-events';
 import * as gateHelpers from '../../gates/helpers';
 import { formatCompletionGateResult, runCompletionGate } from '../../gates/completion';
+import { formatNextStepText, resolveNextStepFromCliOptions } from '../../gates/next-step';
 import { withCompletionGateFinalizationLockAsync } from '../../gates/finalization-lock';
 import {
     runEnterTaskModeCommand,
@@ -260,6 +261,21 @@ export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> 
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;
     }
+}
+
+export async function handleNextStep(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' },
+        '--events-root': { key: 'eventsRoot', type: 'string' },
+        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+        '--as-json': { key: 'asJson', type: 'boolean' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = resolveNextStepFromCliOptions(options);
+    process.stdout.write(options.asJson === true
+        ? `${JSON.stringify(result, null, 2)}\n`
+        : formatNextStepText(result));
 }
 
 export async function handleFullSuiteValidation(gateArgv: string[]): Promise<void> {

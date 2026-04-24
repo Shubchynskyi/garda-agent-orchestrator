@@ -32,6 +32,7 @@ import {
     handleLogTaskEvent,
     handleTaskEventsSummary,
     handleTaskAuditSummary,
+    handleNextStep,
     handleFullSuiteValidation,
     handleCompletionGate,
     handleHumanCommit
@@ -95,6 +96,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleTaskEventsSummary(gateArgv);
         case 'task-audit-summary':
             return handleTaskAuditSummary(gateArgv);
+        case 'next-step':
+            return handleNextStep(gateArgv);
         case 'log-task-event':
             return handleLogTaskEvent(gateArgv);
         case 'required-reviews-check':

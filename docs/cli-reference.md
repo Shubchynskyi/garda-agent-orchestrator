@@ -429,11 +429,12 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Scoped diff | `garda gate build-scoped-diff --review-type "db"` |
 | Review context | `garda gate build-review-context --review-type "code" --depth 2` |
 | Task events | `garda gate task-events-summary --task-id "T-001"` |
+| Next step | `garda gate next-step --task-id "T-001"` |
 | Log event | `garda gate log-task-event --task-id "T-001" --event-type "..."` |
 | Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
 | Human commit | `garda gate human-commit --message "<message>"` |
 
-Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+Use `garda gate next-step --task-id "T-001"` when the next mandatory gate is unclear; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
 

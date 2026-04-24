@@ -90,7 +90,8 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'completion-gate',
     'log-task-event',
     'task-events-summary',
-    'task-audit-summary'
+    'task-audit-summary',
+    'next-step'
 ]);
 
 function stripAnsi(value: string): string {

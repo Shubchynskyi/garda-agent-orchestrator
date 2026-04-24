@@ -320,6 +320,13 @@ function buildLifecycleGateHelpEntries(
                 `${cliPrefix} gate task-audit-summary --task-id "${TASK_ID_PLACEHOLDER}" --as-json --repo-root "."`
             ], true)
         },
+        'next-step': {
+            ...createGateHelpEntry('Show the deterministic next orchestrator command for a task, including effective full-suite and review policy context.', [
+                `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
+                `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --as-json --repo-root "."`,
+                `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --events-root "${buildBundleRelativePath(bundleName, 'runtime/task-events')}" --reviews-root "${buildBundleRelativePath(bundleName, 'runtime/reviews')}" --repo-root "."`
+            ], true)
+        },
         'human-commit': {
             ...createSingleUsageEntry(
                 'Run a human-authorized commit through the guarded helper path.',
