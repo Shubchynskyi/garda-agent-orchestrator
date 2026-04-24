@@ -9,10 +9,7 @@ import {
 } from '../core/constants';
 import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
-import {
-    getProviderOrchestratorProfileDefinitions,
-    SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
-} from '../materialization/common';
+import { SHARED_START_TASK_WORKFLOW_RELATIVE_PATH } from '../materialization/common';
 import {
     normalizeSourceOfTruthValue,
     resolveReviewerRoutingPolicy,

@@ -1,9 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { stringSha256, fileSha256, normalizePath, toPosix, joinOrchestratorPath, resolvePathInsideRepo, toStringArray } from './helpers';
-import { assertValidTaskId, appendTaskEvent } from '../gate-runtime/task-events';
-import { buildOutputTelemetry, formatVisibleSavingsLine } from '../gate-runtime/token-telemetry';
+import { stringSha256, normalizePath, joinOrchestratorPath } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 
 /**

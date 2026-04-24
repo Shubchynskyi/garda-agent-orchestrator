@@ -1,4 +1,4 @@
-import { appendTaskEvent, appendTaskEventAsync } from './task-events';
+import { appendTaskEvent } from './task-events';
 import type { AutoEmitOptions } from './lifecycle-event-core';
 import {
     emitLifecycleEvent,

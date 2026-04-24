@@ -15,7 +15,6 @@ import {
     compareVersionStrings,
     copyDirectoryContentMerge,
     copyPathRecursive,
-    getSyncBackupMetadataPath,
     getTimestamp,
     removePathRecursive,
     removeUpdateSentinel,

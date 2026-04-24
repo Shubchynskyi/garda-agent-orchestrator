@@ -131,15 +131,7 @@ export function coerceIntLike(value: unknown): number | null {
     return null;
 }
 
-interface OutputTelemetryRecord {
-    estimated_saved_chars?: unknown;
-    estimated_saved_tokens?: unknown;
-    raw_line_count?: unknown;
-    filtered_line_count?: unknown;
-    raw_char_count?: unknown;
-    filtered_char_count?: unknown;
-    raw_token_count_estimate?: unknown;
-}
+
 
 interface FormatVisibleSavingsOptions {
     label?: string;

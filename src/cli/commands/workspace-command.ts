@@ -11,11 +11,7 @@ import {
     readInitAnswersArtifact,
     syncBundleItems
 } from './cli-helpers';
-import {
-    ensureBundleExists,
-    formatKeyValueOutput,
-    ParsedOptionsRecord
-} from './shared-command-utils';
+import { formatKeyValueOutput, type ParsedOptionsRecord } from './shared-command-utils';
 import { hasMaterializedWorkflowConfigBaseline } from '../../core/workflow-config';
 import {
     handleStandardFlags,

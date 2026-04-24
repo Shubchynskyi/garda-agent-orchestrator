@@ -158,8 +158,8 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
         trustOverride = false,
         initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         dryRun = false,
-        skipVerify = false,
-        skipManifestValidation = false,
+        skipVerify: _skipVerify = false,
+        skipManifestValidation: _skipManifestValidation = false,
         installRunner = null,
         materializationRunner = null
     } = options;

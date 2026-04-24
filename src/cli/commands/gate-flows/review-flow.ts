@@ -10,10 +10,7 @@ import {
     emitMandatoryReviewPhaseStartedEvent,
     emitStatusChangedEvent
 } from '../../../gate-runtime/lifecycle-events';
-import {
-    appendMandatoryTaskEvent,
-    assertValidTaskId
-} from '../../../gate-runtime/task-events';
+import { appendMandatoryTaskEvent } from '../../../gate-runtime/task-events';
 import { assessDocImpact } from '../../../gates/doc-impact';
 import {
     checkRequiredReviews,
@@ -71,7 +68,6 @@ import {
     getCompileGateEvidence,
     testCompileScopeDrift,
     testReviewArtifacts,
-    type CompileGateEvidenceResult,
     type CompileScopeDriftResult,
     type ReviewArtifactsAuditResult
 } from './review-flow-support';

@@ -1,18 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { DEFAULT_BUNDLE_NAME } from '../core/constants';
 import {
     fileSha256,
     isOrchestratorSourceCheckout,
     joinOrchestratorPath,
     normalizePath,
-    scanProtectedPathHashes,
-    getProtectedControlPlaneRoots,
-    toPosix,
-    writeProtectedControlPlaneManifest
+    toPosix
 } from './helpers';
-import { loadIsolationModeConfig, type IsolationModeConfig } from './isolation-mode';
+import { loadIsolationModeConfig } from './isolation-mode';
 
 export const ISOLATION_SANDBOX_DIR = '.isolation-sandbox';
 const SANDBOX_MANIFEST_NAME = 'sandbox-manifest.json';
@@ -342,7 +338,6 @@ export function compareSandboxToLive(repoRoot: string): {
 
     // Rebased sandbox snapshot: strip sandbox-root prefix for comparison
     const rebasedSandbox: Record<string, string> = {};
-    const sandboxPrefix = normalizePath(path.relative(liveRoot, sandboxRoot));
     for (const [key, val] of Object.entries(sandboxSnapshot)) {
         // Sandbox snapshot keys are relative to sandboxRoot; rebase to orchestratorRoot
         rebasedSandbox[key] = val;

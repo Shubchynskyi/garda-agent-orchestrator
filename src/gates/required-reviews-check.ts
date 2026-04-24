@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     auditReviewArtifactCompaction,
-    buildReviewReceipt,
     normalizeCompatibilityReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
@@ -10,7 +9,7 @@ import {
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getReviewArtifactFindingsEvidence, isTrivialReview } from './completion';
 import { fileSha256, normalizePath, toPlainRecord } from './helpers';
-import { getNoOpEvidence, type NoOpEvidenceResult } from './no-op';
+import { getNoOpEvidence } from './no-op';
 import { getReviewContextContractViolations } from './review-context-contract';
 import { resolveReviewContextRoutingIdentity } from './review-context-routing';
 import { type ReviewDependencyTimelineEvent } from './review-dependencies';

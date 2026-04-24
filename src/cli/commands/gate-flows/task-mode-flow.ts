@@ -24,12 +24,7 @@ import {
     assertValidTaskId
 } from '../../../gate-runtime/task-events';
 import { withFilesystemLock } from '../../../gate-runtime/task-events-locking';
-import {
-    buildRulePackArtifact,
-    getRulePackEvidence,
-    getRulePackEvidenceViolations,
-    resolveRulePackArtifactPath
-} from '../../../gates/rule-pack';
+import { buildRulePackArtifact, resolveRulePackArtifactPath } from '../../../gates/rule-pack';
 import {
     buildHandshakeDiagnostics,
     formatHandshakeDiagnosticsResult,
@@ -52,7 +47,6 @@ import {
 import {
     buildTaskModeArtifact,
     getTaskModeEvidence,
-    getTaskModeEvidenceViolations,
     normalizeTaskModeEntryMode,
     parseTaskModeDepth,
     resolveTaskModeArtifactPath,

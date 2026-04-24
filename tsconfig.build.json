@@ -15,7 +15,9 @@
     "rootDir": ".",
     "declaration": false,
     "sourceMap": false,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false
   },
   "include": [
     "src/**/*.ts"

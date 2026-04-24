@@ -1,5 +1,5 @@
 import { assertExplicitCliTrustOverride } from '../../lifecycle/update-trust';
-import { type CheckUpdateRunnerOptions, runCheckUpdate } from '../../lifecycle/check-update';
+import { runCheckUpdate } from '../../lifecycle/check-update';
 import { runUpdateFromGit } from '../../lifecycle/update-git';
 import { runRollback } from '../../lifecycle/rollback';
 import {

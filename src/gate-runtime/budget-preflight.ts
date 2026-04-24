@@ -131,8 +131,7 @@ export function resolveDepthEscalation(input: BudgetForecastInput): DepthEscalat
     };
 }
 
-const HIGH_RISK_TRIGGERS: ReadonlySet<string> = new Set(['security', 'infra']);
-const MEDIUM_RISK_TRIGGERS: ReadonlySet<string> = new Set(['db', 'refactor', 'api', 'performance']);
+
 
 function classifyRiskLevel(triggers: RiskTriggers): 'low' | 'medium' | 'high' {
     if (triggers.security || triggers.infra) return 'high';

@@ -1,18 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {
-    ALL_AGENT_ENTRYPOINT_FILES,
-    resolveBundleName
-} from '../core/constants';
+import { resolveBundleName } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
-import {
-    getActiveAgentEntrypointFiles,
-    getCanonicalEntrypointFile,
-    getManagedGitignoreCleanupEntries,
-    SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
-} from '../materialization/common';
+import { SHARED_START_TASK_WORKFLOW_RELATIVE_PATH } from '../materialization/common';
 import {
     MANAGED_START,
     MANAGED_END,

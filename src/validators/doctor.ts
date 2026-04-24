@@ -24,7 +24,6 @@ import { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor-run
 import { checkProfileHealth, type ProfileHealthEvidence } from './doctor-profile';
 import {
     collectLockHealth,
-    type LockHealthEvidence,
     type TaskEventLockScanResult,
     type TaskEventLockCleanupResult,
     type ReviewArtifactLockScanResult,

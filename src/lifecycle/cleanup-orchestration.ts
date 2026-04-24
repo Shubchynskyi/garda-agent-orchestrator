@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { invalidateIndex as invalidateReviewsIndex } from '../gate-runtime/reviews-index';
 import { pruneAggregateLogLocked } from '../gate-runtime/task-events';

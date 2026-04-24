@@ -34,7 +34,6 @@ import {
     type FinalReportContract,
     type GateOutcome,
     type ProfileReviewDecisionSummary,
-    type TaskQueueMetadata,
     parseOptionalNumber,
     readDocImpactSummary,
     readReviewTrustSummary,

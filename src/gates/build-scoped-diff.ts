@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { buildScopedDiffMetadata, convertToGitPathspecs, filterDiffByHunks } from '../gate-runtime/scoped-diff';
+import { convertToGitPathspecs, filterDiffByHunks } from '../gate-runtime/scoped-diff';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { matchAnyRegex } from '../gate-runtime/text-utils';
 import { normalizePath, resolveGitRoot, resolvePathInsideRepo, toStringArray, toPosix } from './helpers';

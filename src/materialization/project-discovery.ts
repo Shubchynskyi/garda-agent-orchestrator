@@ -1,7 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as childProcess from 'node:child_process';
-import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { pathExists } from '../core/fs';
 import { normalizeRelativePath } from '../core/paths';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 import {

@@ -8,10 +8,10 @@ import {
     spawnStreamed
 } from '../../../core/subprocess';
 import {
-    appendTaskEvent
+    appendTaskEvent,
+    assertValidTaskId
 } from '../../../gate-runtime/task-events';
-import { assertValidTaskId } from '../../../gate-runtime/task-events';
-import { auditCommandCompactness, auditGateCommand } from '../../../gates/task-events-summary';
+import { auditCommandCompactness } from '../../../gates/task-events-summary';
 import type { CommandCompactnessAudit } from '../../../gates/task-events-summary';
 import * as gateHelpers from '../../../gates/helpers';
 import {

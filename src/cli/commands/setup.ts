@@ -27,7 +27,6 @@ import {
     parseOptions,
     printBanner,
     printHelp,
-    printHighlightedPair,
     printStatus,
     promptSingleSelect,
     promptTextInput,

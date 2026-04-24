@@ -11,8 +11,7 @@ import {
     getCycleBindingSnapshotFromPayload,
     getCurrentCycleReviewContextPaths,
     resolveTaskCycleBindingSnapshot,
-    shouldIncludeTelemetryForCurrentCycle,
-    type TaskCycleBindingSnapshot
+    shouldIncludeTelemetryForCurrentCycle
 } from '../../gates/task-events-summary';
 
 interface TokenContribution {
@@ -453,7 +452,7 @@ function buildTokenEconomy(
             ['infra', path.join(reviewsRoot, `${taskId}-infra-review-context.json`)],
             ['dependency', path.join(reviewsRoot, `${taskId}-dependency-review-context.json`)]
         ]);
-    for (const [rt, contextPath] of currentCycleReviewContextPaths.entries()) {
+    for (const [, contextPath] of currentCycleReviewContextPaths.entries()) {
         const contextKey = `review-context:${toPosix(contextPath)}`;
         if (sourceIndexByKey.has(contextKey)) continue;
         const payload = safeReadJson(contextPath);

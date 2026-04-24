@@ -68,8 +68,7 @@ import {
 } from '../../../gates/protected-manifest-guard';
 import {
     getTaskModeEvidence,
-    getTaskModeEvidenceViolations,
-    parseTaskModeDepth
+    getTaskModeEvidenceViolations
 } from '../../../gates/task-mode';
 import {
     validateTaskPlan,

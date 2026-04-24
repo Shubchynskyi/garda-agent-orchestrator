@@ -283,7 +283,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
             throw new Error(`Unknown cleanup policy action: ${policySubcommand}. Allowed values: show, edit, reset.`);
         }
 
-        const { targetRoot, bundlePath } = resolveWorkspacePaths(policyOptions.targetRoot, 'cleanup policy');
+        const { bundlePath } = resolveWorkspacePaths(policyOptions.targetRoot, 'cleanup policy');
 
         return handleCleanupPolicyCommand(bundlePath, {
             retentionMode: typeof policyOptions.retentionMode === 'string' ? policyOptions.retentionMode : undefined,

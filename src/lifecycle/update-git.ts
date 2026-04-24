@@ -157,7 +157,7 @@ async function prepareGitUpdateSource(sourceRoot: string, diagnosticSource: stri
     }
 
     const buildResult = await runNpmInSource(sourceRoot, ['run', 'build'], DEFAULT_COMPILE_TIMEOUT_MS);
-    const buildText = `${String(buildResult.stderr || '')}\n${String(buildResult.stdout || '')}`;
+
     if (buildResult.timedOut) {
         throw createLifecycleDiagnosticError({
             message: `Timed out building git update source '${diagnosticSource}'.`,

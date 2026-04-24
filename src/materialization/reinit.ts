@@ -5,12 +5,11 @@ import { readJsonFile, writeJsonFile } from '../core/json';
 import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
 import {
     buildRefreshAgentInitState,
-    createAgentInitState,
     doesAgentInitStateMatchAnswers,
     readAgentInitStateSafe,
     writeAgentInitState
 } from '../runtime/agent-init-state';
-import { getCanonicalEntrypointFile, getActiveAgentEntrypointFiles, convertActiveAgentEntrypointFilesToString } from './common';
+import { getCanonicalEntrypointFile, convertActiveAgentEntrypointFilesToString } from './common';
 import { applyAssistantDefaults } from './rule-materialization';
 import { runInstall } from './install';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';

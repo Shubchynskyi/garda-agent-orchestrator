@@ -12,10 +12,7 @@ import {
     resolveIsolatedOrchestratorRoot,
     validateSandbox
 } from '../../gates/isolation-sandbox';
-import {
-    parseOptions,
-    normalizePathValue
-} from './cli-helpers';
+import { parseOptions } from './cli-helpers';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 
 export async function handleValidateIsolation(gateArgv: string[]): Promise<void> {

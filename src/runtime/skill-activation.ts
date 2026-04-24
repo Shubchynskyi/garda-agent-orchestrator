@@ -29,12 +29,11 @@ import {
     getReviewSkillCandidates,
     hasSkillEntrypoint,
     readReviewCapabilitiesConfigFile,
-    type OptionalReviewCapabilityKey,
     OPTIONAL_REVIEW_CAPABILITY_KEYS,
     type ReviewCapabilities
 } from '../core/review-capabilities';
 
-type JsonObject = Record<string, unknown>;
+
 
 interface InstalledSkillPacksPayload {
     version: number;

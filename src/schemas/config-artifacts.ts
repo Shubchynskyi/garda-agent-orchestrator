@@ -322,8 +322,7 @@ export function validateIsolationModeConfig(input: unknown): Record<string, unkn
     return normalized;
 }
 
-const VALID_REVIEW_POLICY_VALUES = new Set<unknown>([true, false, 'auto']);
-const BUILT_IN_PROFILE_NAMES = ['balanced', 'fast', 'strict', 'docs-only'] as const;
+
 
 function normalizeReviewPolicyValue(value: unknown, fieldName: string): boolean | 'auto' {
     if (value === 'auto') {

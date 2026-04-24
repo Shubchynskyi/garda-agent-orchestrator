@@ -230,12 +230,7 @@ function getEffectiveDepthFromPreflight(
     return previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2;
 }
 
-function getRequiredReviewTypesInPreparationOrder(
-    requiredReviews: Record<string, boolean>,
-    reviewExecutionPolicyMode: ReturnType<typeof resolveReviewExecutionPolicyModeFromPreflight>
-): string[] {
-    return getReviewExecutionPreparationBatches(requiredReviews, reviewExecutionPolicyMode).flat();
-}
+
 
 function formatReviewTypeList(reviewTypes: readonly string[]): string {
     return reviewTypes.length > 0 ? reviewTypes.join(', ') : 'none';

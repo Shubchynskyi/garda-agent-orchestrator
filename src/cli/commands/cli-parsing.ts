@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as path from 'node:path';
 import {
     ALL_AGENT_ENTRYPOINT_FILES,
     BOOLEAN_FALSE_VALUES,

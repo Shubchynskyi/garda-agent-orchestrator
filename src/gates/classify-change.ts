@@ -3,7 +3,6 @@ import * as path from 'node:path';
 import { matchAnyRegex } from '../gate-runtime/text-utils';
 import {
     normalizePath,
-    joinOrchestratorPath,
     getProtectedControlPlaneRoots,
     normalizeProtectedControlPlaneRoots,
     normalizeRootPrefixes,

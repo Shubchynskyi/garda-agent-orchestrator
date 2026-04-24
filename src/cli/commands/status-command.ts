@@ -5,7 +5,6 @@ import { runDoctor, formatDoctorResult, formatDoctorResultCompact, formatDoctorR
 import { getStatusSnapshot, formatStatusSnapshotCompact, formatStatusSnapshotJson } from '../../validators/status';
 import { getWhyBlocked, formatWhyBlockedResult } from '../../validators/why-blocked';
 import {
-    getInitAnswerValue,
     PackageJsonLike,
     parseOptions,
     printBanner,

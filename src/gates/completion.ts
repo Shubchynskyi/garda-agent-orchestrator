@@ -37,30 +37,20 @@ import {
     readOptionalArtifactStringField,
     findLatestRecordedReviewContextPath
 } from './completion-evidence';
-import type { TimelineEventEntry } from './completion-evidence';
 import {
-    STAGE_SEQUENCE_ORDER,
-    NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER,
-    NON_CODE_STAGE_SEQUENCE_ORDER,
     REVIEW_CONTRACTS,
-    EMPTY_REVIEW_MARKERS,
     validateStageSequence,
     validateZeroDiffCompletionEvidence,
     validateReviewSkillEvidence,
     validatePreflightForCompletion,
-    isTrivialReview,
-    extractMarkdownSectionLines,
-    normalizeReviewListText,
-    isMeaningfulReviewEntry,
-    getMarkdownMeaningfulEntries,
-    getFindingsBySeverity,
     getReviewArtifactFindingsEvidence
 } from './completion-verdict';
-import type { StageSequenceEvidence, ZeroDiffCompletionEvidence } from './completion-verdict';
+
 import {
     buildCoherentCycleRestartCommand,
     buildReviewCycleRestartCommand
 } from './completion-reporting';
+// readReviewTrustSummary is intentionally imported for re-export
 import { readReviewTrustSummary } from './task-audit-summary-collectors';
 import {
     loadFullSuiteValidationConfig,

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ALL_AGENT_ENTRYPOINT_FILES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
+import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
 import { pathExists, readTextFile } from '../core/fs';
 import {
     getProviderOrchestratorProfileDefinitions,

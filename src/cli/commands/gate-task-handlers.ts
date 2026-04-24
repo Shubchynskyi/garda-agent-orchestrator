@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     emitMandatoryCompletionGateEventAsync
@@ -24,10 +23,7 @@ import {
     ensureDirectoryExists,
     parseRequiredText
 } from './cli-helpers';
-import {
-    type ParsedOptionsRecord,
-    requireResolvedPath
-} from './shared-command-utils';
+import type { ParsedOptionsRecord } from './shared-command-utils';
 import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion-finalization';
 import { runFullSuiteValidationCommand } from './gate-flows/full-suite-validation-flow';
 import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task-summary-flow';
