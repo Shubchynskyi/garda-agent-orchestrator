@@ -22,6 +22,7 @@ import {
     readSkillsHeadlinesIfPresent,
     removeSkillPack,
     suggestSkills,
+    syncReviewCapabilities,
     textMatchesFuzzyVariant,
     validateSkillPacks,
     writeSkillsIndex,
@@ -158,6 +159,33 @@ test('addSkillPack synchronizes optional review capabilities for installed speci
         assert.equal(removeResult.reviewCapabilities!.test, false);
         assert.equal(removeResult.reviewCapabilities!.performance, false);
         assert.equal(removeResult.reviewCapabilities!.dependency, true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('syncReviewCapabilities ignores bare matching directories without a skill entrypoint', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template', 'config'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'review-capabilities.json'), getReviewCapabilitiesConfigPath(bundleRoot));
+
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills', 'performance-review'), { recursive: true });
+        const readySkillRoot = path.join(bundleRoot, 'live', 'skills', 'testing-strategy');
+        fs.mkdirSync(readySkillRoot, { recursive: true });
+        fs.writeFileSync(path.join(readySkillRoot, 'SKILL.md'), '# testing-strategy\n', 'utf8');
+
+        const syncResult = syncReviewCapabilities(bundleRoot);
+        assert.equal(syncResult.capabilities.performance, false);
+        assert.equal(syncResult.capabilities.test, true);
+
+        const persistedCapabilities = JSON.parse(fs.readFileSync(getReviewCapabilitiesConfigPath(bundleRoot), 'utf8'));
+        assert.equal(persistedCapabilities.performance, false);
+        assert.equal(persistedCapabilities.test, true);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

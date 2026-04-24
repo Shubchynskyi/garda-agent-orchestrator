@@ -348,8 +348,12 @@ describe('runInit', () => {
     it('synchronizes optional review capabilities from live specialist skills', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
-            fs.mkdirSync(path.join(bundleRoot, 'live', 'skills', 'api-contract-review'), { recursive: true });
-            fs.mkdirSync(path.join(bundleRoot, 'live', 'skills', 'testing-strategy'), { recursive: true });
+            const apiSkillRoot = path.join(bundleRoot, 'live', 'skills', 'api-contract-review');
+            const testSkillRoot = path.join(bundleRoot, 'live', 'skills', 'testing-strategy');
+            fs.mkdirSync(apiSkillRoot, { recursive: true });
+            fs.mkdirSync(testSkillRoot, { recursive: true });
+            fs.writeFileSync(path.join(apiSkillRoot, 'SKILL.md'), '# api-contract-review\n', 'utf8');
+            fs.writeFileSync(path.join(testSkillRoot, 'SKILL.md'), '# testing-strategy\n', 'utf8');
 
             runInit({
                 targetRoot: projectRoot,
