@@ -188,10 +188,10 @@ Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 25. Report to user in exact order:
     1. implementation summary (include depth, path mode, review verdicts, docs updated)
-       - at `depth=1` and `depth=2`, include a token-economy savings line; at `depth=3` it is optional;
-       - format savings as `Saved tokens: ~<total> (~<percent>%) (<part> <label> + <part> <label> + ...)` when the baseline is known;
+       - at `depth=1` and `depth=2`, include an output-compaction line; at `depth=3` it is optional;
+       - use chars as the primary unit, keep approximate percentage when baseline is known, keep spaced breakdown formatting, and include token estimate only as a secondary note when available;
        - keep spaces between numeric values and labels and around `+`; do not emit compressed fragments like `824code review context` or `+25DB review context`;
-       - localized summaries may translate the wording, but must preserve the numeric structure; example: `Saved tokens: ~882 (~67%) (824 code review context + 25 DB review context + 33 compile gate output).`
+       - localized summaries may translate the wording, but must preserve the numeric structure; example: `Suppressed output: ~3528 chars (~67%) (code review context ~3296 chars + DB review context ~100 chars + compile gate output ~132 chars). Token estimate: ~882.`
     2. commit suggestion as exact command form, defaulting to conventional style: `git commit -m "<type>(<scope>): <summary>"`
        - if `final_closeout.commit_command_suggestion` is populated, use it verbatim by default; otherwise fall back to the conventional template above.
     3. explicit follow-up question: `Do you want me to commit now? (yes/no)`

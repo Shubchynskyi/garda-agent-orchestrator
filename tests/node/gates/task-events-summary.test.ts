@@ -718,6 +718,9 @@ describe('gates/task-events-summary', () => {
                 review_type: 'code',
                 rule_context: {
                     summary: {
+                        original_char_count: 720,
+                        output_char_count: 240,
+                        estimated_saved_chars: 480,
                         original_token_count_estimate: 180,
                         output_token_count_estimate: 60,
                         estimated_saved_tokens: 120
@@ -728,6 +731,9 @@ describe('gates/task-events-summary', () => {
             const reviewEvidencePath = path.join(reviewsDir, 'T-003-review-gate.json');
             fs.writeFileSync(reviewEvidencePath, JSON.stringify({
                 output_telemetry: {
+                    raw_char_count: 72,
+                    filtered_char_count: 24,
+                    estimated_saved_chars: 48,
                     raw_token_count_estimate: 18,
                     filtered_token_count_estimate: 6,
                     estimated_saved_tokens: 12
@@ -749,6 +755,9 @@ describe('gates/task-events-summary', () => {
                     actor: 'gate',
                     message: 'Compile gate passed.',
                     details: {
+                        raw_char_count: 200,
+                        filtered_char_count: 68,
+                        estimated_saved_chars: 132,
                         raw_token_count_estimate: 50,
                         filtered_token_count_estimate: 17,
                         estimated_saved_tokens: 33
@@ -773,12 +782,516 @@ describe('gates/task-events-summary', () => {
             );
 
             const summary = buildTaskEventsSummary({ taskId: 'T-003', eventsRoot: eventsDir, repoRoot: tmpDir });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 660);
+            assert.equal(summary.token_economy!.total_raw_char_count, 992);
             assert.equal(summary.token_economy!.total_estimated_saved_tokens, 165);
             assert.equal(summary.token_economy!.total_raw_token_count_estimate, 248);
-            assert.match(summary.token_economy!.visible_summary_line!, /Saved tokens: ~165/);
-            assert.match(summary.token_economy!.visible_summary_line!, /120 code review context/);
-            assert.match(summary.token_economy!.visible_summary_line!, /33 compile gate output/);
-            assert.match(summary.token_economy!.visible_summary_line!, /12 review gate output/);
+            assert.match(summary.token_economy!.visible_summary_line!, /Suppressed output: ~660 chars/);
+            assert.match(summary.token_economy!.visible_summary_line!, /code review context ~480 chars/);
+            assert.match(summary.token_economy!.visible_summary_line!, /compile gate output ~132 chars/);
+            assert.match(summary.token_economy!.visible_summary_line!, /review gate output ~48 chars/);
+            assert.match(summary.token_economy!.visible_summary_line!, /Token estimate: ~165/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('labels full-suite validation telemetry separately from generic gate output', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-004',
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full suite passed.',
+                    details: {
+                        output_telemetry: {
+                            raw_char_count: 600,
+                            filtered_char_count: 180,
+                            estimated_saved_chars: 420,
+                            raw_token_count_estimate: 150,
+                            filtered_token_count_estimate: 45,
+                            estimated_saved_tokens: 105
+                        }
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-004.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({ taskId: 'T-004', eventsRoot: eventsDir, repoRoot: tmpDir });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 420);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 105);
+            assert.match(summary.token_economy!.visible_summary_line!, /full-suite validation output ~420 chars/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('excludes stale full-suite telemetry when the current cycle binding no longer matches', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-004B-compile-gate.json'),
+                JSON.stringify({
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    preflight_path: path.join(reviewsDir, 'T-004B-preflight.json'),
+                    preflight_hash_sha256: 'current-cycle'
+                }),
+                'utf8'
+            );
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:05:00Z',
+                    task_id: 'T-004B',
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full suite passed.',
+                    details: {
+                        cycle_binding: {
+                            preflight_path: path.join(reviewsDir, 'T-004B-preflight.json'),
+                            preflight_sha256: 'older-cycle',
+                            compile_gate_timestamp: '2024-01-15T09:30:00Z'
+                        },
+                        output_telemetry: {
+                            raw_char_count: 600,
+                            filtered_char_count: 180,
+                            estimated_saved_chars: 420,
+                            raw_token_count_estimate: 150,
+                            filtered_token_count_estimate: 45,
+                            estimated_saved_tokens: 105
+                        }
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-004B.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({ taskId: 'T-004B', eventsRoot: eventsDir, repoRoot: tmpDir });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 0);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 0);
+            assert.equal(summary.token_economy!.breakdown.length, 0);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('keeps current-cycle compile and full-suite telemetry when the compile artifact is written after the compile event', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const preflightPath = path.join(reviewsDir, 'T-004B-runtime-order-preflight.json');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-004B-runtime-order-compile-gate.json'),
+                JSON.stringify({
+                    timestamp_utc: '2024-01-15T10:00:00.400Z',
+                    preflight_path: preflightPath,
+                    preflight_hash_sha256: 'current-cycle'
+                }),
+                'utf8'
+            );
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00.000Z',
+                    task_id: 'T-004B-runtime-order',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile gate passed for the current cycle.',
+                    details: {
+                        preflight_path: preflightPath,
+                        preflight_hash_sha256: 'current-cycle',
+                        raw_char_count: 200,
+                        filtered_char_count: 68,
+                        estimated_saved_chars: 132,
+                        raw_token_count_estimate: 50,
+                        filtered_token_count_estimate: 17,
+                        estimated_saved_tokens: 33
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:05:00.000Z',
+                    task_id: 'T-004B-runtime-order',
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full suite passed for the current cycle.',
+                    details: {
+                        cycle_binding: {
+                            preflight_path: preflightPath,
+                            preflight_sha256: 'current-cycle',
+                            compile_gate_timestamp: '2024-01-15T10:00:00.000Z'
+                        },
+                        output_telemetry: {
+                            raw_char_count: 600,
+                            filtered_char_count: 180,
+                            estimated_saved_chars: 420,
+                            raw_token_count_estimate: 150,
+                            filtered_token_count_estimate: 45,
+                            estimated_saved_tokens: 105
+                        }
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-004B-runtime-order.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({
+                taskId: 'T-004B-runtime-order',
+                eventsRoot: eventsDir,
+                repoRoot: tmpDir
+            });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 552);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 138);
+            assert.equal(summary.token_economy!.breakdown.length, 2);
+            assert.match(summary.token_economy!.visible_summary_line!, /compile gate output ~132 chars/);
+            assert.match(summary.token_economy!.visible_summary_line!, /full-suite validation output ~420 chars/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('counts current-cycle review-context telemetry directly from REVIEW_PHASE_STARTED output_path', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const preflightPath = path.join(reviewsDir, 'T-004B-review-phase-preflight.json');
+            const reviewContextPath = path.join(reviewsDir, 'T-004B-review-phase-code-review-context.json');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-004B-review-phase-compile-gate.json'),
+                JSON.stringify({
+                    timestamp_utc: '2024-01-15T10:00:00.400Z',
+                    preflight_path: preflightPath,
+                    preflight_hash_sha256: 'current-cycle'
+                }),
+                'utf8'
+            );
+            fs.writeFileSync(reviewContextPath, JSON.stringify({
+                review_type: 'code',
+                rule_context: {
+                    summary: {
+                        original_char_count: 720,
+                        output_char_count: 240,
+                        estimated_saved_chars: 480,
+                        original_token_count_estimate: 180,
+                        output_token_count_estimate: 60,
+                        estimated_saved_tokens: 120
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00.000Z',
+                    task_id: 'T-004B-review-phase',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile gate passed for the current cycle.',
+                    details: {
+                        preflight_path: preflightPath,
+                        preflight_hash_sha256: 'current-cycle'
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00.000Z',
+                    task_id: 'T-004B-review-phase',
+                    event_type: 'REVIEW_PHASE_STARTED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Review phase started for the current cycle.',
+                    details: {
+                        review_type: 'code',
+                        output_path: reviewContextPath
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-004B-review-phase.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({
+                taskId: 'T-004B-review-phase',
+                eventsRoot: eventsDir,
+                repoRoot: tmpDir
+            });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 480);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 120);
+            assert.equal(summary.token_economy!.breakdown.length, 1);
+            assert.match(summary.token_economy!.visible_summary_line!, /code review context ~480 chars/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('excludes stale compile and review-context telemetry after a newer compile cycle starts', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            const reviewContextPath = path.join(reviewsDir, 'T-004C-code-review-context.json');
+            fs.writeFileSync(reviewContextPath, JSON.stringify({
+                review_type: 'code',
+                rule_context: {
+                    summary: {
+                        original_char_count: 720,
+                        output_char_count: 240,
+                        estimated_saved_chars: 480,
+                        original_token_count_estimate: 180,
+                        output_token_count_estimate: 60,
+                        estimated_saved_tokens: 120
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const reviewEvidencePath = path.join(reviewsDir, 'T-004C-review-gate.json');
+            fs.writeFileSync(reviewEvidencePath, JSON.stringify({
+                output_telemetry: {
+                    raw_char_count: 72,
+                    filtered_char_count: 24,
+                    estimated_saved_chars: 48,
+                    raw_token_count_estimate: 18,
+                    filtered_token_count_estimate: 6,
+                    estimated_saved_tokens: 12
+                },
+                artifact_evidence: {
+                    checked: [{
+                        review: 'code',
+                        review_context_path: reviewContextPath.replace(/\\/g, '/')
+                    }]
+                }
+            }, null, 2), 'utf8');
+
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-004C-compile-gate.json'),
+                JSON.stringify({
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    preflight_path: path.join(reviewsDir, 'T-004C-preflight.json'),
+                    preflight_hash_sha256: 'current-cycle'
+                }),
+                'utf8'
+            );
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-004C',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile gate passed for the earlier cycle.',
+                    details: {
+                        raw_char_count: 200,
+                        filtered_char_count: 68,
+                        estimated_saved_chars: 132,
+                        raw_token_count_estimate: 50,
+                        filtered_token_count_estimate: 17,
+                        estimated_saved_tokens: 33
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:05:00Z',
+                    task_id: 'T-004C',
+                    event_type: 'REVIEW_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Review gate passed for the earlier cycle.',
+                    details: {
+                        review_evidence_path: reviewEvidencePath.replace(/\\/g, '/')
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:06:00Z',
+                    task_id: 'T-004C',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile gate passed for the current cycle.',
+                    details: {
+                        raw_char_count: 96,
+                        filtered_char_count: 34,
+                        estimated_saved_chars: 62,
+                        raw_token_count_estimate: 24,
+                        filtered_token_count_estimate: 8,
+                        estimated_saved_tokens: 16
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-004C.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({ taskId: 'T-004C', eventsRoot: eventsDir, repoRoot: tmpDir });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 62);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 16);
+            assert.equal(summary.token_economy!.breakdown.length, 1);
+            assert.match(summary.token_economy!.visible_summary_line!, /compile gate output ~62 chars/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('keeps token-only legacy contributions visible inside char-first summaries', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-005',
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full suite passed.',
+                    details: {
+                        output_telemetry: {
+                            raw_char_count: 600,
+                            filtered_char_count: 180,
+                            estimated_saved_chars: 420,
+                            raw_token_count_estimate: 150,
+                            filtered_token_count_estimate: 45,
+                            estimated_saved_tokens: 105
+                        }
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-005',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile gate passed.',
+                    details: {
+                        raw_token_count_estimate: 50,
+                        filtered_token_count_estimate: 17,
+                        estimated_saved_tokens: 33
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-005.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({ taskId: 'T-005', eventsRoot: eventsDir, repoRoot: tmpDir });
+            assert.match(summary.token_economy!.visible_summary_line!, /Suppressed output \(char-aware subset\): ~420 chars/);
+            assert.match(summary.token_economy!.visible_summary_line!, /full-suite validation output ~420 chars/);
+            assert.match(summary.token_economy!.visible_summary_line!, /compile gate output token estimate ~33/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('uses the provided reviewsRoot and keeps only the latest full-suite attempt per cycle', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'custom-reviews');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            const firstArtifactPath = path.join(reviewsDir, 'T-006-full-suite-validation-first.json');
+            const secondArtifactPath = path.join(reviewsDir, 'T-006-full-suite-validation-second.json');
+            const preflightPath = path.join(reviewsDir, 'T-006-preflight.json');
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-006-compile-gate.json'),
+                JSON.stringify({
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    preflight_path: preflightPath,
+                    preflight_hash_sha256: 'current-cycle'
+                }),
+                'utf8'
+            );
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:05:00Z',
+                    task_id: 'T-006',
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full suite passed.',
+                    details: {
+                        artifact_path: firstArtifactPath,
+                        cycle_binding: {
+                            preflight_path: preflightPath,
+                            preflight_sha256: 'current-cycle',
+                            compile_gate_timestamp: '2024-01-15T10:00:00Z'
+                        },
+                        output_telemetry: {
+                            raw_char_count: 600,
+                            filtered_char_count: 180,
+                            estimated_saved_chars: 420,
+                            raw_token_count_estimate: 150,
+                            filtered_token_count_estimate: 45,
+                            estimated_saved_tokens: 105
+                        }
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:06:00Z',
+                    task_id: 'T-006',
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full suite passed again.',
+                    details: {
+                        artifact_path: secondArtifactPath,
+                        cycle_binding: {
+                            preflight_path: preflightPath,
+                            preflight_sha256: 'current-cycle',
+                            compile_gate_timestamp: '2024-01-15T10:00:00Z'
+                        },
+                        output_telemetry: {
+                            raw_char_count: 1000,
+                            filtered_char_count: 220,
+                            estimated_saved_chars: 780,
+                            raw_token_count_estimate: 250,
+                            filtered_token_count_estimate: 55,
+                            estimated_saved_tokens: 195
+                        }
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-006.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({
+                taskId: 'T-006',
+                eventsRoot: eventsDir,
+                repoRoot: tmpDir,
+                reviewsRoot: reviewsDir
+            });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 780);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 195);
+            assert.equal(summary.token_economy!.breakdown.length, 1);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
@@ -800,7 +1313,7 @@ describe('gates/task-events-summary', () => {
                 command_policy_warnings: [],
                 command_policy_warning_count: 0,
                 token_economy: {
-                    visible_summary_line: 'Saved tokens: ~33 (~66%) (33 compile gate output).'
+                    visible_summary_line: 'Suppressed output: ~132 chars (~66%) (compile gate output ~132 chars). Token estimate: ~33.'
                 },
                 first_event_utc: '2024-01-15T10:00:00.000Z',
                 last_event_utc: '2024-01-15T10:00:00.000Z',
@@ -817,7 +1330,7 @@ describe('gates/task-events-summary', () => {
             assert.ok(text.includes('Task: T-001'));
             assert.ok(text.includes('Events: 1'));
             assert.ok(text.includes('IntegrityStatus: PASS'));
-            assert.ok(text.includes('Saved tokens: ~33 (~66%) (33 compile gate output).'));
+            assert.ok(text.includes('Suppressed output: ~132 chars (~66%) (compile gate output ~132 chars). Token estimate: ~33.'));
             assert.ok(text.includes('PREFLIGHT_CLASSIFIED'));
             assert.ok(text.includes('Timeline:'));
         });

@@ -6,6 +6,7 @@ import { LIFECYCLE_EVENT_TYPES } from '../../../gate-runtime/lifecycle-events';
 import { appendTaskEventAsync } from '../../../gate-runtime/task-events';
 import * as gateHelpers from '../../../gates/helpers';
 import {
+    buildFullSuiteValidationOutputTelemetry,
     buildSkippedResult,
     buildValidationResult,
     formatFullSuiteValidationResult,
@@ -355,6 +356,7 @@ export async function runFullSuiteValidationCommand(
         changedFiles,
         cycleBinding
     );
+    result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);
     await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, result.status, result, {
         status: result.status,
         enabled: result.enabled,
@@ -367,7 +369,8 @@ export async function runFullSuiteValidationCommand(
         cycle_binding: result.cycle_binding,
         out_of_scope_audit_verdict: result.out_of_scope_audit_verdict,
         violations: result.violations,
-        warnings: result.warnings
+        warnings: result.warnings,
+        output_telemetry: result.output_telemetry
     });
 
     return {

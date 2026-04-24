@@ -169,6 +169,9 @@ test('buildTaskStats extracts token savings from event output_telemetry', () => 
             timestamp_utc: '2026-04-05T14:00:00Z',
             details: {
                 output_telemetry: {
+                    raw_char_count: 2000,
+                    filtered_char_count: 400,
+                    estimated_saved_chars: 1600,
                     raw_token_count_estimate: 500,
                     filtered_token_count_estimate: 100,
                     estimated_saved_tokens: 400
@@ -177,12 +180,427 @@ test('buildTaskStats extracts token savings from event output_telemetry', () => 
         });
 
         const stats = buildTaskStats('T-300', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(stats.token_economy.total_estimated_saved_chars, 1600);
+        assert.equal(stats.token_economy.total_raw_char_count, 2000);
+        assert.equal(stats.token_economy.chars_savings_percent, 80);
         assert.equal(stats.token_economy.total_estimated_saved_tokens, 400);
         assert.equal(stats.token_economy.total_raw_token_count_estimate, 500);
         assert.equal(stats.token_economy.savings_percent, 80);
         assert.ok(stats.token_economy.visible_summary_line);
-        assert.ok(stats.token_economy.visible_summary_line!.includes('~400'));
+        assert.ok(stats.token_economy.visible_summary_line!.includes('Suppressed output: ~1600 chars'));
         assert.ok(stats.token_economy.visible_summary_line!.includes('~80%'));
+        assert.equal(stats.token_economy.breakdown.length, 1);
+        assert.equal(stats.token_economy.breakdown[0].label, 'compile gate output');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats labels full-suite validation telemetry separately', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        writeEvent(eventsRoot, 'T-301', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:05:00Z',
+            details: {
+                output_telemetry: {
+                    raw_char_count: 1500,
+                    filtered_char_count: 450,
+                    estimated_saved_chars: 1050,
+                    raw_token_count_estimate: 420,
+                    filtered_token_count_estimate: 120,
+                    estimated_saved_tokens: 300
+                }
+            }
+        });
+
+        const stats = buildTaskStats('T-301', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(stats.token_economy.total_estimated_saved_chars, 1050);
+        assert.equal(stats.token_economy.total_estimated_saved_tokens, 300);
+        assert.equal(stats.token_economy.breakdown.length, 1);
+        assert.equal(stats.token_economy.breakdown[0].label, 'full-suite validation output');
+        assert.ok(stats.token_economy.visible_summary_line!.includes('full-suite validation output ~1050 chars'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats excludes stale full-suite telemetry from an older cycle', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        fs.writeFileSync(
+            path.join(reviewsRoot, 'T-301B-compile-gate.json'),
+            JSON.stringify({
+                timestamp_utc: '2026-04-05T14:00:00Z',
+                preflight_path: path.join(reviewsRoot, 'T-301B-preflight.json'),
+                preflight_hash_sha256: 'current-cycle'
+            }),
+            'utf8'
+        );
+
+        writeEvent(eventsRoot, 'T-301B', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:05:00Z',
+            details: {
+                cycle_binding: {
+                    preflight_path: path.join(reviewsRoot, 'T-301B-preflight.json'),
+                    preflight_sha256: 'older-cycle',
+                    compile_gate_timestamp: '2026-04-05T13:30:00Z'
+                },
+                output_telemetry: {
+                    raw_char_count: 1500,
+                    filtered_char_count: 450,
+                    estimated_saved_chars: 1050,
+                    raw_token_count_estimate: 420,
+                    filtered_token_count_estimate: 120,
+                    estimated_saved_tokens: 300
+                }
+            }
+        });
+
+        const stats = buildTaskStats('T-301B', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(stats.token_economy.total_estimated_saved_chars, 0);
+        assert.equal(stats.token_economy.total_estimated_saved_tokens, 0);
+        assert.equal(stats.token_economy.breakdown.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats keeps current-cycle compile and full-suite telemetry when the compile artifact trails the compile event', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        const preflightPath = path.join(reviewsRoot, 'T-301C-preflight.json');
+        fs.writeFileSync(
+            path.join(reviewsRoot, 'T-301C-compile-gate.json'),
+            JSON.stringify({
+                timestamp_utc: '2026-04-05T14:00:00.400Z',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'current-cycle'
+            }),
+            'utf8'
+        );
+
+        writeEvent(eventsRoot, 'T-301C', {
+            event_type: 'COMPILE_GATE_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:00:00.000Z',
+            details: {
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'current-cycle',
+                raw_char_count: 200,
+                filtered_char_count: 68,
+                estimated_saved_chars: 132,
+                raw_token_count_estimate: 50,
+                filtered_token_count_estimate: 17,
+                estimated_saved_tokens: 33
+            }
+        });
+        writeEvent(eventsRoot, 'T-301C', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:05:00.000Z',
+            details: {
+                cycle_binding: {
+                    preflight_path: preflightPath,
+                    preflight_sha256: 'current-cycle',
+                    compile_gate_timestamp: '2026-04-05T14:00:00.000Z'
+                },
+                output_telemetry: {
+                    raw_char_count: 1500,
+                    filtered_char_count: 450,
+                    estimated_saved_chars: 1050,
+                    raw_token_count_estimate: 420,
+                    filtered_token_count_estimate: 120,
+                    estimated_saved_tokens: 300
+                }
+            }
+        });
+
+        const stats = buildTaskStats('T-301C', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(stats.token_economy.total_estimated_saved_chars, 1182);
+        assert.equal(stats.token_economy.total_estimated_saved_tokens, 333);
+        assert.equal(stats.token_economy.breakdown.length, 2);
+        assert.ok(stats.token_economy.visible_summary_line!.includes('compile gate output ~132 chars'));
+        assert.ok(stats.token_economy.visible_summary_line!.includes('full-suite validation output ~1050 chars'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats keeps token-only legacy contributions visible inside char-first summaries', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        writeEvent(eventsRoot, 'T-302', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:05:00Z',
+            details: {
+                output_telemetry: {
+                    raw_char_count: 1500,
+                    filtered_char_count: 450,
+                    estimated_saved_chars: 1050,
+                    raw_token_count_estimate: 420,
+                    filtered_token_count_estimate: 120,
+                    estimated_saved_tokens: 300
+                }
+            }
+        });
+        writeEvent(eventsRoot, 'T-302', {
+            event_type: 'COMPILE_GATE_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:06:00Z',
+            details: {
+                raw_token_count_estimate: 50,
+                filtered_token_count_estimate: 17,
+                estimated_saved_tokens: 33
+            }
+        });
+
+        const stats = buildTaskStats('T-302', tmpDir, eventsRoot, reviewsRoot);
+        assert.ok(stats.token_economy.visible_summary_line!.includes('Suppressed output (char-aware subset): ~1050 chars'));
+        assert.ok(stats.token_economy.visible_summary_line!.includes('full-suite validation output ~1050 chars'));
+        assert.ok(stats.token_economy.visible_summary_line!.includes('compile gate output token estimate ~33'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats counts full-suite validation events as gate pass/fail outcomes', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        writeEvent(eventsRoot, 'T-302B', {
+            event_type: 'COMPILE_GATE_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:00:00Z'
+        });
+        writeEvent(eventsRoot, 'T-302B', {
+            event_type: 'FULL_SUITE_VALIDATION_WARNED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:01:00Z'
+        });
+        writeEvent(eventsRoot, 'T-302B', {
+            event_type: 'FULL_SUITE_VALIDATION_SKIPPED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:02:00Z'
+        });
+        writeEvent(eventsRoot, 'T-302B', {
+            event_type: 'FULL_SUITE_VALIDATION_FAILED',
+            outcome: 'FAIL',
+            timestamp_utc: '2026-04-05T14:03:00Z'
+        });
+
+        const stats = buildTaskStats('T-302B', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(stats.gate_pass_count, 3);
+        assert.equal(stats.gate_fail_count, 1);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats uses the provided reviewsRoot and keeps only the latest full-suite attempt per cycle', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot } = scaffold(tmpDir);
+        const customReviewsRoot = path.join(tmpDir, 'custom-reviews');
+        fs.mkdirSync(customReviewsRoot, { recursive: true });
+        const firstArtifactPath = path.join(customReviewsRoot, 'T-302C-full-suite-validation-first.json');
+        const secondArtifactPath = path.join(customReviewsRoot, 'T-302C-full-suite-validation-second.json');
+        const preflightPath = path.join(customReviewsRoot, 'T-302C-preflight.json');
+        fs.writeFileSync(
+            path.join(customReviewsRoot, 'T-302C-compile-gate.json'),
+            JSON.stringify({
+                timestamp_utc: '2026-04-05T14:00:00Z',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'current-cycle'
+            }),
+            'utf8'
+        );
+
+        writeEvent(eventsRoot, 'T-302C', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:05:00Z',
+            details: {
+                artifact_path: firstArtifactPath,
+                cycle_binding: {
+                    preflight_path: preflightPath,
+                    preflight_sha256: 'current-cycle',
+                    compile_gate_timestamp: '2026-04-05T14:00:00Z'
+                },
+                output_telemetry: {
+                    raw_char_count: 600,
+                    filtered_char_count: 200,
+                    estimated_saved_chars: 400,
+                    raw_token_count_estimate: 150,
+                    filtered_token_count_estimate: 50,
+                    estimated_saved_tokens: 100
+                }
+            }
+        });
+        writeEvent(eventsRoot, 'T-302C', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:06:00Z',
+            details: {
+                artifact_path: secondArtifactPath,
+                cycle_binding: {
+                    preflight_path: preflightPath,
+                    preflight_sha256: 'current-cycle',
+                    compile_gate_timestamp: '2026-04-05T14:00:00Z'
+                },
+                output_telemetry: {
+                    raw_char_count: 1200,
+                    filtered_char_count: 300,
+                    estimated_saved_chars: 900,
+                    raw_token_count_estimate: 300,
+                    filtered_token_count_estimate: 75,
+                    estimated_saved_tokens: 225
+                }
+            }
+        });
+
+        const stats = buildTaskStats('T-302C', tmpDir, eventsRoot, customReviewsRoot);
+        assert.equal(stats.token_economy.total_estimated_saved_chars, 900);
+        assert.equal(stats.token_economy.total_estimated_saved_tokens, 225);
+        assert.equal(stats.token_economy.breakdown.length, 1);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats normalizes full-suite cycle keys so relative and absolute preflight paths dedupe', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot } = scaffold(tmpDir);
+        const customReviewsRoot = path.join(tmpDir, 'custom-reviews');
+        fs.mkdirSync(customReviewsRoot, { recursive: true });
+        const absolutePreflightPath = path.join(customReviewsRoot, 'T-302D-preflight.json');
+        const relativePreflightPath = path.relative(tmpDir, absolutePreflightPath);
+
+        fs.writeFileSync(
+            path.join(customReviewsRoot, 'T-302D-compile-gate.json'),
+            JSON.stringify({
+                timestamp_utc: '2026-04-05T14:00:00Z',
+                preflight_path: absolutePreflightPath
+            }),
+            'utf8'
+        );
+
+        writeEvent(eventsRoot, 'T-302D', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:05:00Z',
+            details: {
+                cycle_binding: {
+                    preflight_path: relativePreflightPath,
+                    compile_gate_timestamp: '2026-04-05T14:00:00Z'
+                },
+                output_telemetry: {
+                    raw_char_count: 500,
+                    filtered_char_count: 150,
+                    estimated_saved_chars: 350,
+                    raw_token_count_estimate: 125,
+                    filtered_token_count_estimate: 38,
+                    estimated_saved_tokens: 87
+                }
+            }
+        });
+        writeEvent(eventsRoot, 'T-302D', {
+            event_type: 'FULL_SUITE_VALIDATION_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:06:00Z',
+            details: {
+                cycle_binding: {
+                    preflight_path: absolutePreflightPath,
+                    compile_gate_timestamp: '2026-04-05T14:00:00Z'
+                },
+                output_telemetry: {
+                    raw_char_count: 1200,
+                    filtered_char_count: 300,
+                    estimated_saved_chars: 900,
+                    raw_token_count_estimate: 300,
+                    filtered_token_count_estimate: 75,
+                    estimated_saved_tokens: 225
+                }
+            }
+        });
+
+        const stats = buildTaskStats('T-302D', tmpDir, eventsRoot, customReviewsRoot);
+        assert.equal(stats.token_economy.total_estimated_saved_chars, 900);
+        assert.equal(stats.token_economy.total_estimated_saved_tokens, 225);
+        assert.equal(stats.token_economy.breakdown.length, 1);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('buildTaskStats ignores stale review-context artifacts until the current cycle rebuilds them', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        fs.writeFileSync(
+            path.join(reviewsRoot, 'T-302E-compile-gate.json'),
+            JSON.stringify({
+                timestamp_utc: '2026-04-05T14:00:00Z',
+                preflight_path: path.join(reviewsRoot, 'T-302E-preflight.json'),
+                preflight_hash_sha256: 'current-cycle'
+            }),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(reviewsRoot, 'T-302E-code-review-context.json'),
+            JSON.stringify({
+                review_type: 'code',
+                rule_context: {
+                    summary: {
+                        original_char_count: 720,
+                        output_char_count: 240,
+                        estimated_saved_chars: 480,
+                        original_token_count_estimate: 180,
+                        output_token_count_estimate: 60,
+                        estimated_saved_tokens: 120
+                    }
+                }
+            }),
+            'utf8'
+        );
+
+        writeEvent(eventsRoot, 'T-302E', {
+            event_type: 'REVIEW_PHASE_STARTED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:01:00Z',
+            details: {
+                review_type: 'code',
+                output_path: path.join(reviewsRoot, 'T-302E-code-review-context.json')
+            }
+        });
+        writeEvent(eventsRoot, 'T-302E', {
+            event_type: 'COMPILE_GATE_PASSED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T14:06:00Z',
+            details: {
+                output_telemetry: {
+                    raw_char_count: 96,
+                    filtered_char_count: 34,
+                    estimated_saved_chars: 62,
+                    raw_token_count_estimate: 24,
+                    filtered_token_count_estimate: 8,
+                    estimated_saved_tokens: 16
+                }
+            }
+        });
+
+        const stats = buildTaskStats('T-302E', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(stats.token_economy.total_estimated_saved_chars, 62);
+        assert.equal(stats.token_economy.total_estimated_saved_tokens, 16);
         assert.equal(stats.token_economy.breakdown.length, 1);
         assert.equal(stats.token_economy.breakdown[0].label, 'compile gate output');
     } finally {
@@ -282,14 +700,32 @@ test('formatTaskStatsText produces readable output', () => {
         budget_forecast: null,
         budget_comparison: null,
         token_economy: {
+            total_estimated_saved_chars: 2000,
+            total_raw_char_count: 8000,
+            total_output_char_count: 6000,
             total_estimated_saved_tokens: 500,
             total_raw_token_count_estimate: 2000,
+            chars_savings_percent: 25,
             savings_percent: 25,
             breakdown: [
-                { label: 'compile gate output', estimated_saved_tokens: 300, raw_token_count_estimate: 1200 },
-                { label: 'code review context', estimated_saved_tokens: 200, raw_token_count_estimate: 800 }
+                {
+                    label: 'compile gate output',
+                    estimated_saved_chars: 1200,
+                    estimated_saved_tokens: 300,
+                    raw_char_count: 4800,
+                    output_char_count: 3600,
+                    raw_token_count_estimate: 1200
+                },
+                {
+                    label: 'code review context',
+                    estimated_saved_chars: 800,
+                    estimated_saved_tokens: 200,
+                    raw_char_count: 3200,
+                    output_char_count: 2400,
+                    raw_token_count_estimate: 800
+                }
             ],
-            visible_summary_line: 'Saved tokens: ~500 (~25%) (300 compile gate output + 200 code review context).'
+            visible_summary_line: 'Suppressed output: ~2000 chars (~25%) (compile gate output ~1200 chars + code review context ~800 chars). Token estimate: ~500.'
         }
     };
 
@@ -327,8 +763,12 @@ test('formatTaskStatsJson produces valid JSON', () => {
         budget_forecast: null,
         budget_comparison: null,
         token_economy: {
+            total_estimated_saved_chars: 0,
+            total_raw_char_count: 0,
+            total_output_char_count: 0,
             total_estimated_saved_tokens: 0,
             total_raw_token_count_estimate: 0,
+            chars_savings_percent: null,
             savings_percent: null,
             breakdown: [],
             visible_summary_line: null
@@ -350,6 +790,9 @@ test('formatAggregateStatsText includes header and per-task lines', () => {
         total_wall_clock_seconds: 1200,
         total_gate_pass: 8,
         total_gate_fail: 1,
+        total_estimated_saved_chars: 4000,
+        total_raw_char_count: 16000,
+        aggregate_chars_savings_percent: 25,
         total_estimated_saved_tokens: 1000,
         total_raw_token_count_estimate: 4000,
         aggregate_savings_percent: 25,
@@ -372,8 +815,12 @@ test('formatAggregateStatsText includes header and per-task lines', () => {
                 budget_forecast: null,
                 budget_comparison: null,
                 token_economy: {
+                    total_estimated_saved_chars: 2000,
+                    total_raw_char_count: 8000,
+                    total_output_char_count: 6000,
                     total_estimated_saved_tokens: 500,
                     total_raw_token_count_estimate: 2000,
+                    chars_savings_percent: 25,
                     savings_percent: 25,
                     breakdown: [],
                     visible_summary_line: null
@@ -397,8 +844,12 @@ test('formatAggregateStatsText includes header and per-task lines', () => {
                 budget_forecast: null,
                 budget_comparison: null,
                 token_economy: {
+                    total_estimated_saved_chars: 2000,
+                    total_raw_char_count: 8000,
+                    total_output_char_count: 6000,
                     total_estimated_saved_tokens: 500,
                     total_raw_token_count_estimate: 2000,
+                    chars_savings_percent: 25,
                     savings_percent: 25,
                     breakdown: [],
                     visible_summary_line: null
@@ -410,9 +861,143 @@ test('formatAggregateStatsText includes header and per-task lines', () => {
     const text = formatAggregateStatsText(agg);
     assert.ok(text.includes('GARDA_STATS'));
     assert.ok(text.includes('Tasks analyzed: 2'));
-    assert.ok(text.includes('Total saved tokens: ~1000'));
+    assert.ok(text.includes('Total suppressed output: ~4000 chars (~25%)'));
+    assert.ok(text.includes('Total token estimate: ~1000'));
     assert.ok(text.includes('T-001'));
     assert.ok(text.includes('T-002'));
+});
+
+test('formatAggregateStatsText keeps token-only per-task notes visible', () => {
+    const agg: AggregateStatsResult = {
+        tasks_analyzed: 1,
+        total_events: 3,
+        total_wall_clock_seconds: 60,
+        total_gate_pass: 2,
+        total_gate_fail: 0,
+        total_estimated_saved_chars: 0,
+        total_raw_char_count: 0,
+        aggregate_chars_savings_percent: null,
+        total_estimated_saved_tokens: 33,
+        total_raw_token_count_estimate: 50,
+        aggregate_savings_percent: 66,
+        per_task: [
+            {
+                task_id: 'T-LEGACY',
+                events_count: 3,
+                first_event_utc: null,
+                last_event_utc: null,
+                wall_clock_seconds: 60,
+                gate_pass_count: 2,
+                gate_fail_count: 0,
+                path_mode: null,
+                required_reviews: [],
+                changed_files_count: 0,
+                changed_lines_total: 0,
+                requested_depth: null,
+                effective_depth: null,
+                depth_escalated: false,
+                budget_forecast: null,
+                budget_comparison: null,
+                token_economy: {
+                    total_estimated_saved_chars: 0,
+                    total_raw_char_count: 0,
+                    total_output_char_count: 0,
+                    total_estimated_saved_tokens: 33,
+                    total_raw_token_count_estimate: 50,
+                    chars_savings_percent: null,
+                    savings_percent: 66,
+                    breakdown: [],
+                    visible_summary_line: 'Token estimate: ~33 (~66%) (compile gate output ~33 tokens).'
+                }
+            }
+        ]
+    };
+
+    const text = formatAggregateStatsText(agg);
+    assert.ok(text.includes('Total suppressed output: unavailable (legacy token-only artifacts)'));
+    assert.ok(text.includes('Total token estimate: ~33'));
+    assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, token estimate ~33'));
+});
+
+test('formatAggregateStatsText marks partial char coverage for mixed aggregate history', () => {
+    const agg: AggregateStatsResult = {
+        tasks_analyzed: 2,
+        total_events: 8,
+        total_wall_clock_seconds: 180,
+        total_gate_pass: 6,
+        total_gate_fail: 0,
+        total_estimated_saved_chars: 2000,
+        total_raw_char_count: 8000,
+        aggregate_chars_savings_percent: null,
+        total_estimated_saved_tokens: 533,
+        total_raw_token_count_estimate: 2050,
+        aggregate_savings_percent: 26,
+        per_task: [
+            {
+                task_id: 'T-MIXED',
+                events_count: 5,
+                first_event_utc: null,
+                last_event_utc: null,
+                wall_clock_seconds: 120,
+                gate_pass_count: 4,
+                gate_fail_count: 0,
+                path_mode: null,
+                required_reviews: [],
+                changed_files_count: 0,
+                changed_lines_total: 0,
+                requested_depth: null,
+                effective_depth: null,
+                depth_escalated: false,
+                budget_forecast: null,
+                budget_comparison: null,
+                token_economy: {
+                    total_estimated_saved_chars: 2000,
+                    total_raw_char_count: 8000,
+                    total_output_char_count: 6000,
+                    total_estimated_saved_tokens: 500,
+                    total_raw_token_count_estimate: 2000,
+                    chars_savings_percent: null,
+                    savings_percent: 25,
+                    breakdown: [],
+                    visible_summary_line: 'Suppressed output (char-aware subset): ~2000 chars (compile gate output ~1200 chars + legacy review gate output token estimate ~200). Token estimate: ~500.'
+                }
+            },
+            {
+                task_id: 'T-LEGACY',
+                events_count: 3,
+                first_event_utc: null,
+                last_event_utc: null,
+                wall_clock_seconds: 60,
+                gate_pass_count: 2,
+                gate_fail_count: 0,
+                path_mode: null,
+                required_reviews: [],
+                changed_files_count: 0,
+                changed_lines_total: 0,
+                requested_depth: null,
+                effective_depth: null,
+                depth_escalated: false,
+                budget_forecast: null,
+                budget_comparison: null,
+                token_economy: {
+                    total_estimated_saved_chars: 0,
+                    total_raw_char_count: 0,
+                    total_output_char_count: 0,
+                    total_estimated_saved_tokens: 33,
+                    total_raw_token_count_estimate: 50,
+                    chars_savings_percent: null,
+                    savings_percent: 66,
+                    breakdown: [],
+                    visible_summary_line: 'Token estimate: ~33 (~66%) (compile gate output ~33 tokens).'
+                }
+            }
+        ]
+    };
+
+    const text = formatAggregateStatsText(agg);
+    assert.ok(text.includes('Total suppressed output (char-aware subset): ~2000 chars'));
+    assert.ok(text.includes('T-MIXED: 5 events, 2m 0s, ~2000 chars suppressed (char-aware subset; token estimate ~500)'));
+    assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, token estimate ~33'));
 });
 
 // ---------------------------------------------------------------------------
@@ -426,6 +1011,9 @@ test('formatAggregateStatsJson produces valid JSON', () => {
         total_wall_clock_seconds: 0,
         total_gate_pass: 0,
         total_gate_fail: 0,
+        total_estimated_saved_chars: 0,
+        total_raw_char_count: 0,
+        aggregate_chars_savings_percent: null,
         total_estimated_saved_tokens: 0,
         total_raw_token_count_estimate: 0,
         aggregate_savings_percent: null,
@@ -498,8 +1086,12 @@ test('formatTaskStatsText handles null wall_clock_seconds', () => {
         budget_forecast: null,
         budget_comparison: null,
         token_economy: {
+            total_estimated_saved_chars: 0,
+            total_raw_char_count: 0,
+            total_output_char_count: 0,
             total_estimated_saved_tokens: 0,
             total_raw_token_count_estimate: 0,
+            chars_savings_percent: null,
             savings_percent: null,
             breakdown: [],
             visible_summary_line: null
@@ -529,8 +1121,12 @@ test('formatTaskStatsText formats hours correctly', () => {
         budget_forecast: null,
         budget_comparison: null,
         token_economy: {
+            total_estimated_saved_chars: 0,
+            total_raw_char_count: 0,
+            total_output_char_count: 0,
             total_estimated_saved_tokens: 0,
             total_raw_token_count_estimate: 0,
+            chars_savings_percent: null,
             savings_percent: null,
             breakdown: [],
             visible_summary_line: null
@@ -690,13 +1286,24 @@ test('formatTaskStatsText renders depth and budget forecast when present', () =>
             summary_line: 'depth: 1->2 (escalated), forecast: ~1700 tokens, actual raw: ~1500 tokens, saved: ~400 tokens, accuracy: 0.88x'
         },
         token_economy: {
+            total_estimated_saved_chars: 1600,
+            total_raw_char_count: 6000,
+            total_output_char_count: 4400,
             total_estimated_saved_tokens: 400,
             total_raw_token_count_estimate: 1500,
+            chars_savings_percent: 27,
             savings_percent: 27,
             breakdown: [
-                { label: 'compile gate output', estimated_saved_tokens: 400, raw_token_count_estimate: 1500 }
+                {
+                    label: 'compile gate output',
+                    estimated_saved_chars: 1600,
+                    estimated_saved_tokens: 400,
+                    raw_char_count: 6000,
+                    output_char_count: 4400,
+                    raw_token_count_estimate: 1500
+                }
             ],
-            visible_summary_line: 'Saved tokens: ~400 (~27%) (400 compile gate output).'
+            visible_summary_line: 'Suppressed output: ~1600 chars (~27%) (compile gate output ~1600 chars). Token estimate: ~400.'
         }
     };
     const text = formatTaskStatsText(stats);

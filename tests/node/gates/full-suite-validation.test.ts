@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../../src/cli/exit-codes';
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../src/core/constants';
 import {
+    buildFullSuiteValidationOutputTelemetry,
     buildSkippedResult,
     buildValidationResult,
     compactGreenSummary,
@@ -15,6 +16,7 @@ import {
     formatFullSuiteValidationResult,
     loadFullSuiteValidationConfig
 } from '../../../src/gates/full-suite-validation';
+import { countTextChars } from '../../../src/gate-runtime/text-utils';
 import { runCliWithCapturedOutput } from '../cli/commands/gate-test-helpers';
 
 describe('gates/full-suite-validation', () => {
@@ -165,6 +167,102 @@ describe('gates/full-suite-validation', () => {
             assert.ok(text.includes('FULL_SUITE_VALIDATION_SKIPPED'));
             assert.ok(text.includes('CycleBinding: task_id=T-123;'));
         });
+
+        it('buildFullSuiteValidationOutputTelemetry measures savings against compacted visible output', () => {
+            const config = loadFullSuiteValidationConfig('/nonexistent');
+            const rawOutputLines = [
+                'detail line 1 with verbose raw output that should not survive compaction',
+                'detail line 2 with verbose raw output that should not survive compaction',
+                'detail line 3 with verbose raw output that should not survive compaction',
+                'detail line 4 with verbose raw output that should not survive compaction',
+                'detail line 5 with verbose raw output that should not survive compaction',
+                'detail line 6 with verbose raw output that should not survive compaction',
+                'detail line 7 with verbose raw output that should not survive compaction',
+                'detail line 8 with verbose raw output that should not survive compaction',
+                'detail line 9 with verbose raw output that should not survive compaction',
+                'detail line 10 with verbose raw output that should not survive compaction',
+                'detail line 11 with verbose raw output that should not survive compaction',
+                'detail line 12 with verbose raw output that should not survive compaction',
+                '# tests 20',
+                '# pass 20',
+                '# fail 0',
+                '# duration_ms 1234'
+            ];
+            const result = buildValidationResult(
+                { ...config, enabled: true, command: 'npm test' },
+                0,
+                false,
+                rawOutputLines,
+                'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-output.log',
+                ['src/changed.ts'],
+                {
+                    task_id: 'T-123',
+                    preflight_path: 'runtime/reviews/T-123-preflight.json',
+                    preflight_sha256: 'abc123',
+                    compile_gate_timestamp: null
+                }
+            );
+            const telemetry = buildFullSuiteValidationOutputTelemetry(
+                rawOutputLines,
+                result
+            );
+
+            assert.ok(telemetry);
+            assert.equal((telemetry as Record<string, unknown>).filter_mode, 'full_suite_validation_compaction');
+            assert.ok(Number((telemetry as Record<string, unknown>).estimated_saved_chars) > 0);
+            assert.ok(Number((telemetry as Record<string, unknown>).estimated_saved_tokens) > 0);
+
+            const formatted = formatFullSuiteValidationResult({
+                ...result,
+                output_telemetry: telemetry
+            });
+            assert.match(formatted, /\[full-suite-validation\] suppressed ~\d+ chars/);
+            assert.equal(
+                Number((telemetry as Record<string, unknown>).filtered_char_count),
+                countTextChars(formatted.split('\n'))
+            );
+        });
+
+        it('buildFullSuiteValidationOutputTelemetry measures savings for failure_chunks output', () => {
+            const config = loadFullSuiteValidationConfig('/nonexistent');
+            const rawOutputLines = [
+                'not ok 1 - full suite telemetry branch failed at src/changed.ts:5',
+                ...Array.from(
+                    { length: 60 },
+                    (_, index) => `verbose failure detail line ${index + 1} that should be compacted away`
+                )
+            ];
+            const result = buildValidationResult(
+                { ...config, enabled: true, command: 'npm test', red_failure_chunk_lines: 10 },
+                1,
+                false,
+                rawOutputLines,
+                'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-output.log',
+                ['src/changed.ts'],
+                {
+                    task_id: 'T-123',
+                    preflight_path: 'runtime/reviews/T-123-preflight.json',
+                    preflight_sha256: 'abc123',
+                    compile_gate_timestamp: null
+                }
+            );
+            const telemetry = buildFullSuiteValidationOutputTelemetry(rawOutputLines, result);
+
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.failure_chunks.length > 0);
+            assert.ok(telemetry);
+            assert.equal((telemetry as Record<string, unknown>).parser_strategy, 'failure_chunks');
+            assert.ok(Number((telemetry as Record<string, unknown>).estimated_saved_chars) > 0);
+            assert.ok(Number((telemetry as Record<string, unknown>).estimated_saved_tokens) > 0);
+            const formatted = formatFullSuiteValidationResult({
+                ...result,
+                output_telemetry: telemetry
+            });
+            assert.equal(
+                Number((telemetry as Record<string, unknown>).filtered_char_count),
+                countTextChars(formatted.split('\n'))
+            );
+        });
     });
 
     describe('CLI integration', () => {
@@ -214,7 +312,13 @@ describe('gates/full-suite-validation', () => {
             const helperScript = path.join(tempDir, 'fail-unrelated.js');
             fs.writeFileSync(
                 helperScript,
-                'process.stdout.write("FAIL at src/unrelated.ts:5 detail\\n"); process.exit(1);',
+                [
+                    'process.stdout.write("FAIL at src/unrelated.ts:5 detail\\n");',
+                    'for (let index = 0; index < 40; index += 1) {',
+                    '  process.stdout.write(`warn-path verbose detail ${index} that should be compacted away\\n`);',
+                    '}',
+                    'process.exit(1);'
+                ].join('\n'),
                 'utf8'
             );
             fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
@@ -223,7 +327,7 @@ describe('gates/full-suite-validation', () => {
                     command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
                     timeout_ms: 30000,
                     green_summary_max_lines: 5,
-                    red_failure_chunk_lines: 50,
+                    red_failure_chunk_lines: 10,
                     out_of_scope_failure_policy: 'AUDIT_AND_WARN'
                 }
             }), 'utf8');
@@ -248,10 +352,13 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.status, 'WARNED');
             assert.equal(artifact.out_of_scope_audit_verdict, 'WARNED');
             assert.equal(artifact.cycle_binding.task_id, 'T-WARN');
+            assert.ok(artifact.output_telemetry);
+            assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
             const timelinePath = path.join(eventsDir, 'T-WARN.jsonl');
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_WARNED"/);
+            assert.match(timeline, /"output_telemetry":\{/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -268,7 +375,13 @@ describe('gates/full-suite-validation', () => {
             const helperScript = path.join(tempDir, 'pass.js');
             fs.writeFileSync(
                 helperScript,
-                'process.stdout.write(\"all good\\\\n\"); process.exit(0);',
+                [
+                    'for (let index = 0; index < 12; index += 1) {',
+                    '  process.stdout.write(`detail line ${index} with verbose raw output that should not survive compaction\\n`);',
+                    '}',
+                    'process.stdout.write("# tests 20\\n# pass 20\\n# fail 0\\n# duration_ms 1234\\n");',
+                    'process.exit(0);'
+                ].join('\n'),
                 'utf8'
             );
             fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
@@ -300,10 +413,13 @@ describe('gates/full-suite-validation', () => {
             assert.ok(fs.existsSync(artifactPath));
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'PASSED');
+            assert.ok(artifact.output_telemetry);
+            assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
             const timelinePath = path.join(eventsDir, 'T-PASS.jsonl');
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
+            assert.match(timeline, /"output_telemetry":\{/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

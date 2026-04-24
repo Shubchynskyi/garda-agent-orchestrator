@@ -132,6 +132,7 @@ export function coerceIntLike(value: unknown): number | null {
 }
 
 interface OutputTelemetryRecord {
+    estimated_saved_chars?: unknown;
     estimated_saved_tokens?: unknown;
     raw_line_count?: unknown;
     filtered_line_count?: unknown;
@@ -143,6 +144,7 @@ interface OutputTelemetryRecord {
 interface FormatVisibleSavingsOptions {
     label?: string;
     minimumSavedTokens?: number;
+    minimumSavedChars?: number;
 }
 
 /**
@@ -151,6 +153,7 @@ interface FormatVisibleSavingsOptions {
 export function formatVisibleSavingsLine(telemetry: unknown, options: FormatVisibleSavingsOptions = {}): string | null {
     const label = options.label || 'token-economy';
     const minimumSavedTokens = options.minimumSavedTokens != null ? options.minimumSavedTokens : 10;
+    const minimumSavedChars = options.minimumSavedChars != null ? options.minimumSavedChars : 40;
 
     if (!telemetry || typeof telemetry !== 'object') {
         return null;
@@ -158,35 +161,52 @@ export function formatVisibleSavingsLine(telemetry: unknown, options: FormatVisi
 
     const tel = telemetry as Record<string, unknown>;
     const savedTokens = coerceIntLike(tel.estimated_saved_tokens);
+    const savedChars = coerceIntLike(tel.estimated_saved_chars);
     const rawLineCount = coerceIntLike(tel.raw_line_count);
     const filteredLineCount = coerceIntLike(tel.filtered_line_count);
     const rawCharCount = coerceIntLike(tel.raw_char_count);
     const filteredCharCount = coerceIntLike(tel.filtered_char_count);
     const rawTokenEstimate = coerceIntLike(tel.raw_token_count_estimate);
 
-    if (savedTokens === null || rawLineCount === null || filteredLineCount === null || rawCharCount === null || filteredCharCount === null) {
-        return null;
-    }
-    if (savedTokens <= 0) {
-        return null;
-    }
+    const lineSavings = rawLineCount != null && filteredLineCount != null
+        ? rawLineCount - filteredLineCount
+        : null;
+    const charSavings = rawCharCount != null && filteredCharCount != null
+        ? rawCharCount - filteredCharCount
+        : savedChars;
+    const resolvedSavedTokens = savedTokens != null && savedTokens > 0 ? savedTokens : 0;
+    const resolvedSavedChars = charSavings != null && charSavings > 0 ? charSavings : 0;
 
-    const lineSavings = rawLineCount - filteredLineCount;
-    const charSavings = rawCharCount - filteredCharCount;
-    if (lineSavings <= 0 && charSavings <= 0) {
+    if (resolvedSavedChars <= 0 && resolvedSavedTokens <= 0) {
         return null;
     }
 
     const resolvedLabel = (label || '').trim() || 'token-economy';
-    if (lineSavings <= 0 && savedTokens < Math.max(minimumSavedTokens, 0)) {
+    if (resolvedSavedChars > 0) {
+        if (
+            (lineSavings == null || lineSavings <= 0)
+            && resolvedSavedChars < Math.max(minimumSavedChars, 0)
+            && resolvedSavedTokens < Math.max(minimumSavedTokens, 0)
+        ) {
+            return null;
+        }
+        if (rawCharCount != null && rawCharCount > 0) {
+            const savedPercent = Math.round((resolvedSavedChars * 100.0) / rawCharCount);
+            const tokenNote = resolvedSavedTokens > 0 && rawTokenEstimate != null && rawTokenEstimate > 0
+                ? `; token estimate ~${resolvedSavedTokens}`
+                : '';
+            return `[${resolvedLabel}] suppressed ~${resolvedSavedChars} chars (~${savedPercent}%)${tokenNote}`;
+        }
+        const tokenNote = resolvedSavedTokens > 0 ? `; token estimate ~${resolvedSavedTokens}` : '';
+        return `[${resolvedLabel}] suppressed ~${resolvedSavedChars} chars${tokenNote}`;
+    }
+
+    if (resolvedSavedTokens < Math.max(minimumSavedTokens, 0)) {
         return null;
     }
-
     if (rawTokenEstimate != null && rawTokenEstimate > 0) {
-        const savedPercent = Math.round((savedTokens * 100.0) / rawTokenEstimate);
-        return `[${resolvedLabel}] saved ~${savedTokens} tokens (~${savedPercent}%)`;
+        const savedPercent = Math.round((resolvedSavedTokens * 100.0) / rawTokenEstimate);
+        return `[${resolvedLabel}] token estimate ~${resolvedSavedTokens} (~${savedPercent}%)`;
     }
-
-    return `[${resolvedLabel}] saved ~${savedTokens} tokens`;
+    return `[${resolvedLabel}] token estimate ~${resolvedSavedTokens}`;
 }
-

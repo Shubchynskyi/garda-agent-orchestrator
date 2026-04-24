@@ -239,6 +239,7 @@ export async function handleTaskEventsSummary(gateArgv: string[]): Promise<void>
         '--task-id': { key: 'taskId', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' },
         '--events-root': { key: 'eventsRoot', type: 'string' },
+        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
         '--output-path': { key: 'outputPath', type: 'string' },
         '--as-json': { key: 'asJson', type: 'boolean' },
         '--include-details': { key: 'includeDetails', type: 'boolean' }

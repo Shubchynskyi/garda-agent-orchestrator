@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../core/constants';
+import { buildOutputTelemetry, formatVisibleSavingsLine } from '../gate-runtime/token-telemetry';
 import { joinOrchestratorPath, normalizePath } from './helpers';
 
 export const OUT_OF_SCOPE_FAILURE_POLICIES = Object.freeze([
@@ -50,6 +51,7 @@ export interface FullSuiteValidationResult {
     out_of_scope_audit_verdict: 'BLOCKED' | 'WARNED' | 'NOT_APPLICABLE';
     violations: string[];
     warnings: string[];
+    output_telemetry?: Record<string, unknown> | null;
     cycle_binding?: FullSuiteValidationCycleBinding;
 }
 
@@ -343,7 +345,7 @@ export function detectOutOfScopeFailures(outputLines: string[], taskChangedFiles
     return false;
 }
 
-export function formatFullSuiteValidationResult(result: FullSuiteValidationResult): string {
+function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult): string[] {
     const lines: string[] = [];
     lines.push(`FULL_SUITE_VALIDATION_${result.status}`);
     lines.push(`Enabled: ${result.enabled}`);
@@ -403,5 +405,54 @@ export function formatFullSuiteValidationResult(result: FullSuiteValidationResul
         }
     }
 
-    return lines.join('\n');
+    const visibleSavingsLine = formatVisibleSavingsLine(result.output_telemetry, {
+        label: 'full-suite-validation'
+    });
+    if (visibleSavingsLine) {
+        lines.push(visibleSavingsLine);
+    }
+
+    return lines;
+}
+
+export function buildFullSuiteValidationOutputTelemetry(
+    rawOutputLines: string[],
+    result: FullSuiteValidationResult
+): Record<string, unknown> | null {
+    if (!result.output_artifact_path) {
+        return null;
+    }
+
+    let telemetry: Record<string, unknown> | null = null;
+    let previousVisibleLine: string | null = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const filteredLines = buildFullSuiteValidationOutputLines({
+            ...result,
+            output_telemetry: telemetry
+        });
+        const nextTelemetry = buildOutputTelemetry(
+            rawOutputLines,
+            filteredLines,
+            {
+                filterMode: 'full_suite_validation_compaction',
+                parserMode: 'FULL',
+                parserName: 'full-suite-validation',
+                parserStrategy: result.failure_chunks.length > 0 ? 'failure_chunks' : 'compact_summary'
+            }
+        );
+        const nextVisibleLine = formatVisibleSavingsLine(nextTelemetry, {
+            label: 'full-suite-validation'
+        });
+        telemetry = nextTelemetry;
+        if (nextVisibleLine === previousVisibleLine) {
+            break;
+        }
+        previousVisibleLine = nextVisibleLine;
+    }
+
+    return telemetry;
+}
+
+export function formatFullSuiteValidationResult(result: FullSuiteValidationResult): string {
+    return buildFullSuiteValidationOutputLines(result).join('\n');
 }

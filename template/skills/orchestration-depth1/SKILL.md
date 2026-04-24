@@ -58,4 +58,4 @@ Escalate back to the full orchestration skill immediately if:
 - If the original preflight used planned `--changed-file` inputs in a clean workspace before implementation, refresh it before compile by rerunning `classify-change` and `load-rule-pack --stage POST_PREFLIGHT` once the real diff exists.
 - Do not mark a task `DONE` while any PASS review artifact still has active findings, residual risks, or deferred items without `Justification:`.
 - Prefer concise evidence and scoped artifacts over pasting large raw outputs.
-- The final summary must include a token-economy savings line using the same spaced `~N (~P%)` structure as the full orchestration contract, including readable ` + ` separators between breakdown segments.
+- The final summary must include the same output-compaction line shape as the full orchestration contract: chars first, approximate percentage when baseline is known, readable ` + ` separators between breakdown segments, and token estimate only as a secondary note when available.

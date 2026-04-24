@@ -4,11 +4,23 @@ import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-eve
 import { coerceIntLike } from '../../gate-runtime/token-telemetry';
 import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult } from '../../gate-runtime/budget-preflight';
 import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
-import { parseTimestamp, getOutputTelemetryFromPayload } from '../../gates/task-events-summary';
+import {
+    parseTimestamp,
+    getOutputTelemetryFromPayload,
+    buildTaskCycleBindingKey,
+    getCycleBindingSnapshotFromPayload,
+    getCurrentCycleReviewContextPaths,
+    resolveTaskCycleBindingSnapshot,
+    shouldIncludeTelemetryForCurrentCycle,
+    type TaskCycleBindingSnapshot
+} from '../../gates/task-events-summary';
 
 interface TokenContribution {
     label: string;
+    estimated_saved_chars: number;
     estimated_saved_tokens: number;
+    raw_char_count: number;
+    output_char_count: number | null;
     raw_token_count_estimate: number;
 }
 
@@ -33,8 +45,12 @@ export interface TaskStatsResult {
 }
 
 export interface TokenEconomySummary {
+    total_estimated_saved_chars: number;
+    total_raw_char_count: number;
+    total_output_char_count: number;
     total_estimated_saved_tokens: number;
     total_raw_token_count_estimate: number;
+    chars_savings_percent: number | null;
     savings_percent: number | null;
     breakdown: TokenContribution[];
     visible_summary_line: string | null;
@@ -46,6 +62,9 @@ export interface AggregateStatsResult {
     total_wall_clock_seconds: number;
     total_gate_pass: number;
     total_gate_fail: number;
+    total_estimated_saved_chars: number;
+    total_raw_char_count: number;
+    aggregate_chars_savings_percent: number | null;
     total_estimated_saved_tokens: number;
     total_raw_token_count_estimate: number;
     aggregate_savings_percent: number | null;
@@ -73,6 +92,9 @@ const GATE_PASS_EVENTS = new Set([
     'REVIEW_GATE_PASSED',
     'REVIEW_GATE_PASSED_WITH_OVERRIDE',
     'DOC_IMPACT_ASSESSED',
+    'FULL_SUITE_VALIDATION_PASSED',
+    'FULL_SUITE_VALIDATION_WARNED',
+    'FULL_SUITE_VALIDATION_SKIPPED',
     'COMPLETION_GATE_PASSED'
 ]);
 
@@ -82,6 +104,7 @@ const GATE_FAIL_EVENTS = new Set([
     'COMPILE_GATE_FAILED',
     'REVIEW_GATE_FAILED',
     'DOC_IMPACT_ASSESSMENT_FAILED',
+    'FULL_SUITE_VALIDATION_FAILED',
     'COMPLETION_GATE_FAILED'
 ]);
 
@@ -101,12 +124,18 @@ function getReviewContextSummary(payload: Record<string, unknown> | null | undef
     const summary = ruleContext.summary as Record<string, unknown> | null | undefined;
     if (!summary || typeof summary !== 'object') return null;
     const savedTokens = coerceIntLike(summary.estimated_saved_tokens);
-    if (savedTokens == null || savedTokens <= 0) return null;
+    const savedChars = coerceIntLike(summary.estimated_saved_chars);
+    if ((savedTokens == null || savedTokens <= 0) && (savedChars == null || savedChars <= 0)) return null;
     const rawTokenEstimate = coerceIntLike(summary.original_token_count_estimate);
+    const rawCharCount = coerceIntLike(summary.original_char_count);
+    const outputCharCount = coerceIntLike(summary.output_char_count);
     const reviewType = String(payload.review_type || '').trim().toLowerCase();
     return {
         label: REVIEW_CONTEXT_LABELS[reviewType] || 'review context',
-        estimated_saved_tokens: savedTokens,
+        estimated_saved_chars: savedChars != null && savedChars > 0 ? savedChars : 0,
+        estimated_saved_tokens: savedTokens != null && savedTokens > 0 ? savedTokens : 0,
+        raw_char_count: rawCharCount != null && rawCharCount > 0 ? rawCharCount : 0,
+        output_char_count: outputCharCount != null && outputCharCount >= 0 ? outputCharCount : null,
         raw_token_count_estimate: rawTokenEstimate != null && rawTokenEstimate > 0 ? rawTokenEstimate : 0
     };
 }
@@ -141,7 +170,38 @@ function getCommandOutputLabel(eventType: string): string {
     const normalized = String(eventType || '').trim().toUpperCase();
     if (normalized.startsWith('COMPILE_GATE_')) return 'compile gate output';
     if (normalized.startsWith('REVIEW_GATE_')) return 'review gate output';
+    if (normalized.startsWith('FULL_SUITE_VALIDATION_')) return 'full-suite validation output';
     return 'gate output';
+}
+
+function formatContributionSummaryPart(item: TokenContribution): string {
+    if (item.estimated_saved_chars > 0) {
+        return `${item.label} ~${item.estimated_saved_chars} chars`;
+    }
+    return `${item.label} token estimate ~${item.estimated_saved_tokens}`;
+}
+
+function getCommandOutputSourceKey(
+    eventType: string,
+    details: Record<string, unknown>,
+    index: number,
+    repoRoot: string
+): string {
+    const normalizedEventType = String(eventType || '').trim().toUpperCase();
+    if (normalizedEventType.startsWith('FULL_SUITE_VALIDATION_')) {
+        const cycleKey = buildTaskCycleBindingKey(getCycleBindingSnapshotFromPayload(details, repoRoot));
+        if (cycleKey) {
+            return `command-output:full-suite-cycle:${cycleKey}`;
+        }
+        if (typeof details.artifact_path === 'string' && details.artifact_path.trim()) {
+            const resolved = resolveArtifactPathForRead(details.artifact_path, repoRoot);
+            const normalizedPath = resolved ? toPosix(resolved) : String(details.artifact_path).trim();
+            if (normalizedPath) {
+                return `command-output:${normalizedPath}`;
+            }
+        }
+    }
+    return `command-output:event:${index}:${eventType}`;
 }
 
 export function buildTaskStats(
@@ -298,11 +358,17 @@ function buildTokenEconomy(
     taskId: string
 ): TokenEconomySummary {
     const breakdown: TokenContribution[] = [];
-    const seenKeys = new Set<string>();
+    const sourceIndexByKey = new Map<string, number>();
+    const currentCycle = resolveTaskCycleBindingSnapshot(taskId, events, repoRoot, reviewsRoot);
 
     function addContribution(key: string, contribution: TokenContribution): void {
-        if (contribution.estimated_saved_tokens <= 0 || seenKeys.has(key)) return;
-        seenKeys.add(key);
+        if (contribution.estimated_saved_tokens <= 0 && contribution.estimated_saved_chars <= 0) return;
+        const existingIndex = sourceIndexByKey.get(key);
+        if (existingIndex != null) {
+            breakdown[existingIndex] = contribution;
+            return;
+        }
+        sourceIndexByKey.set(key, breakdown.length);
         breakdown.push(contribution);
     }
 
@@ -325,36 +391,71 @@ function buildTokenEconomy(
             if (artifact) {
                 reviewEvidencePayload = artifact;
                 const telemetry = getOutputTelemetryFromPayload(artifact);
-                if (telemetry) {
+                const includeCurrentCycleTelemetry = shouldIncludeTelemetryForCurrentCycle(
+                    eventType,
+                    event.timestamp_utc,
+                    artifact,
+                    currentCycle,
+                    repoRoot
+                );
+                if (telemetry && includeCurrentCycleTelemetry) {
                     const normalizedKey = normalizeArtifactKey(String(details.review_evidence_path));
                     addContribution(`command-output:${normalizedKey}`, {
                         label: getCommandOutputLabel(eventType),
+                        estimated_saved_chars: telemetry.estimated_saved_chars,
                         estimated_saved_tokens: telemetry.estimated_saved_tokens,
+                        raw_char_count: telemetry.raw_char_count,
+                        output_char_count: telemetry.output_char_count,
                         raw_token_count_estimate: telemetry.raw_token_count_estimate
                     });
                 }
-                collectReviewContextFromContainer(artifact, repoRoot, seenKeys, breakdown, normalizeArtifactKey);
+                if (includeCurrentCycleTelemetry) {
+                    collectReviewContextFromContainer(artifact, repoRoot, sourceIndexByKey, breakdown, normalizeArtifactKey);
+                }
             }
         }
 
         if (!reviewEvidencePayload) {
             const telemetry = getOutputTelemetryFromPayload(details);
-            if (telemetry) {
-                addContribution(`command-output:event:${i + 1}:${eventType}`, {
+            const includeCurrentCycleTelemetry = shouldIncludeTelemetryForCurrentCycle(
+                eventType,
+                event.timestamp_utc,
+                details,
+                currentCycle,
+                repoRoot
+            );
+            if (telemetry && includeCurrentCycleTelemetry) {
+                addContribution(getCommandOutputSourceKey(eventType, details, i + 1, repoRoot), {
                     label: getCommandOutputLabel(eventType),
+                    estimated_saved_chars: telemetry.estimated_saved_chars,
                     estimated_saved_tokens: telemetry.estimated_saved_tokens,
+                    raw_char_count: telemetry.raw_char_count,
+                    output_char_count: telemetry.output_char_count,
                     raw_token_count_estimate: telemetry.raw_token_count_estimate
                 });
             }
-            collectReviewContextFromContainer(details, repoRoot, seenKeys, breakdown, normalizeArtifactKey);
+            if (includeCurrentCycleTelemetry) {
+                collectReviewContextFromContainer(details, repoRoot, sourceIndexByKey, breakdown, normalizeArtifactKey);
+            }
         }
     }
 
-    const reviewTypes = ['code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency'];
-    for (const rt of reviewTypes) {
-        const contextPath = path.join(reviewsRoot, `${taskId}-${rt}-review-context.json`);
+    const currentCycleReviewContextPaths = currentCycle?.compile_gate_timestamp
+        ? getCurrentCycleReviewContextPaths(events, currentCycle, repoRoot)
+        : new Map<string, string>([
+            ['code', path.join(reviewsRoot, `${taskId}-code-review-context.json`)],
+            ['db', path.join(reviewsRoot, `${taskId}-db-review-context.json`)],
+            ['security', path.join(reviewsRoot, `${taskId}-security-review-context.json`)],
+            ['refactor', path.join(reviewsRoot, `${taskId}-refactor-review-context.json`)],
+            ['api', path.join(reviewsRoot, `${taskId}-api-review-context.json`)],
+            ['test', path.join(reviewsRoot, `${taskId}-test-review-context.json`)],
+            ['performance', path.join(reviewsRoot, `${taskId}-performance-review-context.json`)],
+            ['infra', path.join(reviewsRoot, `${taskId}-infra-review-context.json`)],
+            ['dependency', path.join(reviewsRoot, `${taskId}-dependency-review-context.json`)]
+        ]);
+    for (const [rt, contextPath] of currentCycleReviewContextPaths.entries()) {
         const contextKey = `review-context:${toPosix(contextPath)}`;
-        if (seenKeys.has(contextKey)) continue;
+        if (sourceIndexByKey.has(contextKey)) continue;
         const payload = safeReadJson(contextPath);
         if (!payload) continue;
         const summary = getReviewContextSummary(payload);
@@ -363,24 +464,47 @@ function buildTokenEconomy(
         }
     }
 
+    const totalSavedChars = breakdown.reduce((sum, item) => sum + item.estimated_saved_chars, 0);
+    const totalRawChars = breakdown.reduce((sum, item) => sum + (item.raw_char_count || 0), 0);
+    const totalOutputChars = breakdown.reduce((sum, item) => sum + (item.output_char_count != null ? item.output_char_count : 0), 0);
     const totalSaved = breakdown.reduce((sum, item) => sum + item.estimated_saved_tokens, 0);
     const totalRaw = breakdown.reduce((sum, item) => sum + (item.raw_token_count_estimate || 0), 0);
     const baselineKnown = breakdown.length > 0 && breakdown.every(item => (item.raw_token_count_estimate || 0) > 0);
+    const charsBaselineKnown = breakdown.length > 0 && breakdown.every(item => (item.raw_char_count || 0) > 0);
+    const hasTokenOnlyContributions = breakdown.some((item) => item.estimated_saved_chars <= 0 && item.estimated_saved_tokens > 0);
+    const hasCharAwareContributions = breakdown.some((item) => item.estimated_saved_chars > 0);
+    const charAwareSubsetOnly = hasCharAwareContributions && hasTokenOnlyContributions;
     const savingsPercent = baselineKnown && totalRaw > 0 ? Math.round((totalSaved * 100.0) / totalRaw) : null;
+    const charsSavingsPercent = charsBaselineKnown && totalRawChars > 0 ? Math.round((totalSavedChars * 100.0) / totalRawChars) : null;
 
     let visibleSummaryLine: string | null = null;
-    if (totalSaved > 0 && breakdown.length > 0) {
-        const parts = breakdown.map(item => `${item.estimated_saved_tokens} ${item.label}`).join(' + ');
-        if (savingsPercent != null) {
-            visibleSummaryLine = `Saved tokens: ~${totalSaved} (~${savingsPercent}%) (${parts}).`;
+    if (totalSavedChars > 0 && breakdown.length > 0) {
+        const parts = breakdown.map(item => formatContributionSummaryPart(item)).join(' + ');
+        const tokenNote = totalSaved > 0 ? ` Token estimate: ~${totalSaved}.` : '';
+        const prefix = charAwareSubsetOnly
+            ? 'Suppressed output (char-aware subset)'
+            : 'Suppressed output';
+        if (charsSavingsPercent != null) {
+            visibleSummaryLine = `${prefix}: ~${totalSavedChars} chars (~${charsSavingsPercent}%) (${parts}).${tokenNote}`;
         } else {
-            visibleSummaryLine = `Saved tokens: ~${totalSaved} (${parts}).`;
+            visibleSummaryLine = `${prefix}: ~${totalSavedChars} chars (${parts}).${tokenNote}`;
+        }
+    } else if (totalSaved > 0 && breakdown.length > 0) {
+        const parts = breakdown.map(item => `${item.label} ~${item.estimated_saved_tokens} tokens`).join(' + ');
+        if (savingsPercent != null) {
+            visibleSummaryLine = `Token estimate: ~${totalSaved} (~${savingsPercent}%) (${parts}).`;
+        } else {
+            visibleSummaryLine = `Token estimate: ~${totalSaved} (${parts}).`;
         }
     }
 
     return {
+        total_estimated_saved_chars: totalSavedChars,
+        total_raw_char_count: totalRawChars,
+        total_output_char_count: totalOutputChars,
         total_estimated_saved_tokens: totalSaved,
         total_raw_token_count_estimate: totalRaw,
+        chars_savings_percent: charsSavingsPercent,
         savings_percent: savingsPercent,
         breakdown,
         visible_summary_line: visibleSummaryLine
@@ -390,7 +514,7 @@ function buildTokenEconomy(
 function collectReviewContextFromContainer(
     container: Record<string, unknown>,
     repoRoot: string,
-    seenKeys: Set<string>,
+    sourceIndexByKey: Map<string, number>,
     breakdown: TokenContribution[],
     normalizeKey?: (rawPath: string) => string
 ): void {
@@ -408,8 +532,12 @@ function collectReviewContextFromContainer(
         const rawPathStr = String(entry.review_context_path);
         const normalizedPath = normalizeKey ? normalizeKey(rawPathStr) : rawPathStr;
         const key = `review-context:${normalizedPath}`;
-        if (seenKeys.has(key)) continue;
-        seenKeys.add(key);
+        const existingIndex = sourceIndexByKey.get(key);
+        if (existingIndex != null) {
+            breakdown[existingIndex] = summary;
+            continue;
+        }
+        sourceIndexByKey.set(key, breakdown.length);
         breakdown.push(summary);
     }
 }
@@ -443,8 +571,23 @@ export function buildAggregateStats(
     const totalWall = perTask.reduce((sum, t) => sum + (t.wall_clock_seconds || 0), 0);
     const totalPass = perTask.reduce((sum, t) => sum + t.gate_pass_count, 0);
     const totalFail = perTask.reduce((sum, t) => sum + t.gate_fail_count, 0);
+    const totalSavedChars = perTask.reduce((sum, t) => sum + t.token_economy.total_estimated_saved_chars, 0);
+    const totalRawChars = perTask.reduce((sum, t) => sum + t.token_economy.total_raw_char_count, 0);
     const totalSaved = perTask.reduce((sum, t) => sum + t.token_economy.total_estimated_saved_tokens, 0);
     const totalRaw = perTask.reduce((sum, t) => sum + t.token_economy.total_raw_token_count_estimate, 0);
+    const aggregateCharCoverageComplete = perTask.every((task) => {
+        const tokenEconomy = task.token_economy;
+        if (tokenEconomy.total_estimated_saved_chars <= 0 && tokenEconomy.total_estimated_saved_tokens <= 0) {
+            return true;
+        }
+        if (tokenEconomy.total_estimated_saved_chars <= 0) {
+            return false;
+        }
+        return tokenEconomy.chars_savings_percent != null;
+    });
+    const aggCharsPercent = aggregateCharCoverageComplete && totalRawChars > 0
+        ? Math.round((totalSavedChars * 100.0) / totalRawChars)
+        : null;
     const aggPercent = totalRaw > 0 ? Math.round((totalSaved * 100.0) / totalRaw) : null;
 
     return {
@@ -453,6 +596,9 @@ export function buildAggregateStats(
         total_wall_clock_seconds: totalWall,
         total_gate_pass: totalPass,
         total_gate_fail: totalFail,
+        total_estimated_saved_chars: totalSavedChars,
+        total_raw_char_count: totalRawChars,
+        aggregate_chars_savings_percent: aggCharsPercent,
         total_estimated_saved_tokens: totalSaved,
         total_raw_token_count_estimate: totalRaw,
         aggregate_savings_percent: aggPercent,
@@ -503,17 +649,25 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
         lines.push(`  ${stats.budget_comparison.summary_line}`);
     }
 
-    if (stats.token_economy.total_estimated_saved_tokens > 0) {
+    if (stats.token_economy.total_estimated_saved_chars > 0 || stats.token_economy.total_estimated_saved_tokens > 0) {
         lines.push('');
         lines.push('Token Economy:');
         if (stats.token_economy.visible_summary_line) {
             lines.push(`  ${stats.token_economy.visible_summary_line}`);
         }
         for (const item of stats.token_economy.breakdown) {
-            const rawNote = item.raw_token_count_estimate > 0
-                ? ` (raw ~${item.raw_token_count_estimate})`
-                : '';
-            lines.push(`  - ${item.label}: ~${item.estimated_saved_tokens} saved${rawNote}`);
+            if (item.estimated_saved_chars > 0) {
+                const notes = [
+                    item.raw_char_count > 0 ? `raw ~${item.raw_char_count} chars` : null,
+                    item.estimated_saved_tokens > 0 ? `token estimate ~${item.estimated_saved_tokens}` : null
+                ].filter((entry) => !!entry).join(', ');
+                lines.push(`  - ${item.label}: ~${item.estimated_saved_chars} chars suppressed${notes ? ` (${notes})` : ''}`);
+            } else if (item.estimated_saved_tokens > 0) {
+                const notes = item.raw_token_count_estimate > 0
+                    ? `raw ~${item.raw_token_count_estimate} tokens`
+                    : '';
+                lines.push(`  - ${item.label}: token estimate ~${item.estimated_saved_tokens}${notes ? ` (${notes})` : ''}`);
+            }
         }
     } else {
         lines.push('');
@@ -531,25 +685,50 @@ export function formatAggregateStatsText(stats: AggregateStatsResult): string {
     lines.push(`Total duration: ${formatWallClock(stats.total_wall_clock_seconds)}`);
     lines.push(`Total gates: ${stats.total_gate_pass} passed, ${stats.total_gate_fail} failed`);
 
-    if (stats.total_estimated_saved_tokens > 0) {
-        const pctNote = stats.aggregate_savings_percent != null
-            ? ` (~${stats.aggregate_savings_percent}%)`
-            : '';
-        lines.push(`Total saved tokens: ~${stats.total_estimated_saved_tokens}${pctNote}`);
+    if (stats.total_estimated_saved_chars > 0 || stats.total_estimated_saved_tokens > 0) {
+        const partialCharCoverage = stats.total_estimated_saved_chars > 0
+            && stats.total_estimated_saved_tokens > 0
+            && stats.aggregate_chars_savings_percent == null;
+        if (stats.total_estimated_saved_chars > 0) {
+            const pctNote = stats.aggregate_chars_savings_percent != null
+                ? ` (~${stats.aggregate_chars_savings_percent}%)`
+                : '';
+            const label = partialCharCoverage
+                ? 'Total suppressed output (char-aware subset)'
+                : 'Total suppressed output';
+            lines.push(`${label}: ~${stats.total_estimated_saved_chars} chars${pctNote}`);
+        } else if (stats.total_raw_char_count > 0) {
+            lines.push('Total suppressed output: 0 chars');
+        } else if (stats.total_estimated_saved_tokens > 0) {
+            lines.push('Total suppressed output: unavailable (legacy token-only artifacts)');
+        }
+        if (stats.total_estimated_saved_tokens > 0) {
+            lines.push(`Total token estimate: ~${stats.total_estimated_saved_tokens}`);
+        }
+        if (stats.total_raw_char_count > 0) {
+            lines.push(`Total raw chars: ~${stats.total_raw_char_count}`);
+        }
         if (stats.total_raw_token_count_estimate > 0) {
             lines.push(`Total raw tokens: ~${stats.total_raw_token_count_estimate}`);
         }
     } else {
-        lines.push('Total saved tokens: 0');
+        lines.push('Total suppressed output: 0 chars');
     }
 
     if (stats.per_task.length > 0) {
         lines.push('');
         lines.push('Per-task summary:');
         for (const task of stats.per_task) {
-            const savedNote = task.token_economy.total_estimated_saved_tokens > 0
-                ? `, saved ~${task.token_economy.total_estimated_saved_tokens} tokens`
-                : '';
+            const partialCharCoverage = task.token_economy.total_estimated_saved_chars > 0
+                && task.token_economy.total_estimated_saved_tokens > 0
+                && task.token_economy.chars_savings_percent == null;
+            const savedNote = task.token_economy.total_estimated_saved_chars > 0
+                ? partialCharCoverage
+                    ? `, ~${task.token_economy.total_estimated_saved_chars} chars suppressed (char-aware subset; token estimate ~${task.token_economy.total_estimated_saved_tokens})`
+                    : `, ~${task.token_economy.total_estimated_saved_chars} chars suppressed`
+                : task.token_economy.total_estimated_saved_tokens > 0
+                    ? `, token estimate ~${task.token_economy.total_estimated_saved_tokens}`
+                    : '';
             const durationNote = formatWallClock(task.wall_clock_seconds);
             lines.push(`  ${task.task_id}: ${task.events_count} events, ${durationNote}${savedNote}`);
         }

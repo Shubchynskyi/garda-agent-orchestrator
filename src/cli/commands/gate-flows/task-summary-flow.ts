@@ -19,6 +19,7 @@ export interface TaskEventsSummaryCommandOptions {
     taskId?: unknown;
     repoRoot?: unknown;
     eventsRoot?: unknown;
+    reviewsRoot?: unknown;
     outputPath?: unknown;
     asJson?: unknown;
     includeDetails?: unknown;
@@ -53,10 +54,17 @@ export function runTaskEventsSummaryCommand(
             'EventsRoot'
         )
         : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
+    const reviewsRoot = options.reviewsRoot
+        ? requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(String(options.reviewsRoot), repoRoot, { allowMissing: true }),
+            'ReviewsRoot'
+        )
+        : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const summary = buildTaskEventsSummary({
         taskId: parseRequiredText(options.taskId, 'TaskId'),
         eventsRoot,
-        repoRoot
+        repoRoot,
+        reviewsRoot
     });
     const rendered = options.asJson === true
         ? `${JSON.stringify(summary, null, 2)}\n`

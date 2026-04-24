@@ -348,6 +348,161 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
         });
 
+        it('treats downstream gate passes as stale after a newer compile cycle begins', () => {
+            const compileOne = '2026-01-01T00:00:01.000Z';
+            const reviewPhase = '2026-01-01T00:00:02.000Z';
+            const reviewGate = '2026-01-01T00:00:03.000Z';
+            const docImpact = '2026-01-01T00:00:04.000Z';
+            const completion = '2026-01-01T00:00:05.000Z';
+            const compileTwo = '2026-01-01T00:00:06.000Z';
+
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: compileOne,
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed for the earlier cycle.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: reviewPhase,
+                task_id: TASK_ID,
+                event_type: 'REVIEW_PHASE_STARTED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Review phase started for the earlier cycle.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: reviewGate,
+                task_id: TASK_ID,
+                event_type: 'REVIEW_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Review gate passed for the earlier cycle.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: docImpact,
+                task_id: TASK_ID,
+                event_type: 'DOC_IMPACT_ASSESSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Doc impact recorded for the earlier cycle.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: completion,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed for the earlier cycle.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: compileTwo,
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'A newer compile cycle started after the earlier completion.'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-compile-gate.json', {
+                timestamp_utc: compileTwo,
+                preflight_path: path.join(reviewsDir, `${TASK_ID}-preflight.json`),
+                preflight_hash_sha256: 'current-cycle'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 18 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'INCOMPLETE');
+            assert.equal(result.final_report_contract.status, 'NOT_READY');
+            assert.equal(result.gates.find((gate) => gate.gate === 'compile-gate')?.status, 'PASS');
+            assert.equal(result.gates.find((gate) => gate.gate === 'required-reviews-check')?.status, 'MISSING');
+            assert.equal(result.gates.find((gate) => gate.gate === 'doc-impact-gate')?.status, 'MISSING');
+            assert.equal(result.gates.find((gate) => gate.gate === 'completion-gate')?.status, 'MISSING');
+            assert.ok(result.final_report_contract.blocker);
+        });
+
+        it('does not let stale required-review receipts block a freshly recompiled cycle', () => {
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                review_artifact_sha256: 'stale-hash',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:code-reviewer',
+                trust_level: 'LOCAL_AUDITED',
+                recorded_at_utc: new Date().toISOString()
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 18 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-compile-gate.json', {
+                timestamp_utc: '2026-01-01T00:00:06.000Z',
+                preflight_path: path.join(reviewsDir, `${TASK_ID}-preflight.json`),
+                preflight_hash_sha256: 'current-cycle'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:01.000Z',
+                task_id: TASK_ID,
+                event_type: 'REVIEW_RECORDED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Historical review was recorded for the earlier cycle.',
+                details: {
+                    review_type: 'code',
+                    review_context_path: path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)
+                }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:02.000Z',
+                task_id: TASK_ID,
+                event_type: 'REVIEW_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Historical review gate passed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:03.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Historical completion gate passed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:06.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'A newer compile cycle started after the stale review artifacts were left behind.'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'INCOMPLETE');
+            assert.equal(result.gates.find((gate) => gate.gate === 'required-reviews-check')?.status, 'MISSING');
+            assert.equal(result.blockers.find((blocker) => blocker.gate === 'code-review'), undefined);
+        });
+
         it('keeps skipped full-suite evidence non-blocking when the task-bound cycle disabled the mode', () => {
             const now = new Date().toISOString();
             writeWorkflowConfig(tmpDir, false);
@@ -385,6 +540,51 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
             assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: false');
+        });
+
+        it('requires full-suite again when an older skipped event is followed by a newer compile cycle', () => {
+            writeWorkflowConfig(tmpDir, true);
+            const preflightPath = path.join(reviewsDir, `${TASK_ID}-preflight.json`);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-compile-gate.json', {
+                timestamp_utc: '2026-01-01T00:00:02.400Z',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'current-cycle'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                task_id: TASK_ID,
+                event_type: 'FULL_SUITE_VALIDATION_SKIPPED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Older cycle skipped full-suite while the mode was disabled.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:02.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'A newer compile cycle started after the skipped event.',
+                details: {
+                    preflight_path: preflightPath.replace(/\\/g, '/'),
+                    preflight_hash_sha256: 'current-cycle'
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.gates.find((gate) => gate.gate === 'full-suite-validation')?.status, 'MISSING');
+            assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: true');
         });
 
         it('prefers the latest full-suite terminal event over older skipped evidence from a previous cycle', () => {
@@ -429,6 +629,58 @@ describe('gates/task-audit-summary', () => {
                 assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: true');
                 assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), true);
             }
+        });
+
+        it('keeps current-cycle full-suite gate evidence when the compile artifact timestamp trails the compile event', () => {
+            writeWorkflowConfig(tmpDir, true);
+            const preflightPath = path.join(reviewsDir, `${TASK_ID}-preflight.json`);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-compile-gate.json', {
+                timestamp_utc: '2026-01-01T00:00:00.400Z',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'current-cycle'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed for the current cycle.',
+                details: {
+                    preflight_path: preflightPath.replace(/\\/g, '/'),
+                    preflight_hash_sha256: 'current-cycle'
+                }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:02.000Z',
+                task_id: TASK_ID,
+                event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Full-suite validation passed for the current cycle.',
+                details: {
+                    cycle_binding: {
+                        preflight_path: preflightPath.replace(/\\/g, '/'),
+                        preflight_sha256: 'current-cycle',
+                        compile_gate_timestamp: '2026-01-01T00:00:00.000Z'
+                    }
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.gates.find((gate) => gate.gate === 'compile-gate')?.status, 'PASS');
+            assert.equal(result.gates.find((gate) => gate.gate === 'full-suite-validation')?.status, 'PASS');
         });
 
         it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {
@@ -482,7 +734,10 @@ describe('gates/task-audit-summary', () => {
                 message: 'Compile gate passed.',
                 details: {
                     output_telemetry: {
+                        estimated_saved_chars: 62,
                         estimated_saved_tokens: 62,
+                        raw_char_count: 248,
+                        filtered_char_count: 186,
                         raw_token_count_estimate: 180,
                         filtered_token_count_estimate: 118
                     }
@@ -622,8 +877,41 @@ describe('gates/task-audit-summary', () => {
             assert.ok(result.final_closeout.review_trust?.policy_summary_line?.includes('asserted local review may finish this'));
             assert.equal(result.final_closeout.implementation_summary.docs_updated, true);
             assert.deepEqual(result.final_closeout.docs.docs_updated, ['docs/cli-reference.md']);
-            assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('Saved tokens: ~62'));
+            assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('Suppressed output: ~62 chars'));
             assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, false);
+        });
+
+        it('includes full-suite validation telemetry in final closeout token economy', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Full-suite validation passed.',
+                details: {
+                    output_telemetry: {
+                        estimated_saved_chars: 420,
+                        estimated_saved_tokens: 105,
+                        raw_char_count: 600,
+                        filtered_char_count: 180,
+                        raw_token_count_estimate: 150,
+                        filtered_token_count_estimate: 45
+                    }
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.token_economy?.total_estimated_saved_chars, 420);
+            assert.equal(result.final_closeout.token_economy?.total_estimated_saved_tokens, 105);
+            assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('full-suite validation output ~420 chars'));
         });
 
         it('keeps the legacy trust summary visible when preflight review metadata is missing but historical review artifacts remain', () => {

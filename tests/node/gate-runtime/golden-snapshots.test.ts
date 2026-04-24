@@ -128,7 +128,7 @@ test('golden: formatVisibleSavingsLine produces expected format', () => {
     );
     const line = formatVisibleSavingsLine(telemetry);
     assert.ok(line !== null, 'should produce a savings line');
-    assert.match(line!, /^\[token-economy\] saved ~\d+ tokens \(~\d+%\)$/);
+    assert.match(line!, /^\[token-economy\] suppressed ~\d+ chars \(~\d+%\); token estimate ~\d+$/);
 });
 
 test('golden: formatVisibleSavingsLine returns null for zero savings', () => {
@@ -145,7 +145,7 @@ test('golden: formatVisibleSavingsLine respects custom label', () => {
     );
     const line = formatVisibleSavingsLine(telemetry, { label: 'compile-gate' });
     assert.ok(line !== null);
-    assert.match(line!, /^\[compile-gate\] saved ~\d+ tokens/);
+    assert.match(line!, /^\[compile-gate\] suppressed ~\d+ chars \(~\d+%\); token estimate ~\d+$/);
 });
 
 // ============================================================================

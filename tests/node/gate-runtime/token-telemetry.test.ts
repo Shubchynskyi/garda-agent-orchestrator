@@ -165,7 +165,7 @@ test('formatVisibleSavingsLine formats with percentage when raw estimate availab
         raw_token_count_estimate: 100
     };
     const result = formatVisibleSavingsLine(telemetry);
-    assert.match(result!, /^\[token-economy\] saved ~50 tokens \(~50%\)$/);
+    assert.match(result!, /^\[token-economy\] suppressed ~100 chars \(~50%\); token estimate ~50$/);
 });
 
 test('formatVisibleSavingsLine uses custom label', () => {
@@ -177,7 +177,26 @@ test('formatVisibleSavingsLine uses custom label', () => {
         filtered_char_count: 100
     };
     const result = formatVisibleSavingsLine(telemetry, { label: 'custom' });
-    assert.match(result!, /^\[custom\] saved ~25 tokens$/);
+    assert.match(result!, /^\[custom\] suppressed ~100 chars \(~50%\)$/);
+});
+
+test('formatVisibleSavingsLine supports char-only telemetry without token fields', () => {
+    const telemetry = {
+        estimated_saved_chars: 80,
+        raw_char_count: 200,
+        filtered_char_count: 120
+    };
+    const result = formatVisibleSavingsLine(telemetry);
+    assert.match(result!, /^\[token-economy\] suppressed ~80 chars \(~40%\)$/);
+});
+
+test('formatVisibleSavingsLine preserves token-only fallback for legacy telemetry', () => {
+    const telemetry = {
+        estimated_saved_tokens: 50,
+        raw_token_count_estimate: 100
+    };
+    const result = formatVisibleSavingsLine(telemetry);
+    assert.match(result!, /^\[token-economy\] token estimate ~50 \(~50%\)$/);
 });
 
 test('formatVisibleSavingsLine returns null when savings below minimum', () => {

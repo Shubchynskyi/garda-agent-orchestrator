@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile, forEachJsonlLine } from '../gate-runtime/task-events';
 import { coerceIntLike } from '../gate-runtime/token-telemetry';
-import { resolvePathInsideRepo, toPosix } from './helpers';
+import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from './helpers';
 
 const REVIEW_CONTEXT_LABELS = Object.freeze({
     code: 'code review context',
@@ -422,6 +422,17 @@ function readJsonArtifactForSummary(pathValue: unknown, repoRoot: string | null)
     }
 }
 
+function safeReadJson(filePath: string): Record<string, unknown> | null {
+    try {
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+            return null;
+        }
+        return JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+}
+
 export function getOutputTelemetryFromPayload(payload: Record<string, unknown> | null | undefined) {
     if (!payload || typeof payload !== 'object') {
         return null;
@@ -430,16 +441,23 @@ export function getOutputTelemetryFromPayload(payload: Record<string, unknown> |
         ? payload.output_telemetry
         : payload) as Record<string, unknown>;
     const savedTokens = coerceIntLike(candidate.estimated_saved_tokens);
-    if (savedTokens == null || savedTokens <= 0) {
+    const savedChars = coerceIntLike(candidate.estimated_saved_chars);
+    if ((savedTokens == null || savedTokens <= 0) && (savedChars == null || savedChars <= 0)) {
         return null;
     }
     const rawTokenEstimate = coerceIntLike(candidate.raw_token_count_estimate);
     const outputTokenEstimate = coerceIntLike(candidate.filtered_token_count_estimate);
+    const rawCharCount = coerceIntLike(candidate.raw_char_count);
+    const outputCharCount = coerceIntLike(candidate.filtered_char_count);
     return {
         raw_token_count_estimate: rawTokenEstimate != null && rawTokenEstimate > 0 ? rawTokenEstimate : 0,
         output_token_count_estimate: outputTokenEstimate != null && outputTokenEstimate >= 0 ? outputTokenEstimate : null,
-        estimated_saved_tokens: savedTokens,
-        baseline_known: rawTokenEstimate != null && rawTokenEstimate > 0
+        estimated_saved_tokens: savedTokens != null && savedTokens > 0 ? savedTokens : 0,
+        raw_char_count: rawCharCount != null && rawCharCount > 0 ? rawCharCount : 0,
+        output_char_count: outputCharCount != null && outputCharCount >= 0 ? outputCharCount : null,
+        estimated_saved_chars: savedChars != null && savedChars > 0 ? savedChars : 0,
+        baseline_known: rawTokenEstimate != null && rawTokenEstimate > 0,
+        char_baseline_known: rawCharCount != null && rawCharCount > 0
     };
 }
 
@@ -456,16 +474,23 @@ function getReviewContextSummary(payload: Record<string, unknown> | null | undef
         return null;
     }
     const savedTokens = coerceIntLike(summary.estimated_saved_tokens);
-    if (savedTokens == null || savedTokens <= 0) {
+    const savedChars = coerceIntLike(summary.estimated_saved_chars);
+    if ((savedTokens == null || savedTokens <= 0) && (savedChars == null || savedChars <= 0)) {
         return null;
     }
     const rawTokenEstimate = coerceIntLike(summary.original_token_count_estimate);
     const outputTokenEstimate = coerceIntLike(summary.output_token_count_estimate);
+    const rawCharCount = coerceIntLike(summary.original_char_count);
+    const outputCharCount = coerceIntLike(summary.output_char_count);
     return {
         raw_token_count_estimate: rawTokenEstimate != null && rawTokenEstimate > 0 ? rawTokenEstimate : 0,
         output_token_count_estimate: outputTokenEstimate != null && outputTokenEstimate >= 0 ? outputTokenEstimate : null,
-        estimated_saved_tokens: savedTokens,
-        baseline_known: rawTokenEstimate != null && rawTokenEstimate > 0
+        estimated_saved_tokens: savedTokens != null && savedTokens > 0 ? savedTokens : 0,
+        raw_char_count: rawCharCount != null && rawCharCount > 0 ? rawCharCount : 0,
+        output_char_count: outputCharCount != null && outputCharCount >= 0 ? outputCharCount : null,
+        estimated_saved_chars: savedChars != null && savedChars > 0 ? savedChars : 0,
+        baseline_known: rawTokenEstimate != null && rawTokenEstimate > 0,
+        char_baseline_known: rawCharCount != null && rawCharCount > 0
     };
 }
 
@@ -482,12 +507,18 @@ function getCommandOutputLabel(eventType: string): string {
     if (normalized.startsWith('REVIEW_GATE_')) {
         return 'review gate output';
     }
+    if (normalized.startsWith('FULL_SUITE_VALIDATION_')) {
+        return 'full-suite validation output';
+    }
     return 'gate output';
 }
 
 interface TokenContributionEntry {
     label: string;
+    estimated_saved_chars: number;
     estimated_saved_tokens: number;
+    raw_char_count: number;
+    output_char_count: number | null;
     raw_token_count_estimate: number;
     output_token_count_estimate: number | null;
     source_kind: string;
@@ -497,18 +528,328 @@ interface TokenContributionEntry {
     source_index?: number | null;
 }
 
-function addTokenEconomyContribution(breakdown: TokenContributionEntry[], seenKeys: Set<string>, contribution: Partial<TokenContributionEntry> & { estimated_saved_tokens: number; source_key?: string; label?: string }): void {
-    if (!contribution || contribution.estimated_saved_tokens <= 0) {
+export interface TaskCycleBindingSnapshot {
+    preflight_path: string | null;
+    preflight_sha256: string | null;
+    compile_gate_timestamp: string | null;
+}
+
+export function normalizeCycleBindingPath(pathValue: unknown, repoRoot: string | null): string | null {
+    const resolvedPath = resolveArtifactPathForRead(pathValue, repoRoot);
+    if (resolvedPath) {
+        return toPosix(resolvedPath);
+    }
+    if (typeof pathValue !== 'string') {
+        return null;
+    }
+    const trimmed = pathValue.trim();
+    return trimmed ? toPosix(trimmed) : null;
+}
+
+export function getCycleBindingSnapshotFromPayload(
+    payload: Record<string, unknown> | null | undefined,
+    repoRoot: string | null
+): TaskCycleBindingSnapshot | null {
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
+    const cycleBinding = payload.cycle_binding as Record<string, unknown> | null | undefined;
+    if (!cycleBinding || typeof cycleBinding !== 'object') {
+        return null;
+    }
+    const preflightSha = typeof cycleBinding.preflight_sha256 === 'string'
+        ? cycleBinding.preflight_sha256
+        : null;
+    const compileGateTimestamp = typeof cycleBinding.compile_gate_timestamp === 'string'
+        ? cycleBinding.compile_gate_timestamp
+        : null;
+    const preflightPath = normalizeCycleBindingPath(cycleBinding.preflight_path, repoRoot);
+    if (!preflightSha && !compileGateTimestamp && !preflightPath) {
+        return null;
+    }
+    return {
+        preflight_path: preflightPath,
+        preflight_sha256: preflightSha,
+        compile_gate_timestamp: compileGateTimestamp
+    };
+}
+
+export function buildTaskCycleBindingKey(snapshot: TaskCycleBindingSnapshot | null): string | null {
+    if (!snapshot || !snapshot.compile_gate_timestamp) {
+        return null;
+    }
+    const cycleIdentity = snapshot.preflight_sha256 || snapshot.preflight_path;
+    if (!cycleIdentity) {
+        return null;
+    }
+    return `${snapshot.compile_gate_timestamp}:${cycleIdentity}`;
+}
+
+export function readTaskCycleBindingSnapshot(
+    taskId: string,
+    repoRoot: string | null,
+    reviewsRootOverride?: string | null
+): TaskCycleBindingSnapshot | null {
+    const effectiveReviewsRoot = reviewsRootOverride
+        ? path.resolve(String(reviewsRootOverride))
+        : repoRoot
+            ? joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'))
+            : null;
+    if (!effectiveReviewsRoot) {
+        return null;
+    }
+    const safeTaskId = assertValidTaskId(taskId);
+    const compileGateArtifact = safeReadJson(path.join(effectiveReviewsRoot, `${safeTaskId}-compile-gate.json`));
+    if (!compileGateArtifact) {
+        return null;
+    }
+    const preflightSha = typeof compileGateArtifact.preflight_hash_sha256 === 'string'
+        ? compileGateArtifact.preflight_hash_sha256
+        : null;
+    const compileGateTimestamp = typeof compileGateArtifact.timestamp_utc === 'string'
+        ? compileGateArtifact.timestamp_utc
+        : null;
+    const preflightPath = normalizeCycleBindingPath(compileGateArtifact.preflight_path, repoRoot);
+    if (!preflightSha && !compileGateTimestamp && !preflightPath) {
+        return null;
+    }
+    return {
+        preflight_path: preflightPath,
+        preflight_sha256: preflightSha,
+        compile_gate_timestamp: compileGateTimestamp
+    };
+}
+
+function getCompileGateSnapshotFromEvent(
+    event: Record<string, unknown>,
+    repoRoot: string | null
+): TaskCycleBindingSnapshot | null {
+    const timestamp = formatTimestamp(event.timestamp_utc);
+    const details = event.details && typeof event.details === 'object'
+        ? event.details as Record<string, unknown>
+        : null;
+    const preflightSha = details && typeof details.preflight_hash_sha256 === 'string'
+        ? details.preflight_hash_sha256
+        : null;
+    const preflightPath = normalizeCycleBindingPath(details?.preflight_path, repoRoot);
+    if (!timestamp && !preflightSha && !preflightPath) {
+        return null;
+    }
+    return {
+        preflight_path: preflightPath,
+        preflight_sha256: preflightSha,
+        compile_gate_timestamp: timestamp
+    };
+}
+
+export function resolveTaskCycleBindingSnapshot(
+    taskId: string,
+    events: ReadonlyArray<Record<string, unknown>>,
+    repoRoot: string | null,
+    reviewsRootOverride?: string | null
+): TaskCycleBindingSnapshot | null {
+    const artifactSnapshot = readTaskCycleBindingSnapshot(taskId, repoRoot, reviewsRootOverride);
+    let latestCompileSnapshot: TaskCycleBindingSnapshot | null = null;
+
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        if (eventType !== 'COMPILE_GATE_PASSED' && eventType !== 'COMPILE_GATE_FAILED') {
+            continue;
+        }
+        latestCompileSnapshot = getCompileGateSnapshotFromEvent(event, repoRoot);
+        break;
+    }
+
+    if (!latestCompileSnapshot?.compile_gate_timestamp) {
+        return artifactSnapshot;
+    }
+    if (!artifactSnapshot) {
+        return latestCompileSnapshot.preflight_path || latestCompileSnapshot.preflight_sha256
+            ? latestCompileSnapshot
+            : null;
+    }
+    const artifactTime = parseTimestamp(artifactSnapshot.compile_gate_timestamp).getTime();
+    const latestEventTime = parseTimestamp(latestCompileSnapshot.compile_gate_timestamp).getTime();
+    if (latestCompileSnapshot.preflight_path || latestCompileSnapshot.preflight_sha256) {
+        return latestCompileSnapshot;
+    }
+    if (latestEventTime > artifactTime) {
+        return latestCompileSnapshot;
+    }
+
+    return {
+        preflight_path: artifactSnapshot.preflight_path,
+        preflight_sha256: artifactSnapshot.preflight_sha256,
+        compile_gate_timestamp: latestCompileSnapshot.compile_gate_timestamp
+    };
+}
+
+export function shouldIncludeFullSuiteTelemetryForCurrentCycle(
+    eventType: string,
+    eventTimestamp: unknown,
+    payload: Record<string, unknown> | null | undefined,
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string | null
+): boolean {
+    const normalizedEventType = String(eventType || '').trim().toUpperCase();
+    if (!normalizedEventType.startsWith('FULL_SUITE_VALIDATION_')) {
+        return true;
+    }
+    if (!currentCycle || !currentCycle.compile_gate_timestamp) {
+        return true;
+    }
+
+    const eventDate = parseTimestamp(eventTimestamp);
+    const compileGateDate = parseTimestamp(currentCycle.compile_gate_timestamp);
+    if (
+        eventDate.getTime() > 0
+        && compileGateDate.getTime() > 0
+        && eventDate.getTime() < compileGateDate.getTime()
+    ) {
+        return false;
+    }
+
+    const candidateCycle = getCycleBindingSnapshotFromPayload(payload, repoRoot);
+    if (!candidateCycle) {
+        return true;
+    }
+    if (
+        currentCycle.preflight_sha256
+        && candidateCycle.preflight_sha256
+        && candidateCycle.preflight_sha256 !== currentCycle.preflight_sha256
+    ) {
+        return false;
+    }
+    if (
+        candidateCycle.compile_gate_timestamp
+        && candidateCycle.compile_gate_timestamp !== currentCycle.compile_gate_timestamp
+    ) {
+        return false;
+    }
+    if (
+        currentCycle.preflight_path
+        && candidateCycle.preflight_path
+        && candidateCycle.preflight_path !== currentCycle.preflight_path
+    ) {
+        return false;
+    }
+    return true;
+}
+
+export function shouldIncludeTelemetryForCurrentCycle(
+    eventType: string,
+    eventTimestamp: unknown,
+    payload: Record<string, unknown> | null | undefined,
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string | null
+): boolean {
+    if (!currentCycle?.compile_gate_timestamp) {
+        return true;
+    }
+
+    const eventDate = parseTimestamp(eventTimestamp);
+    const compileGateDate = parseTimestamp(currentCycle.compile_gate_timestamp);
+    if (
+        eventDate.getTime() > 0
+        && compileGateDate.getTime() > 0
+        && eventDate.getTime() < compileGateDate.getTime()
+    ) {
+        return false;
+    }
+
+    return shouldIncludeFullSuiteTelemetryForCurrentCycle(
+        eventType,
+        eventTimestamp,
+        payload,
+        currentCycle,
+        repoRoot
+    );
+}
+
+export function getCurrentCycleReviewContextPaths(
+    events: Record<string, unknown>[],
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string
+): Map<string, string> {
+    const reviewContextPaths = new Map<string, string>();
+
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        const details = event.details && typeof event.details === 'object'
+            ? event.details as Record<string, unknown>
+            : null;
+        if (
+            !details
+            || !shouldIncludeTelemetryForCurrentCycle(
+                eventType,
+                event.timestamp_utc,
+                details,
+                currentCycle,
+                repoRoot
+            )
+        ) {
+            continue;
+        }
+
+        const reviewType = String(
+            details.review_type
+            || details.reviewType
+            || ''
+        ).trim().toLowerCase();
+        if (!reviewType || reviewContextPaths.has(reviewType)) {
+            continue;
+        }
+
+        let candidatePath = '';
+        if (eventType === 'REVIEW_RECORDED') {
+            candidatePath = String(details.review_context_path || details.reviewContextPath || '').trim();
+        } else if (eventType === 'REVIEW_PHASE_STARTED') {
+            candidatePath = String(details.output_path || details.review_context_path || details.reviewContextPath || '').trim();
+        } else {
+            continue;
+        }
+        if (!candidatePath) {
+            continue;
+        }
+
+        const resolvedPath = resolveArtifactPathForRead(candidatePath, repoRoot);
+        if (!resolvedPath) {
+            continue;
+        }
+        reviewContextPaths.set(reviewType, resolvedPath);
+    }
+
+    return reviewContextPaths;
+}
+
+function addTokenEconomyContribution(
+    breakdown: TokenContributionEntry[],
+    sourceIndexByKey: Map<string, number>,
+    contribution: Partial<TokenContributionEntry> & {
+        estimated_saved_tokens?: number;
+        estimated_saved_chars?: number;
+        source_key?: string;
+        label?: string;
+    }
+): void {
+    if (
+        !contribution
+        || ((contribution.estimated_saved_tokens || 0) <= 0 && (contribution.estimated_saved_chars || 0) <= 0)
+    ) {
         return;
     }
     const sourceKey = String(contribution.source_key || '').trim();
-    if (!sourceKey || seenKeys.has(sourceKey)) {
+    if (!sourceKey) {
         return;
     }
-    seenKeys.add(sourceKey);
-    breakdown.push({
+    const normalizedContribution = {
         label: contribution.label || '',
-        estimated_saved_tokens: contribution.estimated_saved_tokens,
+        estimated_saved_chars: contribution.estimated_saved_chars || 0,
+        estimated_saved_tokens: contribution.estimated_saved_tokens || 0,
+        raw_char_count: contribution.raw_char_count || 0,
+        output_char_count: contribution.output_char_count ?? null,
         raw_token_count_estimate: contribution.raw_token_count_estimate || 0,
         output_token_count_estimate: contribution.output_token_count_estimate ?? null,
         source_kind: contribution.source_kind || '',
@@ -516,10 +857,29 @@ function addTokenEconomyContribution(breakdown: TokenContributionEntry[], seenKe
         source_path: contribution.source_path || null,
         source_event_type: contribution.source_event_type || null,
         source_index: contribution.source_index || null
-    });
+    };
+    const existingIndex = sourceIndexByKey.get(sourceKey);
+    if (existingIndex != null) {
+        breakdown[existingIndex] = normalizedContribution;
+        return;
+    }
+    sourceIndexByKey.set(sourceKey, breakdown.length);
+    breakdown.push(normalizedContribution);
 }
 
-function collectReviewContextContributions(container: Record<string, unknown>, repoRoot: string | null, breakdown: TokenContributionEntry[], seenKeys: Set<string>): void {
+function formatContributionSummaryPart(item: TokenContributionEntry): string {
+    if ((item.estimated_saved_chars || 0) > 0) {
+        return `${item.label} ~${item.estimated_saved_chars} chars`;
+    }
+    return `${item.label} token estimate ~${item.estimated_saved_tokens}`;
+}
+
+function collectReviewContextContributions(
+    container: Record<string, unknown>,
+    repoRoot: string | null,
+    breakdown: TokenContributionEntry[],
+    sourceIndexByKey: Map<string, number>
+): void {
     if (!container || typeof container !== 'object') {
         return;
     }
@@ -539,9 +899,12 @@ function collectReviewContextContributions(container: Record<string, unknown>, r
         if (!summary) {
             continue;
         }
-        addTokenEconomyContribution(breakdown, seenKeys, {
+        addTokenEconomyContribution(breakdown, sourceIndexByKey, {
             label: getReviewContextLabel(String(reviewContextArtifact.payload.review_type || entry.review || '')),
+            estimated_saved_chars: summary.estimated_saved_chars,
             estimated_saved_tokens: summary.estimated_saved_tokens,
+            raw_char_count: summary.raw_char_count,
+            output_char_count: summary.output_char_count,
             raw_token_count_estimate: summary.raw_token_count_estimate,
             output_token_count_estimate: summary.output_token_count_estimate,
             source_kind: 'review_context',
@@ -551,9 +914,37 @@ function collectReviewContextContributions(container: Record<string, unknown>, r
     }
 }
 
-export function buildTokenEconomySummary(events: Record<string, unknown>[], repoRoot: string | null) {
+function getCommandOutputSourceKey(
+    eventType: string,
+    details: Record<string, unknown>,
+    index: number,
+    repoRoot: string | null
+): string {
+    const normalizedEventType = String(eventType || '').trim().toUpperCase();
+    if (normalizedEventType.startsWith('FULL_SUITE_VALIDATION_')) {
+        const cycleKey = buildTaskCycleBindingKey(getCycleBindingSnapshotFromPayload(details, repoRoot));
+        if (cycleKey) {
+            return `command-output:full-suite-cycle:${cycleKey}`;
+        }
+        if (typeof details.artifact_path === 'string' && details.artifact_path.trim()) {
+            const normalizedPath = normalizeCycleBindingPath(details.artifact_path, repoRoot);
+            if (normalizedPath) {
+                return `command-output:${normalizedPath}`;
+            }
+        }
+    }
+    return `command-output:event:${index}:${eventType}`;
+}
+
+export function buildTokenEconomySummary(
+    taskId: string,
+    events: Record<string, unknown>[],
+    repoRoot: string | null,
+    reviewsRootOverride?: string | null
+) {
     const breakdown: TokenContributionEntry[] = [];
-    const seenKeys = new Set<string>();
+    const sourceIndexByKey = new Map<string, number>();
+    const currentCycle = resolveTaskCycleBindingSnapshot(taskId, events, repoRoot, reviewsRootOverride);
 
     for (let index = 0; index < events.length; index += 1) {
         const event = events[index];
@@ -571,10 +962,20 @@ export function buildTokenEconomySummary(events: Record<string, unknown>[], repo
             if (reviewEvidence) {
                 reviewEvidencePayload = reviewEvidence.payload;
                 const reviewTelemetry = getOutputTelemetryFromPayload(reviewEvidence.payload);
-                if (reviewTelemetry) {
-                    addTokenEconomyContribution(breakdown, seenKeys, {
+                const includeCurrentCycleTelemetry = shouldIncludeTelemetryForCurrentCycle(
+                    eventType,
+                    event.timestamp_utc,
+                    reviewEvidence.payload,
+                    currentCycle,
+                    repoRoot
+                );
+                if (reviewTelemetry && includeCurrentCycleTelemetry) {
+                    addTokenEconomyContribution(breakdown, sourceIndexByKey, {
                         label: getCommandOutputLabel(eventType),
+                        estimated_saved_chars: reviewTelemetry.estimated_saved_chars,
                         estimated_saved_tokens: reviewTelemetry.estimated_saved_tokens,
+                        raw_char_count: reviewTelemetry.raw_char_count,
+                        output_char_count: reviewTelemetry.output_char_count,
                         raw_token_count_estimate: reviewTelemetry.raw_token_count_estimate,
                         output_token_count_estimate: reviewTelemetry.output_token_count_estimate,
                         source_kind: 'command_output',
@@ -584,28 +985,98 @@ export function buildTokenEconomySummary(events: Record<string, unknown>[], repo
                         source_index: index + 1
                     });
                 }
-                collectReviewContextContributions(reviewEvidence.payload, repoRoot, breakdown, seenKeys);
+                if (includeCurrentCycleTelemetry) {
+                    collectReviewContextContributions(reviewEvidence.payload, repoRoot, breakdown, sourceIndexByKey);
+                }
             }
         }
 
         if (!reviewEvidencePayload) {
             const directTelemetry = getOutputTelemetryFromPayload(details);
-            if (directTelemetry) {
-                addTokenEconomyContribution(breakdown, seenKeys, {
+            const includeCurrentCycleTelemetry = shouldIncludeTelemetryForCurrentCycle(
+                eventType,
+                event.timestamp_utc,
+                details,
+                currentCycle,
+                repoRoot
+            );
+            if (directTelemetry && includeCurrentCycleTelemetry) {
+                addTokenEconomyContribution(breakdown, sourceIndexByKey, {
                     label: getCommandOutputLabel(eventType),
+                    estimated_saved_chars: directTelemetry.estimated_saved_chars,
                     estimated_saved_tokens: directTelemetry.estimated_saved_tokens,
+                    raw_char_count: directTelemetry.raw_char_count,
+                    output_char_count: directTelemetry.output_char_count,
                     raw_token_count_estimate: directTelemetry.raw_token_count_estimate,
                     output_token_count_estimate: directTelemetry.output_token_count_estimate,
                     source_kind: 'command_output',
-                    source_key: `command-output:event:${index + 1}:${eventType}`,
+                    source_key: getCommandOutputSourceKey(eventType, details, index + 1, repoRoot),
                     source_event_type: eventType,
                     source_index: index + 1
                 });
             }
-            collectReviewContextContributions(details, repoRoot, breakdown, seenKeys);
+            if (includeCurrentCycleTelemetry) {
+                collectReviewContextContributions(details, repoRoot, breakdown, sourceIndexByKey);
+            }
         }
     }
 
+    const resolvedReviewsRoot = reviewsRootOverride
+        ? path.resolve(String(reviewsRootOverride))
+        : repoRoot
+            ? joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'))
+            : null;
+    const currentCycleReviewContextPaths = currentCycle?.compile_gate_timestamp && repoRoot
+        ? getCurrentCycleReviewContextPaths(events, currentCycle, repoRoot)
+        : new Map<string, string>();
+    if (!currentCycle?.compile_gate_timestamp && resolvedReviewsRoot) {
+        for (const reviewType of Object.keys(REVIEW_CONTEXT_LABELS)) {
+            currentCycleReviewContextPaths.set(
+                reviewType,
+                path.join(resolvedReviewsRoot, `${taskId}-${reviewType}-review-context.json`)
+            );
+        }
+    }
+    for (const [reviewType, contextPath] of currentCycleReviewContextPaths.entries()) {
+        const resolvedPath = resolveArtifactPathForRead(contextPath, repoRoot);
+        if (!resolvedPath) {
+            continue;
+        }
+        const contextKey = `review-context:${toPosix(resolvedPath)}`;
+        if (sourceIndexByKey.has(contextKey)) {
+            continue;
+        }
+        const payload = safeReadJson(resolvedPath);
+        if (!payload) {
+            continue;
+        }
+        const summary = getReviewContextSummary(payload);
+        if (!summary) {
+            continue;
+        }
+        addTokenEconomyContribution(breakdown, sourceIndexByKey, {
+            label: getReviewContextLabel(String(payload.review_type || reviewType || '')),
+            estimated_saved_chars: summary.estimated_saved_chars,
+            estimated_saved_tokens: summary.estimated_saved_tokens,
+            raw_char_count: summary.raw_char_count,
+            output_char_count: summary.output_char_count,
+            raw_token_count_estimate: summary.raw_token_count_estimate,
+            output_token_count_estimate: summary.output_token_count_estimate,
+            source_kind: 'review_context',
+            source_key: contextKey,
+            source_path: toPosix(resolvedPath)
+        });
+    }
+
+    const totalSavedChars = breakdown.reduce(function (total, item) {
+        return total + item.estimated_saved_chars;
+    }, 0);
+    const totalRawChars = breakdown.reduce(function (total, item) {
+        return total + (item.raw_char_count || 0);
+    }, 0);
+    const totalOutputChars = breakdown.reduce(function (total, item) {
+        return total + (item.output_char_count != null ? item.output_char_count : 0);
+    }, 0);
     const totalSavedTokens = breakdown.reduce(function (total, item) {
         return total + item.estimated_saved_tokens;
     }, 0);
@@ -618,25 +1089,55 @@ export function buildTokenEconomySummary(events: Record<string, unknown>[], repo
     const baselineKnown = breakdown.length > 0 && breakdown.every(function (item) {
         return (item.raw_token_count_estimate || 0) > 0;
     });
+    const charBaselineKnown = breakdown.length > 0 && breakdown.every(function (item) {
+        return (item.raw_char_count || 0) > 0;
+    });
+    const hasTokenOnlyContributions = breakdown.some(function (item) {
+        return (item.estimated_saved_chars || 0) <= 0 && (item.estimated_saved_tokens || 0) > 0;
+    });
+    const hasCharAwareContributions = breakdown.some(function (item) {
+        return (item.estimated_saved_chars || 0) > 0;
+    });
+    const charAwareSubsetOnly = hasCharAwareContributions && hasTokenOnlyContributions;
 
     let visibleSummaryLine = null;
-    if (totalSavedTokens > 0 && breakdown.length > 0) {
+    if (totalSavedChars > 0 && breakdown.length > 0) {
         const parts = breakdown.map(function (item) {
-            return `${item.estimated_saved_tokens} ${item.label}`;
+            return formatContributionSummaryPart(item);
+        }).join(' + ');
+        const tokenNote = totalSavedTokens > 0
+            ? ` Token estimate: ~${totalSavedTokens}.`
+            : '';
+        const prefix = charAwareSubsetOnly
+            ? 'Suppressed output (char-aware subset)'
+            : 'Suppressed output';
+        if (charBaselineKnown && totalRawChars > 0) {
+            const savedPercent = Math.round((totalSavedChars * 100.0) / totalRawChars);
+            visibleSummaryLine = `${prefix}: ~${totalSavedChars} chars (~${savedPercent}%) (${parts}).${tokenNote}`;
+        } else {
+            visibleSummaryLine = `${prefix}: ~${totalSavedChars} chars (${parts}).${tokenNote}`;
+        }
+    } else if (totalSavedTokens > 0 && breakdown.length > 0) {
+        const parts = breakdown.map(function (item) {
+            return `${item.label} ~${item.estimated_saved_tokens} tokens`;
         }).join(' + ');
         if (baselineKnown && totalRawTokens > 0) {
             const savedPercent = Math.round((totalSavedTokens * 100.0) / totalRawTokens);
-            visibleSummaryLine = `Saved tokens: ~${totalSavedTokens} (~${savedPercent}%) (${parts}).`;
+            visibleSummaryLine = `Token estimate: ~${totalSavedTokens} (~${savedPercent}%) (${parts}).`;
         } else {
-            visibleSummaryLine = `Saved tokens: ~${totalSavedTokens} (${parts}).`;
+            visibleSummaryLine = `Token estimate: ~${totalSavedTokens} (${parts}).`;
         }
     }
 
     return {
+        total_estimated_saved_chars: totalSavedChars,
+        total_raw_char_count: totalRawChars,
+        total_output_char_count: totalOutputChars,
         total_estimated_saved_tokens: totalSavedTokens,
         total_raw_token_count_estimate: totalRawTokens,
         total_output_token_count_estimate: totalOutputTokens,
         baseline_known: baselineKnown,
+        char_baseline_known: charBaselineKnown,
         measurable_part_count: breakdown.length,
         breakdown,
         visible_summary_line: visibleSummaryLine
@@ -647,6 +1148,7 @@ export interface BuildTaskEventsSummaryOptions {
     taskId: string;
     eventsRoot: string;
     repoRoot?: string | null;
+    reviewsRoot?: string | null;
 }
 
 /**
@@ -657,6 +1159,7 @@ export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
     const taskId = options.taskId;
     const eventsRoot = options.eventsRoot;
     const repoRoot = options.repoRoot ? path.resolve(String(options.repoRoot)) : null;
+    const reviewsRoot = options.reviewsRoot ? path.resolve(String(options.reviewsRoot)) : null;
 
     const safeTaskId = assertValidTaskId(taskId);
     const taskEventFile = path.join(eventsRoot, `${safeTaskId}.jsonl`);
@@ -745,7 +1248,7 @@ export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
         });
     }
     summary.command_policy_warning_count = summary.command_policy_warnings.length;
-    summary.token_economy = buildTokenEconomySummary(events, repoRoot);
+    summary.token_economy = buildTokenEconomySummary(safeTaskId, events, repoRoot, reviewsRoot);
 
     return summary;
 }

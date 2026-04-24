@@ -3,7 +3,14 @@ import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
 import { fileSha256, toPosix } from './helpers';
-import { buildTokenEconomySummary, formatTimestamp, parseTimestamp } from './task-events-summary';
+import {
+    buildTokenEconomySummary,
+    formatTimestamp,
+    parseTimestamp,
+    resolveTaskCycleBindingSnapshot,
+    shouldIncludeFullSuiteTelemetryForCurrentCycle,
+    type TaskCycleBindingSnapshot
+} from './task-events-summary';
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
 import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
@@ -122,8 +129,6 @@ interface OrderedTaskEvents {
     count: number;
     firstEventUtc: string | null;
     lastEventUtc: string | null;
-    eventTypesPresent: Set<string>;
-    eventByType: Map<string, TaskAuditEvent>;
 }
 
 interface PreflightSummary {
@@ -200,62 +205,130 @@ function readOrderedTaskEvents(taskEventFile: string): OrderedTaskEvents {
         return ta.getTime() - tb.getTime();
     });
 
-    const eventTypesPresent = new Set<string>();
-    const eventByType = new Map<string, TaskAuditEvent>();
-    for (const event of events) {
-        const eventType = String(event.event_type || '');
-        eventTypesPresent.add(eventType);
-        eventByType.set(eventType, event);
-    }
-
     return {
         events,
         count: events.length,
         firstEventUtc: events.length > 0 ? formatTimestamp(events[0].timestamp_utc) : null,
-        lastEventUtc: events.length > 0 ? formatTimestamp(events[events.length - 1].timestamp_utc) : null,
-        eventTypesPresent,
-        eventByType
+        lastEventUtc: events.length > 0 ? formatTimestamp(events[events.length - 1].timestamp_utc) : null
     };
 }
 
 function findLatestEventForTypes(
     eventTypes: string[],
-    eventTypesPresent: Set<string>,
-    eventByType: Map<string, TaskAuditEvent>
+    events: TaskAuditEvent[],
+    predicate?: (eventType: string, event: TaskAuditEvent) => boolean
 ): { event: TaskAuditEvent; eventType: string } | null {
-    let latestMatch: { event: TaskAuditEvent; eventType: string } | null = null;
+    if (events.length === 0 || eventTypes.length === 0) {
+        return null;
+    }
+    const wantedTypes = new Set(eventTypes);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        const eventType = String(event.event_type || '');
+        if (!wantedTypes.has(eventType)) {
+            continue;
+        }
+        if (predicate && !predicate(eventType, event)) {
+            continue;
+        }
+        return { event, eventType };
+    }
+    return null;
+}
 
-    for (const eventType of eventTypes) {
-        if (!eventTypesPresent.has(eventType)) {
-            continue;
-        }
-        const event = eventByType.get(eventType);
-        if (!event) {
-            continue;
-        }
-        if (
-            latestMatch == null
-            || parseTimestamp(event.timestamp_utc).getTime() > parseTimestamp(latestMatch.event.timestamp_utc).getTime()
-        ) {
-            latestMatch = { event, eventType };
-        }
+const CURRENT_CYCLE_DOWNSTREAM_GATES = new Set([
+    'review-phase',
+    'required-reviews-check',
+    'doc-impact-gate',
+    'full-suite-validation',
+    'completion-gate'
+]);
+
+function isEventRelevantForLifecycleGate(
+    gateSpec: LifecycleGateSpec,
+    eventType: string,
+    event: TaskAuditEvent,
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string
+): boolean {
+    if (!CURRENT_CYCLE_DOWNSTREAM_GATES.has(gateSpec.gate) || !currentCycle?.compile_gate_timestamp) {
+        return true;
     }
 
-    return latestMatch;
+    const eventTime = parseTimestamp(event.timestamp_utc).getTime();
+    const compileTime = parseTimestamp(currentCycle.compile_gate_timestamp).getTime();
+    if (eventTime > 0 && compileTime > 0 && eventTime < compileTime) {
+        return false;
+    }
+
+    if (gateSpec.gate !== 'full-suite-validation') {
+        return true;
+    }
+
+    const details = event.details && typeof event.details === 'object'
+        ? event.details as Record<string, unknown>
+        : null;
+    return shouldIncludeFullSuiteTelemetryForCurrentCycle(
+        eventType,
+        event.timestamp_utc,
+        details,
+        currentCycle,
+        repoRoot
+    );
+}
+
+function resolveFullSuiteValidationRequirementForCurrentCycle(
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string,
+    liveFullSuiteValidationEnabled: boolean
+): boolean {
+    if (!currentCycle?.compile_gate_timestamp) {
+        return resolveFullSuiteValidationRequirementForOrderedTaskEvents(
+            events.map((event) => String(event.event_type || '')),
+            liveFullSuiteValidationEnabled
+        ).required;
+    }
+
+    const currentCycleFullSuiteEventTypes = events
+        .filter((event) => shouldIncludeFullSuiteTelemetryForCurrentCycle(
+            String(event.event_type || ''),
+            event.timestamp_utc,
+            event.details && typeof event.details === 'object'
+                ? event.details as Record<string, unknown>
+                : null,
+            currentCycle,
+            repoRoot
+        ))
+        .map((event) => String(event.event_type || '').trim().toUpperCase())
+        .filter((eventType) => eventType.startsWith('FULL_SUITE_VALIDATION_'));
+
+    if (currentCycleFullSuiteEventTypes.length > 0) {
+        return resolveFullSuiteValidationRequirementForOrderedTaskEvents(
+            currentCycleFullSuiteEventTypes,
+            liveFullSuiteValidationEnabled
+        ).required;
+    }
+
+    return liveFullSuiteValidationEnabled;
 }
 
 function resolveLifecycleGateStatus(
     gateSpec: LifecycleGateSpec,
-    eventTypesPresent: Set<string>,
-    eventByType: Map<string, TaskAuditEvent>
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string
 ): { gateOutcome: GateOutcome; blocker: BlockerEntry | null } {
     const passEvents = gateSpec.pass_event === 'REVIEW_GATE_PASSED'
         ? [gateSpec.pass_event, 'REVIEW_GATE_PASSED_WITH_OVERRIDE']
         : gateSpec.pass_event === 'FULL_SUITE_VALIDATION_PASSED'
             ? [gateSpec.pass_event, 'FULL_SUITE_VALIDATION_WARNED']
             : [gateSpec.pass_event];
-    const latestPass = findLatestEventForTypes(passEvents, eventTypesPresent, eventByType);
-    const latestFail = findLatestEventForTypes(gateSpec.fail_events, eventTypesPresent, eventByType);
+    const lifecyclePredicate = (eventType: string, event: TaskAuditEvent): boolean => (
+        isEventRelevantForLifecycleGate(gateSpec, eventType, event, currentCycle, repoRoot)
+    );
+    const latestPass = findLatestEventForTypes(passEvents, events, lifecyclePredicate);
+    const latestFail = findLatestEventForTypes(gateSpec.fail_events, events, lifecyclePredicate);
 
     if (latestPass && latestFail) {
         const passTime = parseTimestamp(latestPass.event.timestamp_utc).getTime();
@@ -315,14 +388,15 @@ function resolveLifecycleGateStatus(
 
 function buildLifecycleGateOutcomes(
     lifecycleGates: LifecycleGateSpec[],
-    eventTypesPresent: Set<string>,
-    eventByType: Map<string, TaskAuditEvent>
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string
 ): { gates: GateOutcome[]; blockers: BlockerEntry[] } {
     const gates: GateOutcome[] = [];
     const blockers: BlockerEntry[] = [];
 
     for (const gateSpec of lifecycleGates) {
-        const resolvedGate = resolveLifecycleGateStatus(gateSpec, eventTypesPresent, eventByType);
+        const resolvedGate = resolveLifecycleGateStatus(gateSpec, events, currentCycle, repoRoot);
         gates.push(resolvedGate.gateOutcome);
         if (resolvedGate.blocker) {
             blockers.push(resolvedGate.blocker);
@@ -471,14 +545,66 @@ function buildRequiredReviewBlocker(reviewType: string, taskId: string, reviewsR
     return null;
 }
 
+function shouldValidateRequiredReviewArtifactForCurrentCycle(
+    reviewType: string,
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null
+): boolean {
+    if (!currentCycle?.compile_gate_timestamp) {
+        return true;
+    }
+
+    const compileGateTime = parseTimestamp(currentCycle.compile_gate_timestamp).getTime();
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        const eventTime = parseTimestamp(event.timestamp_utc).getTime();
+        if (eventTime > 0 && compileGateTime > 0 && eventTime < compileGateTime) {
+            continue;
+        }
+
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        if (
+            eventType === 'REVIEW_GATE_PASSED'
+            || eventType === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
+            || eventType === 'REVIEW_GATE_FAILED'
+            || eventType === 'COMPLETION_GATE_PASSED'
+            || eventType === 'COMPLETION_GATE_FAILED'
+        ) {
+            return true;
+        }
+
+        if (eventType !== 'REVIEW_RECORDED') {
+            continue;
+        }
+        const details = event.details && typeof event.details === 'object'
+            ? event.details as Record<string, unknown>
+            : null;
+        const recordedReviewType = String(
+            details?.review_type
+            || details?.reviewType
+            || ''
+        ).trim().toLowerCase();
+        if (recordedReviewType === reviewType) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function collectRequiredReviewBlockers(
     requiredReviews: Record<string, boolean>,
     taskId: string,
-    reviewsRoot: string
+    reviewsRoot: string,
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null
 ): BlockerEntry[] {
     return Object.entries(requiredReviews)
         .flatMap(([reviewType, required]) => {
             if (!required) {
+                return [];
+            }
+            if (!shouldValidateRequiredReviewArtifactForCurrentCycle(reviewType, events, currentCycle)) {
                 return [];
             }
             const blocker = buildRequiredReviewBlocker(reviewType, taskId, reviewsRoot);
@@ -566,10 +692,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const taskEventFile = path.join(eventsRoot, `${safeTaskId}.jsonl`);
     const orderedEvents = readOrderedTaskEvents(taskEventFile);
     const events = orderedEvents.events;
-    const fullSuiteValidationEnabled = resolveFullSuiteValidationRequirementForOrderedTaskEvents(
-        events.map((event) => String(event.event_type || '')),
+    const currentCycle = resolveTaskCycleBindingSnapshot(safeTaskId, events, repoRoot, reviewsRoot);
+    const fullSuiteValidationEnabled = resolveFullSuiteValidationRequirementForCurrentCycle(
+        events,
+        currentCycle,
+        repoRoot,
         liveFullSuiteValidationEnabled
-    ).required;
+    );
     const workspaceStatusSnapshot = getStatusSnapshot(repoRoot);
     const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled);
     let integrityStatus = 'UNKNOWN';
@@ -585,8 +714,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     }
     const lifecycleStatus = buildLifecycleGateOutcomes(
         lifecycleGates,
-        orderedEvents.eventTypesPresent,
-        orderedEvents.eventByType
+        events,
+        currentCycle,
+        repoRoot
     );
     const gates = [...lifecycleStatus.gates];
     const blockers = [...lifecycleStatus.blockers];
@@ -619,8 +749,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
     const profileReviewDecisions = readProfileReviewDecisions(taskMode, preflight, scopeCategory);
-    blockers.push(...collectRequiredReviewBlockers(requiredReviews, safeTaskId, reviewsRoot));
-    const tokenEconomy = buildTokenEconomySummary(events, repoRoot);
+    blockers.push(...collectRequiredReviewBlockers(requiredReviews, safeTaskId, reviewsRoot, events, currentCycle));
+    const tokenEconomy = buildTokenEconomySummary(safeTaskId, events, repoRoot, reviewsRoot);
     const evidence = collectEvidenceArtifacts(reviewsRoot, safeTaskId, taskEventFile);
     const hasCompletionPass = gates.some(
         (g) => g.gate === 'completion-gate' && g.status === 'PASS'
@@ -740,6 +870,12 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                     || ''
                 ).trim().toLowerCase();
                 if (recordedReviewType !== reviewType) {
+                    continue;
+                }
+                if (
+                    currentCycle?.compile_gate_timestamp
+                    && parseTimestamp(entry.timestamp_utc).getTime() < parseTimestamp(currentCycle.compile_gate_timestamp).getTime()
+                ) {
                     continue;
                 }
                 const reviewContextPath = String(
