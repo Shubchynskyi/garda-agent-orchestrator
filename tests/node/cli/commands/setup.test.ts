@@ -327,8 +327,14 @@ test('handleSetup --no-prompt preserves existing active agent files and remateri
         const persistedAnswers = JSON.parse(
             fs.readFileSync(path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json'), 'utf8')
         );
+        const workflowConfig = JSON.parse(
+            fs.readFileSync(path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json'), 'utf8')
+        );
         assert.equal(persistedAnswers.ActiveAgentFiles, 'CLAUDE.md, AGENTS.md, .antigravity/rules.md');
         assert.equal(persistedAnswers.ProviderMinimalism, 'false');
+        assert.deepEqual(workflowConfig.review_execution_policy, {
+            mode: 'code_first_optional'
+        });
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
         assert.ok(fs.existsSync(path.join(workspaceRoot, 'AGENTS.md')));
         assert.ok(fs.existsSync(path.join(workspaceRoot, '.antigravity', 'rules.md')));
@@ -408,6 +414,9 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
                     green_summary_max_lines: 7,
                     red_failure_chunk_lines: 42,
                     out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                },
+                review_execution_policy: {
+                    mode: 'strict_sequential'
                 }
             }, null, 2),
             'utf8'
@@ -428,6 +437,84 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
             red_failure_chunk_lines: 42,
             out_of_scope_failure_policy: 'AUDIT_AND_WARN'
         });
+        assert.deepEqual(workflowConfig.review_execution_policy, {
+            mode: 'strict_sequential'
+        });
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup materializes code_first_optional review_execution_policy for a fresh workspace', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-workflow-config-fresh-default-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.deepEqual(workflowConfig.review_execution_policy, {
+            mode: 'code_first_optional'
+        });
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup preserves legacy workflow-config omission for review_execution_policy across repeated refreshes', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-workflow-config-legacy-compat-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+            packageJson,
+            repoRoot
+        );
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.deepEqual(workflowConfig.full_suite_validation, {
+            enabled: true,
+            command: 'npm run test:full',
+            timeout_ms: 123456,
+            green_summary_max_lines: 7,
+            red_failure_chunk_lines: 42,
+            out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+        });
+        assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

@@ -1,12 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
-import { buildReviewContextSections } from '../gate-runtime/review-context';
+import { buildReviewContextSections, type ReviewContextSectionsResult } from '../gate-runtime/review-context';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { fileSha256, normalizePath, orchestratorRelativePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPath, resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { getCanonicalReviewContextPath } from './review-context-paths';
-import { resolveRuntimeReviewerIdentity } from './reviewer-routing';
+import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 import { getReviewSkillCandidates, hasSkillEntrypoint } from '../core/review-capabilities';
 
@@ -101,7 +101,7 @@ export function toNonNegativeInt(value: unknown): number | null {
     } catch { return null; }
 }
 
-interface TokenEconomyConfig {
+export interface TokenEconomyConfig {
     enabled?: unknown;
     enabled_depths?: unknown;
     strip_examples?: unknown;
@@ -117,10 +117,27 @@ export interface BuildReviewContextOptions {
     preflightPath: string;
     preflightPayload?: Record<string, unknown> | null;
     taskModePath?: string | null;
+    taskModeEvidence?: ReturnType<typeof getTaskModeEvidence> | null;
+    runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
     tokenEconomyConfigPath: string;
+    tokenEconomyConfigData?: TokenEconomyConfig | null;
     scopedDiffMetadataPath: string;
     outputPath: string;
     repoRoot: string;
+    ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
+    ruleFileContentCache?: Map<string, string> | null;
+}
+
+function buildRuleContextSectionsCacheKey(
+    selectedRulePaths: readonly string[],
+    stripExamples: boolean,
+    stripCodeBlocks: boolean
+): string {
+    return JSON.stringify({
+        selectedRulePaths,
+        stripExamples,
+        stripCodeBlocks
+    });
 }
 
 /**
@@ -137,8 +154,13 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const repoRoot = options.repoRoot;
 
     const preflight = options.preflightPayload ?? JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
-    let tokenConfig: TokenEconomyConfig = {};
-    if (tokenEconomyConfigPath && fs.existsSync(tokenEconomyConfigPath) && fs.statSync(tokenEconomyConfigPath).isFile()) {
+    let tokenConfig: TokenEconomyConfig = options.tokenEconomyConfigData || {};
+    if (
+        !options.tokenEconomyConfigData
+        && tokenEconomyConfigPath
+        && fs.existsSync(tokenEconomyConfigPath)
+        && fs.statSync(tokenEconomyConfigPath).isFile()
+    ) {
         tokenConfig = JSON.parse(fs.readFileSync(tokenEconomyConfigPath, 'utf8')) as TokenEconomyConfig;
     }
 
@@ -164,10 +186,16 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const requiredReviews = preflight.required_reviews || {};
     const requiredReview = parseBool(requiredReviews[reviewType]);
     const taskId = String(preflight.task_id || '').trim() || null;
-    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+    const taskModeEvidence = options.taskModeEvidence || (
+        taskId
+            ? getTaskModeEvidence(repoRoot, taskId, options.taskModePath || '')
+            : null
+    );
+    const runtimeIdentity = options.runtimeReviewerIdentity || resolveRuntimeReviewerIdentity({
         repoRoot,
         taskId,
         taskModePath: options.taskModePath || '',
+        taskModeEvidence,
         allowLegacyFallback: true
     });
     const runtimeIdentityViolations = [...runtimeIdentity.violations];
@@ -206,16 +234,13 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         plan_sha256: null,
         plan_summary: null
     };
-    if (taskId) {
-        const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId, options.taskModePath || '');
-        if (taskModeEvidence.plan) {
+    if (taskModeEvidence?.plan) {
             planMetadata = {
                 plan_guided: true,
                 plan_path: taskModeEvidence.plan.plan_path,
                 plan_sha256: taskModeEvidence.plan.plan_sha256,
                 plan_summary: taskModeEvidence.plan.plan_summary
             };
-        }
     }
 
     const stripExamplesFlag = parseBool(tokenConfig.strip_examples);
@@ -273,13 +298,32 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     // Build the rule context artifact using gate-runtime
     const ruleContextArtifactPath = outputPath.replace(/\.json$/, '.md');
     const readFileCallback = (rulePath: string): string => {
+        if (options.ruleFileContentCache?.has(rulePath)) {
+            return String(options.ruleFileContentCache.get(rulePath) || '');
+        }
         const resolved = path.isAbsolute(rulePath) ? rulePath : path.resolve(repoRoot, rulePath);
-        try { return fs.readFileSync(resolved, 'utf8'); } catch { return ''; }
+        try {
+            const content = fs.readFileSync(resolved, 'utf8');
+            options.ruleFileContentCache?.set(rulePath, content);
+            return content;
+        } catch {
+            options.ruleFileContentCache?.set(rulePath, '');
+            return '';
+        }
     };
-    const ruleContextSections = buildReviewContextSections(selectedRulePaths, readFileCallback, {
-        stripExamples: stripExamplesApplied,
-        stripCodeBlocks: stripCodeBlocksApplied
-    });
+    const ruleContextSectionsCacheKey = buildRuleContextSectionsCacheKey(
+        selectedRulePaths,
+        stripExamplesApplied,
+        stripCodeBlocksApplied
+    );
+    let ruleContextSections = options.ruleContextSectionsCache?.get(ruleContextSectionsCacheKey) || null;
+    if (!ruleContextSections) {
+        ruleContextSections = buildReviewContextSections(selectedRulePaths, readFileCallback, {
+            stripExamples: stripExamplesApplied,
+            stripCodeBlocks: stripCodeBlocksApplied
+        });
+        options.ruleContextSectionsCache?.set(ruleContextSectionsCacheKey, ruleContextSections);
+    }
 
     const ruleContextArtifact = {
         artifact_path: normalizePath(ruleContextArtifactPath),

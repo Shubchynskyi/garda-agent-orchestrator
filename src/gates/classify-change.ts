@@ -18,6 +18,10 @@ import {
     readReviewCapabilitiesConfigFile,
     type ReviewCapabilities
 } from '../core/review-capabilities';
+import {
+    buildReviewExecutionPolicySummaryLine,
+    type EffectiveReviewExecutionPolicyMode
+} from '../core/review-execution-policy';
 
 interface TriggerConfig {
     db: string[];
@@ -79,6 +83,7 @@ export interface ClassifyChangeOptions {
     detectionSource?: string;
     classificationConfig: ResolvedClassificationConfig;
     reviewCapabilities?: Partial<ReviewCapabilities>;
+    reviewExecutionPolicyMode?: EffectiveReviewExecutionPolicyMode;
 }
 
 /**
@@ -416,6 +421,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const detectionSource = options.detectionSource || 'explicit_changed_files';
     const classificationConfig = options.classificationConfig;
     const reviewCapabilities = options.reviewCapabilities || {};
+    const reviewExecutionPolicyMode = options.reviewExecutionPolicyMode;
 
     const runtimeRoots = classificationConfig.runtime_roots;
     const fastPathRoots = classificationConfig.fast_path_roots;
@@ -564,6 +570,12 @@ export function classifyChange(options: ClassifyChangeOptions) {
             infra: requiredInfraReview,
             dependency: requiredDependencyReview
         },
+        review_execution_policy: reviewExecutionPolicyMode
+            ? {
+                mode: reviewExecutionPolicyMode,
+                visible_summary_line: buildReviewExecutionPolicySummaryLine(reviewExecutionPolicyMode)
+            }
+            : undefined,
         zero_diff_guard: {
             zero_diff_detected: zeroDiffDetected,
             status: zeroDiffDetected ? 'BASELINE_ONLY' : 'DIFF_PRESENT',

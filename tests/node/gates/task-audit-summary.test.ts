@@ -40,9 +40,18 @@ function writeEvent(eventsDir: string, taskId: string, event: Record<string, unk
 }
 
 function writePreflight(reviewsDir: string, taskId: string, data: Record<string, unknown>): void {
+    const payload = {
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        },
+        ...data
+    };
+    if (Object.prototype.hasOwnProperty.call(data, 'review_execution_policy') && data.review_execution_policy === undefined) {
+        delete (payload as Record<string, unknown>).review_execution_policy;
+    }
     fs.writeFileSync(
         path.join(reviewsDir, `${taskId}-preflight.json`),
-        JSON.stringify(data),
+        JSON.stringify(payload),
         'utf8'
     );
 }
@@ -67,7 +76,11 @@ function writeActiveCompletionLock(reviewsDir: string, taskId: string): string {
     return lockPath;
 }
 
-function writeWorkflowConfig(repoRoot: string, enabled: boolean): void {
+function writeWorkflowConfig(
+    repoRoot: string,
+    enabled: boolean,
+    reviewExecutionPolicyMode: 'parallel_all' | 'test_after_code' | 'code_first_optional' | 'strict_sequential' = 'code_first_optional'
+): void {
     const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
@@ -76,6 +89,9 @@ function writeWorkflowConfig(repoRoot: string, enabled: boolean): void {
             full_suite_validation: {
                 enabled,
                 command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: reviewExecutionPolicyMode
             }
         }, null, 2),
         'utf8'
@@ -540,6 +556,8 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
             assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: false');
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_mode, 'code_first_optional');
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         });
 
         it('requires full-suite again when an older skipped event is followed by a newer compile cycle', () => {
@@ -585,6 +603,138 @@ describe('gates/task-audit-summary', () => {
 
             assert.equal(result.gates.find((gate) => gate.gate === 'full-suite-validation')?.status, 'MISSING');
             assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: true');
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_mode, 'code_first_optional');
+        });
+
+        it('keeps legacy compatibility mode for pre-T-147 preflight artifacts even when live config changed later', () => {
+            writeWorkflowConfig(tmpDir, false, 'strict_sequential');
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {},
+                review_execution_policy: undefined
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const renderedSummaryText = formatTaskAuditSummaryText(result);
+            const renderedMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_mode, 'legacy_test_downstream');
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_summary_line, 'Review execution policy: legacy_test_downstream (implicit compatibility mode)');
+            assert.ok(renderedSummaryText.includes('Review execution policy: legacy_test_downstream (implicit compatibility mode)'));
+            assert.ok(renderedMarkdown.includes('Review execution policy: legacy_test_downstream (implicit compatibility mode)'));
+            assert.ok(!renderedSummaryText.includes('Review execution policy: strict_sequential'));
+            assert.ok(!renderedMarkdown.includes('Review execution policy: strict_sequential'));
+        });
+
+        it('surfaces the effective review execution policy in current-cycle audit output', () => {
+            writeWorkflowConfig(tmpDir, false, 'strict_sequential');
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {},
+                review_execution_policy: {
+                    mode: 'strict_sequential'
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const renderedSummaryText = formatTaskAuditSummaryText(result);
+            const renderedMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_mode, 'strict_sequential');
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
+            assert.ok(renderedSummaryText.includes('Review execution policy: strict_sequential'));
+            assert.ok(renderedMarkdown.includes('Review execution policy: strict_sequential'));
+        });
+
+        it('recovers the current-cycle review execution policy from timeline evidence when the preflight artifact is gone', () => {
+            writeWorkflowConfig(tmpDir, false, 'parallel_all');
+            const preflightPath = path.join(reviewsDir, `${TASK_ID}-preflight.json`);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {},
+                review_execution_policy: {
+                    mode: 'strict_sequential'
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-compile-gate.json', {
+                timestamp_utc: '2026-01-01T00:00:01.000Z',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'cycle-preflight'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:00.500Z',
+                task_id: TASK_ID,
+                event_type: 'PREFLIGHT_CLASSIFIED',
+                outcome: 'INFO',
+                actor: 'gate',
+                message: 'Preflight completed with mode FULL_PATH.',
+                details: {
+                    output_path: preflightPath.replace(/\\/g, '/'),
+                    review_execution_policy: {
+                        mode: 'strict_sequential'
+                    }
+                }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:01.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed.',
+                details: {
+                    preflight_path: preflightPath.replace(/\\/g, '/'),
+                    preflight_hash_sha256: 'cycle-preflight'
+                }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T00:00:02.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            fs.rmSync(preflightPath, { force: true });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_mode, 'strict_sequential');
+            assert.equal(result.final_closeout.workflow?.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
         });
 
         it('prefers the latest full-suite terminal event over older skipped evidence from a previous cycle', () => {

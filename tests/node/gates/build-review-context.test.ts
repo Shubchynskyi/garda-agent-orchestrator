@@ -11,7 +11,7 @@ import {
     getLegacyDefaultReviewContextPath,
     resolveCanonicalReviewContextPath
 } from '../../../src/gates/review-context-paths';
-import { buildTaskModeArtifact, resolveTaskModeArtifactPath } from '../../../src/gates/task-mode';
+import { buildTaskModeArtifact, getTaskModeEvidence, resolveTaskModeArtifactPath } from '../../../src/gates/task-mode';
 import { resolveReviewerRoutingPolicy, resolveRuntimeReviewerIdentity } from '../../../src/gates/reviewer-routing';
 
 function writeTaskModeArtifactFixture(
@@ -248,6 +248,59 @@ describe('gates/build-review-context', () => {
             assert.equal(result.reviewer_routing.delegation_required, true);
             assert.equal(result.reviewer_routing.expected_execution_mode, 'delegated_subagent');
             assert.equal(result.reviewer_routing.fallback_allowed, false);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('reuses precomputed task-mode evidence and runtime identity without rereading the task-mode artifact', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-runtime-cache-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'reviews'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'init-answers.json'), JSON.stringify({
+                SourceOfTruth: 'Qwen'
+            }, null, 2), 'utf8');
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            const preflightPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-cache-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-cache',
+                required_reviews: { code: true }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-cache', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Qwen',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: true,
+                enabled_depths: [1, 2]
+            }, null, 2), 'utf8');
+            const taskModeEvidence = getTaskModeEvidence(repoRoot, 'T-901-cache', '');
+            const runtimeReviewerIdentity = resolveRuntimeReviewerIdentity({
+                repoRoot,
+                taskId: 'T-901-cache',
+                taskModeEvidence,
+                allowLegacyFallback: true
+            });
+            fs.rmSync(resolveTaskModeArtifactPath(repoRoot, 'T-901-cache', ''), { force: true });
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 3,
+                preflightPath,
+                taskModePath: '',
+                taskModeEvidence,
+                runtimeReviewerIdentity,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-cache-code-scoped.json'),
+                outputPath: path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-cache-code-review-context.json'),
+                repoRoot
+            });
+
+            assert.equal(result.reviewer_routing.source_of_truth, 'Codex');
+            assert.equal(result.reviewer_routing.execution_provider, 'Codex');
+            assert.equal(result.reviewer_routing.canonical_source_of_truth, 'Qwen');
+            assert.equal(result.reviewer_routing.identity_status, 'resolved');
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { cloneJsonValue, isPlainObject, mergeConfig } from '../core/config-merge';
 import { readJsonFile } from '../core/json';
+import { mergeWorkflowConfigWithTemplate, type WorkflowConfigData } from '../core/workflow-config';
 import { ALL_AGENT_ENTRYPOINT_FILES , resolveBundleName} from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
@@ -45,6 +46,7 @@ interface RunInitOptions {
     tokenEconomyEnabled?: boolean;
     providerMinimalism?: boolean;
     activeAgentFilesSeed?: string | null;
+    preserveLegacyReviewExecutionPolicyOmission?: boolean;
     lifecycleLockAlreadyHeld?: boolean;
 }
 
@@ -126,6 +128,7 @@ export function runInit(options: RunInitOptions) {
         tokenEconomyEnabled = true,
         providerMinimalism = true,
         activeAgentFilesSeed = null,
+        preserveLegacyReviewExecutionPolicyOmission = false,
         lifecycleLockAlreadyHeld = false
     } = options;
 
@@ -133,6 +136,12 @@ export function runInit(options: RunInitOptions) {
     const liveRoot = path.join(bundleRoot, 'live');
     const templateRuleRoot = path.join(templateRoot, 'docs/agent-rules');
     const liveRuleRoot = path.join(liveRoot, 'docs/agent-rules');
+    const workflowConfigPath = path.join(liveRoot, 'config', 'workflow-config.json');
+    const workflowConfigExistedBeforeRun = pathExists(workflowConfigPath);
+    const preserveLegacyWorkflowConfigOmission = (
+        preserveLegacyReviewExecutionPolicyOmission
+        && !workflowConfigExistedBeforeRun
+    );
 
     if (!pathExists(templateRoot)) {
         throw new Error(`Template directory not found: ${templateRoot}`);
@@ -301,7 +310,13 @@ export function runInit(options: RunInitOptions) {
         try {
             const templateConfig = cloneJsonValue(readJsonFile(templateConfigPath) as Record<string, unknown>);
             let existingConfig: Record<string, unknown> | null = null;
-            const hadExistingConfig = pathExists(destConfigPath);
+            const treatWorkflowConfigAsMissingBeforeRun = (
+                configName === 'workflow-config'
+                && preserveLegacyWorkflowConfigOmission
+            );
+            const hadExistingConfig = treatWorkflowConfigAsMissingBeforeRun
+                ? false
+                : pathExists(destConfigPath);
 
             if (hadExistingConfig) {
                 try {
@@ -317,7 +332,11 @@ export function runInit(options: RunInitOptions) {
             const replaceWithCanonicalTemplate = configName === 'garda.config';
             const materializedConfig = replaceWithCanonicalTemplate
                 ? cloneJsonValue(templateConfig)
-                : mergeConfig(templateConfig, existingConfig);
+                : configName === 'workflow-config'
+                    ? mergeWorkflowConfigWithTemplate(templateConfig as WorkflowConfigData, existingConfig, {
+                        preserveLegacyReviewExecutionPolicyOmission: preserveLegacyWorkflowConfigOmission
+                    })
+                    : mergeConfig(templateConfig, existingConfig);
 
             // Apply token economy enabled flag
             if (configName === 'token-economy') {

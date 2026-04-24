@@ -398,7 +398,8 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
                     claudeOrchestratorFullAccess: validated.ClaudeOrchestratorFullAccess,
                     tokenEconomyEnabled: validated.TokenEconomyEnabled,
                     providerMinimalism: validated.ProviderMinimalism,
-                    activeAgentFilesSeed: validated.ActiveAgentFiles ? validated.ActiveAgentFiles.join(', ') : null
+                    activeAgentFilesSeed: validated.ActiveAgentFiles ? validated.ActiveAgentFiles.join(', ') : null,
+                    preserveLegacyReviewExecutionPolicyOmission: true
                 });
             } else {
                 runInit({
@@ -412,7 +413,8 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
                     claudeOrchestratorFullAccess: validated.ClaudeOrchestratorFullAccess,
                     tokenEconomyEnabled: validated.TokenEconomyEnabled,
                     providerMinimalism: validated.ProviderMinimalism,
-                    activeAgentFilesSeed: validated.ActiveAgentFiles ? validated.ActiveAgentFiles.join(', ') : null
+                    activeAgentFilesSeed: validated.ActiveAgentFiles ? validated.ActiveAgentFiles.join(', ') : null,
+                    preserveLegacyReviewExecutionPolicyOmission: true
                 });
             }
             materializationStatus = 'PASS';

@@ -511,8 +511,8 @@ describe('runUpdate', () => {
                         out_of_scope_failure_policy: 'AUDIT_AND_WARN',
                         auto_open_report: true
                     },
-                    future_toggle_group: {
-                        sticky_notice_enabled: true
+                    review_execution_policy: {
+                        mode: 'strict_sequential'
                     }
                 }, null, 2),
                 'utf8'
@@ -538,15 +538,59 @@ describe('runUpdate', () => {
                 out_of_scope_failure_policy: 'AUDIT_AND_WARN',
                 auto_open_report: true
             });
-            assert.deepEqual(workflowConfig.future_toggle_group, {
-                sticky_notice_enabled: true
+            assert.deepEqual(workflowConfig.review_execution_policy, {
+                mode: 'strict_sequential'
             });
         } finally {
             removePathRecursive(projectRoot);
         }
     });
 
-    it('applies disabled workflow-config defaults when update materializes a missing config (T-208)', () => {
+    it('preserves legacy workflow-config omission for review_execution_policy during update (T-147)', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.deepEqual(workflowConfig.full_suite_validation, {
+                enabled: true,
+                command: 'npm run test:full',
+                timeout_ms: 123456,
+                green_summary_max_lines: 7,
+                red_failure_chunk_lines: 42,
+                out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+            });
+            assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('materializes legacy-compatible workflow-config when update refreshes a missing config (T-147)', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
@@ -571,6 +615,7 @@ describe('runUpdate', () => {
                 red_failure_chunk_lines: 50,
                 out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
             });
+            assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
         } finally {
             removePathRecursive(projectRoot);
         }

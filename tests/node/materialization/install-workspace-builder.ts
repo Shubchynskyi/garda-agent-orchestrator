@@ -100,4 +100,5 @@ export type CapturedInitRunnerOptions = {
     claudeOrchestratorFullAccess?: boolean;
     providerMinimalism?: boolean;
     activeAgentFilesSeed?: string | null;
+    preserveLegacyReviewExecutionPolicyOmission?: boolean;
 };

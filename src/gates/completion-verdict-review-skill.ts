@@ -11,6 +11,10 @@ import {
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../gate-runtime/review-context';
+import {
+    DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    type EffectiveReviewExecutionPolicyMode
+} from '../core/review-execution-policy';
 import { getReviewSkillCandidates } from '../core/review-capabilities';
 import { normalizePath } from './helpers';
 import {
@@ -64,7 +68,8 @@ export function validateReviewSkillEvidence(
     sourceOfTruth: string | null = null,
     canonicalSourceOfTruth: string | null = null,
     allowLegacyReviewContextIdentityFallback = false,
-    executionProviderSource: string | null = null
+    executionProviderSource: string | null = null,
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
 ): { skill_ids: string[]; reference_paths: string[]; artifact_keys: string[]; reviewer_execution_modes: string[]; violations: string[] } {
     const result = {
         skill_ids: [] as string[],
@@ -242,7 +247,7 @@ export function validateReviewSkillEvidence(
     for (const key of requiredKeys) {
         upstreamRequiredReviewsByKey.set(
             key,
-            getRequiredUpstreamReviewsFromRecord(key, normalizedRequiredReviewRecord)
+            getRequiredUpstreamReviewsFromRecord(key, normalizedRequiredReviewRecord, reviewExecutionPolicyMode)
         );
     }
 

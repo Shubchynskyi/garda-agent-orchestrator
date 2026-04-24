@@ -71,3 +71,34 @@ test('handleInit forwards init-answer gitignore options into standalone init mat
         fs.rmSync(projectRoot, { recursive: true, force: true });
     }
 });
+
+test('handleInit materializes code_first_optional review_execution_policy when bundle exists but live version does not', () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const { projectRoot, bundleRoot } = setupWorkspace(repoRoot);
+    const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+    const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    fs.writeFileSync(answersPath, JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'Codex',
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        ProviderMinimalism: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE',
+        ActiveAgentFiles: 'AGENTS.md'
+    }, null, 2), 'utf8');
+
+    const originalConsoleLog = console.log;
+    console.log = () => undefined;
+    try {
+        handleInit(['--target-root', projectRoot], { name: 'garda-agent-orchestrator', version: '1.0.0' });
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.deepEqual(workflowConfig.review_execution_policy, {
+            mode: 'code_first_optional'
+        });
+    } finally {
+        console.log = originalConsoleLog;
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+});

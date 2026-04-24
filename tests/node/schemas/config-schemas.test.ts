@@ -23,6 +23,7 @@ import {
     isolationModeSchema,
     profilesSchema,
     reviewArtifactStorageSchema,
+    workflowConfigSchema,
     gardaConfigSchema
 } from '../../../src/schemas/config-schemas';
 
@@ -210,6 +211,24 @@ test('template profiles.json validates against schema', () => {
 test('template review-artifact-storage.json validates against schema', () => {
     const data = readTemplateConfig('review-artifact-storage.json');
     const result = validateAgainstSchema(data, reviewArtifactStorageSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config schema allows future top-level toggle groups', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    clone.future_toggle_group = {
+        sticky_notice_enabled: true
+    };
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config schema allows future full_suite_validation knobs', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (clone.full_suite_validation as Record<string, unknown>).auto_open_report = true;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
@@ -427,6 +446,114 @@ test('validateAllConfigs reports runtime validator failures', () => {
         assert.ok(reviewReport);
         assert.equal(reviewReport.runtimeValid, false);
         assert.ok(reviewReport.errors.some((error) => error.includes('synthetic runtime validation failure')));
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
+test('validateAllConfigs accepts workflow-config files with preserved future top-level toggles', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const workflowConfigPath = path.join(configDir, 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.future_toggle_group = {
+            sticky_notice_enabled: true
+        };
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+        const report = validateAllConfigs(bundleRoot);
+        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        assert.equal(report.passed, true, JSON.stringify(report, null, 2));
+        assert.ok(workflowReport);
+        assert.equal(workflowReport.schemaValid, true);
+        assert.equal(workflowReport.runtimeValid, true);
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
+test('validateAllConfigs accepts workflow-config files with preserved future full_suite_validation knobs', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const workflowConfigPath = path.join(configDir, 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        (workflowConfig.full_suite_validation as Record<string, unknown>).auto_open_report = true;
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+        const report = validateAllConfigs(bundleRoot);
+        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        assert.equal(report.passed, true, JSON.stringify(report, null, 2));
+        assert.ok(workflowReport);
+        assert.equal(workflowReport.schemaValid, true);
+        assert.equal(workflowReport.runtimeValid, true);
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
+test('validateAllConfigs rejects likely typo top-level workflow-config keys', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const workflowConfigPath = path.join(configDir, 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        delete workflowConfig.review_execution_policy;
+        workflowConfig.review_execution_polciy = {
+            mode: 'parallel_all'
+        };
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+        const report = validateAllConfigs(bundleRoot);
+        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        assert.equal(report.passed, false);
+        assert.ok(workflowReport);
+        assert.equal(workflowReport.schemaValid, true);
+        assert.equal(workflowReport.runtimeValid, false);
+        assert.ok(workflowReport.errors.some((error) => error.includes("did you mean 'review_execution_policy'")));
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
+test('validateAllConfigs rejects case-drifted workflow-config review_execution_policy keys', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const workflowConfigPath = path.join(configDir, 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        delete workflowConfig.review_execution_policy;
+        workflowConfig.Review_Execution_Policy = {
+            mode: 'parallel_all'
+        };
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+        const report = validateAllConfigs(bundleRoot);
+        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        assert.equal(report.passed, false);
+        assert.ok(workflowReport);
+        assert.equal(workflowReport.runtimeValid, false);
+        assert.ok(workflowReport.errors.some((error) => error.includes("exact key 'review_execution_policy'")));
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
+test('validateAllConfigs rejects unknown nested workflow-config review_execution_policy keys', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const workflowConfigPath = path.join(configDir, 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.review_execution_policy = {
+            mode: 'parallel_all',
+            visible_summary_line: 'unexpected'
+        };
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+        const report = validateAllConfigs(bundleRoot);
+        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        assert.equal(report.passed, false);
+        assert.ok(workflowReport);
+        assert.equal(workflowReport.schemaValid, false);
+        assert.equal(workflowReport.runtimeValid, false);
+        assert.ok(workflowReport.errors.some((error) => error.includes('visible_summary_line')));
     } finally {
         cleanupTempBundleRoot(tmpDir);
     }

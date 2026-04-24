@@ -18,7 +18,8 @@ import {
     normalizeReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance,
     restoreReviewerRoutingMetadata,
-    type ReviewReceipt
+    type ReviewReceipt,
+    type ReviewContextSectionsResult
 } from '../../../gate-runtime/review-context';
 import {
     emitSkillReferenceLoadedEventAsync,
@@ -31,6 +32,11 @@ import {
     assertRequiredUpstreamReviewDependencies,
     type ReviewDependencyTimelineEvent
 } from '../../../gates/review-dependencies';
+import {
+    resolveRuntimeReviewerIdentity,
+    type RuntimeReviewerIdentity
+} from '../../../gates/reviewer-routing';
+import { getTaskModeEvidence } from '../../../gates/task-mode';
 import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
 import {
     computeCodeReviewScopeFingerprint,
@@ -45,6 +51,7 @@ import {
     buildKeyValueOutputLines,
     requireResolvedPath
 } from '../shared-command-utils';
+import type { TokenEconomyConfig } from '../../../gates/build-review-context';
 
 interface ReviewReuseResult {
     reused: boolean;
@@ -59,12 +66,12 @@ interface CompileEvidenceSummary {
     preflightHashSha256: string | null;
 }
 
-interface TimelineEventsSummaryResult {
+export interface TimelineEventsSummaryResult {
     events: ReviewDependencyTimelineEvent[];
     hasInvalidLines: boolean;
 }
 
-function readTimelineEventsSummary(timelinePath: string): TimelineEventsSummaryResult {
+export function readTimelineEventsSummary(timelinePath: string): TimelineEventsSummaryResult {
     if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
         return {
             events: [],
@@ -165,6 +172,7 @@ async function tryReuseCodeReviewEvidence(options: {
     preflightPayload: Record<string, unknown>;
     reviewContextPath: string;
     previousReviewContextReuseSha256?: string | null;
+    timelineEventsSummary?: TimelineEventsSummaryResult | null;
 }): Promise<ReviewReuseResult> {
     if (options.reviewType !== 'code') {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
@@ -234,7 +242,7 @@ async function tryReuseCodeReviewEvidence(options: {
     }
 
     const timelinePath = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'task-events', `${options.taskId}.jsonl`));
-    const timelineEvents = readTimelineEventsSummary(timelinePath).events;
+    const timelineEvents = options.timelineEventsSummary?.events || readTimelineEventsSummary(timelinePath).events;
     const latestCompilePassSequence = findLatestTimelineSequence(
         timelineEvents,
         (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
@@ -385,11 +393,18 @@ export interface BuildReviewContextCommandOptions {
     reviewType?: unknown;
     depth?: unknown;
     preflightPath?: unknown;
+    preflightPayload?: Record<string, unknown> | null;
     taskModePath?: unknown;
+    taskModeEvidence?: ReturnType<typeof getTaskModeEvidence> | null;
+    runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
     tokenEconomyConfigPath?: unknown;
+    tokenEconomyConfigData?: TokenEconomyConfig | null;
+    timelineEventsSummary?: TimelineEventsSummaryResult | null;
     scopedDiffMetadataPath?: unknown;
     outputPath?: unknown;
     repoRoot?: unknown;
+    ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
+    ruleFileContentCache?: Map<string, string> | null;
 }
 
 export async function runBuildReviewContextCommand(
@@ -406,18 +421,44 @@ export async function runBuildReviewContextCommand(
         gateHelpers.resolvePathInsideRepo(parseRequiredText(options.preflightPath, 'PreflightPath'), repoRoot),
         'PreflightPath'
     );
-    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const preflightPayload = (
+        options.preflightPayload
+        && typeof options.preflightPayload === 'object'
+        && !Array.isArray(options.preflightPayload)
+    )
+        ? options.preflightPayload
+        : JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const taskModePath = String(options.taskModePath || '').trim();
     const taskId = String(preflightPayload.task_id || '').trim();
+    const taskModeEvidence = taskId
+        ? (
+            options.taskModeEvidence
+            || getTaskModeEvidence(repoRoot, taskId, taskModePath)
+        )
+        : null;
+    const runtimeReviewerIdentity = taskId
+        ? (
+            options.runtimeReviewerIdentity
+            || resolveRuntimeReviewerIdentity({
+                repoRoot,
+                taskId,
+                taskModePath,
+                taskModeEvidence,
+                allowLegacyFallback: true
+            })
+        )
+        : null;
+    const timelinePath = taskId
+        ? gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`))
+        : null;
+    const timelineSummary = timelinePath
+        ? (options.timelineEventsSummary || readTimelineEventsSummary(timelinePath))
+        : null;
     if (taskId) {
-        const timelinePath = gateHelpers.joinOrchestratorPath(
-            repoRoot,
-            path.join('runtime', 'task-events', `${taskId}.jsonl`)
-        );
-        const timelineSummary = readTimelineEventsSummary(timelinePath);
         assertReviewLifecycleGuardFromEntries(
-            timelinePath,
-            timelineSummary.events,
-            timelineSummary.hasInvalidLines,
+            String(timelinePath),
+            timelineSummary?.events || [],
+            timelineSummary?.hasInvalidLines === true,
             'build-review-context',
             'review_phase'
         );
@@ -426,8 +467,9 @@ export async function runBuildReviewContextCommand(
             preflightPath,
             preflightPayload,
             reviewType,
-            timelineEvents: timelineSummary.events,
-            taskModePath: String(options.taskModePath || '').trim()
+            timelineEvents: timelineSummary?.events || [],
+            taskModePath,
+            runtimeReviewerIdentity
         });
     }
     const tokenEconomyConfigPath = options.tokenEconomyConfigPath
@@ -458,11 +500,16 @@ export async function runBuildReviewContextCommand(
         depth,
         preflightPath,
         preflightPayload,
-        taskModePath: String(options.taskModePath || '').trim() || null,
+        taskModePath: taskModePath || null,
+        taskModeEvidence,
+        runtimeReviewerIdentity,
         tokenEconomyConfigPath,
+        tokenEconomyConfigData: options.tokenEconomyConfigData || null,
         scopedDiffMetadataPath,
         outputPath,
-        repoRoot
+        repoRoot,
+        ruleContextSectionsCache: options.ruleContextSectionsCache || null,
+        ruleFileContentCache: options.ruleFileContentCache || null
     });
     let reviewReuseResult: ReviewReuseResult = {
         reused: false,
@@ -502,7 +549,8 @@ export async function runBuildReviewContextCommand(
                 preflightPath,
                 preflightPayload,
                 reviewContextPath: outputPath,
-                previousReviewContextReuseSha256
+                previousReviewContextReuseSha256,
+                timelineEventsSummary: timelineSummary
             });
         }
     } catch {

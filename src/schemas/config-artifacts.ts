@@ -9,6 +9,9 @@ import {
     normalizeStringArray
 } from './shared';
 import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
+import {
+    normalizeReviewExecutionPolicyMode
+} from '../core/review-execution-policy';
 
 interface IntegerArrayOptions {
     allowScalar?: boolean;
@@ -411,6 +414,89 @@ const VALID_RETENTION_MODES = new Set(['none', 'summary', 'full']);
 const VALID_COMPRESSION_FORMATS = new Set(['gzip']);
 const VALID_WORKFLOW_FULL_SUITE_FAILURE_POLICIES = new Set(['AUDIT_AND_BLOCK', 'AUDIT_AND_WARN']);
 
+function assertNoCaseMismatchedKnownKeys(
+    raw: Record<string, unknown>,
+    knownKeys: readonly string[],
+    fieldName: string
+): void {
+    const allowedKeySet = new Set(knownKeys);
+    for (const key of Object.keys(raw)) {
+        const caseInsensitiveMatch = knownKeys.find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+        if (caseInsensitiveMatch && !allowedKeySet.has(key)) {
+            throw new Error(`${fieldName}.${key} must use the exact key '${caseInsensitiveMatch}'.`);
+        }
+    }
+}
+
+function assertNoUnknownKeys(
+    raw: Record<string, unknown>,
+    knownKeys: readonly string[],
+    fieldName: string
+): void {
+    const allowedKeySet = new Set(knownKeys);
+    for (const key of Object.keys(raw)) {
+        if (!allowedKeySet.has(key)) {
+            throw new Error(`${fieldName}.${key} is not allowed.`);
+        }
+    }
+}
+
+function computeEditDistance(left: string, right: string): number {
+    const rows = left.length + 1;
+    const cols = right.length + 1;
+    const distances = Array.from({ length: rows }, (_, rowIndex) => (
+        Array.from({ length: cols }, (_, colIndex) => (rowIndex === 0 ? colIndex : (colIndex === 0 ? rowIndex : 0)))
+    ));
+
+    for (let rowIndex = 1; rowIndex < rows; rowIndex += 1) {
+        for (let colIndex = 1; colIndex < cols; colIndex += 1) {
+            const substitutionCost = left[rowIndex - 1] === right[colIndex - 1] ? 0 : 1;
+            distances[rowIndex][colIndex] = Math.min(
+                distances[rowIndex - 1][colIndex] + 1,
+                distances[rowIndex][colIndex - 1] + 1,
+                distances[rowIndex - 1][colIndex - 1] + substitutionCost
+            );
+        }
+    }
+
+    return distances[left.length][right.length];
+}
+
+function findLikelyKnownKeyTypo(key: string, knownKeys: readonly string[]): string | null {
+    const normalizedKey = key.toLowerCase();
+    let bestCandidate: string | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const candidate of knownKeys) {
+        const normalizedCandidate = candidate.toLowerCase();
+        const maxDistance = normalizedCandidate.length >= 12 ? 2 : 1;
+        const distance = computeEditDistance(normalizedKey, normalizedCandidate);
+        if (distance <= maxDistance && distance < bestDistance) {
+            bestCandidate = candidate;
+            bestDistance = distance;
+        }
+    }
+
+    return bestCandidate;
+}
+
+function assertNoLikelyTypoKeys(
+    raw: Record<string, unknown>,
+    knownKeys: readonly string[],
+    fieldName: string
+): void {
+    const allowedKeySet = new Set(knownKeys);
+    for (const key of Object.keys(raw)) {
+        if (allowedKeySet.has(key)) {
+            continue;
+        }
+        const likelyMatch = findLikelyKnownKeyTypo(key, knownKeys);
+        if (likelyMatch) {
+            throw new Error(`${fieldName}.${key} is not allowed; did you mean '${likelyMatch}'?`);
+        }
+    }
+}
+
 export function validateReviewArtifactStorageConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'review-artifact-storage');
     const knownKeys = new Set([
@@ -477,7 +563,14 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeys = new Set(['full_suite_validation']);
+    const knownKeyList = ['full_suite_validation', 'review_execution_policy'] as const;
+    const knownKeys = new Set(knownKeyList);
+    assertNoCaseMismatchedKnownKeys(
+        raw,
+        knownKeyList,
+        'workflow-config'
+    );
+    assertNoLikelyTypoKeys(raw, knownKeyList, 'workflow-config');
     const normalized = cloneUnknownProperties(raw, knownKeys);
 
     const section = ensurePlainObject(raw.full_suite_validation, 'workflow-config.full_suite_validation');
@@ -489,6 +582,18 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         'red_failure_chunk_lines',
         'out_of_scope_failure_policy'
     ]);
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        [
+            'enabled',
+            'command',
+            'timeout_ms',
+            'green_summary_max_lines',
+            'red_failure_chunk_lines',
+            'out_of_scope_failure_policy'
+        ],
+        'workflow-config.full_suite_validation'
+    );
     const normalizedSection = cloneUnknownProperties(section, sectionKnownKeys);
 
     normalizedSection.enabled = normalizeBooleanLike(
@@ -527,6 +632,30 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     normalizedSection.out_of_scope_failure_policy = policy;
 
     normalized.full_suite_validation = normalizedSection;
+    if (raw.review_execution_policy === undefined) {
+        return normalized;
+    }
+
+    const reviewExecutionPolicy = ensurePlainObject(
+        raw.review_execution_policy,
+        'workflow-config.review_execution_policy'
+    );
+    assertNoCaseMismatchedKnownKeys(
+        reviewExecutionPolicy,
+        ['mode'],
+        'workflow-config.review_execution_policy'
+    );
+    assertNoUnknownKeys(
+        reviewExecutionPolicy,
+        ['mode'],
+        'workflow-config.review_execution_policy'
+    );
+    const normalizedReviewExecutionPolicy: Record<string, unknown> = {};
+    normalizedReviewExecutionPolicy.mode = normalizeReviewExecutionPolicyMode(
+        reviewExecutionPolicy.mode,
+        'workflow-config.review_execution_policy.mode'
+    );
+    normalized.review_execution_policy = normalizedReviewExecutionPolicy;
     return normalized;
 }
 

@@ -53,6 +53,7 @@ import { runContractMigrations } from '../../lifecycle/contract-migrations';
 import { serializeInitAnswers } from '../../schemas/init-answers';
 import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
+import { hasMaterializedWorkflowConfigBaseline } from '../../core/workflow-config';
 import { validateManifest } from '../../validators/validate-manifest';
 import { runVerify } from '../../validators/verify';
 import { writeProtectedControlPlaneManifest } from '../../gates/helpers';
@@ -349,6 +350,7 @@ export async function handleSetup(
     try {
         await withLifecycleOperationLockAsync(targetRoot, 'setup', async () => {
         const bundlePath = getBundlePath(targetRoot);
+        const bundleHadMaterializedLiveBeforeSetup = hasMaterializedWorkflowConfigBaseline(bundlePath);
         const defaultInitAnswersPath = options.initAnswersPath || path.join(path.basename(bundlePath), 'runtime', 'init-answers.json');
         const promptedAnswers: SetupAnswers | null = canUseInteractivePrompts
             ? await collectSetupAnswersInteractively(
@@ -422,7 +424,10 @@ export async function handleSetup(
             initAnswersPath: resolvedInitAnswersPath,
             dryRun: options.dryRun,
             initRunner: function (initOptions: Omit<Parameters<typeof runInit>[0], 'bundleRoot'>) {
-                runInit(Object.assign({ bundleRoot: effectiveBundlePath }, initOptions));
+                runInit(Object.assign({
+                    bundleRoot: effectiveBundlePath,
+                    preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeSetup
+                }, initOptions));
             }
         });
 

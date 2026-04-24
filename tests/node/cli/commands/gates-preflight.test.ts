@@ -213,6 +213,13 @@ function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     }
 }
 
+function writeWorkflowConfig(repoRoot: string, payload: string): string {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, payload, 'utf8');
+    return configPath;
+}
+
 function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
@@ -517,6 +524,67 @@ function initializeGitRepo(repoRoot: string): void {
 }
 
 describe('cli/commands/gates — preflight', () => {
+    it('classify-change uses legacy compatibility mode when workflow-config is missing', () => {
+        const repoRoot = createTempRepo();
+        try {
+            const result = runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskIntent: 'Adjust workflow review ordering'
+            });
+            const parsed = JSON.parse(result.outputText) as Record<string, unknown>;
+            assert.deepEqual(parsed.review_execution_policy, {
+                mode: 'legacy_test_downstream',
+                visible_summary_line: 'Review execution policy: legacy_test_downstream (implicit compatibility mode)'
+            });
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('classify-change fails closed when workflow-config is malformed', () => {
+        const repoRoot = createTempRepo();
+        try {
+            writeWorkflowConfig(repoRoot, '{"full_suite_validation":');
+            const error = captureExpectedError(() => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskIntent: 'Adjust workflow review ordering'
+            }));
+            assert.match(error.message, /workflow-config\.json/i);
+            assert.match(error.message, /JSON/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('classify-change fails closed when workflow-config uses a case-drifted review_execution_policy key', () => {
+        const repoRoot = createTempRepo();
+        try {
+            writeWorkflowConfig(repoRoot, JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                Review_Execution_Policy: {
+                    mode: 'parallel_all'
+                }
+            }, null, 2));
+            const error = captureExpectedError(() => runClassifyChangeCommand({
+                repoRoot,
+                changedFiles: ['src/app.ts'],
+                taskIntent: 'Adjust workflow review ordering'
+            }));
+            assert.match(error.message, /exact key 'review_execution_policy'/i);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('classifies security file and emits risk_aware_depth with promoted effective depth', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const securityFilePath = path.join(repoRoot, 'src', 'auth', 'jwt-guard.ts');

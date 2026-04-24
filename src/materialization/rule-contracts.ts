@@ -75,7 +75,7 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
             'SKILL_SELECTED',
             'SKILL_REFERENCE_LOADED',
             'After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...`',
-            'Downstream `test` review preparation must not start until every required upstream non-`test` review for the current cycle has a clean PASS artifact and receipt.',
+            'Downstream review preparation must follow the current-cycle dependency graph from `preflight.review_execution_policy`; do not start `test` until every required upstream dependency for the active policy has a clean PASS artifact and receipt.',
             'If a later cycle changes only test scope, still run `build-review-context` for reusable upstream `code` review first so current-cycle reuse evidence exists before `test` review starts.',
             'Compile gate validates post-preflight rule-pack evidence',
             'Review gate command validates task-mode entry evidence (`TASK_MODE_ENTERED`) for the same task id.',
@@ -112,8 +112,8 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
             `${getBundleCliCommand(bn)} gate load-rule-pack`,
             'After preflight, re-run `load-rule-pack --stage "POST_PREFLIGHT"`',
             'build-review-context --review-type "<review-type>" --depth "<1|2|3>"',
-            '`test` review is downstream: prepare it only after every required upstream non-`test` review for the current cycle is already recorded as PASS.',
-            'On pure test-scope reruns, run `build-review-context` for reusable upstream `code` review first so the current-cycle reuse receipt exists before launching `test` review.'
+            'Review launch dependencies come from `preflight.review_execution_policy`; prepare `test` only after every required upstream dependency for the active policy is already recorded as PASS.',
+            'On pure test-scope reruns, if the active policy keeps `test` downstream of `code`, run `build-review-context` for reusable upstream `code` review first so the current-cycle reuse receipt exists before launching `test` review.'
         ])
     }),
     Object.freeze({

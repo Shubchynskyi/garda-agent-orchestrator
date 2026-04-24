@@ -30,6 +30,7 @@ import { auditGateCommand } from '../../../gates/task-events-summary';
 import type { CommandCompactnessAudit } from '../../../gates/task-events-summary';
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../gates/classify-change';
+import { loadReviewExecutionPolicyConfig } from '../../../core/review-execution-policy';
 import { detectCodeChanged } from '../../../gates/preflight-code-change';
 import {
     buildOptionalSkillSelectionArtifact,
@@ -305,6 +306,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     );
     const classificationConfig = getClassificationConfig(repoRoot);
     const reviewCapabilities = getReviewCapabilities(repoRoot);
+    const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
     const result: ClassificationResult & { task_id?: string } = classifyChange({
         normalizedFiles: workspaceSnapshot.changed_files,
         taskIntent: String(options.taskIntent || ''),
@@ -317,7 +319,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         renameCount,
         detectionSource: workspaceSnapshot.detection_source,
         classificationConfig,
-        reviewCapabilities
+        reviewCapabilities,
+        reviewExecutionPolicyMode: reviewExecutionPolicy.mode
     });
 
     const protectedFilesSnapshot = gateHelpers.scanProtectedPathHashes(
@@ -717,6 +720,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     changed_lines_total: result.metrics.changed_lines_total,
                     code_changed: codeChanged,
                     required_reviews: result.required_reviews,
+                    review_execution_policy: (result as Record<string, unknown>).review_execution_policy ?? null,
                     optional_skill_selection_artifact_path: optionalSkillSelectionArtifactPath,
                     zero_diff_guard: result.zero_diff_guard,
                     budget_forecast: (result as any).budget_forecast || null,

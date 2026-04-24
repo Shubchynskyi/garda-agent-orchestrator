@@ -179,6 +179,29 @@ describe('runInit', () => {
         }
     });
 
+    it('materializes code_first_optional review_execution_policy for a fresh bundle', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const workflowConfig = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+                'utf8'
+            ));
+            assert.deepEqual(workflowConfig.review_execution_policy, {
+                mode: 'code_first_optional'
+            });
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('syncs root .gitignore and includes .review-temp during standalone init', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

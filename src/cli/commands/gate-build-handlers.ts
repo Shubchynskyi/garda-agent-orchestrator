@@ -19,6 +19,7 @@ import {
     runCompileGateCommand
 } from './gate-flows/compile-flow';
 import {
+    readTimelineEventsSummary,
     runBuildReviewContextCommand,
     type BuildReviewContextCommandOptions,
     type BuildReviewContextCommandResult
@@ -38,7 +39,7 @@ import {
 } from './shared-command-utils';
 
 export type { BuildReviewContextCommandOptions, BuildReviewContextCommandResult };
-export { runBuildReviewContextCommand };
+export { runBuildReviewContextCommand, readTimelineEventsSummary };
 
 export async function handleClassifyChange(gateArgv: string[]): Promise<void> {
     const defs = {

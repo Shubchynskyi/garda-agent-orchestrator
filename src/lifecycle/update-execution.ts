@@ -41,6 +41,7 @@ export interface MaterializationRunnerOptions {
     tokenEconomyEnabled: boolean;
     providerMinimalism: boolean;
     activeAgentFilesSeed: string | null;
+    preserveLegacyReviewExecutionPolicyOmission?: boolean;
     lifecycleLockAlreadyHeld?: boolean;
 }
 
@@ -191,6 +192,7 @@ export function executeUpdatePipelineStages(options: {
                     tokenEconomyEnabled: sources.tokenEconomyEnabled,
                     providerMinimalism: sources.providerMinimalism,
                     activeAgentFilesSeed: sources.activeAgentFilesSeed,
+                    preserveLegacyReviewExecutionPolicyOmission: true,
                     lifecycleLockAlreadyHeld
                 });
             } else {
@@ -206,6 +208,7 @@ export function executeUpdatePipelineStages(options: {
                     tokenEconomyEnabled: sources.tokenEconomyEnabled,
                     providerMinimalism: sources.providerMinimalism,
                     activeAgentFilesSeed: sources.activeAgentFilesSeed,
+                    preserveLegacyReviewExecutionPolicyOmission: true,
                     lifecycleLockAlreadyHeld
                 });
             }

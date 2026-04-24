@@ -16,6 +16,7 @@ import {
     formatKeyValueOutput,
     ParsedOptionsRecord
 } from './shared-command-utils';
+import { hasMaterializedWorkflowConfigBaseline } from '../../core/workflow-config';
 import {
     handleStandardFlags,
     resolveInitAnswersPath,
@@ -46,6 +47,7 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
     try {
         await withLifecycleOperationLockAsync(targetRoot, 'install', async () => {
         const bundlePath = getBundlePath(targetRoot);
+        const bundleHadMaterializedLiveBeforeInstall = hasMaterializedWorkflowConfigBaseline(bundlePath);
         const sourceResolved = path.resolve(source.sourceRoot);
         const bundleResolved = path.resolve(bundlePath);
         if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase() && !options.dryRun) {
@@ -64,7 +66,11 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
             initAnswersPath: answers.resolvedPath,
             dryRun: options.dryRun === true,
             initRunner(initOptions) {
-                runInit({ bundleRoot: effectiveBundlePath, ...initOptions });
+                runInit({
+                    ...initOptions,
+                    bundleRoot: effectiveBundlePath,
+                    preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeInstall
+                });
             }
         }) as Record<string, unknown>;
         formatKeyValueOutput(installResult, [
@@ -103,6 +109,7 @@ export function handleInit(commandArgv: string[], packageJson: PackageJsonLike):
         tokenEconomyEnabled: answers.tokenEconomyEnabled,
         providerMinimalism: answers.providerMinimalism,
         activeAgentFilesSeed: answers.activeAgentFiles,
+        preserveLegacyReviewExecutionPolicyOmission: hasMaterializedWorkflowConfigBaseline(bundlePath),
         dryRun: options.dryRun === true
     }) as Record<string, unknown>;
     console.log('Init: PASS');

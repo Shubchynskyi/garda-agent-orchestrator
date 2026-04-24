@@ -1,5 +1,10 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../exit-codes';
+import {
+    getReviewExecutionPreparationBatches,
+    resolveReviewExecutionPolicyModeFromPreflight
+} from '../../../core/review-execution-policy';
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
 import { selectRulePackFiles } from '../../../gates/build-review-context';
 import { collectOrderedTimelineEvents, findLatestTimelineEvent } from '../../../gates/completion-evidence';
@@ -18,6 +23,7 @@ import {
 } from './compile-flow';
 import {
     runBuildReviewContextCommand,
+    readTimelineEventsSummary,
     type BuildReviewContextCommandResult
 } from '../gate-build-handlers';
 import {
@@ -26,24 +32,15 @@ import {
     runLoadRulePackCommand,
     runShellSmokePreflightCommand
 } from './task-mode-flow';
+import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
+import type { TokenEconomyConfig } from '../../../gates/build-review-context';
+import { resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
 
 const TASK_ENTRY_RULE_FILES = Object.freeze([
     '00-core.md',
     '40-commands.md',
     '80-task-workflow.md',
     '90-skill-catalog.md'
-]);
-
-const REVIEW_PREPARATION_ORDER = Object.freeze([
-    'code',
-    'db',
-    'security',
-    'refactor',
-    'api',
-    'performance',
-    'infra',
-    'dependency',
-    'test'
 ]);
 
 const REVIEW_CYCLE_BOUNDARY_EVENTS = new Set([
@@ -233,19 +230,11 @@ function getEffectiveDepthFromPreflight(
     return previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2;
 }
 
-function getRequiredReviewTypesInPreparationOrder(requiredReviews: Record<string, boolean>): string[] {
-    const rankByReviewType = new Map(REVIEW_PREPARATION_ORDER.map((reviewType, index) => [reviewType, index]));
-    return Object.entries(requiredReviews)
-        .filter(([, required]) => required)
-        .map(([reviewType]) => reviewType)
-        .sort((left, right) => {
-            const leftRank = rankByReviewType.get(left) ?? Number.MAX_SAFE_INTEGER;
-            const rightRank = rankByReviewType.get(right) ?? Number.MAX_SAFE_INTEGER;
-            if (leftRank !== rightRank) {
-                return leftRank - rightRank;
-            }
-            return left.localeCompare(right);
-        });
+function getRequiredReviewTypesInPreparationOrder(
+    requiredReviews: Record<string, boolean>,
+    reviewExecutionPolicyMode: ReturnType<typeof resolveReviewExecutionPolicyModeFromPreflight>
+): string[] {
+    return getReviewExecutionPreparationBatches(requiredReviews, reviewExecutionPolicyMode).flat();
 }
 
 function formatReviewTypeList(reviewTypes: readonly string[]): string {
@@ -538,6 +527,7 @@ export async function runRestartReviewCycleCommand(
         const refreshedPreflight = getPreflightContext(refreshedPreflightPath, resolvedTaskId);
         const refreshedRequiredReviews = refreshedPreflight.preflight.required_reviews as Record<string, boolean>;
         const effectiveDepth = getEffectiveDepthFromPreflight(previousTaskMode, refreshedPreflight);
+        const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(refreshedPreflight.preflight);
 
         ensureStepPassed('load-rule-pack (POST_PREFLIGHT)', runLoadRulePackCommand({
             repoRoot,
@@ -561,36 +551,92 @@ export async function runRestartReviewCycleCommand(
         } as CompileGateCommandOptions);
         ensureStepPassed('compile-gate', compileResult);
 
-        const requiredReviewTypes = getRequiredReviewTypesInPreparationOrder(refreshedRequiredReviews);
+        const requiredReviewBatches = getReviewExecutionPreparationBatches(
+            refreshedRequiredReviews,
+            reviewExecutionPolicyMode
+        );
+        const requiredReviewTypes = requiredReviewBatches.flat();
+        const sharedTokenEconomyConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
+        const sharedTokenEconomyConfigData: TokenEconomyConfig | null = (
+            fs.existsSync(sharedTokenEconomyConfigPath)
+            && fs.statSync(sharedTokenEconomyConfigPath).isFile()
+        )
+            ? JSON.parse(fs.readFileSync(sharedTokenEconomyConfigPath, 'utf8')) as TokenEconomyConfig
+            : null;
+        const sharedRuleContextSectionsCache = new Map();
+        const sharedRuleFileContentCache = new Map<string, string>();
+        const sharedRuntimeReviewerIdentity = resolveRuntimeReviewerIdentity({
+            repoRoot,
+            taskId: resolvedTaskId,
+            taskModePath: resolvedTaskModePath,
+            taskModeEvidence: previousTaskMode,
+            allowLegacyFallback: true
+        });
         const preparedResults: BuildReviewContextCommandResult[] = [];
         const reusedReviewTypes: string[] = [];
         const launchRequiredReviewTypes: string[] = [];
         let pendingReviewTypes: string[] = [];
         let pendingReason: string | null = null;
 
-        for (let index = 0; index < requiredReviewTypes.length; index += 1) {
-            const reviewType = requiredReviewTypes[index];
-            try {
-                const prepared = await runBuildReviewContextCommand({
-                    repoRoot,
-                    reviewType,
-                    depth: String(effectiveDepth),
-                    preflightPath: refreshedPreflightPath,
-                    taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined
-                });
-                preparedResults.push(prepared);
-                if (prepared.reusedReviewEvidence) {
-                    reusedReviewTypes.push(reviewType);
+        for (let batchIndex = 0; batchIndex < requiredReviewBatches.length; batchIndex += 1) {
+            const reviewBatch = requiredReviewBatches[batchIndex];
+            const batchTimelineSummary = readTimelineEventsSummary(
+                gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`))
+            );
+            const batchResults = await Promise.all(reviewBatch.map(async (reviewType) => {
+                try {
+                    const prepared = await runBuildReviewContextCommand({
+                        repoRoot,
+                        reviewType,
+                        depth: String(effectiveDepth),
+                        preflightPath: refreshedPreflightPath,
+                        preflightPayload: refreshedPreflight.preflight,
+                        taskModePath: String(previousTaskMode.evidence_path || '').trim() || undefined,
+                        taskModeEvidence: previousTaskMode,
+                        runtimeReviewerIdentity: sharedRuntimeReviewerIdentity,
+                        tokenEconomyConfigPath: sharedTokenEconomyConfigPath,
+                        tokenEconomyConfigData: sharedTokenEconomyConfigData,
+                        timelineEventsSummary: batchTimelineSummary,
+                        ruleContextSectionsCache: sharedRuleContextSectionsCache,
+                        ruleFileContentCache: sharedRuleFileContentCache
+                    });
+                    return {
+                        reviewType,
+                        prepared,
+                        dependencyBlockReason: null,
+                        error: null
+                    };
+                } catch (error: unknown) {
+                    return {
+                        reviewType,
+                        prepared: null,
+                        dependencyBlockReason: getDependencyBlockReason(error, reviewType),
+                        error
+                    };
+                }
+            }));
+
+            const unexpectedFailure = batchResults.find((result) => result.error && !result.dependencyBlockReason);
+            if (unexpectedFailure) {
+                throw unexpectedFailure.error;
+            }
+
+            for (const result of batchResults) {
+                if (!result.prepared) {
+                    continue;
+                }
+                preparedResults.push(result.prepared);
+                if (result.prepared.reusedReviewEvidence) {
+                    reusedReviewTypes.push(result.reviewType);
                 } else {
-                    launchRequiredReviewTypes.push(reviewType);
+                    launchRequiredReviewTypes.push(result.reviewType);
                 }
-            } catch (error: unknown) {
-                const dependencyBlockReason = getDependencyBlockReason(error, reviewType);
-                if (!dependencyBlockReason) {
-                    throw error;
-                }
-                pendingReviewTypes = requiredReviewTypes.slice(index);
-                pendingReason = dependencyBlockReason;
+            }
+
+            const dependencyBlockedResult = batchResults.find((result) => result.dependencyBlockReason);
+            if (dependencyBlockedResult) {
+                pendingReviewTypes = requiredReviewTypes.slice(requiredReviewTypes.indexOf(dependencyBlockedResult.reviewType));
+                pendingReason = dependencyBlockedResult.dependencyBlockReason;
                 break;
             }
         }
@@ -608,6 +654,7 @@ export async function runRestartReviewCycleCommand(
                 `PreflightPath: ${gateHelpers.normalizePath(refreshedPreflightPath)}`,
                 `DetectionSource: ${replayScope.detectionSource}`,
                 `EffectiveDepth: ${effectiveDepth}`,
+                `ReviewExecutionPolicy: ${reviewExecutionPolicyMode}`,
                 `PreparedReviewTypes: ${formatReviewTypeList(preparedResults.map((result) => result.reviewType))}`,
                 `LaunchRequiredReviewTypes: ${formatReviewTypeList(launchRequiredReviewTypes)}`,
                 `ReusedReviewTypes: ${formatReviewTypeList(reusedReviewTypes)}`,

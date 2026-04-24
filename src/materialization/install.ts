@@ -51,6 +51,7 @@ interface RunInstallOptions {
     assistantBrevity: string;
     sourceOfTruth: string;
     initAnswersPath: string;
+    preserveLegacyReviewExecutionPolicyOmission?: boolean;
     lifecycleLockAlreadyHeld?: boolean;
     initRunner?: (options: {
         targetRoot: string;
@@ -62,6 +63,7 @@ interface RunInstallOptions {
         tokenEconomyEnabled: boolean;
         providerMinimalism: boolean;
         activeAgentFilesSeed: string | null;
+        preserveLegacyReviewExecutionPolicyOmission: boolean;
     }) => void;
 }
 
@@ -136,6 +138,7 @@ export function runInstall(options: RunInstallOptions) {
         assistantBrevity,
         sourceOfTruth,
         initAnswersPath,
+        preserveLegacyReviewExecutionPolicyOmission = false,
         lifecycleLockAlreadyHeld = false,
         initRunner
     } = options;
@@ -710,7 +713,8 @@ export function runInstall(options: RunInstallOptions) {
             claudeOrchestratorFullAccess: enableClaudeOrchestratorFullAccess,
             tokenEconomyEnabled,
             providerMinimalism,
-            activeAgentFilesSeed: activeEntryFilesSeed
+            activeAgentFilesSeed: activeEntryFilesSeed,
+            preserveLegacyReviewExecutionPolicyOmission
         });
         initInvoked = true;
     }

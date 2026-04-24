@@ -67,6 +67,7 @@ import {
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
 } from './full-suite-validation';
+import { resolveReviewExecutionPolicyModeFromPreflight } from '../core/review-execution-policy';
 
 export { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
 
@@ -461,7 +462,8 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         executionProvider,
         runtimeIdentity.canonical_source_of_truth,
         runtimeIdentity.task_mode_identity_backfilled,
-        runtimeIdentity.execution_provider_source
+        runtimeIdentity.execution_provider_source,
+        resolveReviewExecutionPolicyModeFromPreflight(preflight)
     );
     errors.push(...reviewSkillEvidence.violations);
 

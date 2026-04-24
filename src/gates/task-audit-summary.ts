@@ -6,6 +6,7 @@ import { fileSha256, toPosix } from './helpers';
 import {
     buildTokenEconomySummary,
     formatTimestamp,
+    normalizeCycleBindingPath,
     parseTimestamp,
     resolveTaskCycleBindingSnapshot,
     shouldIncludeFullSuiteTelemetryForCurrentCycle,
@@ -14,6 +15,13 @@ import {
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
 import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
+import {
+    LEGACY_REVIEW_EXECUTION_POLICY_MODE,
+    buildReviewExecutionPolicySummaryLine,
+    loadReviewExecutionPolicyConfig,
+    resolveReviewExecutionPolicyModeFromPreflight,
+    type EffectiveReviewExecutionPolicyMode
+} from '../core/review-execution-policy';
 import { getStatusSnapshot } from '../validators/status';
 import {
     type BlockerEntry,
@@ -64,6 +72,8 @@ export interface FinalCloseoutArtifact {
     workflow?: {
         mandatory_full_suite_enabled: boolean;
         visible_summary_line: string;
+        review_execution_policy_mode?: EffectiveReviewExecutionPolicyMode | null;
+        review_execution_policy_summary_line?: string | null;
     } | null;
     docs: FinalCloseoutDocsSummary;
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
@@ -634,6 +644,55 @@ function collectEvidenceArtifacts(reviewsRoot: string, taskId: string, taskEvent
     return evidence;
 }
 
+function readReviewExecutionPolicyModeFromCurrentCycleTimeline(
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string
+): EffectiveReviewExecutionPolicyMode | null {
+    const expectedPreflightPath = currentCycle?.preflight_path
+        ? toPosix(currentCycle.preflight_path)
+        : null;
+    const compileGateTime = currentCycle?.compile_gate_timestamp
+        ? parseTimestamp(currentCycle.compile_gate_timestamp).getTime()
+        : 0;
+
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        if (eventType !== 'PREFLIGHT_CLASSIFIED') {
+            continue;
+        }
+
+        const eventTime = parseTimestamp(event.timestamp_utc).getTime();
+        if (compileGateTime > 0 && eventTime > 0 && eventTime > compileGateTime) {
+            continue;
+        }
+
+        const details = event.details && typeof event.details === 'object'
+            ? event.details as Record<string, unknown>
+            : null;
+        if (!details) {
+            continue;
+        }
+
+        const eventPreflightPath = normalizeCycleBindingPath(details.output_path, repoRoot);
+        if (expectedPreflightPath && eventPreflightPath && eventPreflightPath !== expectedPreflightPath) {
+            continue;
+        }
+
+        const rawPolicy = details.review_execution_policy;
+        if (rawPolicy && typeof rawPolicy === 'object' && !Array.isArray(rawPolicy)) {
+            return resolveReviewExecutionPolicyModeFromPreflight(
+                { review_execution_policy: rawPolicy },
+                LEGACY_REVIEW_EXECUTION_POLICY_MODE
+            );
+        }
+        return LEGACY_REVIEW_EXECUTION_POLICY_MODE;
+    }
+
+    return null;
+}
+
 // Artifact name patterns relative to reviews root, keyed by kind.
 const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'task-mode', suffix: '-task-mode.json' },
@@ -686,6 +745,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
     const liveFullSuiteValidationEnabled = loadFullSuiteValidationConfig(repoRoot).enabled;
+    const liveReviewExecutionPolicyMode = loadReviewExecutionPolicyConfig(repoRoot).mode;
     const taskMetadata = readTaskQueueMetadata(repoRoot, safeTaskId);
     const taskPath = path.join(repoRoot, 'TASK.md');
     const taskFileExists = fs.existsSync(taskPath) && fs.statSync(taskPath).isFile();
@@ -745,6 +805,12 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const pathMode = preflightSummary.pathMode;
     const preflightPath = preflightSummary.path;
     const preflight = preflightSummary.raw;
+    const timelineReviewExecutionPolicyMode = preflight
+        ? null
+        : readReviewExecutionPolicyModeFromCurrentCycleTimeline(events, currentCycle, repoRoot);
+    const reviewExecutionPolicyMode = preflight
+        ? resolveReviewExecutionPolicyModeFromPreflight(preflight)
+        : timelineReviewExecutionPolicyMode || liveReviewExecutionPolicyMode;
     const preflightSha256 = preflightSummary.sha256;
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
@@ -968,7 +1034,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         optional_skills: optionalSkillsSummary,
         workflow: {
             mandatory_full_suite_enabled: fullSuiteValidationEnabled,
-            visible_summary_line: `Mandatory full-suite: ${fullSuiteValidationEnabled ? 'true' : 'false'}`
+            visible_summary_line: `Mandatory full-suite: ${fullSuiteValidationEnabled ? 'true' : 'false'}`,
+            review_execution_policy_mode: reviewExecutionPolicyMode,
+            review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(reviewExecutionPolicyMode)
         },
         docs: docsSummary,
         token_economy: tokenEconomy,

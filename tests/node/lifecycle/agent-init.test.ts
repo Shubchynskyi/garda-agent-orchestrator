@@ -256,9 +256,54 @@ test('runAgentInit seeds workflow-config full-suite command from project stack w
         const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
         assert.equal(fullSuiteValidation.enabled, false);
         assert.equal(fullSuiteValidation.command, 'pytest');
+        assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
 
         const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
         assert.equal(persistedState.LastSeededFullSuiteCommand, 'pytest');
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit preserves legacy-compatible workflow-config omission when the file is missing on an existing bundle', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-missing-workflow-config-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
+
+        runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+        assert.equal(fullSuiteValidation.enabled, false);
+        assert.equal(fullSuiteValidation.command, 'pytest');
+        assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
@@ -440,8 +485,8 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
                 out_of_scope_failure_policy: 'AUDIT_AND_WARN',
                 auto_open_report: true
             },
-            future_toggle_group: {
-                sticky_notice_enabled: true
+            review_execution_policy: {
+                mode: 'strict_sequential'
             }
         });
         writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
@@ -466,8 +511,8 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
         assert.equal(fullSuiteValidation.command, 'pytest');
         assert.equal(fullSuiteValidation.out_of_scope_failure_policy, 'AUDIT_AND_WARN');
         assert.equal(fullSuiteValidation.auto_open_report, true);
-        assert.deepEqual(workflowConfig.future_toggle_group, {
-            sticky_notice_enabled: true
+        assert.deepEqual(workflowConfig.review_execution_policy, {
+            mode: 'strict_sequential'
         });
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });

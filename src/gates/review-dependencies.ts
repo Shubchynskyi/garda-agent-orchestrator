@@ -3,14 +3,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { TaskEventIntegrity } from '../gate-runtime/task-events';
 import { extractReviewVerdictToken, type ReviewReceipt } from '../gate-runtime/review-context';
+import {
+    DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    getReviewExecutionDependencies,
+    resolveReviewExecutionPolicyModeFromPreflight,
+    type EffectiveReviewExecutionPolicyMode
+} from '../core/review-execution-policy';
 import * as gateHelpers from './helpers';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from './required-reviews-check';
 import { resolveCanonicalReviewContextPath } from './review-context-paths';
-import { resolveRuntimeReviewerIdentity } from './reviewer-routing';
-
-const REVIEW_DEPENDENCY_ORDER: Readonly<Record<string, readonly string[]>> = Object.freeze({
-    test: Object.freeze(['code', 'db', 'security', 'refactor', 'api', 'performance', 'infra', 'dependency'])
-});
+import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 
 export interface ReviewDependencyTimelineEvent {
     event_type: string;
@@ -37,21 +39,29 @@ export function normalizeRequiredReviewRecord(value: unknown): Record<string, bo
     return result;
 }
 
-export function getReviewDependencyTypes(reviewType: string): readonly string[] {
-    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
-    return REVIEW_DEPENDENCY_ORDER[normalizedReviewType] || [];
+export function getReviewDependencyTypes(
+    reviewType: string,
+    requiredReviewRecord: Record<string, boolean>,
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+): string[] {
+    return getReviewExecutionDependencies(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
 }
 
 export function getRequiredUpstreamReviewsFromRecord(
     reviewType: string,
-    requiredReviewRecord: Record<string, boolean>
+    requiredReviewRecord: Record<string, boolean>,
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
 ): string[] {
-    return getReviewDependencyTypes(reviewType).filter((candidate) => requiredReviewRecord[candidate] === true);
+    return getReviewDependencyTypes(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
 }
 
-export function getRequiredUpstreamReviews(reviewType: string, requiredReviews: unknown): string[] {
+export function getRequiredUpstreamReviews(
+    reviewType: string,
+    requiredReviews: unknown,
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+): string[] {
     const requiredReviewRecord = normalizeRequiredReviewRecord(requiredReviews);
-    return getRequiredUpstreamReviewsFromRecord(reviewType, requiredReviewRecord);
+    return getRequiredUpstreamReviewsFromRecord(reviewType, requiredReviewRecord, reviewExecutionPolicyMode);
 }
 
 function findLatestTimelineSequence(
@@ -130,6 +140,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
     upstreamReviewType: string;
     timelineEvents?: readonly ReviewDependencyTimelineEvent[];
     taskModePath?: string | null;
+    runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
 }): ReviewDependencyStatus {
     const recordedEvent = options.latestRecordedReviewByType.get(options.upstreamReviewType) ?? null;
     if (!recordedEvent) {
@@ -226,7 +237,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
     }
 
     const repoRoot = resolveRepoRootFromPreflightPath(options.preflightPath);
-    const runtimeIdentity = resolveRuntimeReviewerIdentity({
+    const runtimeIdentity = options.runtimeReviewerIdentity || resolveRuntimeReviewerIdentity({
         repoRoot,
         taskId: options.taskId,
         taskModePath: String(options.taskModePath || '').trim(),
@@ -276,8 +287,14 @@ export function assertRequiredUpstreamReviewDependencies(options: {
     reviewType: string;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
     taskModePath?: string | null;
+    runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
 }): void {
-    const upstreamReviewTypes = getRequiredUpstreamReviews(options.reviewType, options.preflightPayload.required_reviews);
+    const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(options.preflightPayload);
+    const upstreamReviewTypes = getRequiredUpstreamReviews(
+        options.reviewType,
+        options.preflightPayload.required_reviews,
+        reviewExecutionPolicyMode
+    );
     if (upstreamReviewTypes.length === 0) {
         return;
     }
@@ -295,7 +312,8 @@ export function assertRequiredUpstreamReviewDependencies(options: {
         latestRecordedReviewByType,
         upstreamReviewType,
         timelineEvents: options.timelineEvents,
-        taskModePath: String(options.taskModePath || '').trim()
+        taskModePath: String(options.taskModePath || '').trim(),
+        runtimeReviewerIdentity: options.runtimeReviewerIdentity || null
     }));
     const blockedDependencies = dependencyStatuses.filter((status) => !status.ready);
     if (blockedDependencies.length === 0) {

@@ -91,7 +91,9 @@ function seedWorkflowConfigFullSuiteCommand(
     const detectedCommand = resolveSuggestedFullSuiteValidationCommand(targetRoot)
         || UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND;
     const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
-    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot);
+    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot, {
+        preserveLegacyReviewExecutionPolicyOmission: true
+    });
 
     const existingSection = isPlainObject(rawConfig.full_suite_validation)
         ? rawConfig.full_suite_validation as Record<string, unknown>

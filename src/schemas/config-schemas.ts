@@ -15,6 +15,7 @@ import {
     BREVITY_VALUES,
     COLLECTED_VIA_VALUES
 } from '../core/constants';
+import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
 
 // ---------------------------------------------------------------------------
 // Individual config schemas
@@ -268,9 +269,22 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                 out_of_scope_failure_policies: { type: 'array', items: { type: 'string', enum: [...OUT_OF_SCOPE_FAILURE_POLICIES] }, uniqueItems: true, description: 'Available failure policies.' }
             },
             required: ['enabled', 'command', 'timeout_ms', 'green_summary_max_lines', 'red_failure_chunk_lines', 'out_of_scope_failure_policy']
+        },
+        review_execution_policy: {
+            type: 'object',
+            description: 'Repo-local launch ordering policy for current-cycle review preparation and downstream dependency invalidation.',
+            properties: {
+                mode: {
+                    type: 'string',
+                    enum: [...REVIEW_EXECUTION_POLICY_MODES],
+                    description: 'Review execution policy mode.'
+                }
+            },
+            required: ['mode'],
+            additionalProperties: false
         }
     },
-    additionalProperties: false
+    additionalProperties: true
 });
 
 const REVIEW_POLICY_VALUE = {

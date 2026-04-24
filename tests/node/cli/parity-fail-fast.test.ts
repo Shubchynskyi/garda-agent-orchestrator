@@ -115,6 +115,7 @@ test('workflow command resolves parity against --target-root instead of the call
         assert.equal(result.status, 0, 'workflow show should succeed when the target root itself is not stale');
         assert.ok(!combined.includes('Source Parity Violation: The deployed bundle is stale'));
         assert.ok(combined.includes('Mandatory full-suite: false'));
+        assert.ok(combined.includes('Review execution policy: code_first_optional'));
     } finally {
         fs.rmSync(callerDir, { recursive: true, force: true });
         fs.rmSync(targetDir, { recursive: true, force: true });
@@ -358,6 +359,7 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
                 'set',
                 '--target-root', targetDir,
                 '--full-suite-enabled', 'true',
+                '--review-execution-policy', 'strict_sequential',
                 '--json'
             ],
             { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
@@ -371,12 +373,92 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
         assert.equal(parsed.action, 'set');
         assert.equal(parsed.status, 'CHANGED');
         assert.equal(parsed.full_suite_validation.enabled, true);
+        assert.equal(parsed.review_execution_policy.mode, 'strict_sequential');
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
+        assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
 
         const configPath = path.join(targetDir, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
         assert.equal(fs.existsSync(configPath), true);
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.full_suite_validation.enabled, true);
+        assert.equal(parsedConfig.review_execution_policy.mode, 'strict_sequential');
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('workflow set routes legacy materialized target roots through the CLI dispatcher when review_execution_policy is introduced explicitly', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-legacy-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-legacy-target-'));
+    try {
+        fs.mkdirSync(path.join(callerDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(callerDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(callerDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(callerDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const configDir = path.join(targetDir, 'garda-agent-orchestrator', 'live', 'config');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(targetDir, 'garda-agent-orchestrator', 'live', 'version.json'),
+            JSON.stringify({ version: '1.0.0' }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(configDir, 'workflow-config.json'),
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 25,
+                    red_failure_chunk_lines: 80,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [
+                CLI_PATH,
+                'workflow',
+                'set',
+                '--target-root', targetDir,
+                '--review-execution-policy', 'strict_sequential',
+                '--json'
+            ],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, 0, 'workflow set should succeed for a legacy materialized target root');
+        assert.ok(!combined.includes('Source Parity Violation: The deployed bundle is stale'));
+
+        const parsed = JSON.parse(result.stdout || '');
+        assert.equal(parsed.action, 'set');
+        assert.equal(parsed.status, 'CHANGED');
+        assert.equal(parsed.review_execution_policy.mode, 'strict_sequential');
+        assert.equal(parsed.review_execution_policy.configured, true);
+        assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
+
+        const configPath = path.join(configDir, 'workflow-config.json');
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.full_suite_validation.enabled, false);
+        assert.equal(parsedConfig.review_execution_policy.mode, 'strict_sequential');
     } finally {
         fs.rmSync(callerDir, { recursive: true, force: true });
         fs.rmSync(targetDir, { recursive: true, force: true });

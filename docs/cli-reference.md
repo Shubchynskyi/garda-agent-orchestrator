@@ -314,11 +314,15 @@ Show or change repo-local workflow configuration.
 garda workflow --target-root "."
 garda workflow show --target-root "." --json
 garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test"
+garda workflow set --target-root "." --review-execution-policy strict_sequential
 ```
 
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
-- The current surface manages repo-local `full_suite_validation` settings in `live/config/workflow-config.json`.
+- The current surface manages repo-local `full_suite_validation` and `review_execution_policy` settings in `live/config/workflow-config.json`.
+- Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
+- Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.
+- Existing repos that still omit `review_execution_policy` stay on the legacy compatibility path (`test` waits for all required upstream reviews, other review types remain independent) until an operator explicitly sets one of the supported modes.
 
 ### `garda review-capabilities`
 

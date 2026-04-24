@@ -223,6 +223,10 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         lines.push(closeout.workflow.visible_summary_line);
     }
 
+    if (closeout.workflow?.review_execution_policy_summary_line) {
+        lines.push(closeout.workflow.review_execution_policy_summary_line);
+    }
+
     if (closeout.token_economy?.visible_summary_line) {
         lines.push(closeout.token_economy.visible_summary_line);
     }
@@ -378,6 +382,9 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.workflow?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.workflow.visible_summary_line}`);
+    }
+    if (summary.final_closeout.workflow?.review_execution_policy_summary_line) {
+        lines.push(`  ${summary.final_closeout.workflow.review_execution_policy_summary_line}`);
     }
     if (summary.final_closeout.token_economy?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.token_economy.visible_summary_line}`);

@@ -347,6 +347,7 @@ export function resolveRuntimeReviewerIdentity(options: {
     repoRoot: string;
     taskId?: string | null;
     taskModePath?: string | null;
+    taskModeEvidence?: ReturnType<typeof getTaskModeEvidence> | null;
     executionProvider?: unknown;
     routedTo?: unknown;
     allowLegacyFallback?: boolean;
@@ -356,7 +357,7 @@ export function resolveRuntimeReviewerIdentity(options: {
     const workspaceCanonicalSourceOfTruth = readCanonicalSourceOfTruth(normalizedRepoRoot);
     const allowLegacyFallback = options.allowLegacyFallback !== false;
     const taskMode = normalizedTaskId
-        ? getTaskModeEvidence(normalizedRepoRoot, normalizedTaskId, String(options.taskModePath || '').trim())
+        ? (options.taskModeEvidence || getTaskModeEvidence(normalizedRepoRoot, normalizedTaskId, String(options.taskModePath || '').trim()))
         : null;
     const hasTaskModeArtifact = !!(
         normalizedTaskId
