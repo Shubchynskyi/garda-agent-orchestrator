@@ -27,8 +27,6 @@ import {
     emitProviderRoutingEvent
 } from '../../../src/gate-runtime/lifecycle-events';
 
-import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
-
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'lifecycle-events-test-'));
 }
@@ -516,6 +514,25 @@ describe('gate-runtime/lifecycle-events', () => {
                 'IMPLEMENTATION_STARTED',
                 'REVIEW_PHASE_STARTED'
             ]);
+        });
+
+        it('mandatory emit helpers keep canonical commit when aggregate append fails', () => {
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            fs.mkdirSync(path.join(eventsRoot, 'all-tasks.jsonl'), { recursive: true });
+
+            const result = emitMandatoryPreflightStartedEvent(tempDir, 'T-MANDATORY-AGG', { task_intent: 'Implement change' }, {
+                eventsRoot
+            });
+
+            assert.ok(result);
+            assert.equal(result.commit_status, 'committed_with_derived_index_failure');
+            assert.equal(result.canonical_committed, true);
+            assert.equal(result.derived_warnings.length, 1);
+            assert.match(result.derived_warnings[0], /aggregate append\/prune failed/i);
+
+            const timelinePath = path.join(eventsRoot, 'T-MANDATORY-AGG.jsonl');
+            const event = JSON.parse(fs.readFileSync(timelinePath, 'utf8').trim()) as Record<string, unknown>;
+            assert.equal(event.event_type, 'PREFLIGHT_STARTED');
         });
 
         it('implementation and review-phase stage helpers can repeat across recovery cycles', () => {

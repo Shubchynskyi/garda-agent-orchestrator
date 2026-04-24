@@ -42,6 +42,7 @@ import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../../gates/review-reuse';
+import { taskEventAppendHasBlockingFailure } from '../../../gate-runtime/task-events';
 import {
     normalizePathValue,
     ensureDirectoryExists,
@@ -318,7 +319,7 @@ async function tryReuseCodeReviewEvidence(options: {
             reviewerIdentity,
             reviewerFallbackReason
         );
-        if (!routingEvent || (Array.isArray(routingEvent.warnings) && routingEvent.warnings.length > 0)) {
+        if (!routingEvent || taskEventAppendHasBlockingFailure(routingEvent, false)) {
             throw new Error('REVIEWER_DELEGATION_ROUTED telemetry could not be persisted for review reuse.');
         }
         const currentReviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routingEvent.integrity);
@@ -349,7 +350,7 @@ async function tryReuseCodeReviewEvidence(options: {
             review_context_path: gateHelpers.normalizePath(options.reviewContextPath),
             review_context_sha256: routingUpdate.contextSha256
         });
-        if (!recordedEvent || (Array.isArray(recordedEvent.warnings) && recordedEvent.warnings.length > 0)) {
+        if (!recordedEvent || taskEventAppendHasBlockingFailure(recordedEvent, false)) {
             throw new Error('REVIEW_RECORDED telemetry could not be persisted for review reuse.');
         }
     } catch {

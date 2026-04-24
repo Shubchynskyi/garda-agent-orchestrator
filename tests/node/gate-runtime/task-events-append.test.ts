@@ -6,14 +6,20 @@ import * as path from 'node:path';
 
 import {
     assertValidTaskId,
+    appendMandatoryTaskEvent,
+    appendMandatoryTaskEventAsync,
     appendTaskEvent,
     buildEventIntegrityHash,
     inspectTaskEventFile,
     normalizeIntegrityValue,
     readTaskEventAppendState,
+    taskEventAppendHasBlockingFailure,
     forEachJsonlLine
 } from '../../../src/gate-runtime/task-events';
-import { collectTimelineSummaryForDoctor } from '../../../src/gate-runtime/timeline-summary';
+import {
+    __setTimelineSummaryTestHooks,
+    collectTimelineSummaryForDoctor
+} from '../../../src/gate-runtime/timeline-summary';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
 // ---------------------------------------------------------------------------
@@ -377,7 +383,10 @@ test('appendTaskEvent creates chain with correct integrity', () => {
 
         // Append 3 events
         for (let i = 0; i < 3; i++) {
-            appendTaskEvent(orchestratorRoot, 'T-TEST', 'test', 'PASS', `Event ${i + 1}`, { step: i }, { passThru: true });
+            const appendResult = appendTaskEvent(orchestratorRoot, 'T-TEST', 'test', 'PASS', `Event ${i + 1}`, { step: i }, { passThru: true });
+            assert.equal(appendResult?.commit_status, 'committed');
+            assert.equal(appendResult?.canonical_committed, true);
+            assert.deepEqual(appendResult?.derived_warnings, []);
         }
 
         // Verify the file exists and has integrity chain
@@ -400,6 +409,143 @@ test('appendTaskEvent creates chain with correct integrity', () => {
 
 test('appendTaskEvent returns null for empty taskId', () => {
     assert.equal(appendTaskEvent('/tmp', '', 'test', 'PASS', 'msg', null), null);
+});
+
+test('appendMandatoryTaskEvent keeps canonical commit when aggregate append fails', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-aggregate-fail-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        fs.mkdirSync(path.join(eventsRoot, 'all-tasks.jsonl'), { recursive: true });
+
+        const result = appendMandatoryTaskEvent(
+            tempDir,
+            'T-AGG-FAIL',
+            'PLAN_CREATED',
+            'INFO',
+            'Aggregate failure after canonical commit',
+            { fault: 'all-tasks-is-directory' },
+            { eventsRoot }
+        );
+
+        assert.equal(result.commit_status, 'committed_with_derived_index_failure');
+        assert.equal(result.canonical_committed, true);
+        assert.equal(taskEventAppendHasBlockingFailure(result, false), false);
+        assert.equal(result.derived_warnings.length, 1);
+        assert.match(result.derived_warnings[0], /aggregate append\/prune failed/i);
+
+        const eventFile = path.join(eventsRoot, 'T-AGG-FAIL.jsonl');
+        assert.ok(fs.existsSync(eventFile));
+        const lines = fs.readFileSync(eventFile, 'utf8').split('\n').filter((line) => line.trim().length > 0);
+        assert.equal(lines.length, 1);
+        const event = JSON.parse(lines[0]) as Record<string, unknown>;
+        assert.equal(event.event_type, 'PLAN_CREATED');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendMandatoryTaskEvent retry with emitOnce skips duplicate after derived aggregate failure', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-aggregate-retry-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        fs.mkdirSync(path.join(eventsRoot, 'all-tasks.jsonl'), { recursive: true });
+
+        const first = appendMandatoryTaskEvent(
+            tempDir,
+            'T-AGG-RETRY',
+            'PLAN_CREATED',
+            'INFO',
+            'First attempt commits canonical event',
+            { attempt: 1 },
+            { eventsRoot, emitOnce: true }
+        );
+        const second = appendMandatoryTaskEvent(
+            tempDir,
+            'T-AGG-RETRY',
+            'PLAN_CREATED',
+            'INFO',
+            'Retry should not duplicate the canonical event',
+            { attempt: 2 },
+            { eventsRoot, emitOnce: true }
+        );
+
+        assert.equal(first.commit_status, 'committed_with_derived_index_failure');
+        assert.equal(second.commit_status, 'skipped_duplicate');
+        assert.equal(second.skipped_reason, 'emit_once_duplicate');
+        assert.equal(second.canonical_committed, false);
+        assert.equal(taskEventAppendHasBlockingFailure(second), false);
+        assert.equal(taskEventAppendHasBlockingFailure(second, false), true);
+        assert.equal(second.warnings.length, 0);
+
+        const eventFile = path.join(eventsRoot, 'T-AGG-RETRY.jsonl');
+        const lines = fs.readFileSync(eventFile, 'utf8').split('\n').filter((line) => line.trim().length > 0);
+        assert.equal(lines.length, 1);
+        const event = JSON.parse(lines[0]) as Record<string, unknown>;
+        assert.equal(event.message, 'First attempt commits canonical event');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendMandatoryTaskEventAsync keeps canonical commit when aggregate append fails', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-aggregate-async-fail-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        fs.mkdirSync(path.join(eventsRoot, 'all-tasks.jsonl'), { recursive: true });
+
+        const result = await appendMandatoryTaskEventAsync(
+            tempDir,
+            'T-AGG-ASYNC',
+            'PLAN_CREATED',
+            'INFO',
+            'Async aggregate failure after canonical commit',
+            { fault: 'all-tasks-is-directory' },
+            { eventsRoot }
+        );
+
+        assert.equal(result.commit_status, 'committed_with_derived_index_failure');
+        assert.equal(result.canonical_committed, true);
+        assert.equal(result.derived_warnings.length, 1);
+        assert.match(result.derived_warnings[0], /aggregate append\/prune failed/i);
+        assert.ok(fs.existsSync(path.join(eventsRoot, 'T-AGG-ASYNC.jsonl')));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendMandatoryTaskEvent keeps canonical commit when timeline summary refresh fails', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-summary-fail-'));
+    try {
+        __setTimelineSummaryTestHooks({
+            beforeMerge() {
+                throw new Error('injected timeline summary failure');
+            }
+        });
+
+        const result = appendMandatoryTaskEvent(
+            tempDir,
+            'T-SUMMARY-FAIL',
+            'TASK_MODE_ENTERED',
+            'PASS',
+            'Timeline summary failure after canonical commit',
+            { fault: 'timeline-summary-before-merge' }
+        );
+
+        assert.equal(result.commit_status, 'committed_with_derived_index_failure');
+        assert.equal(result.canonical_committed, true);
+        assert.equal(taskEventAppendHasBlockingFailure(result, false), false);
+        assert.equal(result.derived_warnings.length, 1);
+        assert.match(result.derived_warnings[0], /timeline summary update failed/i);
+        assert.match(result.derived_warnings[0], /injected timeline summary failure/i);
+
+        const eventFile = path.join(tempDir, 'runtime', 'task-events', 'T-SUMMARY-FAIL.jsonl');
+        assert.ok(fs.existsSync(eventFile));
+        const event = JSON.parse(fs.readFileSync(eventFile, 'utf8').trim()) as Record<string, unknown>;
+        assert.equal(event.event_type, 'TASK_MODE_ENTERED');
+    } finally {
+        __setTimelineSummaryTestHooks(null);
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 // ---------------------------------------------------------------------------

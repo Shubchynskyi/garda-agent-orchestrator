@@ -8,7 +8,10 @@ import {
     normalizeCompatibilityReviewerExecutionMode,
     restoreReviewerRoutingMetadata
 } from '../../../gate-runtime/review-context';
-import { assertValidTaskId } from '../../../gate-runtime/task-events';
+import {
+    assertValidTaskId,
+    taskEventAppendHasBlockingFailure
+} from '../../../gate-runtime/task-events';
 import { fileSha256 } from '../../../gate-runtime/hash';
 import {
     emitReviewerDelegationRoutedEventAsync,
@@ -1018,7 +1021,7 @@ async function recordReviewReceiptFromArtifacts(options: {
             review_artifact_path: normalizePath(options.artifactPath),
             review_context_path: normalizePath(options.contextPath)
         });
-        if (!recordedEvent || (Array.isArray(recordedEvent.warnings) && recordedEvent.warnings.length > 0)) {
+        if (!recordedEvent || taskEventAppendHasBlockingFailure(recordedEvent, false)) {
             throw new Error(
                 `Review receipts require REVIEW_RECORDED telemetry for '${options.reviewType}'. ` +
                 'The lifecycle event could not be persisted.'
@@ -1172,7 +1175,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
             reviewerIdentity,
             reviewerFallbackReason
         );
-        if (!routedEvent || (Array.isArray(routedEvent.warnings) && routedEvent.warnings.length > 0)) {
+        if (!routedEvent || taskEventAppendHasBlockingFailure(routedEvent, false)) {
             throw new Error(
                 `Review routing requires REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}'. ` +
                 'The lifecycle event could not be persisted.'

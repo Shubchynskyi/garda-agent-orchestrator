@@ -85,11 +85,20 @@ export interface TaskEvent {
     integrity?: TaskEventIntegrity;
 }
 
+export type TaskEventCommitStatus =
+    | 'not_committed'
+    | 'committed'
+    | 'committed_with_derived_index_failure'
+    | 'skipped_duplicate';
+
 export interface AppendTaskEventResult {
     task_event_log_path: string;
     all_tasks_log_path: string;
     integrity: TaskEventIntegrity | null;
+    commit_status: TaskEventCommitStatus;
+    canonical_committed: boolean;
     warnings: string[];
+    derived_warnings: string[];
     skipped_reason?: 'emit_once_duplicate' | null;
     aggregate_retention?: AggregateRetentionResult;
     lock_telemetry?: {
@@ -291,7 +300,10 @@ function createAppendResult(paths: TaskEventPaths): AppendTaskEventResult {
         task_event_log_path: paths.taskFilePath.replace(/\\/g, '/'),
         all_tasks_log_path: paths.allTasksPath.replace(/\\/g, '/'),
         integrity: null,
+        commit_status: 'not_committed',
+        canonical_committed: false,
         warnings: [],
+        derived_warnings: [],
         skipped_reason: null,
         lock_telemetry: {
             task_lock_retries: 0,
@@ -366,12 +378,29 @@ function shouldRefreshTimelineSummary(event: TaskEvent): boolean {
     return SUMMARY_REFRESH_EVENT_TYPES.has(event.event_type);
 }
 
-function updateTimelineSummaryBestEffortForEvent(eventsRoot: string, taskId: string, event: TaskEvent | null): void {
+function updateTimelineSummaryBestEffortForEvent(eventsRoot: string, taskId: string, event: TaskEvent | null): string | null {
     try {
         const { updateTimelineSummaryForTask } = require('./timeline-summary') as typeof import('./timeline-summary');
         updateTimelineSummaryForTask(eventsRoot, taskId, getCodeChangedHintFromEvent(event));
-    } catch {
-        // Summary update failure is non-fatal.
+        return null;
+    } catch (error: unknown) {
+        return buildAppendWarning('task-event timeline summary update failed', error);
+    }
+}
+
+function refreshTimelineSummaryForCommittedEvent(
+    result: AppendTaskEventResult,
+    eventsRoot: string,
+    taskId: string,
+    event: TaskEvent
+): void {
+    if (!shouldRefreshTimelineSummary(event)) {
+        return;
+    }
+    const warning = updateTimelineSummaryBestEffortForEvent(eventsRoot, taskId, event);
+    if (warning) {
+        recordDerivedAppendWarning(result, warning);
+        process.stderr.write(`WARNING: ${warning}\n`);
     }
 }
 
@@ -491,6 +520,50 @@ function buildAppendWarning(prefix: string, error: unknown): string {
     return `${prefix}: ${getErrorMessage(error)}`;
 }
 
+function markTaskEventCommitted(result: AppendTaskEventResult, event: TaskEvent): void {
+    result.integrity = Object.assign({}, event.integrity);
+    result.commit_status = 'committed';
+    result.canonical_committed = true;
+}
+
+function markTaskEventSkippedDuplicate(result: AppendTaskEventResult): void {
+    result.skipped_reason = 'emit_once_duplicate';
+    result.commit_status = 'skipped_duplicate';
+    result.canonical_committed = false;
+}
+
+function recordDerivedAppendWarning(result: AppendTaskEventResult, warning: string): void {
+    result.warnings.push(warning);
+    result.derived_warnings.push(warning);
+    if (result.canonical_committed) {
+        result.commit_status = 'committed_with_derived_index_failure';
+    }
+}
+
+export function getBlockingTaskEventAppendWarnings(result: AppendTaskEventResult): string[] {
+    return result.warnings.filter((warning) => !result.derived_warnings.includes(warning));
+}
+
+export function taskEventAppendHasBlockingFailure(
+    result: AppendTaskEventResult,
+    acceptSkippedDuplicate = true
+): boolean {
+    const acceptedDuplicate = acceptSkippedDuplicate && result.skipped_reason === 'emit_once_duplicate';
+    return (!result.canonical_committed && !acceptedDuplicate) ||
+        result.commit_status === 'not_committed' ||
+        getBlockingTaskEventAppendWarnings(result).length > 0;
+}
+
+function assertMandatoryAppendCommitted(result: AppendTaskEventResult, eventType: string): void {
+    const blockingWarnings = getBlockingTaskEventAppendWarnings(result);
+    if (taskEventAppendHasBlockingFailure(result)) {
+        const diagnostics = blockingWarnings.length > 0
+            ? blockingWarnings
+            : (result.warnings.length > 0 ? result.warnings : [`commit_status=${result.commit_status}`]);
+        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${diagnostics.join(' | ')}`);
+    }
+}
+
 export function appendTaskEvent(
     repoRoot: string,
     taskId: string,
@@ -534,10 +607,10 @@ export function appendTaskEvent(
         const taskLockResult = withFilesystemLock(paths.taskLockPath, lockOptions, function (): void {
             line = appendTaskEventLineSync(paths.taskFilePath, safeTaskId, event, emitOnce);
             if (line == null) {
-                result.skipped_reason = 'emit_once_duplicate';
+                markTaskEventSkippedDuplicate(result);
                 return;
             }
-            result.integrity = Object.assign({}, event.integrity);
+            markTaskEventCommitted(result, event);
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
     } catch (error: unknown) {
@@ -565,13 +638,11 @@ export function appendTaskEvent(
         applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
     } catch (error: unknown) {
         const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
-        result.warnings.push(warning);
+        recordDerivedAppendWarning(result, warning);
         process.stderr.write(`WARNING: ${warning}\n`);
     }
 
-    if (shouldRefreshTimelineSummary(event)) {
-        updateTimelineSummaryBestEffortForEvent(paths.eventsRoot, safeTaskId, event);
-    }
+    refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
     return passThru ? result : null;
 }
 
@@ -619,10 +690,10 @@ export async function appendTaskEventAsync(
             const preWriteDelayMs = toPositiveInteger(options.preWriteDelayMs, 0);
             line = await appendTaskEventLineAsync(paths.taskFilePath, safeTaskId, event, preWriteDelayMs, emitOnce);
             if (line == null) {
-                result.skipped_reason = 'emit_once_duplicate';
+                markTaskEventSkippedDuplicate(result);
                 return;
             }
-            result.integrity = Object.assign({}, event.integrity);
+            markTaskEventCommitted(result, event);
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
     } catch (error: unknown) {
@@ -650,13 +721,11 @@ export async function appendTaskEventAsync(
         applyAggregateLockTelemetry(result, retentionResult.appendMode, retentionResult.telemetry);
     } catch (error: unknown) {
         const warning = buildAppendWarning('task-event aggregate append/prune failed', error);
-        result.warnings.push(warning);
+        recordDerivedAppendWarning(result, warning);
         process.stderr.write(`WARNING: ${warning}\n`);
     }
 
-    if (shouldRefreshTimelineSummary(event)) {
-        updateTimelineSummaryBestEffortForEvent(paths.eventsRoot, safeTaskId, event);
-    }
+    refreshTimelineSummaryForCommittedEvent(result, paths.eventsRoot, safeTaskId, event);
     return passThru ? result : null;
 }
 
@@ -685,9 +754,7 @@ export function appendMandatoryTaskEvent(
     if (!result) {
         throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
     }
-    if (result.warnings.length > 0) {
-        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`);
-    }
+    assertMandatoryAppendCommitted(result, eventType);
     return result;
 }
 
@@ -716,8 +783,6 @@ export async function appendMandatoryTaskEventAsync(
     if (!result) {
         throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
     }
-    if (result.warnings.length > 0) {
-        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`);
-    }
+    assertMandatoryAppendCommitted(result, eventType);
     return result;
 }

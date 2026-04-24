@@ -1,4 +1,6 @@
 import {
+    appendMandatoryTaskEvent,
+    appendMandatoryTaskEventAsync,
     appendTaskEvent,
     appendTaskEventAsync
 } from './task-events';
@@ -101,7 +103,7 @@ export function emitMandatoryLifecycleEvent(
         throw new Error(`Mandatory lifecycle event '${eventType}' requires repoRoot and taskId.`);
     }
 
-    const result = appendTaskEvent(
+    const result = appendMandatoryTaskEvent(
         repoRoot,
         taskId,
         eventType,
@@ -110,18 +112,11 @@ export function emitMandatoryLifecycleEvent(
         details,
         {
             actor: options.actor || 'gate',
-            passThru: true,
             eventsRoot: options.eventsRoot,
             emitOnce
         }
     );
 
-    if (!result) {
-        throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
-    }
-    if (result.warnings.length > 0) {
-        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`);
-    }
     if (result.skipped_reason === 'emit_once_duplicate') {
         return null;
     }
@@ -142,7 +137,7 @@ export async function emitMandatoryLifecycleEventAsync(
         throw new Error(`Mandatory lifecycle event '${eventType}' requires repoRoot and taskId.`);
     }
 
-    const result = await appendTaskEventAsync(
+    const result = await appendMandatoryTaskEventAsync(
         repoRoot,
         taskId,
         eventType,
@@ -151,18 +146,11 @@ export async function emitMandatoryLifecycleEventAsync(
         details,
         {
             actor: options.actor || 'gate',
-            passThru: true,
             eventsRoot: options.eventsRoot,
             emitOnce
         }
     );
 
-    if (!result) {
-        throw new Error(`Mandatory lifecycle event '${eventType}' append failed without diagnostics.`);
-    }
-    if (result.warnings.length > 0) {
-        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${result.warnings.join(' | ')}`);
-    }
     if (result.skipped_reason === 'emit_once_duplicate') {
         return null;
     }

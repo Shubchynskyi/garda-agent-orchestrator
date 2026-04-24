@@ -39,11 +39,14 @@ export {
     appendMandatoryTaskEventAsync,
     appendTaskEvent,
     appendTaskEventAsync,
+    getBlockingTaskEventAppendWarnings,
     readTaskEventAppendState,
     readTaskEventAppendStateFast,
+    taskEventAppendHasBlockingFailure,
     type AppendTaskEventResult,
     type TaskEvent,
     type TaskEventAppendState,
+    type TaskEventCommitStatus,
     type TaskEventIntegrity
 } from './task-events-io';
 export type { AppendTaskEventResult as TaskEventAppendResult } from './task-events-io';

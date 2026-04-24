@@ -1076,6 +1076,116 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('reuses prior code-review evidence when only the aggregate telemetry index fails', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-reuse-aggregate-warning';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reuse code review evidence when aggregate telemetry index fails'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const taskEventsRoot = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events');
+        const aggregatePath = path.join(taskEventsRoot, 'all-tasks.jsonl');
+        fs.rmSync(aggregatePath, { force: true });
+        fs.mkdirSync(aggregatePath, { recursive: true });
+
+        const result = await runBuildReviewContextCommand({
+            reviewType: 'code',
+            depth: '2',
+            preflightPath,
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+        assert.equal(result.reusedReviewEvidence, true);
+        assert.equal(result.reusedReviewerExecutionMode, 'delegated_subagent');
+        assert.equal(result.reusedReviewerIdentity, 'agent:code-reviewer');
+        assert.equal(
+            fs.existsSync(aggregatePath) && fs.statSync(aggregatePath).isDirectory(),
+            true,
+            'fixture must keep aggregate index unavailable while reuse succeeds from canonical task events'
+        );
+
+        const refreshedReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(refreshedReceipt.reviewer_execution_mode, 'delegated_subagent');
+        assert.equal(refreshedReceipt.reviewer_identity, 'agent:code-reviewer');
+        assert.equal(refreshedReceipt.preflight_sha256, require('node:crypto')
+            .createHash('sha256')
+            .update(fs.readFileSync(preflightPath, 'utf8'))
+            .digest('hex'));
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerRouting = reviewContext.reviewer_routing as Record<string, unknown>;
+        assert.equal(reviewerRouting.actual_execution_mode, 'delegated_subagent');
+        assert.equal(reviewerRouting.reviewer_session_id, 'agent:code-reviewer');
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');
+        assert.ok(latestCompileSequence >= 0);
+        const currentCycleCodeEvents = events
+            .map((event, index) => ({ event, index }))
+            .filter(({ event, index }) => (
+                index > latestCompileSequence
+                && (event.event_type === 'REVIEWER_DELEGATION_ROUTED' || event.event_type === 'REVIEW_RECORDED')
+                && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+            ));
+        assert.equal(
+            currentCycleCodeEvents.filter(({ event }) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length,
+            1
+        );
+        assert.equal(
+            currentCycleCodeEvents.filter(({ event }) => event.event_type === 'REVIEW_RECORDED').length,
+            1
+        );
+        assert.equal(
+            (currentCycleCodeEvents.find(({ event }) => event.event_type === 'REVIEW_RECORDED')?.event.details as Record<string, unknown>).reused_existing_review,
+            true
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('preserves delegated reviewer provenance when historical code review evidence is reused in the current cycle', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-delegated-reuse-provenance';

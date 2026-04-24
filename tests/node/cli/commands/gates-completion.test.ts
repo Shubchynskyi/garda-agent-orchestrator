@@ -174,9 +174,21 @@ function getOrchestratorRoot(repoRoot: string): string {
 }
 
 function loadTaskEventsIoModule(): { appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>; } {
-    return require(path.join(__dirname, '../../../../src/gate-runtime/task-events-io.js')) as {
-        appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
+    const taskEventsIoModule = require(path.join(__dirname, '../../../../src/gate-runtime/task-events-io.js')) as {
+        appendMandatoryTaskEventAsync: (...args: unknown[]) => Promise<unknown>;
     };
+    const lifecycleAppendProxy = {} as { appendTaskEventAsync: (...args: unknown[]) => Promise<unknown>; };
+    Object.defineProperty(lifecycleAppendProxy, 'appendTaskEventAsync', {
+        configurable: true,
+        enumerable: true,
+        get() {
+            return taskEventsIoModule.appendMandatoryTaskEventAsync;
+        },
+        set(value: (...args: unknown[]) => Promise<unknown>) {
+            taskEventsIoModule.appendMandatoryTaskEventAsync = value;
+        }
+    });
+    return lifecycleAppendProxy;
 }
 
 function loadTimelineSummaryModule(): { reconcileTimelineSummaryForTask: (...args: unknown[]) => void; } {
@@ -2657,13 +2669,13 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate restores snapshots when COMPLETION_GATE_PASSED appends with warnings after TASK.md is already DONE', async () => {
+    it('completion-gate keeps canonical completion pass when aggregate append warns after TASK.md is already DONE', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-903-completion-pass-warning-rollback';
+        const taskId = 'T-903-completion-pass-warning-committed';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
-        const commandsPath = path.join(repoRoot, 'commands-completion-pass-warning-rollback.md');
+        const commandsPath = path.join(repoRoot, 'commands-completion-pass-warning-committed.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
@@ -2675,7 +2687,7 @@ describe('cli/commands/gates', () => {
         runEnterTaskMode({
             repoRoot,
             taskId,
-            taskSummary: 'Restore snapshots when completion pass append reports warnings after write'
+            taskSummary: 'Keep canonical completion pass when aggregate append reports warnings after write'
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -2709,7 +2721,7 @@ describe('cli/commands/gates', () => {
             decision: 'NO_DOC_UPDATES',
             behaviorChanged: false,
             changelogUpdated: false,
-            rationale: 'Completion pass warning rollback regression fixture only.',
+            rationale: 'Completion pass derived-warning commit regression fixture only.',
             emitMetrics: false
         });
         assert.equal(docImpactResult.exitCode, 0);
@@ -2769,34 +2781,30 @@ describe('cli/commands/gates', () => {
                 return originalAppendFileSync(filePath, data, options);
             }) as typeof fsModule.appendFileSync;
 
-            const error = await captureExpectedAsyncError(async () => {
-                await handleCompletionGate([
-                    '--preflight-path', preflightPath,
-                    '--task-id', taskId,
-                    '--repo-root', repoRoot
-                ]);
-            });
-            assert.match(error.message, /mandatory COMPLETION_GATE_PASSED append failed/i);
-            assert.match(error.message, /aggregate append\/prune failed/i);
-            assert.equal(injectedAggregateFailure, true, 'aggregate append failure must be injected during the warning rollback scenario');
+            await handleCompletionGate([
+                '--preflight-path', preflightPath,
+                '--task-id', taskId,
+                '--repo-root', repoRoot
+            ]);
+            assert.equal(injectedAggregateFailure, true, 'aggregate append failure must be injected during the derived-warning scenario');
         } finally {
             fsModule.appendFileSync = originalAppendFileSync;
         }
 
-        const failedAttemptEvents = readTaskTimelineEvents(repoRoot, taskId);
+        const completedEvents = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(
-            failedAttemptEvents.filter((event) => event.event_type === 'COMPLETION_GATE_PASSED').length,
-            baselineCompletionCount,
-            'warning-backed partial completion append must be rolled back from the task timeline'
+            completedEvents.filter((event) => event.event_type === 'COMPLETION_GATE_PASSED').length,
+            baselineCompletionCount + 1,
+            'derived-index warning must not roll back the canonical completion pass from the task timeline'
         );
         assert.equal(
-            failedAttemptEvents.filter((event) => (
+            completedEvents.filter((event) => (
                 event.event_type === 'STATUS_CHANGED'
                 && typeof (event.details as Record<string, unknown> | undefined)?.new_status === 'string'
                 && String((event.details as Record<string, unknown>).new_status).toUpperCase() === 'DONE'
             )).length,
             baselineDoneStatusCount,
-            'warning-backed completion failure must restore the original DONE status timeline snapshot'
+            'derived-index warning must not duplicate the existing DONE status timeline event'
         );
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
         const aggregateRestoredAsFile = fs.existsSync(aggregatePath) && fs.statSync(aggregatePath).isFile();
@@ -2809,8 +2817,8 @@ describe('cli/commands/gates', () => {
                 .map((line) => JSON.parse(line) as Record<string, unknown>);
         assert.equal(
             restoredAggregateEntries.length,
-            baselineAggregateEntries.length + 1,
-            'warning-backed completion failure must append a single COMPLETION_GATE_FAILED audit marker'
+            baselineAggregateEntries.length,
+            'derived-index warning must not append rollback or failure aggregate rows'
         );
         assert.equal(
             restoredAggregateEntries.filter((entry) => (
@@ -2821,7 +2829,7 @@ describe('cli/commands/gates', () => {
                 String(entry.task_id || '').trim() === taskId
                 && String(entry.event_type || '').trim() === 'COMPLETION_GATE_PASSED'
             )).length,
-            'warning-backed completion failure must not leave a partial completion aggregate entry behind'
+            'failed aggregate append must leave the derived aggregate index at its baseline state'
         );
         assert.equal(
             restoredAggregateEntries.filter((entry) => (
@@ -2838,15 +2846,15 @@ describe('cli/commands/gates', () => {
                 && !Array.isArray(entry.details)
                 && String(((entry.details as Record<string, unknown>).new_status) || '').toUpperCase() === 'DONE'
             )).length,
-            'warning-backed completion failure must preserve the pre-existing DONE status aggregate state'
+            'derived-index warning must preserve the pre-existing DONE status aggregate state'
         );
         assert.equal(
             restoredAggregateEntries.filter((entry) => (
                 String(entry.task_id || '').trim() === taskId
                 && String(entry.event_type || '').trim() === 'COMPLETION_GATE_FAILED'
             )).length,
-            1,
-            'warning-backed completion failure must emit a single failure lifecycle marker for auditability'
+            0,
+            'derived-index warning must not emit a completion failure lifecycle marker'
         );
         const restoredTimelineSummary = baselineTimelineSummaryContent === null
             ? null
@@ -2856,39 +2864,27 @@ describe('cli/commands/gates', () => {
                         entries?: Record<string, { events_found?: string[]; events_missing?: string[]; completeness_status?: string }>;
                     }
                     : null
-            );
+        );
         const restoredCurrentTaskSummary = restoredTimelineSummary?.entries?.[taskId];
-        assert.ok(restoredCurrentTaskSummary, 'warning-backed completion failure must keep a timeline summary entry for the current task');
+        assert.ok(restoredCurrentTaskSummary, 'derived-index warning must keep a timeline summary entry for the current task');
         assert.equal(
             Array.isArray(restoredCurrentTaskSummary?.events_found)
                 ? restoredCurrentTaskSummary.events_found.includes('COMPLETION_GATE_PASSED')
                 : false,
-            false,
-            'warning-backed completion failure must not leave COMPLETION_GATE_PASSED in the current task timeline summary'
+            true,
+            'derived-index warning must preserve COMPLETION_GATE_PASSED in the canonical timeline summary'
         );
         assert.equal(
             Array.isArray(restoredCurrentTaskSummary?.events_missing)
                 ? restoredCurrentTaskSummary.events_missing.includes('COMPLETION_GATE_PASSED')
                 : false,
-            true,
-            'warning-backed completion failure must keep the current task timeline summary incomplete for COMPLETION_GATE_PASSED'
+            false,
+            'derived-index warning must not keep COMPLETION_GATE_PASSED missing in the timeline summary'
         );
         assert.equal(
             String(restoredCurrentTaskSummary?.completeness_status || ''),
-            'INCOMPLETE',
-            'warning-backed completion failure must preserve the current task completion summary state'
-        );
-
-        await handleCompletionGate([
-            '--preflight-path', preflightPath,
-            '--task-id', taskId,
-            '--repo-root', repoRoot
-        ]);
-
-        const repairedEvents = readTaskTimelineEvents(repoRoot, taskId);
-        assert.equal(
-            repairedEvents.filter((event) => event.event_type === 'COMPLETION_GATE_PASSED').length,
-            baselineCompletionCount + 1
+            'COMPLETE',
+            'derived-index warning must keep the current task completion summary complete'
         );
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
 

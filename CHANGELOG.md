@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- split task-event append results into canonical commit status and derived-index warnings so mandatory lifecycle writes no longer fail after the per-task JSONL event is already committed
 - fixed `gate human-commit --repo-root` so the gate consumes the documented repo-root option instead of forwarding it to `git commit`
 - added `gate next-step` as a deterministic lifecycle navigator that reports the next mandatory command, effective full-suite configuration, review policy, missing artifacts, and review trust state for agent task runs
 - blocked mandatory review preparation only when runtime identity is unresolved or still relies on canonical SourceOfTruth fallback, while keeping delegated reviewer-subagent execution valid regardless of which explicit orchestrator entry surface was used
