@@ -100,9 +100,12 @@ test('acquireFilesystemLock creates lock directory with owner metadata', () => {
         const ownerPath = path.join(lockPath, 'owner.json');
         assert.ok(fs.existsSync(ownerPath), 'owner.json should exist');
         const owner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+        assert.ok(typeof owner.lock_id === 'string' && owner.lock_id.length > 0);
         assert.equal(owner.pid, process.pid);
         assert.ok(typeof owner.hostname === 'string' && owner.hostname.length > 0);
         assert.ok(typeof owner.created_at_utc === 'string');
+        assert.equal(owner.heartbeat_at_utc, owner.created_at_utc);
+        assert.ok(typeof owner.command === 'string' && owner.command.length > 0);
         assert.ok(typeof telemetry.elapsedMs === 'number');
         assert.equal(telemetry.retries, 0);
         releaseFilesystemLock(handle);
@@ -738,7 +741,7 @@ test('releaseFilesystemLock retries transient EPERM and removes lock directory',
         const { handle } = acquireFilesystemLock(lockPath);
         realFs.rmSync = function (...args: unknown[]) {
             const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
-            if (targetPath === path.resolve(lockPath) && interceptedRetries < 2) {
+            if (targetPath.startsWith(path.resolve(`${lockPath}.releasing`)) && interceptedRetries < 2) {
                 interceptedRetries += 1;
                 const error = new Error('EPERM: simulated transient release contention') as NodeJS.ErrnoException;
                 error.code = 'EPERM';
@@ -758,6 +761,75 @@ test('releaseFilesystemLock retries transient EPERM and removes lock directory',
     } finally {
         realFs.rmSync = originalRmSync;
         (process.stderr as unknown as { write: typeof process.stderr.write }).write = originalStderrWrite;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('releaseFilesystemLock retries transient EPERM while claiming release ownership', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-release-claim-retry.lock');
+    const realFs = require('node:fs');
+    const originalRenameSync = realFs.renameSync;
+    const originalStderrWrite = process.stderr.write;
+    let interceptedRetries = 0;
+    let stderrOutput = '';
+
+    try {
+        const { handle } = acquireFilesystemLock(lockPath);
+        realFs.renameSync = function (...args: unknown[]) {
+            const fromPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+            const toPath = typeof args[1] === 'string' ? path.resolve(args[1]) : '';
+            if (fromPath === path.resolve(lockPath)
+                && toPath.startsWith(path.resolve(`${lockPath}.releasing`))
+                && interceptedRetries < 2) {
+                interceptedRetries += 1;
+                const error = new Error('EPERM: simulated transient release claim contention') as NodeJS.ErrnoException;
+                error.code = 'EPERM';
+                throw error;
+            }
+            return originalRenameSync.apply(realFs, args as [fs.PathLike, fs.PathLike]);
+        };
+        (process.stderr as unknown as { write: (...args: unknown[]) => boolean }).write = function (chunk: unknown): boolean {
+            stderrOutput += String(chunk);
+            return true;
+        };
+
+        assert.doesNotThrow(() => releaseFilesystemLock(handle));
+        assert.equal(interceptedRetries, 2, 'release claim should retry transient rename contention');
+        assert.ok(!fs.existsSync(lockPath), 'lock directory should be removed after release claim retry recovery');
+        assert.ok(stderrOutput.includes('LOCK_RELEASE_RETRY_RESOLVED'));
+    } finally {
+        realFs.renameSync = originalRenameSync;
+        (process.stderr as unknown as { write: typeof process.stderr.write }).write = originalStderrWrite;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('releaseFilesystemLock does not remove replacement lock after stale reclaim race', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-old-owner-race.lock');
+    try {
+        const oldOwner = acquireFilesystemLock(lockPath);
+        const oldOwnerMetadataPath = path.join(lockPath, 'owner.json');
+        const oldOwnerMetadata = JSON.parse(fs.readFileSync(oldOwnerMetadataPath, 'utf8'));
+        fs.writeFileSync(oldOwnerMetadataPath, JSON.stringify({
+            ...oldOwnerMetadata,
+            pid: 999999999,
+            heartbeat_at_utc: oldOwnerMetadata.created_at_utc
+        }, null, 2) + '\n', 'utf8');
+
+        const replacement = acquireFilesystemLock(lockPath);
+        const replacementMetadata = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.notEqual(replacementMetadata.lock_id, oldOwner.handle.lockId);
+
+        releaseFilesystemLock(oldOwner.handle);
+        assert.ok(fs.existsSync(lockPath), 'old owner release must not remove replacement lock');
+        const afterOldRelease = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(afterOldRelease.lock_id, replacement.handle.lockId);
+
+        releaseFilesystemLock(replacement.handle);
+        assert.ok(!fs.existsSync(lockPath), 'replacement owner should still be able to release its own lock');
+    } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });

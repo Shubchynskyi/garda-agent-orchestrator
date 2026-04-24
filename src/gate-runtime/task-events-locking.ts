@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import { redactHostname as redactHostnameValue, redactPath } from '../core/redaction';
 
@@ -13,6 +14,7 @@ const MAX_LOCK_RELEASE_RETRY_MS = 250;
 const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 const LOCK_METADATA_GRACE_MS = 2000;
+const LOCK_OWNER_COMMAND_MAX_LENGTH = 160;
 export const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
 const TRANSIENT_LOCK_ACQUIRE_ERROR_CODES = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
 const TRANSIENT_LOCK_RELEASE_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
@@ -22,16 +24,21 @@ export interface LockOptions {
     retryMs?: unknown;
     staleMs?: unknown;
     allowForeignHostStaleRecovery?: unknown;
+    ownerLabel?: unknown;
 }
 
 export interface LockHandle {
     lockPath: string;
+    lockId?: string;
 }
 
 export interface LockOwnerMetadata {
+    lock_id?: string | null;
     pid: number | null;
     hostname: string | null;
     created_at_utc: string | null;
+    heartbeat_at_utc?: string | null;
+    command?: string | null;
     metadata_status: 'missing' | 'invalid_json' | 'invalid_shape' | 'ok';
 }
 
@@ -134,6 +141,14 @@ function getErrorCode(error: unknown): string {
         : '';
 }
 
+function createLockId(): string {
+    return randomUUID();
+}
+
+function sanitizeLockIdForPath(lockId: string): string {
+    return lockId.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 80) || 'unknown';
+}
+
 function sleepMsSync(milliseconds: number): void {
     if (!milliseconds || milliseconds <= 0) {
         return;
@@ -146,12 +161,25 @@ function parseBooleanLike(value: unknown): boolean {
     return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
-function writeLockMetadata(lockPath: string): void {
+function getLockOwnerCommand(options: LockOptions | undefined): string | null {
+    const explicitLabel = typeof options?.ownerLabel === 'string' ? options.ownerLabel.trim() : '';
+    const rawLabel = explicitLabel || path.basename(process.argv[1] || process.argv[0] || '');
+    if (!rawLabel) {
+        return null;
+    }
+    return rawLabel.slice(0, LOCK_OWNER_COMMAND_MAX_LENGTH);
+}
+
+function writeLockMetadata(lockPath: string, lockId: string, options: LockOptions | undefined): void {
     const metadataPath = path.join(lockPath, 'owner.json');
+    const now = new Date().toISOString();
     const payload = {
+        lock_id: lockId,
         pid: process.pid,
         hostname: os.hostname(),
-        created_at_utc: new Date().toISOString()
+        created_at_utc: now,
+        heartbeat_at_utc: now,
+        command: getLockOwnerCommand(options)
     };
     fs.writeFileSync(metadataPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
@@ -163,9 +191,12 @@ function readLockMetadata(lockPath: string): LockOwnerMetadata {
         const stats = fs.statSync(metadataPath);
         if (!stats.isFile()) {
             return {
+                lock_id: null,
                 pid: null,
                 hostname: null,
                 created_at_utc: null,
+                heartbeat_at_utc: null,
+                command: null,
                 metadata_status: 'missing'
             };
         }
@@ -176,22 +207,31 @@ function readLockMetadata(lockPath: string): LockOwnerMetadata {
             : '';
         if (errorCode === 'ENOENT' || errorCode === 'ENOTDIR' || errorCode === 'EISDIR') {
             return {
+                lock_id: null,
                 pid: null,
                 hostname: null,
                 created_at_utc: null,
+                heartbeat_at_utc: null,
+                command: null,
                 metadata_status: 'missing'
             };
         }
         return {
+            lock_id: null,
             pid: null,
             hostname: null,
             created_at_utc: null,
+            heartbeat_at_utc: null,
+            command: null,
             metadata_status: 'missing'
         };
     }
 
     try {
         const parsed = JSON.parse(rawContent) as Record<string, unknown>;
+        const lockIdValue = typeof parsed.lock_id === 'string' && parsed.lock_id.trim()
+            ? parsed.lock_id.trim()
+            : null;
         const pidValue = typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0
             ? parsed.pid
             : null;
@@ -201,20 +241,32 @@ function readLockMetadata(lockPath: string): LockOwnerMetadata {
         const createdAtValue = typeof parsed.created_at_utc === 'string' && parsed.created_at_utc.trim()
             ? parsed.created_at_utc.trim()
             : null;
+        const heartbeatAtValue = typeof parsed.heartbeat_at_utc === 'string' && parsed.heartbeat_at_utc.trim()
+            ? parsed.heartbeat_at_utc.trim()
+            : null;
+        const commandValue = typeof parsed.command === 'string' && parsed.command.trim()
+            ? parsed.command.trim()
+            : null;
         const metadataStatus = pidValue || hostnameValue || createdAtValue
             ? 'ok'
             : 'invalid_shape';
         return {
+            lock_id: lockIdValue,
             pid: pidValue,
             hostname: hostnameValue,
             created_at_utc: createdAtValue,
+            heartbeat_at_utc: heartbeatAtValue,
+            command: commandValue,
             metadata_status: metadataStatus
         };
     } catch {
         return {
+            lock_id: null,
             pid: null,
             hostname: null,
             created_at_utc: null,
+            heartbeat_at_utc: null,
+            command: null,
             metadata_status: 'invalid_json'
         };
     }
@@ -290,6 +342,16 @@ function formatLockReleaseDiagnostic(lockPath: string, kind: string, retries: nu
     ].join('; ');
 }
 
+function createTransientLockPath(lockPath: string, kind: 'releasing' | 'stale', lockId?: string): string {
+    const suffixParts = [
+        kind,
+        String(process.pid),
+        String(Date.now()),
+        sanitizeLockIdForPath(lockId || createLockId())
+    ];
+    return `${lockPath}.${suffixParts.join('-')}`;
+}
+
 export function removeLockPathWithRetry(lockPath: string, kind = 'filesystem_lock'): void {
     let retries = 0;
     const startedAt = Date.now();
@@ -321,6 +383,95 @@ export function removeLockPathWithRetry(lockPath: string, kind = 'filesystem_loc
 
 function removeLockPath(lockPath: string): void {
     removeLockPathWithRetry(lockPath, 'filesystem_lock');
+}
+
+export function renameLockPathWithRetry(
+    lockPath: string,
+    createDestinationPath: () => string,
+    kind = 'filesystem_lock_rename',
+    isExpectedOwner?: () => boolean
+): string | null {
+    let retries = 0;
+    const startedAt = Date.now();
+    while (true) {
+        if (isExpectedOwner && !isExpectedOwner()) {
+            return null;
+        }
+
+        const destinationPath = createDestinationPath();
+        try {
+            fs.renameSync(lockPath, destinationPath);
+            if (retries > 0) {
+                process.stderr.write(
+                    `LOCK_RELEASE_RETRY_RESOLVED: kind=${kind}; lock=${redactLockPath(lockPath)}; retries=${retries}; elapsed_ms=${Date.now() - startedAt}\n`
+                );
+            }
+            return destinationPath;
+        } catch (error: unknown) {
+            const errorCode = getErrorCode(error);
+            if (errorCode === 'ENOENT' || errorCode === 'ENOTDIR') {
+                return null;
+            }
+            if (!isRetryableLockReleaseError(error) || retries >= DEFAULT_LOCK_RELEASE_RETRIES) {
+                const diagnostic = formatLockReleaseDiagnostic(lockPath, kind, retries, Date.now() - startedAt, error);
+                process.stderr.write(`WARNING: LOCK_RELEASE_FAILED: ${diagnostic}\n`);
+                throw new Error(`Failed to claim lock for release after retry backoff: ${diagnostic}`);
+            }
+
+            retries += 1;
+            const delayMs = getLockReleaseDelayMs(retries - 1);
+            process.stderr.write(
+                `WARNING: LOCK_RELEASE_RETRY: ${formatLockReleaseDiagnostic(lockPath, kind, retries, Date.now() - startedAt, error)}; next_delay_ms=${delayMs}\n`
+            );
+            sleepMsSync(delayMs);
+        }
+    }
+}
+
+function lockMetadataMatchesLockId(metadata: LockOwnerMetadata, lockId: string): boolean {
+    return metadata.metadata_status === 'ok' && metadata.lock_id === lockId;
+}
+
+function lockMetadataMatchesCandidate(before: LockOwnerMetadata, after: LockOwnerMetadata): boolean {
+    if (before.lock_id || after.lock_id) {
+        return Boolean(before.lock_id && before.lock_id === after.lock_id);
+    }
+    return before.metadata_status === after.metadata_status
+        && before.pid === after.pid
+        && normalizeHostname(before.hostname) === normalizeHostname(after.hostname)
+        && before.created_at_utc === after.created_at_utc;
+}
+
+function restoreMismatchedClaimedLock(claimedPath: string, originalPath: string): void {
+    try {
+        if (!fs.existsSync(originalPath)) {
+            fs.renameSync(claimedPath, originalPath);
+        }
+    } catch (error: unknown) {
+        process.stderr.write(
+            `WARNING: LOCK_RELEASE_RESTORE_FAILED: lock=${redactLockPath(originalPath)}; claimed=${redactLockPath(claimedPath)}; message=${getErrorMessage(error)}\n`
+        );
+    }
+}
+
+function claimOwnedLockForRelease(lockPath: string, lockId: string): string | null {
+    const releasingPath = renameLockPathWithRetry(
+        lockPath,
+        () => createTransientLockPath(lockPath, 'releasing', lockId),
+        'filesystem_lock_release_claim',
+        () => lockMetadataMatchesLockId(readLockMetadata(lockPath), lockId)
+    );
+    if (!releasingPath) {
+        return null;
+    }
+
+    const claimedMetadata = readLockMetadata(releasingPath);
+    if (lockMetadataMatchesLockId(claimedMetadata, lockId)) {
+        return releasingPath;
+    }
+
+    restoreMismatchedClaimedLock(releasingPath, lockPath);
+    return null;
 }
 
 function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
@@ -459,11 +610,19 @@ function tryRemoveStaleLock(lockPath: string, staleMs: number, options: LockOpti
         return { removed: false, inspection };
     }
 
-    const tempPath = lockPath + '.stale-' + process.pid + '-' + Date.now();
+    const tempPath = createTransientLockPath(lockPath, 'stale', inspection.metadata.lock_id || undefined);
     try {
         fs.renameSync(lockPath, tempPath);
     } catch {
         return { removed: false, inspection };
+    }
+
+    const claimedInspection = inspectLock(tempPath, staleMs);
+    if (!claimedInspection.exists
+        || !claimedInspection.staleReason
+        || !lockMetadataMatchesCandidate(inspection.metadata, claimedInspection.metadata)) {
+        restoreMismatchedClaimedLock(tempPath, lockPath);
+        return { removed: false, inspection: claimedInspection.exists ? claimedInspection : inspection };
     }
 
     try {
@@ -507,16 +666,17 @@ export function acquireFilesystemLock(lockPath: string, options: LockOptions = {
 
     while (true) {
         try {
+            const lockId = createLockId();
             fs.mkdirSync(lockPath);
             try {
-                writeLockMetadata(lockPath);
+                writeLockMetadata(lockPath, lockId, options);
             } catch (metadataError: unknown) {
                 removeLockPath(lockPath);
                 throw metadataError;
             }
             const elapsedMs = Date.now() - startedAt;
             return {
-                handle: { lockPath },
+                handle: { lockPath, lockId },
                 telemetry: {
                     retries,
                     elapsedMs,
@@ -611,9 +771,10 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
 
     while (true) {
         try {
+            const lockId = createLockId();
             fs.mkdirSync(lockPath);
             try {
-                writeLockMetadata(lockPath);
+                writeLockMetadata(lockPath, lockId, options);
             } catch (metadataError: unknown) {
                 removeLockPath(lockPath);
                 throw metadataError;
@@ -626,7 +787,7 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                 );
             }
             return {
-                handle: { lockPath },
+                handle: { lockPath, lockId },
                 telemetry: {
                     retries,
                     elapsedMs,
@@ -711,7 +872,14 @@ export function releaseFilesystemLock(lockHandle: LockHandle | null): void {
     if (!lockHandle || !lockHandle.lockPath) {
         return;
     }
-    removeLockPath(lockHandle.lockPath);
+    if (!lockHandle.lockId) {
+        return;
+    }
+    const claimedPath = claimOwnedLockForRelease(lockHandle.lockPath, lockHandle.lockId);
+    if (!claimedPath) {
+        return;
+    }
+    removeLockPathWithRetry(claimedPath, 'filesystem_lock_release');
 }
 
 function classifyLockName(entryName: string): { scope: 'aggregate' | 'task'; taskId: string | null } | null {

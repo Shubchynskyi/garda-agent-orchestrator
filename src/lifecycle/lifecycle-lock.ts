@@ -2,9 +2,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { redactHostname as redactHostnameValue, redactPath } from '../core/redaction';
 import { resolveBundleName } from '../core/constants';
-import { removeLockPathWithRetry } from '../gate-runtime/task-events-locking';
+import { removeLockPathWithRetry, renameLockPathWithRetry } from '../gate-runtime/task-events-locking';
 
 type JsonObject = Record<string, unknown>;
 
@@ -12,10 +13,13 @@ export const LIFECYCLE_OPERATION_LOCK_DIR_NAME = '.lifecycle-operation.lock';
 export const LIFECYCLE_OPERATION_LOCK_OWNER_FILE_NAME = 'owner.json';
 
 interface LifecycleOperationLockMetadata extends JsonObject {
+    lock_id: string | null;
     pid: number | null;
     hostname: string | null;
     operation: string | null;
     acquired_at_utc: string | null;
+    heartbeat_at_utc: string | null;
+    command: string | null;
     target_root: string | null;
 }
 
@@ -60,6 +64,7 @@ const LIFECYCLE_LOCK_STALE_MS = 30 * 60 * 1000;
 const DEFAULT_LIFECYCLE_ASYNC_QUEUE_TIMEOUT_MS = 10 * 60 * 1000;
 const FOREIGN_HOST_LIFECYCLE_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS';
 const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
+const LIFECYCLE_LOCK_COMMAND_MAX_LENGTH = 160;
 const ACTIVE_LIFECYCLE_OPERATION_LOCKS = new Map<string, number>();
 const LIFECYCLE_ASYNC_QUEUES = new Map<string, LifecycleAsyncQueueState>();
 const LIFECYCLE_ASYNC_CONTEXT = new AsyncLocalStorage<LifecycleAsyncContextState>();
@@ -74,6 +79,24 @@ function getErrorCode(error: unknown): string {
     return error != null && typeof error === 'object' && 'code' in error
         ? String((error as { code?: unknown }).code || '')
         : '';
+}
+
+function createLifecycleLockId(): string {
+    return randomUUID();
+}
+
+function sanitizeLifecycleLockIdForPath(lockId: string): string {
+    return lockId.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 80) || 'unknown';
+}
+
+function createLifecycleTransientLockPath(lockPath: string, kind: 'releasing' | 'stale', lockId?: string): string {
+    return [
+        lockPath,
+        kind,
+        String(process.pid),
+        String(Date.now()),
+        sanitizeLifecycleLockIdForPath(lockId || createLifecycleLockId())
+    ].join('.');
 }
 
 function isProcessLikelyAlive(pid: number | null): boolean | null {
@@ -104,6 +127,12 @@ function isCurrentHostOwner(hostname: string | null): boolean | null {
     return ownerHost === normalizeHostname(os.hostname());
 }
 
+function getLifecycleLockCommandLabel(operation: string): string | null {
+    const cliName = path.basename(process.argv[1] || process.argv[0] || '');
+    const label = [cliName, operation].filter(Boolean).join(':');
+    return label ? label.slice(0, LIFECYCLE_LOCK_COMMAND_MAX_LENGTH) : null;
+}
+
 function parseBooleanLike(value: unknown): boolean {
     const raw = String(value ?? '').trim().toLowerCase();
     return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
@@ -128,20 +157,28 @@ function readLifecycleOperationLockMetadata(lockPath: string): LifecycleOperatio
         const raw = fs.readFileSync(ownerPath, 'utf8');
         const parsed = JSON.parse(raw) as Record<string, unknown>;
         return {
+            lock_id: typeof parsed.lock_id === 'string' && parsed.lock_id.trim() ? parsed.lock_id.trim() : null,
             pid: typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : null,
             hostname: typeof parsed.hostname === 'string' && parsed.hostname.trim() ? parsed.hostname.trim() : null,
             operation: typeof parsed.operation === 'string' && parsed.operation.trim() ? parsed.operation.trim() : null,
             acquired_at_utc: typeof parsed.acquired_at_utc === 'string' && parsed.acquired_at_utc.trim()
                 ? parsed.acquired_at_utc.trim()
                 : null,
+            heartbeat_at_utc: typeof parsed.heartbeat_at_utc === 'string' && parsed.heartbeat_at_utc.trim()
+                ? parsed.heartbeat_at_utc.trim()
+                : null,
+            command: typeof parsed.command === 'string' && parsed.command.trim() ? parsed.command.trim() : null,
             target_root: typeof parsed.target_root === 'string' && parsed.target_root.trim() ? parsed.target_root.trim() : null
         };
     } catch {
         return {
+            lock_id: null,
             pid: null,
             hostname: null,
             operation: null,
             acquired_at_utc: null,
+            heartbeat_at_utc: null,
+            command: null,
             target_root: null
         };
     }
@@ -156,10 +193,13 @@ function inspectLifecycleOperationLock(lockPath: string): LifecycleOperationLock
             ownerAlive: null,
             staleReason: null,
             metadata: {
+                lock_id: null,
                 pid: null,
                 hostname: null,
                 operation: null,
                 acquired_at_utc: null,
+                heartbeat_at_utc: null,
+                command: null,
                 target_root: null
             }
         };
@@ -206,13 +246,17 @@ function inspectLifecycleOperationLock(lockPath: string): LifecycleOperationLock
     };
 }
 
-function writeLifecycleOperationLockMetadata(lockPath: string, targetRoot: string, operation: string): void {
+function writeLifecycleOperationLockMetadata(lockPath: string, targetRoot: string, operation: string, lockId: string): void {
     const ownerPath = path.join(lockPath, LIFECYCLE_OPERATION_LOCK_OWNER_FILE_NAME);
+    const now = new Date().toISOString();
     const payload: LifecycleOperationLockMetadata = {
+        lock_id: lockId,
         pid: process.pid,
         hostname: os.hostname(),
         operation,
-        acquired_at_utc: new Date().toISOString(),
+        acquired_at_utc: now,
+        heartbeat_at_utc: now,
+        command: getLifecycleLockCommandLabel(operation),
         target_root: targetRoot
     };
     fs.writeFileSync(ownerPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
@@ -406,6 +450,88 @@ export function getLifecycleOperationLockPath(targetRoot: string): string {
     return path.join(normalizedTarget, resolveBundleName(), 'runtime', LIFECYCLE_OPERATION_LOCK_DIR_NAME);
 }
 
+function lifecycleLockMetadataMatchesLockId(metadata: LifecycleOperationLockMetadata, lockId: string): boolean {
+    return metadata.lock_id === lockId && metadata.pid !== null && metadata.hostname !== null && metadata.acquired_at_utc !== null;
+}
+
+function lifecycleLockMetadataMatchesCandidate(
+    before: LifecycleOperationLockMetadata,
+    after: LifecycleOperationLockMetadata
+): boolean {
+    if (before.lock_id || after.lock_id) {
+        return Boolean(before.lock_id && before.lock_id === after.lock_id);
+    }
+    return before.pid === after.pid
+        && normalizeHostname(before.hostname) === normalizeHostname(after.hostname)
+        && before.operation === after.operation
+        && before.acquired_at_utc === after.acquired_at_utc
+        && before.target_root === after.target_root;
+}
+
+function restoreMismatchedLifecycleLockClaim(claimedPath: string, originalPath: string, normalizedTarget: string): void {
+    try {
+        if (!fs.existsSync(originalPath)) {
+            fs.renameSync(claimedPath, originalPath);
+        }
+    } catch (error: unknown) {
+        process.stderr.write(
+            `WARNING: LIFECYCLE_LOCK_RESTORE_FAILED: lock=${redactPath(originalPath, normalizedTarget)}; claimed=${redactPath(claimedPath, normalizedTarget)}; message=${error instanceof Error ? error.message : String(error)}\n`
+        );
+    }
+}
+
+function reclaimStaleLifecycleOperationLock(
+    lockPath: string,
+    inspection: LifecycleOperationLockInspection,
+    normalizedTarget: string
+): boolean {
+    const tempPath = createLifecycleTransientLockPath(lockPath, 'stale', inspection.metadata.lock_id || undefined);
+    try {
+        fs.renameSync(lockPath, tempPath);
+    } catch {
+        return false;
+    }
+
+    const claimedInspection = inspectLifecycleOperationLock(tempPath);
+    if (!claimedInspection.exists
+        || !claimedInspection.staleReason
+        || !lifecycleLockMetadataMatchesCandidate(inspection.metadata, claimedInspection.metadata)) {
+        restoreMismatchedLifecycleLockClaim(tempPath, lockPath, normalizedTarget);
+        return false;
+    }
+
+    removeLockPathWithRetry(tempPath, 'lifecycle_lock_stale_cleanup');
+    return true;
+}
+
+function claimLifecycleLockForRelease(lockPath: string, lockId: string, normalizedTarget: string): string | null {
+    const releasingPath = renameLockPathWithRetry(
+        lockPath,
+        () => createLifecycleTransientLockPath(lockPath, 'releasing', lockId),
+        'lifecycle_lock_release_claim',
+        () => lifecycleLockMetadataMatchesLockId(readLifecycleOperationLockMetadata(lockPath), lockId)
+    );
+    if (!releasingPath) {
+        return null;
+    }
+
+    const claimedMetadata = readLifecycleOperationLockMetadata(releasingPath);
+    if (lifecycleLockMetadataMatchesLockId(claimedMetadata, lockId)) {
+        return releasingPath;
+    }
+
+    restoreMismatchedLifecycleLockClaim(releasingPath, lockPath, normalizedTarget);
+    return null;
+}
+
+function releaseLifecycleOperationLockPath(lockPath: string, lockId: string, normalizedTarget: string): void {
+    const claimedPath = claimLifecycleLockForRelease(lockPath, lockId, normalizedTarget);
+    if (!claimedPath) {
+        return;
+    }
+    removeLockPathWithRetry(claimedPath, 'lifecycle_lock_release');
+}
+
 function acquireLifecycleOperationLock(targetRoot: string, operation: string, options: LifecycleLockOptions = {}): { release: () => void; telemetry: LifecycleLockTelemetry } {
     const startedAt = Date.now();
     const normalizedTarget = path.resolve(targetRoot);
@@ -427,6 +553,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
 
     let staleLockRecovered = false;
     const lockPath = getLifecycleOperationLockPath(normalizedTarget);
+    const lockId = createLifecycleLockId();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     try {
         fs.mkdirSync(lockPath);
@@ -440,13 +567,9 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
         const foreignHostAgeExceeded = inspection.ownerHostMatchesCurrent === false && inspection.staleReason === 'age_exceeded';
         const allowForeignHostRecovery = foreignHostAgeExceeded && isForeignHostLifecycleStaleRecoveryEnabled(options);
         if (inspection.exists && inspection.staleReason && (!foreignHostAgeExceeded || allowForeignHostRecovery)) {
-            const tempPath = lockPath + '.stale-' + process.pid + '-' + Date.now();
-            try {
-                fs.renameSync(lockPath, tempPath);
-            } catch {
+            if (!reclaimStaleLifecycleOperationLock(lockPath, inspection, normalizedTarget)) {
                 throw error;
             }
-            removeLockPathWithRetry(tempPath, 'lifecycle_lock_stale_cleanup');
             fs.mkdirSync(lockPath);
             staleLockRecovered = true;
         } else {
@@ -467,7 +590,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
     }
 
     try {
-        writeLifecycleOperationLockMetadata(lockPath, normalizedTarget, operation);
+        writeLifecycleOperationLockMetadata(lockPath, normalizedTarget, operation, lockId);
     } catch (error: unknown) {
         removeLockPathWithRetry(lockPath, 'lifecycle_lock_metadata_cleanup');
         throw error;
@@ -485,7 +608,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
             const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
             if (currentCount <= 1) {
                 ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
-                removeLockPathWithRetry(lockPath, 'lifecycle_lock_release');
+                releaseLifecycleOperationLockPath(lockPath, lockId, normalizedTarget);
                 return;
             }
             ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, currentCount - 1);

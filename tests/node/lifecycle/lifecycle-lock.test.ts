@@ -298,10 +298,13 @@ test('withLifecycleOperationLock writes correct owner metadata', () => {
             const lockPath = getLifecycleOperationLockPath(tmp);
             const ownerPath = path.join(lockPath, 'owner.json');
             const owner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+            assert.ok(typeof owner.lock_id === 'string' && owner.lock_id.length > 0);
             assert.equal(owner.pid, process.pid);
             assert.equal(owner.hostname, os.hostname());
             assert.equal(owner.operation, 'metadata-test');
             assert.ok(typeof owner.acquired_at_utc === 'string');
+            assert.equal(owner.heartbeat_at_utc, owner.acquired_at_utc);
+            assert.ok(typeof owner.command === 'string' && owner.command.includes('metadata-test'));
             assert.ok(typeof owner.target_root === 'string');
         });
     } finally {
@@ -1044,7 +1047,7 @@ test('withLifecycleOperationLock retries transient EBUSY during release and pres
             const lockPath = getLifecycleOperationLockPath(tmp);
             realFs.rmSync = function (...args: unknown[]) {
                 const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
-                if (targetPath === path.resolve(lockPath) && interceptedRetries < 2) {
+                if (targetPath.startsWith(path.resolve(`${lockPath}.releasing`)) && interceptedRetries < 2) {
                     interceptedRetries += 1;
                     const error = new Error('EBUSY: simulated transient lifecycle release contention') as NodeJS.ErrnoException;
                     error.code = 'EBUSY';
@@ -1060,6 +1063,85 @@ test('withLifecycleOperationLock retries transient EBUSY during release and pres
         assert.ok(!fs.existsSync(getLifecycleOperationLockPath(tmp)), 'lock should be released after retry recovery');
     } finally {
         realFs.rmSync = originalRmSync;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock retries transient EPERM while claiming release ownership', () => {
+    const tmp = mkTmpDir();
+    const realFs = require('node:fs');
+    const originalRenameSync = realFs.renameSync;
+    let interceptedRetries = 0;
+    try {
+        const result = withLifecycleOperationLock(tmp, 'release-claim-retry', () => {
+            const lockPath = getLifecycleOperationLockPath(tmp);
+            realFs.renameSync = function (...args: unknown[]) {
+                const fromPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+                const toPath = typeof args[1] === 'string' ? path.resolve(args[1]) : '';
+                if (fromPath === path.resolve(lockPath)
+                    && toPath.startsWith(path.resolve(`${lockPath}.releasing`))
+                    && interceptedRetries < 2) {
+                    interceptedRetries += 1;
+                    const error = new Error('EPERM: simulated transient lifecycle release claim contention') as NodeJS.ErrnoException;
+                    error.code = 'EPERM';
+                    throw error;
+                }
+                return originalRenameSync.apply(realFs, args as [fs.PathLike, fs.PathLike]);
+            };
+            return 'ok';
+        });
+
+        assert.equal(result, 'ok');
+        assert.equal(interceptedRetries, 2, 'lifecycle release claim should retry transient rename contention');
+        assert.ok(!fs.existsSync(getLifecycleOperationLockPath(tmp)), 'lock should be released after claim retry recovery');
+    } finally {
+        realFs.renameSync = originalRenameSync;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock does not remove replacement lock when old release loses ownership race', () => {
+    const tmp = mkTmpDir();
+    const realFs = require('node:fs');
+    const originalRenameSync = realFs.renameSync;
+    let interceptedRelease = false;
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        const result = withLifecycleOperationLock(tmp, 'old-owner', () => {
+            realFs.renameSync = function (...args: unknown[]) {
+                const fromPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+                const toPath = typeof args[1] === 'string' ? path.resolve(args[1]) : '';
+                if (!interceptedRelease
+                    && fromPath === path.resolve(lockPath)
+                    && toPath.startsWith(path.resolve(`${lockPath}.releasing`))) {
+                    interceptedRelease = true;
+                    const stalePath = `${lockPath}.stale-test`;
+                    originalRenameSync.call(realFs, lockPath, stalePath);
+                    fs.mkdirSync(lockPath);
+                    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+                        lock_id: 'replacement-lock-id',
+                        pid: process.pid,
+                        hostname: os.hostname(),
+                        operation: 'replacement-owner',
+                        acquired_at_utc: new Date().toISOString(),
+                        heartbeat_at_utc: new Date().toISOString(),
+                        command: 'replacement-owner',
+                        target_root: path.resolve(tmp)
+                    }, null, 2) + '\n', 'utf8');
+                }
+                return originalRenameSync.apply(realFs, args as [fs.PathLike, fs.PathLike]);
+            };
+            return 'ok';
+        });
+
+        assert.equal(result, 'ok');
+        assert.equal(interceptedRelease, true);
+        assert.ok(fs.existsSync(lockPath), 'replacement lock must survive old owner release');
+        const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
+        assert.equal(owner.lock_id, 'replacement-lock-id');
+        assert.equal(owner.operation, 'replacement-owner');
+    } finally {
+        realFs.renameSync = originalRenameSync;
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
