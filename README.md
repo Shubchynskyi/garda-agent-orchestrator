@@ -105,6 +105,7 @@ If you want persistent commands, install globally.
 | `garda` | Safe overview: help + current project status |
 | `garda setup` | First-run CLI onboarding without requiring an agent for the 6 answers |
 | `garda agent-init` | Hard code-level gate that finalizes agent onboarding |
+| `garda next-step` | Show the exact next orchestrator command for a task |
 | `garda status` | Short project status snapshot |
 | `garda doctor` | Run verify + manifest validation from existing answers |
 | `garda preprompt` | Build a read-only task brief with current context and canonical next commands |

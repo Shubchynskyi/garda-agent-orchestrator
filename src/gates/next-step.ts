@@ -89,6 +89,7 @@ export interface NextStepResult {
     schema_version: 1;
     task_id: string;
     generated_utc: string;
+    navigator_command: string;
     status: NextStepStatus;
     next_gate: string | null;
     title: string;
@@ -125,6 +126,7 @@ interface ReviewArtifactState {
     ready: boolean;
     violations: string[];
     reviewerIdentity: string | null;
+    contextReviewerIdentity: string | null;
     reviewerProvenance: {
         task_sequence: number | null;
         prev_event_sha256: string | null;
@@ -217,6 +219,7 @@ function readReviewArtifactState(reviewsRoot: string, taskId: string, reviewType
     let context: Record<string, unknown> | null = null;
     let receipt: Record<string, unknown> | null = null;
     let reviewerIdentity: string | null = null;
+    let contextReviewerIdentity: string | null = null;
     let reviewerProvenance: ReviewArtifactState['reviewerProvenance'] = null;
 
     if (!contextExists) {
@@ -225,6 +228,14 @@ function readReviewArtifactState(reviewsRoot: string, taskId: string, reviewType
         context = safeReadJson(contextPath);
         if (!context) {
             violations.push('review context artifact is invalid JSON');
+        } else {
+            const reviewerRouting = isPlainRecord(context.reviewer_routing)
+                ? context.reviewer_routing
+                : null;
+            const contextReviewerSessionId = typeof reviewerRouting?.reviewer_session_id === 'string'
+                ? reviewerRouting.reviewer_session_id.trim()
+                : '';
+            contextReviewerIdentity = contextReviewerSessionId || null;
         }
     }
 
@@ -332,6 +343,7 @@ function readReviewArtifactState(reviewsRoot: string, taskId: string, reviewType
         ready: violations.length === 0,
         violations,
         reviewerIdentity,
+        contextReviewerIdentity,
         reviewerProvenance
     };
 }
@@ -573,8 +585,13 @@ function buildCommand(label: string, command: string): NextStepCommand {
     return { label, command };
 }
 
+function buildNavigatorCommand(cliPrefix: string, taskId: string): string {
+    return `${cliPrefix} next-step "${taskId}" --repo-root "."`;
+}
+
 function buildResult(params: {
     taskId: string;
+    navigatorCommand: string;
     status: NextStepStatus;
     nextGate: string | null;
     title: string;
@@ -590,6 +607,7 @@ function buildResult(params: {
         schema_version: 1,
         task_id: params.taskId,
         generated_utc: new Date().toISOString(),
+        navigator_command: params.navigatorCommand,
         status: params.status,
         next_gate: params.nextGate,
         title: params.title,
@@ -649,6 +667,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const cliPrefix = buildCliPrefix(repoRoot);
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     const preflightCommandPath = buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`);
+    const navigatorCommand = buildNavigatorCommand(cliPrefix, taskId);
     const rulePackPath = path.join(reviewsRoot, `${taskId}-rule-pack.json`);
     const preflight = safeReadJson(preflightPath);
     const rulePack = safeReadJson(rulePackPath);
@@ -710,6 +729,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
 
     const resultBase = {
         taskId,
+        navigatorCommand,
         missingArtifacts: coreArtifacts.missing,
         presentArtifacts: coreArtifacts.present,
         fullSuite: fullSuiteSummary,
@@ -830,7 +850,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Finish upstream review first',
-                        `${cliPrefix} gate next-step --task-id "${taskId}" --repo-root "."`
+                        navigatorCommand
                     )
                 ]
             });
@@ -854,6 +874,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             const stateViolations = state.violations.length > 0
                 ? state.violations.join('; ')
                 : 'matching REVIEWER_DELEGATION_ROUTED telemetry is missing';
+            const reviewerIdentity = state.contextReviewerIdentity
+                || '<agent:reviewer-session-id-from-review-context>';
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -863,7 +885,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated review output',
-                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path ".review-temp/${taskId}/${reviewType}/review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "agent:${reviewType}-reviewer" --repo-root "."`
+                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path ".review-temp/${taskId}/${reviewType}/review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
                     )
                 ]
             });
@@ -953,6 +975,7 @@ export function formatNextStepText(result: NextStepResult): string {
     const lines = [
         'GARDA_NEXT_STEP',
         `Task: ${result.task_id}`,
+        `Navigator: ${result.navigator_command}`,
         `Status: ${result.status}`,
         `NextGate: ${result.next_gate || 'none'}`,
         `Title: ${result.title}`,
@@ -970,6 +993,7 @@ export function formatNextStepText(result: NextStepResult): string {
     }
     if (result.review.blocked_review_dependencies.length > 0) {
         lines.push(`ReviewBlockedBy: ${result.review.blocked_review_dependencies.join(', ')}`);
+        lines.push(`BlockedReviewerLaunches: do not prepare or launch '${result.review.next_review_type}' until current-cycle ${result.review.blocked_review_dependencies.join(', ')} review artifacts and receipts pass.`);
     }
     if (result.review.trust_note) {
         lines.push(result.review.trust_note);
@@ -982,7 +1006,33 @@ export function formatNextStepText(result: NextStepResult): string {
     for (const command of result.commands) {
         lines.push(`  ${command.label}: ${command.command}`);
     }
+    if (result.status !== 'DONE') {
+        lines.push(`AfterCommand: rerun ${result.navigator_command} after the command above completes.`);
+    }
     return `${lines.join('\n')}\n`;
+}
+
+function parseTaskIdFromPreflightPath(preflightPath: string): string | null {
+    const basename = path.basename(preflightPath).trim();
+    const suffix = '-preflight.json';
+    if (!basename.endsWith(suffix)) {
+        return null;
+    }
+    return basename.slice(0, -suffix.length) || null;
+}
+
+function pickConsistentTaskId(candidates: Array<{ source: string; value: string | null }>): string {
+    const normalized = candidates
+        .map((candidate) => ({
+            source: candidate.source,
+            value: String(candidate.value || '').trim()
+        }))
+        .filter((candidate) => candidate.value);
+    const uniqueValues = [...new Set(normalized.map((candidate) => candidate.value))];
+    if (uniqueValues.length > 1) {
+        throw new Error(`Conflicting task identifiers for next-step: ${normalized.map((candidate) => `${candidate.source}=${candidate.value}`).join(', ')}.`);
+    }
+    return uniqueValues[0] || '';
 }
 
 export function resolveNextStepFromCliOptions(options: {
@@ -990,16 +1040,32 @@ export function resolveNextStepFromCliOptions(options: {
     repoRoot?: unknown;
     eventsRoot?: unknown;
     reviewsRoot?: unknown;
+    preflightPath?: unknown;
+    positionals?: unknown;
 }): NextStepResult {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const positionals = Array.isArray(options.positionals)
+        ? options.positionals.map((value) => String(value || '').trim()).filter(Boolean)
+        : [];
+    const preflightPathText = String(options.preflightPath || '').trim();
+    const resolvedPreflightPath = preflightPathText
+        ? resolvePathInsideRepo(preflightPathText, repoRoot, { allowMissing: true })
+        : null;
+    const taskId = pickConsistentTaskId([
+        { source: '--task-id', value: String(options.taskId || '').trim() || null },
+        { source: 'positional', value: positionals[0] || null },
+        { source: '--preflight-path', value: resolvedPreflightPath ? parseTaskIdFromPreflightPath(resolvedPreflightPath) : null }
+    ]);
     const reviewsRoot = options.reviewsRoot
         ? resolvePathInsideRepo(String(options.reviewsRoot), repoRoot, { allowMissing: true })
+        : resolvedPreflightPath
+            ? path.dirname(resolvedPreflightPath)
         : null;
     const eventsRoot = options.eventsRoot
         ? resolvePathInsideRepo(String(options.eventsRoot), repoRoot, { allowMissing: true })
         : null;
     return resolveNextStep({
-        taskId: String(options.taskId || ''),
+        taskId,
         repoRoot,
         eventsRoot,
         reviewsRoot

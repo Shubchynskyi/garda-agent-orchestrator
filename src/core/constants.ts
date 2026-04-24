@@ -162,6 +162,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'setup',
     'agent-init',
     'preprompt',
+    'next-step',
     'status',
     'doctor',
     'debug',

@@ -322,8 +322,11 @@ function buildLifecycleGateHelpEntries(
         },
         'next-step': {
             ...createGateHelpEntry('Show the deterministic next orchestrator command for a task, including effective full-suite and review policy context.', [
+                `${cliPrefix} next-step "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
+                `${cliPrefix} gate next-step "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --as-json --repo-root "."`,
+                `${cliPrefix} gate next-step --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
                 `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --events-root "${buildBundleRelativePath(bundleName, 'runtime/task-events')}" --reviews-root "${buildBundleRelativePath(bundleName, 'runtime/reviews')}" --repo-root "."`
             ], true)
         },
@@ -527,6 +530,9 @@ export function buildTaskIdSyntaxRemediationMessage(
     }
     const mistake = getTaskIdSyntaxMistake(gateArgv);
     if (!mistake) {
+        return null;
+    }
+    if (gateName === 'next-step' && mistake.kind === 'positional') {
         return null;
     }
     const mistakenToken = mistake.kind === 'flag'

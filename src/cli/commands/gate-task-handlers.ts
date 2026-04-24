@@ -249,6 +249,7 @@ export async function handleTaskEventsSummary(gateArgv: string[]): Promise<void>
 export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> {
     const defs = {
         '--task-id': { key: 'taskId', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' },
         '--events-root': { key: 'eventsRoot', type: 'string' },
         '--reviews-root': { key: 'reviewsRoot', type: 'string' },
@@ -266,13 +267,15 @@ export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> 
 export async function handleNextStep(gateArgv: string[]): Promise<void> {
     const defs = {
         '--task-id': { key: 'taskId', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' },
+        '--target-root': { key: 'repoRoot', type: 'string' },
         '--events-root': { key: 'eventsRoot', type: 'string' },
         '--reviews-root': { key: 'reviewsRoot', type: 'string' },
         '--as-json': { key: 'asJson', type: 'boolean' }
     };
-    const { options } = parseOptions(gateArgv, defs);
-    const result = resolveNextStepFromCliOptions(options);
+    const { options, positionals } = parseOptions(gateArgv, defs, { allowPositionals: true, maxPositionals: 1 });
+    const result = resolveNextStepFromCliOptions({ ...options, positionals });
     process.stdout.write(options.asJson === true
         ? `${JSON.stringify(result, null, 2)}\n`
         : formatNextStepText(result));

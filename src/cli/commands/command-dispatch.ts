@@ -46,6 +46,10 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
         const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
         return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
     }
+    if (commandName === 'next-step') {
+        const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
+        return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
+    }
     if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'profile'].includes(commandName)) {
         return '.';
     }
@@ -60,7 +64,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'agent-init', 'skills', 'review-capabilities', 'profile', 'workflow'].includes(commandName)) {
+    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'profile', 'workflow'].includes(commandName)) {
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale) {
@@ -115,6 +119,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         case 'preprompt': {
             const { handlePreprompt } = await import('./preprompt-command');
             handlePreprompt(commandArgv, packageJson);
+            return;
+        }
+        case 'next-step': {
+            const { handleGate } = await import('./gate-command');
+            await handleGate(['next-step', ...commandArgv]);
             return;
         }
         case 'status': {

@@ -59,7 +59,9 @@ describe('cli/commands/gates next-step', () => {
         assert.equal(result.errors.length, 0);
         const output = result.logs.join('\n');
         assert.ok(output.includes('gate next-step'));
+        assert.ok(output.includes('next-step "<task-id>"'));
         assert.ok(output.includes('--task-id "<task-id>"'));
+        assert.ok(output.includes('--preflight-path'));
         assert.ok(output.includes('--as-json'));
         assert.ok(output.includes('--events-root'));
         assert.ok(output.includes('--reviews-root'));
@@ -122,9 +124,74 @@ describe('cli/commands/gates next-step', () => {
             assert.equal(result.exitCode, 0);
             assert.equal(result.errors.length, 0);
             assert.ok(result.stdout.includes('GARDA_NEXT_STEP'));
+            assert.ok(result.stdout.includes('Navigator:'));
             assert.ok(result.stdout.includes('NextGate: enter-task-mode'));
             assert.ok(result.stdout.includes('FullSuite:'));
             assert.ok(result.stdout.includes('Commands:'));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('accepts a positional task id for the gate next-step command', async () => {
+        const repoRoot = createTempRepo();
+        try {
+            const result = await runCliWithStdoutCapture([
+                'gate',
+                'next-step',
+                'T-CLI-POSITIONAL',
+                '--repo-root',
+                '.'
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0);
+            assert.equal(result.errors.length, 0);
+            assert.ok(result.stdout.includes('Task: T-CLI-POSITIONAL'));
+            assert.ok(result.stdout.includes('NextGate: enter-task-mode'));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('accepts the top-level next-step alias with a positional task id', async () => {
+        const repoRoot = createTempRepo();
+        try {
+            const result = await runCliWithStdoutCapture([
+                'next-step',
+                'T-CLI-TOPLEVEL',
+                '--target-root',
+                '.'
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0);
+            assert.equal(result.errors.length, 0);
+            assert.ok(result.stdout.includes('Task: T-CLI-TOPLEVEL'));
+            assert.ok(result.stdout.includes('NextGate: enter-task-mode'));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('can infer the task id and reviews root from a preflight path', async () => {
+        const repoRoot = createTempRepo();
+        try {
+            const preflightPath = path.join('garda-agent-orchestrator', 'runtime', 'reviews', 'T-CLI-PREFLIGHT-preflight.json');
+            fs.mkdirSync(path.dirname(path.join(repoRoot, preflightPath)), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, preflightPath), JSON.stringify({ task_id: 'T-CLI-PREFLIGHT' }), 'utf8');
+
+            const result = await runCliWithStdoutCapture([
+                'gate',
+                'next-step',
+                '--preflight-path',
+                preflightPath,
+                '--repo-root',
+                '.'
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0);
+            assert.equal(result.errors.length, 0);
+            assert.ok(result.stdout.includes('Task: T-CLI-PREFLIGHT'));
+            assert.ok(result.stdout.includes('NextGate: enter-task-mode'));
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

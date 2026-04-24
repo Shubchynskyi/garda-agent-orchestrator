@@ -219,6 +219,18 @@ function writeReviewEvidence(repoRoot: string, taskId: string, reviewType: strin
     });
 }
 
+function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: string, reviewerIdentity: string): void {
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    writeJson(reviewContextPath, {
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_routing: {
+            actual_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        }
+    });
+}
+
 function seedReviewGatePass(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-review-gate.json`), {
         task_id: taskId,
@@ -360,6 +372,20 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'record-review-result');
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('matching REVIEWER_DELEGATION_ROUTED telemetry'));
+    });
+
+    it('uses the prepared review context identity when suggesting record-review-result', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
     });
 
     it('blocks downstream review when receipt provenance hash does not match routing telemetry', () => {

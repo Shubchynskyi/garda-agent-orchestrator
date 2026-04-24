@@ -874,6 +874,7 @@ test('COMMAND_SUMMARY has expected commands', () => {
     const names = COMMAND_SUMMARY.map(function (c) { return c[0]; });
     assert.ok(names.includes('setup'));
     assert.ok(names.includes('agent-init'));
+    assert.ok(names.includes('next-step'));
     assert.ok(names.includes('bootstrap'));
     assert.ok(names.includes('doctor'));
     assert.ok(names.includes('status'));

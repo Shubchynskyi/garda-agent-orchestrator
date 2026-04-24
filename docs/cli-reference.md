@@ -107,6 +107,22 @@ Notes:
 - If the workspace is dirty but no reusable staged scope or existing preflight scope is available, the output reports that blocker instead of inventing a misleading `--use-staged` classify command.
 - Output stays bounded: review-artifact and changed-file arrays include counts plus truncation metadata instead of dumping arbitrarily large lists.
 
+### `garda next-step`
+
+Deterministic task navigator. Use this same command whenever the next mandatory gate is unclear.
+
+```text
+garda next-step "T-137" --target-root "."
+garda next-step "T-137" --as-json --target-root "."
+garda gate next-step "T-137" --repo-root "."
+garda gate next-step --preflight-path "garda-agent-orchestrator/runtime/reviews/T-137-preflight.json" --repo-root "."
+```
+
+Notes:
+- `next-step` reads current task events and review artifacts, then prints the current status, effective full-suite config, review policy, missing artifacts, and the single next command to run.
+- The command accepts either a positional task id (`T-137`), `--task-id`, or a `--preflight-path` that ends in `<task-id>-preflight.json`.
+- After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing the next gate flags.
+
 ### `garda debug env`
 
 Show environment and runtime triage details for debugging CLI or workspace issues.
@@ -429,12 +445,12 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Scoped diff | `garda gate build-scoped-diff --review-type "db"` |
 | Review context | `garda gate build-review-context --review-type "code" --depth 2` |
 | Task events | `garda gate task-events-summary --task-id "T-001"` |
-| Next step | `garda gate next-step --task-id "T-001"` |
+| Next step | `garda next-step "T-001"` or `garda gate next-step "T-001"` |
 | Log event | `garda gate log-task-event --task-id "T-001" --event-type "..."` |
 | Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
 | Human commit | `garda gate human-commit --message "<message>"` |
 
-Use `garda gate next-step --task-id "T-001"` when the next mandatory gate is unclear; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+Use `garda next-step "T-001"` when the next mandatory gate is unclear; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
 
