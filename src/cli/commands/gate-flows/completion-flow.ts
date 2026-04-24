@@ -49,6 +49,46 @@ export interface HumanCommitOptions {
     cwd?: string;
 }
 
+function parseHumanCommitInvocation(
+    gitArgs: unknown,
+    options: HumanCommitOptions
+): { commitArgs: string[]; cwd: string } {
+    const invocationCwd = options.cwd || process.cwd();
+    let cwd = invocationCwd;
+    const commitArgs: string[] = [];
+    const rawArgs = gateHelpers.toStringArray(gitArgs).filter(function (item: string) {
+        return String(item || '').trim() !== '';
+    });
+
+    for (let index = 0; index < rawArgs.length; index += 1) {
+        const argument = rawArgs[index];
+        if (argument === '--') {
+            commitArgs.push(...rawArgs.slice(index));
+            break;
+        }
+        if (argument === '--repo-root') {
+            const repoRoot = rawArgs[index + 1];
+            if (!repoRoot) throw new Error('--repo-root requires a value.');
+            cwd = path.resolve(invocationCwd, repoRoot);
+            index += 1;
+            continue;
+        }
+        if (argument.startsWith('--repo-root=')) {
+            const repoRoot = argument.slice('--repo-root='.length);
+            if (!repoRoot) throw new Error('--repo-root requires a value.');
+            cwd = path.resolve(invocationCwd, repoRoot);
+            continue;
+        }
+        commitArgs.push(argument);
+    }
+
+    if (commitArgs.length === 0) {
+        throw new Error('Provide git commit arguments, for example: -m "feat: message"');
+    }
+
+    return { commitArgs, cwd };
+}
+
 interface CommandAuditPayload {
     command_text: string;
     mode: string;
@@ -228,15 +268,10 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
 }
 
 export async function runHumanCommitCommand(gitArgs: unknown, options: HumanCommitOptions = {}): Promise<number> {
-    const finalArgs = gateHelpers.toStringArray(gitArgs).filter(function (item: string) {
-        return String(item || '').trim() !== '';
-    });
-    if (finalArgs.length === 0) {
-        throw new Error('Provide git commit arguments, for example: -m "feat: message"');
-    }
+    const invocation = parseHumanCommitInvocation(gitArgs, options);
 
-    const result = await spawnStreamed('git', ['commit', ...finalArgs], {
-        cwd: options.cwd || process.cwd(),
+    const result = await spawnStreamed('git', ['commit', ...invocation.commitArgs], {
+        cwd: invocation.cwd,
         inheritStdio: true,
         timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
         env: { GARDA_ALLOW_COMMIT: '1' }

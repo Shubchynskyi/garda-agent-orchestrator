@@ -2179,7 +2179,7 @@ describe('cli/commands/gates', () => {
 
     it('runs human commit through git with commit guard override', async () => {
         const repoRoot = createTempRepo();
-    
+
         runGit(repoRoot, ['init']);
         runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
         runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
@@ -2197,6 +2197,69 @@ describe('cli/commands/gates', () => {
         assert.match(logResult.stdout, /test: initial commit/);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('runs documented human-commit command with repo root gate option', async () => {
+        const repoRoot = createTempRepo();
+        const parentCwd = path.dirname(repoRoot);
+
+        runGit(repoRoot, ['init']);
+        runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+        runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+        runGit(repoRoot, ['add', '.']);
+
+        const exitCode = await runHumanCommitCommand([
+            '--message', 'test: documented human commit',
+            '--repo-root', path.basename(repoRoot)
+        ], { cwd: parentCwd });
+        const logResult = childProcess.spawnSync('git', ['log', '--oneline', '-1'], {
+            cwd: repoRoot,
+            windowsHide: true,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore']
+        });
+
+        assert.equal(exitCode, 0);
+        assert.match(logResult.stdout, /test: documented human commit/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('runs human-commit with inline repo root gate option', async () => {
+        const repoRoot = createTempRepo();
+        const parentCwd = path.dirname(repoRoot);
+
+        runGit(repoRoot, ['init']);
+        runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+        runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+        runGit(repoRoot, ['add', '.']);
+
+        const exitCode = await runHumanCommitCommand([
+            '--repo-root=' + path.basename(repoRoot),
+            '--message', 'test: inline repo root human commit'
+        ], { cwd: parentCwd });
+        const logResult = childProcess.spawnSync('git', ['log', '--oneline', '-1'], {
+            cwd: repoRoot,
+            windowsHide: true,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore']
+        });
+
+        assert.equal(exitCode, 0);
+        assert.match(logResult.stdout, /test: inline repo root human commit/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects human-commit repo root without a value', async () => {
+        await assert.rejects(
+            () => runHumanCommitCommand(['--repo-root'], { cwd: process.cwd() }),
+            /--repo-root requires a value\./
+        );
+        await assert.rejects(
+            () => runHumanCommitCommand(['--repo-root='], { cwd: process.cwd() }),
+            /--repo-root requires a value\./
+        );
     });
 
     it('record-review-routing updates review-context routing metadata and emits delegated telemetry', async () => {
