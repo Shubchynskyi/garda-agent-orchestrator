@@ -11,7 +11,7 @@ import {
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../gate-runtime/review-context';
-import { getReviewSkillCandidates } from './build-review-context';
+import { getReviewSkillCandidates } from '../core/review-capabilities';
 import { normalizePath } from './helpers';
 import {
     normalizeTimelineDetailString,

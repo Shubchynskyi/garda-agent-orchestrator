@@ -24,32 +24,17 @@ import {
     validateSkillsHeadlines,
     writeSkillsHeadlines
 } from './skill-headlines';
+import {
+    getDefaultReviewCapabilities,
+    getReviewSkillCandidates,
+    hasSkillEntrypoint,
+    readReviewCapabilitiesConfigFile,
+    type OptionalReviewCapabilityKey,
+    OPTIONAL_REVIEW_CAPABILITY_KEYS,
+    type ReviewCapabilities
+} from '../core/review-capabilities';
 
 type JsonObject = Record<string, unknown>;
-
-const REVIEW_CAPABILITY_KEYS = Object.freeze([
-    'code',
-    'db',
-    'security',
-    'refactor',
-    'api',
-    'test',
-    'performance',
-    'infra',
-    'dependency'
-] as const);
-
-const OPTIONAL_REVIEW_CAPABILITY_KEYS = Object.freeze([
-    'api',
-    'test',
-    'performance',
-    'infra',
-    'dependency'
-] as const);
-
-type ReviewCapabilityKey = (typeof REVIEW_CAPABILITY_KEYS)[number];
-type OptionalReviewCapabilityKey = (typeof OPTIONAL_REVIEW_CAPABILITY_KEYS)[number];
-type ReviewCapabilities = Record<ReviewCapabilityKey, boolean>;
 
 interface InstalledSkillPacksPayload {
     version: number;
@@ -103,26 +88,6 @@ const DEFAULT_INSTALLED_PACKS_PAYLOAD: Readonly<InstalledSkillPacksPayload> = Ob
     installed_packs: []
 });
 
-const REVIEW_CAPABILITIES_DEFAULTS: Readonly<ReviewCapabilities> = Object.freeze({
-    code: true,
-    db: true,
-    security: true,
-    refactor: true,
-    api: false,
-    test: false,
-    performance: false,
-    infra: false,
-    dependency: false
-});
-
-const OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP: Readonly<Record<OptionalReviewCapabilityKey, readonly string[]>> = Object.freeze({
-    api: ['api-review', 'api-contract-review'],
-    test: ['test-review', 'testing-strategy'],
-    performance: ['performance-review'],
-    infra: ['infra-review', 'devops-k8s'],
-    dependency: ['dependency-review']
-});
-
 // ---------------------------------------------------------------------------
 // Path helpers
 // ---------------------------------------------------------------------------
@@ -139,31 +104,16 @@ function getLiveSkillsRoot(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'skills');
 }
 
-// ---------------------------------------------------------------------------
-// Review capabilities
-// ---------------------------------------------------------------------------
-
-function normalizeReviewCapabilitiesConfig(raw: unknown): ReviewCapabilities {
-    const normalized = {} as ReviewCapabilities;
-    const source = asObjectRecord(raw);
-
-    for (const key of REVIEW_CAPABILITY_KEYS) {
-        normalized[key] = key in source ? Boolean(source[key]) : REVIEW_CAPABILITIES_DEFAULTS[key];
-    }
-
-    return normalized;
-}
-
 function readTemplateReviewCapabilities(bundleRoot: string): ReviewCapabilities {
     const templatePath = path.join(bundleRoot, 'template', 'config', 'review-capabilities.json');
     if (!pathExists(templatePath)) {
-        return { ...REVIEW_CAPABILITIES_DEFAULTS };
+        return getDefaultReviewCapabilities();
     }
 
     try {
-        return normalizeReviewCapabilitiesConfig(readJsonFile(templatePath));
+        return readReviewCapabilitiesConfigFile(templatePath);
     } catch {
-        return { ...REVIEW_CAPABILITIES_DEFAULTS };
+        return getDefaultReviewCapabilities();
     }
 }
 
@@ -182,11 +132,15 @@ function listLiveSkillDirectories(bundleRoot: string): string[] {
 export function syncReviewCapabilities(bundleRoot: string): { configPath: string; capabilities: ReviewCapabilities } {
     const configPath = getReviewCapabilitiesConfigPath(bundleRoot);
     const capabilities = readTemplateReviewCapabilities(bundleRoot);
-    const liveSkillDirectorySet = new Set(listLiveSkillDirectories(bundleRoot));
+    const readyLiveSkillDirectorySet = new Set(
+        listLiveSkillDirectories(bundleRoot).filter((skillDir) => {
+            return hasSkillEntrypoint(path.join(getLiveSkillsRoot(bundleRoot), skillDir));
+        })
+    );
 
     for (const capabilityKey of OPTIONAL_REVIEW_CAPABILITY_KEYS) {
-        const candidateDirectories = OPTIONAL_REVIEW_SKILL_DIRECTORY_MAP[capabilityKey];
-        capabilities[capabilityKey] = candidateDirectories.some((candidate: string) => liveSkillDirectorySet.has(candidate));
+        const candidateDirectories = getReviewSkillCandidates(capabilityKey);
+        capabilities[capabilityKey] = candidateDirectories.some((candidate: string) => readyLiveSkillDirectorySet.has(candidate));
     }
 
     ensureDirectory(path.dirname(configPath));

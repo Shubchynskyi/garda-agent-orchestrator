@@ -320,6 +320,25 @@ Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
 - The current surface manages repo-local `full_suite_validation` settings in `live/config/workflow-config.json`.
 
+### `garda review-capabilities`
+
+Show, list, enable, or disable repo-local optional review capabilities without hand-editing `review-capabilities.json`.
+
+```text
+garda review-capabilities --target-root "."
+garda review-capabilities list --target-root "."
+garda review-capabilities show --target-root "." --json
+garda review-capabilities enable api test --target-root "."
+garda review-capabilities disable performance --target-root "."
+```
+
+Notes:
+- `review-capabilities` with no subcommand behaves like `review-capabilities show`.
+- `review-capabilities list` is an alias for `review-capabilities show`.
+- Supported toggle targets are `api`, `test`, `performance`, `infra`, and `dependency`.
+- Enabling a capability validates that a matching live review skill is present under `live/skills/**`; bridge presence is reported separately for bridge-hosted providers, but root-entrypoint providers use the live skill directly.
+- Unsupported custom live skills remain manual-only and do not become preflight-triggered review types automatically.
+
 ### `garda profile`
 
 Manage the active workspace profile and user-defined profile presets.

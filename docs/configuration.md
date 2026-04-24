@@ -143,6 +143,14 @@ Controls which specialist reviews are enabled for the project.
 
 Each top-level key toggles whether that review type may be required by preflight in this workspace.
 
+Manage supported optional capability toggles through the CLI:
+- `garda review-capabilities`
+- `garda review-capabilities list`
+- `garda review-capabilities enable <api|test|performance|infra|dependency>`
+- `garda review-capabilities disable <api|test|performance|infra|dependency>`
+
+The CLI validates that a matching live review skill is installed before enabling a supported optional capability. Bridge presence is surfaced separately for bridge-hosted providers, but root-entrypoint providers execute the live skill directly.
+
 `skills-index.json` is still a generated runtime index under `live/config/`, but it is **not** part of `garda.config.json` and is **not** validated by `gate validate-config`.
 
 ## Skill Packs

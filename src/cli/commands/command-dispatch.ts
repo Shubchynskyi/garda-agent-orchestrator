@@ -46,7 +46,7 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
         const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
         return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
     }
-    if (!['workflow', 'agent-init', 'skills', 'profile'].includes(commandName)) {
+    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'profile'].includes(commandName)) {
         return '.';
     }
     return resolveTargetOrBundleParityRoot(commandArgv);
@@ -60,7 +60,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'agent-init', 'skills', 'profile', 'workflow'].includes(commandName)) {
+    if (['gate', 'agent-init', 'skills', 'review-capabilities', 'profile', 'workflow'].includes(commandName)) {
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale) {
@@ -76,7 +76,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
                         return buildGateCommandOverviewText(parityRoot);
                     }
                 })()
-                : buildGuardedCommandHelpText(commandName as 'agent-init' | 'skills' | 'profile' | 'workflow');
+                : buildGuardedCommandHelpText(commandName as 'agent-init' | 'skills' | 'review-capabilities' | 'profile' | 'workflow');
             throw new Error(
                 buildParityBlockedCommandText({
                     commandName,
@@ -196,6 +196,14 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         case 'skills': {
             const { handleSkills } = await import('./skills');
             const result = handleSkills(commandArgv, packageJson);
+            if (isFailedValidationResult(result)) {
+                process.exitCode = EXIT_VALIDATION_FAILURE;
+            }
+            return;
+        }
+        case 'review-capabilities': {
+            const { handleReviewCapabilities } = await import('./review-capabilities-command');
+            const result = handleReviewCapabilities(commandArgv, packageJson);
             if (isFailedValidationResult(result)) {
                 process.exitCode = EXIT_VALIDATION_FAILURE;
             }

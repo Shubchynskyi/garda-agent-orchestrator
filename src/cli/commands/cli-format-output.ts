@@ -593,7 +593,7 @@ export function buildCommandSummaryLines(): string[] {
     return lines;
 }
 
-type GuardedCommandHelpName = 'agent-init' | 'skills' | 'profile' | 'workflow';
+type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'profile' | 'workflow';
 
 interface GuardedCommandHelpDescriptor {
     readonly summary: string;
@@ -630,6 +630,23 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
         ]),
         hints: Object.freeze([
             'Default mode: skills with no subcommand behaves like skills list.'
+        ])
+    }),
+    'review-capabilities': Object.freeze({
+        summary: 'Show, enable, and disable repo-local optional review capabilities.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} review-capabilities [show|list] [--target-root PATH] [--bundle-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} review-capabilities enable <api|test|performance|infra|dependency> [<capability> ...]`,
+            `${PRIMARY_CLI_NAME} review-capabilities disable <api|test|performance|infra|dependency> [<capability> ...]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} review-capabilities`,
+            `${PRIMARY_CLI_NAME} review-capabilities list`,
+            `${PRIMARY_CLI_NAME} review-capabilities enable api test`
+        ]),
+        hints: Object.freeze([
+            'Default mode: review-capabilities with no subcommand behaves like review-capabilities show.',
+            'The list alias behaves like review-capabilities show.'
         ])
     }),
     profile: Object.freeze({
@@ -681,8 +698,8 @@ function styleHelpToken(token: string): string {
         || [
             'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'uninstall', 'cleanup', 'gc', 'clean', 'verify', 'check-update', 'skills',
-            'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current', 'use', 'create',
-            'delete', 'validate', 'suggest', 'add', 'remove'
+            'review-capabilities', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
+            'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable'
         ].includes(normalized)
     ) {
         return cyan(trimmed);
@@ -797,6 +814,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
+            '  review-capabilities  Show, enable, and disable repo-local optional review capabilities.',
             '  workflow      Show and set repo-local workflow config.',
             '  profile       List, use, create, delete, and validate workspace profiles.',
             '  diff-managed  Show managed vs user-owned block ownership across workspace files.',

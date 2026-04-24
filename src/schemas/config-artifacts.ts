@@ -8,6 +8,7 @@ import {
     normalizeOptionalString,
     normalizeStringArray
 } from './shared';
+import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
 
 interface IntegerArrayOptions {
     allowScalar?: boolean;
@@ -42,7 +43,7 @@ export function validateReviewCapabilitiesConfig(input: unknown): Record<string,
         normalized[key] = normalizeBooleanLike(value, `review-capabilities.${key}`);
     }
 
-    for (const requiredKey of ['code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency']) {
+    for (const requiredKey of REVIEW_CAPABILITY_KEYS) {
         if (!(requiredKey in normalized)) {
             throw new Error(`review-capabilities.${requiredKey} is required.`);
         }

@@ -13,6 +13,11 @@ import {
     toStringArray
 } from './helpers';
 import { resolveGateExecutionPath } from './isolation-sandbox';
+import {
+    getDefaultReviewCapabilities,
+    readReviewCapabilitiesConfigFile,
+    type ReviewCapabilities
+} from '../core/review-capabilities';
 
 interface TriggerConfig {
     db: string[];
@@ -54,19 +59,6 @@ interface ResolvedClassificationConfig {
     performance_trigger_regexes: string[];
     code_like_regexes: string[];
     protected_control_plane_roots: string[];
-}
-
-interface ReviewCapabilities {
-    code: boolean;
-    db: boolean;
-    security: boolean;
-    refactor: boolean;
-    api: boolean;
-    test: boolean;
-    performance: boolean;
-    infra: boolean;
-    dependency: boolean;
-    [key: string]: boolean;
 }
 
 interface MatchConfiguredRootOptions {
@@ -216,19 +208,12 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
  * Load review capabilities from config file.
  */
 export function getReviewCapabilities(repoRoot: string): ReviewCapabilities {
-    const capabilities: ReviewCapabilities = {
-        code: true, db: true, security: true, refactor: true,
-        api: false, test: false, performance: false, infra: false, dependency: false
-    };
     const configPath = resolveGateExecutionPath(repoRoot, 'live/config/review-capabilities.json');
-    if (!fs.existsSync(configPath)) return capabilities;
     try {
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-        for (const key of Object.keys(capabilities)) {
-            if (key in raw) capabilities[key] = !!raw[key];
-        }
-    } catch { /* use defaults */ }
-    return capabilities;
+        return readReviewCapabilitiesConfigFile(configPath);
+    } catch {
+        return getDefaultReviewCapabilities();
+    }
 }
 
 const GROUPED_PACKAGE_ROOTS = Object.freeze(['apps', 'packages', 'services', 'workspaces', 'projects']);

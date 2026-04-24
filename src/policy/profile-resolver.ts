@@ -1,5 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+    getDefaultReviewCapabilities,
+    readReviewCapabilitiesConfigFile,
+    type ReviewCapabilitiesConfigMap
+} from '../core/review-capabilities';
 
 export interface ProfileReviewPolicy {
     code: boolean | 'auto';
@@ -35,19 +40,6 @@ export interface ProfilesData {
     active_profile: string;
     built_in_profiles: Record<string, ProfileEntry>;
     user_profiles: Record<string, ProfileEntry>;
-}
-
-export interface ReviewCapabilities {
-    code: boolean;
-    db: boolean;
-    security: boolean;
-    refactor: boolean;
-    api: boolean;
-    test: boolean;
-    performance: boolean;
-    infra: boolean;
-    dependency: boolean;
-    [key: string]: boolean;
 }
 
 export interface TokenEconomyConfig {
@@ -169,19 +161,14 @@ export function loadProfilesData(profilesPath: string): ProfilesData {
     return data;
 }
 
+export type ReviewCapabilities = ReviewCapabilitiesConfigMap;
+
 export function loadReviewCapabilities(configPath: string): ReviewCapabilities {
-    const defaults: ReviewCapabilities = {
-        code: true, db: true, security: true, refactor: true,
-        api: false, test: false, performance: false, infra: false, dependency: false
-    };
-    const data = readJsonFile<Record<string, unknown>>(configPath);
-    if (!data) return defaults;
-    for (const key of Object.keys(defaults)) {
-        if (key in data && typeof data[key] === 'boolean') {
-            defaults[key] = data[key] as boolean;
-        }
+    try {
+        return readReviewCapabilitiesConfigFile(configPath);
+    } catch {
+        return getDefaultReviewCapabilities();
     }
-    return defaults;
 }
 
 export function loadTokenEconomyConfig(configPath: string): TokenEconomyConfig {

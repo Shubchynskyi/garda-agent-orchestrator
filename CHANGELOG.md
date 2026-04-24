@@ -13,6 +13,7 @@
 - added `garda preprompt task --json` as a read-only bootstrap surface for current task context, canonical next commands, and bounded lifecycle diagnostics
 - added repo-local `optional-skill-selection-policy.json` plus preflight-time optional skill selection artifacts, task-mode planned-scope reuse, and compact final closeout selection summaries
 - tightened optional-skill selection with conservative strong-match activation, selected skill path reporting in `preprompt task --json`, non-zero `preprompt` start-time blocking for `required|strict`, explicit repo-local opt-in, and compile/review gate enforcement for those policy modes
+- added `garda review-capabilities` with `show`/`list`, `enable`, and `disable` subcommands so supported optional review toggles can be inspected or changed without hand-editing `live/config/review-capabilities.json`
 - improved orchestration lifecycle reliability with stricter gate sequencing, safer rerun and recovery flows, and completion checks based on the latest coherent cycle
 - strengthened the review pipeline with earlier artifact validation, automated review materialization and ingestion, dependency-ordered reviews, and code-review reuse for test-only reruns
 - tightened dirty-worktree and protected control-plane guardrails with earlier drift detection, baseline-aware ordinary-task handling, and safer orchestrator-work handoff

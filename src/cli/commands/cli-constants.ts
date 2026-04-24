@@ -54,6 +54,7 @@ export const COMMAND_SUMMARY = Object.freeze<readonly CommandSummaryEntry[]>([
     ['verify', 'Verify workspace layout'],
     ['check-update', 'Check for available updates'],
     ['skills', 'List, suggest, and manage optional skill packs'],
+    ['review-capabilities', 'Show, enable, and disable repo-local optional review capabilities'],
     ['workflow', 'Show and set repo-local workflow config'],
     ['profile', 'List, use, create, delete, and validate workspace profiles'],
     ['diff-managed', 'Show managed vs user-owned block ownership'],
