@@ -296,7 +296,10 @@ describe('cli/commands/gates', () => {
             assert.ok(errorOutput.includes('GARDA_CLI_FAILED'), gateName);
             assert.ok(errorOutput.includes("uses '--task-id', not '--task'"), gateName);
             assert.ok(errorOutput.includes(`Canonical task-id syntax for '${gateName}'`), gateName);
-            assert.ok(errorOutput.includes(`Suggested command: node bin/garda.js gate ${gateName} --task-id "T-008"`), gateName);
+            const expectedSuggestedCommand = gateName === 'next-step'
+                ? 'Suggested command: node bin/garda.js next-step "T-008" --repo-root "."'
+                : `Suggested command: node bin/garda.js gate ${gateName} --task-id "T-008"`;
+            assert.ok(errorOutput.includes(expectedSuggestedCommand), gateName);
             const suggestedLine = errorOutput
                 .split('\n')
                 .find((line) => line.startsWith('Suggested command:')) ?? '';

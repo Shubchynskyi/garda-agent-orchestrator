@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 
 import { matchAnyRegex } from '../gate-runtime/text-utils';
-import { getClassificationConfig } from './classify-change';
+import { getClassificationConfig, isDocumentationLikePath, isRuntimeCodeLikePath } from './classify-change';
 import {
     fileSha256,
     normalizePath,
@@ -11,9 +11,11 @@ import {
 export interface CodeReviewScopeFingerprint {
     all_changed_files: string[];
     non_test_changed_files: string[];
+    docs_only_changed_files: string[];
     missing_non_test_files: string[];
     code_scope_sha256: string | null;
     test_only: boolean;
+    docs_only: boolean;
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -65,10 +67,18 @@ export function computeCodeReviewScopeFingerprint(
     const allChangedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
-    const nonTestChangedFiles = allChangedFiles.filter((filePath) => !matchAnyRegex(filePath, classificationConfig.test_trigger_regexes, {
+    const testChangedFiles = allChangedFiles.filter((filePath) => matchAnyRegex(filePath, classificationConfig.test_trigger_regexes, {
         skipInvalidRegex: true,
         caseInsensitive: true
     }));
+    const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
+        isDocumentationLikePath(filePath)
+        && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
+    ));
+    const nonTestChangedFiles = allChangedFiles.filter((filePath) => (
+        !testChangedFiles.includes(filePath)
+        && !docsOnlyChangedFiles.includes(filePath)
+    ));
     const sortedNonTestFiles = [...nonTestChangedFiles].sort();
     const missingNonTestFiles: string[] = [];
     const fingerprintEntries = sortedNonTestFiles.map((relativePath) => {
@@ -83,9 +93,11 @@ export function computeCodeReviewScopeFingerprint(
     return {
         all_changed_files: allChangedFiles,
         non_test_changed_files: sortedNonTestFiles,
+        docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
         missing_non_test_files: missingNonTestFiles,
         code_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
-        test_only: sortedNonTestFiles.length === 0
+        test_only: sortedNonTestFiles.length === 0 && testChangedFiles.length === allChangedFiles.length,
+        docs_only: sortedNonTestFiles.length === 0 && docsOnlyChangedFiles.length === allChangedFiles.length
     };
 }
 

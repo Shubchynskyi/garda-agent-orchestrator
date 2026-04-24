@@ -323,6 +323,18 @@ function testPrecompiled(value: string, patterns: RegExp[]): boolean {
     return patterns.some((re) => re.test(value));
 }
 
+export function isDocumentationLikePath(pathValue: string): boolean {
+    return testPrecompiled(normalizePath(pathValue), DOC_LIKE_COMPILED);
+}
+
+export function isRuntimeCodeLikePath(pathValue: string, codeLikeRegexes: string[], runtimeRoots: string[]): boolean {
+    const normalizedPath = normalizePath(pathValue);
+    return matchAnyRegex(normalizedPath, codeLikeRegexes, {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    }) && matchesConfiguredRoot(normalizedPath, runtimeRoots, { allowNestedRoot: true });
+}
+
 export type ScopeCategory = 'code' | 'docs-only' | 'config-only' | 'audit-only' | 'mixed' | 'empty';
 
 /**
@@ -345,20 +357,14 @@ export function classifyScopeCategory(
         return { category: 'empty', reasons: ['no_changed_files'] };
     }
 
-    const testMatch = (p: string, regexes: string[]) => matchAnyRegex(p, regexes, {
-        skipInvalidRegex: true,
-        caseInsensitive: true
-    });
-
     let codeCount = 0;
     let docCount = 0;
     let configCount = 0;
     let auditCount = 0;
 
     for (const file of normalizedFiles) {
-        const isCode = testMatch(file, codeLikeRegexes)
-            && matchesConfiguredRoot(file, runtimeRoots, { allowNestedRoot: true });
-        const isDoc = testPrecompiled(file, DOC_LIKE_COMPILED);
+        const isCode = isRuntimeCodeLikePath(file, codeLikeRegexes, runtimeRoots);
+        const isDoc = isDocumentationLikePath(file);
         const isConfig = testPrecompiled(file, CONFIG_LIKE_COMPILED);
         const isAudit = testPrecompiled(file, AUDIT_ONLY_COMPILED);
 

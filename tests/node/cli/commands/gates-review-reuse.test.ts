@@ -1076,6 +1076,254 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('reuses prior code-review evidence for a docs-only post-review delta', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-docs-only-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\n- Updated docs.\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable code review evidence before a docs-only delta'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'docs-only',
+            changed_files: ['CHANGELOG.md'],
+            metrics: { changed_lines_total: 2 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', reviewContextPath,
+                '--repo-root', repoRoot
+            ]);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const refreshedReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(
+            refreshedReceipt.code_scope_sha256,
+            computeCodeReviewScopeFingerprint(JSON.parse(fs.readFileSync(preflightPath, 'utf8')), repoRoot).code_scope_sha256
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const recordedEvents = events.filter((event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
+        ));
+        assert.ok(recordedEvents.length >= 1);
+        assert.equal((recordedEvents.at(-1)?.details as Record<string, unknown>).reused_existing_review, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not reuse prior code-review evidence for a mixed docs plus code delta', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-docs-plus-code-no-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable code review evidence before a mixed docs and code delta'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Runtime code changed.\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['src/app.ts', 'CHANGELOG.md'],
+            metrics: { changed_lines_total: 6 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', reviewContextPath,
+                '--repo-root', repoRoot
+            ]);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerRouting = reviewContext.reviewer_routing as Record<string, unknown>;
+        assert.equal(reviewerRouting.actual_execution_mode, null);
+        assert.equal(reviewerRouting.reviewer_session_id, null);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not treat doc-named runtime code paths as docs-only reuse deltas', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-doc-named-runtime-code-no-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'docs', 'page.tsx'), 'export const Page = () => null;\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Seed reusable code review evidence before a doc-named runtime code delta'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'docs', 'page.tsx'), 'export const Page = () => <main>docs app</main>;\n', 'utf8');
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Runtime docs page changed.\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['src/docs/page.tsx', 'CHANGELOG.md'],
+            metrics: { changed_lines_total: 5 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const fingerprint = computeCodeReviewScopeFingerprint(JSON.parse(fs.readFileSync(preflightPath, 'utf8')), repoRoot);
+        assert.deepEqual(fingerprint.non_test_changed_files, ['src/docs/page.tsx']);
+        assert.deepEqual(fingerprint.docs_only_changed_files, ['CHANGELOG.md']);
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'code',
+                '--depth', '2',
+                '--preflight-path', preflightPath,
+                '--output-path', reviewContextPath,
+                '--repo-root', repoRoot
+            ]);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerRouting = reviewContext.reviewer_routing as Record<string, unknown>;
+        assert.equal(reviewerRouting.actual_execution_mode, null);
+        assert.equal(reviewerRouting.reviewer_session_id, null);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('reuses prior code-review evidence when only the aggregate telemetry index fails', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-reuse-aggregate-warning';

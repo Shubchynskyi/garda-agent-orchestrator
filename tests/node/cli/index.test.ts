@@ -14,6 +14,7 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
         'setup',
         'agent-init',
         'preprompt',
+        'next-step',
         'status',
         'doctor',
         'debug',
