@@ -55,6 +55,15 @@ function normalizeRegistryPath(value: string): string {
     return String(value || '').trim().replace(/\\/g, '/');
 }
 
+function normalizeProviderLookupToken(value: unknown): string {
+    return String(value || '')
+        .trim()
+        .replace(/^or\s+/i, '')
+        .replace(/\\/g, '/')
+        .toLowerCase()
+        .replace(/[\s_-]+/g, '');
+}
+
 function validateProviderEntries(entries: readonly ProviderEntry[]): void {
     const reviewSkillBridgeHosts = entries.filter((entry) => entry.bridge?.reviewSkillBridgeHost);
     if (reviewSkillBridgeHosts.length !== 1) {
@@ -176,7 +185,20 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
             reviewSkillBridgeHost: true,
             selfReferenceRequirement: 'none'
         },
-        aliases: ['githubcopilot', 'copilot', '.github/copilot-instructions.md']
+        aliases: [
+            'githubcopilot',
+            'github copilot',
+            'github-copilot',
+            'github_copilot',
+            'githubcopilotcli',
+            'github copilot cli',
+            'github-copilot-cli',
+            'github_copilot_cli',
+            'copilot',
+            'copilot cli',
+            'copilot-cli',
+            '.github/copilot-instructions.md'
+        ]
     },
     {
         id: 'Windsurf',
@@ -247,6 +269,23 @@ export function getProviderEntryById(providerId: string): ProviderEntry | null {
         return null;
     }
     return PROVIDER_ENTRIES.find((entry) => entry.id.toLowerCase() === normalizedProviderId) || null;
+}
+
+/** Normalizes canonical ids, display labels, and explicit aliases to a canonical provider id. */
+export function normalizeProviderId(value: unknown): string | null {
+    const normalizedInput = normalizeProviderLookupToken(value);
+    if (!normalizedInput) {
+        return null;
+    }
+
+    for (const entry of PROVIDER_ENTRIES) {
+        const candidates = [entry.id, entry.displayLabel, ...entry.aliases];
+        if (candidates.some((candidate) => normalizeProviderLookupToken(candidate) === normalizedInput)) {
+            return entry.id;
+        }
+    }
+
+    return null;
 }
 
 /** Returns one provider entry by orchestrator bridge path (case-insensitive). */

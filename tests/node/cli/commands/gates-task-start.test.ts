@@ -830,6 +830,31 @@ describe('cli/commands/gates — task-start', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('normalizes explicit provider tool aliases before writing task-mode evidence', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900c-provider-tool-alias';
+        seedTaskQueue(repoRoot, taskId, 'TODO');
+        seedInitAnswers(repoRoot, 'GitHubCopilot');
+
+        const result = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Normalize provider tool alias at task-mode entry',
+            provider: 'github-copilot-cli',
+            routedTo: '.github/copilot-instructions.md'
+        });
+
+        assert.equal(result.exitCode, 0);
+        const taskModeArtifact = JSON.parse(fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`), 'utf8'));
+        assert.equal(taskModeArtifact.provider, 'GitHubCopilot');
+        assert.equal(taskModeArtifact.canonical_source_of_truth, 'GitHubCopilot');
+        assert.equal(taskModeArtifact.execution_provider_source, 'provider_entrypoint');
+        assert.equal(taskModeArtifact.runtime_identity_status, 'resolved');
+        assert.deepEqual(taskModeArtifact.runtime_identity_violations, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('rejects enter-task-mode when runtime identity is missing', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900c-missing-routing';

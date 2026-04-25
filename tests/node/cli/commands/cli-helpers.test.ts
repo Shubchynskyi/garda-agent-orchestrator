@@ -280,6 +280,7 @@ test('normalizeSourceOfTruth normalizes case-insensitive values', () => {
     assert.equal(normalizeSourceOfTruth('cursor'), 'Cursor');
     assert.equal(normalizeSourceOfTruth('qwen'), 'Qwen');
     assert.equal(normalizeSourceOfTruth('GitHubCopilot'), 'GitHubCopilot');
+    assert.equal(normalizeSourceOfTruth('github-copilot-cli'), 'GitHubCopilot');
 });
 
 test('normalizeSourceOfTruth throws for invalid values', () => {
@@ -327,6 +328,7 @@ test('normalizeAgentEntrypointToken maps shorthand names', () => {
     assert.equal(normalizeAgentEntrypointToken('qwen.md'), 'QWEN.md');
     assert.equal(normalizeAgentEntrypointToken('githubcopilot'), '.github/copilot-instructions.md');
     assert.equal(normalizeAgentEntrypointToken('copilot'), '.github/copilot-instructions.md');
+    assert.equal(normalizeAgentEntrypointToken('github-copilot-cli'), '.github/copilot-instructions.md');
     assert.equal(normalizeAgentEntrypointToken('windsurf'), '.windsurf/rules/rules.md');
     assert.equal(normalizeAgentEntrypointToken('junie'), '.junie/guidelines.md');
     assert.equal(normalizeAgentEntrypointToken('antigravity'), '.antigravity/rules.md');

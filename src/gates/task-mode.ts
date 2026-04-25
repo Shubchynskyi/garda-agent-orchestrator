@@ -1,8 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { SOURCE_OF_TRUTH_VALUES } from '../core/constants';
-import { getProviderEntriesByEntrypointFile } from '../core/provider-registry';
+import {
+    getProviderEntriesByEntrypointFile,
+    normalizeProviderId
+} from '../core/provider-registry';
 import {
     normalizeOrchestratorStartBanner,
     ORCHESTRATOR_START_BANNER_CONTRACT_EFFECTIVE_AT_UTC,
@@ -291,15 +293,7 @@ function getLatestTaskModeTimelineMetadata(repoRoot: string, taskId: string): {
 }
 
 function normalizeLegacySourceOfTruthValue(value: unknown): string | null {
-    const text = String(value || '').trim();
-    if (!text) {
-        return null;
-    }
-    const normalizedInput = text.toLowerCase().replace(/[\s_-]+/g, '');
-    const match = SOURCE_OF_TRUTH_VALUES.find((candidate) => (
-        candidate.toLowerCase().replace(/[\s_-]+/g, '') === normalizedInput
-    ));
-    return match || null;
+    return normalizeProviderId(value);
 }
 
 function normalizeLegacyRoutePath(value: unknown): string | null {

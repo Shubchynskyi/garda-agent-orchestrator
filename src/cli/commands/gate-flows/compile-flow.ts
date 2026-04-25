@@ -291,6 +291,21 @@ function resolvePrePreflightSequenceLockPath(repoRoot: string, taskId: string): 
     );
 }
 
+function resolveClassifyChangeOutputPath(
+    repoRoot: string,
+    taskId: string | null,
+    explicitOutputPath: string | undefined
+): string | null {
+    const trimmedOutputPath = String(explicitOutputPath || '').trim();
+    if (trimmedOutputPath) {
+        return resolvePathForWrite(trimmedOutputPath, repoRoot);
+    }
+    if (taskId) {
+        return resolveDefaultReviewsPath(repoRoot, `${taskId}-preflight.json`);
+    }
+    return null;
+}
+
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -606,7 +621,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         (result as any).risk_aware_depth = riskAwareDepth;
     }
 
-    const outputPath = options.outputPath ? resolvePathForWrite(options.outputPath, repoRoot) : null;
+    const outputPath = resolveClassifyChangeOutputPath(repoRoot, resolvedTaskId || null, options.outputPath);
     let optionalSkillSelectionArtifactPath: string | null = null;
     if (outputPath) {
         let optionalSkillSelectionPreview: ReturnType<typeof buildOptionalSkillSelectionArtifact> | null = null;

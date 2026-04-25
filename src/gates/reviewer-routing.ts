@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { SOURCE_OF_TRUTH_VALUES, resolveBundleName } from '../core/constants';
 import {
     getProviderEntriesByEntrypointFile,
+    normalizeProviderId,
     getReviewerCapabilityTier
 } from '../core/provider-registry';
 import { getCanonicalEntrypointFile, getProviderOrchestratorProfileDefinitions } from '../materialization/common';
@@ -54,15 +55,7 @@ export interface RuntimeReviewerIdentity {
 }
 
 export function normalizeSourceOfTruthValue(value: unknown): string | null {
-    const text = String(value || '').trim();
-    if (!text) {
-        return null;
-    }
-    const normalizedInput = text.toLowerCase().replace(/[\s_-]+/g, '');
-    const match = SOURCE_OF_TRUTH_VALUES.find((candidate) => (
-        candidate.toLowerCase().replace(/[\s_-]+/g, '') === normalizedInput
-    ));
-    return match || null;
+    return normalizeProviderId(value);
 }
 
 function normalizeRuntimeIdentityStatus(value: unknown): RuntimeProviderIdentityStatus | null {

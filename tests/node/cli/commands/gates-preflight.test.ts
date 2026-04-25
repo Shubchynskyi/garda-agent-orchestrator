@@ -628,6 +628,46 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change with task-id auto-materializes the canonical preflight path', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-930-default-preflight-path';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Auto materialize default preflight artifact path'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            changedFiles: ['src/app.ts'],
+            taskIntent: 'Auto materialize default preflight artifact path',
+            emitMetrics: false
+        });
+
+        const canonicalPreflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, taskId);
+        assert.equal(fs.existsSync(canonicalPreflightPath), true);
+        assert.deepEqual(JSON.parse(fs.readFileSync(canonicalPreflightPath, 'utf8')), payload);
+
+        const preflightEvent = [...readTaskTimelineEvents(repoRoot, taskId)]
+            .reverse()
+            .find((event) => event.event_type === 'PREFLIGHT_CLASSIFIED');
+        assert.ok(preflightEvent, 'expected PREFLIGHT_CLASSIFIED event');
+        assert.equal(
+            String((preflightEvent.details as Record<string, unknown>).output_path || ''),
+            canonicalPreflightPath.replace(/\\/g, '/')
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change uses the explicit custom task-mode artifact path for requested depth and budget forecasting', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-custom-task-mode-depth.json');
@@ -1438,6 +1478,38 @@ describe('cli/commands/gates — preflight', () => {
             /Unsafe same-task overlap detected/
         );
         assert.equal(fs.existsSync(preflightPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not leave the default canonical preflight artifact when classify-change fails before write', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-default-preflight-failure-cleanup';
+        const canonicalPreflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale shell smoke without partial default preflight artifact'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+
+        assert.throws(
+            () => runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Reject stale shell smoke without partial default preflight artifact',
+                changedFiles: ['src/app.ts'],
+                emitMetrics: false
+            }),
+            /Unsafe same-task overlap detected/
+        );
+        assert.equal(fs.existsSync(canonicalPreflightPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

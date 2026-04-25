@@ -1,9 +1,10 @@
-import { resolveBundleName, ALL_AGENT_ENTRYPOINT_FILES, SOURCE_OF_TRUTH_VALUES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
+import { resolveBundleName, ALL_AGENT_ENTRYPOINT_FILES, SOURCE_TO_ENTRYPOINT_MAP } from '../core/constants';
 import {
     getDirectoryScopedProviderEntrypointFiles,
     getProviderAliasMap,
     getProviderBridgeEntries,
-    getProviderIds
+    getProviderIds,
+    normalizeProviderId
 } from '../core/provider-registry';
 
 type SourceOfTruthValue = keyof typeof SOURCE_TO_ENTRYPOINT_MAP;
@@ -17,9 +18,7 @@ const ACTIVE_AGENT_FILE_ALIAS_MAP: Record<string, string> = getProviderAliasMap(
  */
 export function getCanonicalEntrypointFile(sourceOfTruth: string): string {
     const key = String(sourceOfTruth).trim();
-    const match = SOURCE_OF_TRUTH_VALUES.find(
-        (v) => v.toLowerCase() === key.toLowerCase().replace(/\s+/g, '')
-    ) as SourceOfTruthValue | undefined;
+    const match = normalizeProviderId(key) as SourceOfTruthValue | null;
     if (!match) {
         throw new Error(`Unsupported SourceOfTruth value '${sourceOfTruth}'.`);
     }

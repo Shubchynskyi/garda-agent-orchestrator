@@ -435,7 +435,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Restart coherent cycle | `garda gate restart-coherent-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Restart review cycle | `garda gate restart-review-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
-| Classify change | `garda gate classify-change --use-staged --task-intent "..."` |
+| Classify change | `garda gate classify-change --use-staged --task-id "T-001" --task-intent "..."` |
 | Compile gate | `garda gate compile-gate --task-id "T-001"` |
 | Optional skill activation | `garda gate activate-optional-skill --task-id "T-001" --skill-id "<selected-skill-id>"` |
 | Review gate | `garda gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |
@@ -451,6 +451,10 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Human commit | `garda gate human-commit --message "<message>"` |
 
 Use `garda next-step "T-001"` as the task-loop command before and after gates; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+
+Task-start identity and preflight notes:
+- `enter-task-mode` and related runtime identity checks normalize explicit provider aliases such as `github-copilot-cli` to the canonical provider id `GitHubCopilot`; artifacts record the canonical id.
+- When `classify-change` receives `--task-id` but no `--output-path`, it writes the canonical task preflight artifact at `garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`. Non-task ad hoc classification can still run without writing an artifact.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
 

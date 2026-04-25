@@ -10,6 +10,7 @@ import {
     getCanonicalEntrypointFile,
     normalizeAgentEntrypointToken as normalizeCommonAgentEntrypointToken
 } from '../../materialization/common';
+import { normalizeProviderId } from '../../core/provider-registry';
 import { getAgentInitPromptPath, resolvePathInsideRoot } from './cli-bundle-helpers';
 
 type ParsedOptionValue = string | boolean | string[] | undefined;
@@ -165,7 +166,7 @@ export function parseRequiredText(value: unknown, label: string): string {
 
 export function normalizeSourceOfTruth(value: unknown): string {
     const text = parseRequiredText(value, 'SourceOfTruth');
-    const match = SOURCE_OF_TRUTH_VALUES.find((candidate) => candidate.toLowerCase() === text.toLowerCase());
+    const match = normalizeProviderId(text);
     if (!match) throw new Error(`SourceOfTruth must be one of: ${SOURCE_OF_TRUTH_VALUES.join(', ')}.`);
     return match;
 }

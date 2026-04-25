@@ -22,6 +22,7 @@ import {
     getProviderBridgeEntries,
     getRequiredProviderEntryByBridgePath,
     getRequiredReviewSkillBridgeHostEntry,
+    normalizeProviderId,
     getReviewSkillBridgeHostEntry,
     getReviewerCapabilityTier
 } from '../../../src/core/provider-registry';
@@ -136,6 +137,13 @@ describe('provider-registry: internal consistency', () => {
     it('getProviderEntryById resolves providers case-insensitively', () => {
         assert.strictEqual(getProviderEntryById('githubcopilot')?.entrypointFile, '.github/copilot-instructions.md');
         assert.strictEqual(getProviderEntryById('UnknownProvider'), null);
+    });
+
+    it('normalizeProviderId accepts explicit tool aliases without changing canonical ids', () => {
+        assert.strictEqual(normalizeProviderId('github-copilot-cli'), 'GitHubCopilot');
+        assert.strictEqual(normalizeProviderId('GitHub Copilot CLI'), 'GitHubCopilot');
+        assert.strictEqual(normalizeProviderId('copilot-cli'), 'GitHubCopilot');
+        assert.strictEqual(normalizeProviderId('OtherProvider'), null);
     });
 
     it('getProviderEntryByBridgePath resolves providers case-insensitively', () => {

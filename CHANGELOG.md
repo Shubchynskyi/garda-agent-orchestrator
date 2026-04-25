@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- normalized explicit provider aliases such as `github-copilot-cli` to canonical provider ids during task start and preflight routing, and made task-bound `classify-change` auto-write the canonical preflight artifact when `--output-path` is omitted
 - made `next-step` the default task-loop navigator with exact copy-paste recovery commands for stale preflight/rule-pack/review-context cycles and explicit delegated review routing before review result ingestion
 - split task-event append results into canonical commit status and derived-index warnings so mandatory lifecycle writes no longer fail after the per-task JSONL event is already committed
 - fixed `gate human-commit --repo-root` so the gate consumes the documented repo-root option instead of forwarding it to `git commit`
