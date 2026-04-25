@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made `next-step` commands safer to copy by avoiding stale source-checkout runtimes, exposing top-level help under parity drift, refusing to fabricate runtime provider identity from SourceOfTruth, shell-quoting generated values safely, and keeping restarted task cycles out of terminal DONE state
 - made mandatory review launch guidance, rule packs, orchestration skills, provider bridges, and review contexts explicitly require fresh clean-context reviewer sessions and reviewer cleanup after receipt persistence
 - bound protected control-plane preflight scopes to `--orchestrator-work` before preflight artifact writes, and taught `next-step` to generate concrete initial `classify-change` commands from task-mode planned scope
 - normalized explicit provider aliases such as `github-copilot-cli` to canonical provider ids during task start and preflight routing, and made task-bound `classify-change` auto-write the canonical preflight artifact when `--output-path` is omitted

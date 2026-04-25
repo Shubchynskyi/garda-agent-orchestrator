@@ -68,9 +68,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale) {
-            const helpText = commandName === 'gate'
+            const helpText = commandName === 'gate' || commandName === 'next-step'
                 ? (() => {
-                    const gateName = String(commandArgv[0] || '').trim();
+                    const gateName = commandName === 'next-step'
+                        ? 'next-step'
+                        : String(commandArgv[0] || '').trim();
                     if (!gateName || gateName.startsWith('-')) {
                         return buildGateCommandOverviewText(parityRoot);
                     }

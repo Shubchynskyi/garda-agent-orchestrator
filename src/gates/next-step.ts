@@ -63,6 +63,9 @@ import {
 import {
     buildCoherentCycleRestartCommand
 } from './completion-reporting';
+import {
+    normalizeProviderId
+} from '../core/provider-registry';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -127,6 +130,12 @@ export interface NextStepResult {
     full_suite_validation: NextStepFullSuiteSummary;
     review: NextStepReviewSummary;
     audit_status: TaskAuditSummaryResult['status'];
+}
+
+interface TaskQueueEntry {
+    taskId: string;
+    title: string | null;
+    profile: string | null;
 }
 
 interface NextStepOptions {
@@ -1012,7 +1021,152 @@ function buildNavigatorCommand(cliPrefix: string, taskId: string): string {
 }
 
 function quoteCommandValue(value: string): string {
-    return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    const text = String(value);
+    if (/["$`]/.test(text)) {
+        if (process.platform === 'win32') {
+            return `'${text.replace(/'/g, "''")}'`;
+        }
+        return `'${text.replace(/'/g, "'\\''")}'`;
+    }
+    return `"${text.replace(/\\/g, '\\\\')}"`;
+}
+
+function readTaskQueueEntry(repoRoot: string, taskId: string): TaskQueueEntry | null {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    if (!fileExists(taskPath)) {
+        return null;
+    }
+    const escapedTaskId = taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rowPattern = new RegExp(`^\\|\\s*${escapedTaskId}\\s*\\|`);
+    for (const line of fs.readFileSync(taskPath, 'utf8').split('\n')) {
+        if (!rowPattern.test(line)) {
+            continue;
+        }
+        const cells = line
+            .split('|')
+            .slice(1, -1)
+            .map((cell) => cell.trim());
+        if (cells.length < 8) {
+            return {
+                taskId,
+                title: null,
+                profile: null
+            };
+        }
+        return {
+            taskId,
+            title: cells[4] || null,
+            profile: cells[7] || null
+        };
+    }
+    return null;
+}
+
+function resolveDefaultDepthFromTaskQueue(taskEntry: TaskQueueEntry | null): string {
+    const profile = String(taskEntry?.profile || '').trim().toLowerCase();
+    if (profile === 'fast' || profile === 'docs-only') {
+        return '1';
+    }
+    return '2';
+}
+
+function resolveProviderFromEnvironment(): string | null {
+    const explicitProvider = normalizeProviderId(process.env.GARDA_EXECUTION_PROVIDER);
+    if (explicitProvider) {
+        return explicitProvider;
+    }
+    if (process.env.CODEX_THREAD_ID || process.env.CODEX_HOME) {
+        return 'Codex';
+    }
+    if (process.env.CLAUDE_CODE_SSE_PORT) {
+        return 'Claude';
+    }
+    if (process.env.CURSOR_TRACE_ID || process.env.CURSOR_AGENT) {
+        return 'Cursor';
+    }
+    return null;
+}
+
+function quoteProviderForCommand(provider: string | null): string {
+    if (provider) {
+        return quoteCommandValue(provider);
+    }
+    return process.platform === 'win32'
+        ? '"$env:GARDA_EXECUTION_PROVIDER"'
+        : '"$GARDA_EXECUTION_PROVIDER"';
+}
+
+function buildEnterTaskModeCommand(
+    cliPrefix: string,
+    taskId: string,
+    taskEntry: TaskQueueEntry | null,
+    provider: string | null
+): string {
+    const parts = [
+        `${cliPrefix} gate enter-task-mode`,
+        `--task-id ${quoteCommandValue(taskId)}`,
+        '--entry-mode "EXPLICIT_TASK_EXECUTION"',
+        `--requested-depth ${quoteCommandValue(resolveDefaultDepthFromTaskQueue(taskEntry))}`,
+        `--task-summary ${quoteCommandValue(taskEntry?.title || taskId)}`,
+        '--start-banner "Garda captures my mind"'
+    ];
+    parts.push(`--provider ${quoteProviderForCommand(provider)}`);
+    parts.push('--repo-root "."');
+    return parts.join(' ');
+}
+
+function requiresSensitiveScopeDocAcknowledgement(preflight: Record<string, unknown> | null): boolean {
+    const triggers = getPreflightTriggers(preflight);
+    return ['api', 'security', 'infra', 'dependency', 'db'].some((trigger) => triggers[trigger] === true);
+}
+
+function buildDocImpactCommand(
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    preflight: Record<string, unknown> | null
+): string {
+    const parts = [
+        `${cliPrefix} gate doc-impact-gate`,
+        `--task-id ${quoteCommandValue(taskId)}`,
+        `--preflight-path ${quoteCommandValue(preflightCommandPath)}`,
+        '--decision "NO_DOC_UPDATES"',
+        '--behavior-changed false',
+        '--changelog-updated false'
+    ];
+    if (requiresSensitiveScopeDocAcknowledgement(preflight)) {
+        parts.push('--sensitive-scope-reviewed true');
+    }
+    parts.push('--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."');
+    parts.push('--repo-root "."');
+    return parts.join(' ');
+}
+
+function getLatestTimelineSequence(eventsRoot: string, taskId: string, eventType: string): number | null {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const errors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, errors);
+    let latestSequence: number | null = null;
+    for (const event of events) {
+        if (event.event_type !== eventType) {
+            continue;
+        }
+        const sequence = event.integrity?.task_sequence ?? event.sequence;
+        if (typeof sequence !== 'number' || !Number.isFinite(sequence)) {
+            continue;
+        }
+        latestSequence = latestSequence == null ? sequence : Math.max(latestSequence, sequence);
+    }
+    return latestSequence;
+}
+
+function isLatestCompletionCurrent(eventsRoot: string, taskId: string): boolean {
+    const latestCompletionSequence = getLatestTimelineSequence(eventsRoot, taskId, 'COMPLETION_GATE_PASSED');
+    if (latestCompletionSequence == null) {
+        return false;
+    }
+    const latestTaskModeSequence = getLatestTimelineSequence(eventsRoot, taskId, 'TASK_MODE_ENTERED');
+    return latestTaskModeSequence == null || latestCompletionSequence >= latestTaskModeSequence;
 }
 
 function getStringField(source: Record<string, unknown> | null, field: string, fallback: string): string {
@@ -1110,6 +1264,7 @@ function buildResult(params: {
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
 }): NextStepResult {
+    const missingArtifacts = params.status === 'DONE' ? [] : params.missingArtifacts;
     return {
         schema_version: 1,
         task_id: params.taskId,
@@ -1120,7 +1275,7 @@ function buildResult(params: {
         title: params.title,
         reason: params.reason,
         commands: params.commands,
-        missing_artifacts: params.missingArtifacts,
+        missing_artifacts: missingArtifacts,
         present_artifacts: params.presentArtifacts,
         full_suite_validation: params.fullSuite,
         review: params.review,
@@ -1225,6 +1380,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const preflight = safeReadJson(preflightPath);
     const rulePack = safeReadJson(rulePackPath);
     const taskMode = safeReadJson(path.join(reviewsRoot, `${taskId}-task-mode.json`));
+    const taskEntry = readTaskQueueEntry(repoRoot, taskId);
+    const defaultExecutionProvider = resolveProviderFromEnvironment();
     const summary = buildTaskAuditSummary({
         taskId,
         repoRoot,
@@ -1292,17 +1449,35 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         auditStatus: summary.status
     };
 
+    if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
+        return buildResult({
+            ...resultBase,
+            status: 'DONE',
+            nextGate: null,
+            title: 'Task gate flow is complete.',
+            reason: 'Completion gate passed. Use task-audit-summary for final reporting and commit guidance.',
+            commands: [
+                buildCommand(
+                    'Build final audit summary',
+                    `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
+                )
+            ]
+        });
+    }
+
     if (!isGatePassed(summary, 'enter-task-mode')) {
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
             nextGate: 'enter-task-mode',
             title: 'Enter task mode first.',
-            reason: 'No TASK_MODE_ENTERED event exists for this task.',
+            reason: defaultExecutionProvider
+                ? 'No TASK_MODE_ENTERED event exists for this task.'
+                : 'No TASK_MODE_ENTERED event exists for this task, and runtime provider could not be detected from GARDA_EXECUTION_PROVIDER or known provider environment markers. Set GARDA_EXECUTION_PROVIDER to the current execution provider before running the command; do not use SourceOfTruth as a runtime-provider fallback.',
             commands: [
                 buildCommand(
                     'Enter task mode',
-                    `${cliPrefix} gate enter-task-mode --task-id "${taskId}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<TASK.md summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" --repo-root "."`
+                    buildEnterTaskModeCommand(cliPrefix, taskId, taskEntry, defaultExecutionProvider)
                 )
             ]
         });
@@ -1638,7 +1813,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Run doc impact gate',
-                    `${cliPrefix} gate doc-impact-gate --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --decision "<DOCS_UPDATED|NO_DOC_UPDATES>" --behavior-changed <true|false> --changelog-updated <true|false> --rationale "<why>" --repo-root "."`
+                    buildDocImpactCommand(cliPrefix, taskId, preflightCommandPath, preflight)
                 )
             ]
         });
@@ -1678,14 +1853,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
 
     return buildResult({
         ...resultBase,
-        status: 'DONE',
-        nextGate: null,
-        title: 'Task gate flow is complete.',
-        reason: 'Completion gate passed. Use task-audit-summary for final reporting and commit guidance.',
+        status: 'BLOCKED',
+        nextGate: 'completion-gate',
+        title: 'Rerun completion gate for the current task cycle.',
+        reason: 'A previous completion gate pass exists, but it is older than the latest task-mode entry. Continue the restarted task cycle before treating the task as DONE.',
         commands: [
             buildCommand(
-                'Build final audit summary',
-                `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
+                'Run completion gate',
+                `${cliPrefix} gate completion-gate --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
             )
         ]
     });

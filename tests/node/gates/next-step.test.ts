@@ -26,6 +26,40 @@ const ALL_REVIEW_FLAGS = Object.freeze({
 });
 
 let tempRoots: string[] = [];
+const PROVIDER_ENV_KEYS = Object.freeze([
+    'GARDA_EXECUTION_PROVIDER',
+    'CODEX_THREAD_ID',
+    'CODEX_HOME',
+    'CLAUDE_CODE_SSE_PORT',
+    'CURSOR_TRACE_ID',
+    'CURSOR_AGENT'
+]);
+
+function withProviderEnv<T>(updates: Record<string, string | undefined>, callback: () => T): T {
+    const previousValues = new Map<string, string | undefined>();
+    for (const key of PROVIDER_ENV_KEYS) {
+        previousValues.set(key, process.env[key]);
+        delete process.env[key];
+    }
+    for (const [key, value] of Object.entries(updates)) {
+        if (value == null) {
+            delete process.env[key];
+        } else {
+            process.env[key] = value;
+        }
+    }
+    try {
+        return callback();
+    } finally {
+        for (const [key, value] of previousValues) {
+            if (value == null) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
+        }
+    }
+}
 
 function makeTempRepo(): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-'));
@@ -35,7 +69,18 @@ function makeTempRepo(): string {
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        `| ${TASK_ID} | TODO | P1 | ux/test | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |`,
+        ''
+    ].join('\n'), 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {
+        SourceOfTruth: 'Codex'
+    });
     for (const ruleFile of [
         '00-core.md',
         '30-code-style.md',
@@ -389,14 +434,71 @@ afterEach(() => {
 describe('gates/next-step', () => {
     it('points a fresh task at enter-task-mode', () => {
         const repoRoot = makeTempRepo();
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'enter-task-mode');
         assert.ok(result.commands[0].command.includes('gate enter-task-mode'));
+        assert.ok(!result.commands[0].command.includes('<'));
+        assert.ok(result.commands[0].command.includes('--requested-depth "2"'));
+        assert.ok(result.commands[0].command.includes('--task-summary "Make next-step output executable in tests"'));
+        assert.ok(result.commands[0].command.includes('--start-banner "Garda captures my mind"'));
+        assert.ok(result.commands[0].command.includes('--provider "Codex"'));
         const text = formatNextStepText(result);
         assert.ok(text.includes(EXPECTED_LOOP_LINE));
         assert.ok(text.includes('AfterCommand: rerun'));
+    });
+
+    it('uses execution provider environment instead of source-of-truth metadata', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {
+            SourceOfTruth: 'Claude'
+        });
+
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.commands[0].command.includes('--provider "Codex"'));
+        assert.ok(!result.commands[0].command.includes('<'));
+        assert.ok(!result.commands[0].command.includes('--provider "Claude"'));
+    });
+
+    it('does not fabricate a provider when execution provider is unavailable', () => {
+        const repoRoot = makeTempRepo();
+        const result = withProviderEnv({}, () => resolveNextStep({ taskId: TASK_ID, repoRoot }));
+        const expectedProviderReference = process.platform === 'win32'
+            ? '--provider "$env:GARDA_EXECUTION_PROVIDER"'
+            : '--provider "$GARDA_EXECUTION_PROVIDER"';
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.reason.includes('GARDA_EXECUTION_PROVIDER'));
+        assert.ok(result.commands[0].command.includes(expectedProviderReference));
+        assert.ok(!result.commands[0].command.includes('--provider "Codex"'));
+        assert.ok(!result.commands[0].command.includes('<'));
+    });
+
+    it('uses shell-safe quoting for TASK.md summaries with embedded quotes', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | ux/test | Fix "quoted" next-step command | gpt-5.4 | 2026-04-25 | balanced | Test queue entry. |`,
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.commands[0].command.includes('--task-summary \'Fix "quoted" next-step command\''));
+        assert.ok(!result.commands[0].command.includes('\\"'));
     });
 
     it('routes task-mode-only runs to TASK_ENTRY rule-pack loading', () => {
@@ -873,6 +975,32 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'doc-impact-gate');
         assert.ok(result.commands[0].command.includes('gate doc-impact-gate'));
+        assert.ok(!result.commands[0].command.includes('<'));
+        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed false'));
+        assert.ok(result.commands[0].command.includes('--changelog-updated false'));
+        assert.ok(result.commands[0].command.includes('--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."'));
+    });
+
+    it('includes sensitive-scope acknowledgement in doc-impact command when required', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.triggers = {
+            security: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(!result.commands[0].command.includes('<'));
+        assert.ok(result.commands[0].command.includes('--sensitive-scope-reviewed true'));
     });
 
     it('reports DONE after completion gate passes', () => {
@@ -888,6 +1016,50 @@ describe('gates/next-step', () => {
 
         assert.equal(result.status, 'DONE');
         assert.equal(result.next_gate, null);
+        assert.deepEqual(result.missing_artifacts, []);
         assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
+    });
+
+    it('keeps completed tasks terminal when the workspace is clean after commit', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.detection_source = 'git_auto';
+        preflight.changed_files = ['src/app.ts'];
+        preflight.metrics = {
+            changed_lines_total: 10
+        };
+        writeJson(preflightPath, preflight);
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'DONE');
+        assert.equal(result.next_gate, null);
+        assert.deepEqual(result.missing_artifacts, []);
+        assert.ok(!formatNextStepText(result).includes('MissingArtifacts:'));
+    });
+
+    it('does not let an old completion pass hide a restarted task cycle', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            restarted: true
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.status, 'DONE');
+        assert.equal(result.next_gate, 'completion-gate');
+        assert.ok(result.reason.includes('older than the latest task-mode entry'));
     });
 });

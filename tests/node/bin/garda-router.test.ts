@@ -200,6 +200,8 @@ test('getRuntimeCandidates prefers dist runtime over .node-build when both exist
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-order-'));
     try {
         createGardaPackageRoot(tempRoot, '2.4.0');
+        writeFile(path.join(tempRoot, 'tests', 'node', 'placeholder.test.ts'), '');
+        writeFile(path.join(tempRoot, 'scripts', 'node-foundation', 'placeholder.ts'), '');
         writeFile(path.join(tempRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
         writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
 

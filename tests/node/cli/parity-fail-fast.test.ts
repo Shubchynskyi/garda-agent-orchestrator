@@ -235,6 +235,45 @@ test('review-capabilities help remains discoverable when parity blocks the calle
     }
 });
 
+test('next-step help remains discoverable when parity blocks the caller workspace', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-next-step-help-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(tmpDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(tmpDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'next-step', 'T-250', '--repo-root', '.'],
+            { cwd: tmpDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, EXIT_PRECONDITION_FAILURE);
+        assert.ok(combined.includes('PARITY_BLOCKED'));
+        assert.ok(combined.includes('GARDA_COMMAND_HELP'));
+        assert.ok(combined.includes('next-step'));
+        assert.ok(combined.includes('Default task-loop navigator'));
+        assert.ok(combined.includes('Fix'));
+        assert.ok(!combined.includes('Cannot read properties of undefined'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('review-capabilities enable routes through the CLI dispatcher for --target-root and preserves JSON output', () => {
     const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-review-capabilities-set-caller-'));
     const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-review-capabilities-set-target-'));
