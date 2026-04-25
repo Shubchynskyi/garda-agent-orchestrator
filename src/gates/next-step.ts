@@ -189,8 +189,20 @@ interface PreflightWorkspaceReadiness {
     reason: string;
 }
 
+interface PreflightCycleReadiness {
+    ready: boolean;
+    reason: string;
+}
+
 interface RulePackReadiness {
     ready: boolean;
+    reason: string;
+}
+
+interface StartupCycleReadiness {
+    ready: boolean;
+    nextGate: 'load-rule-pack' | 'handshake-diagnostics' | 'shell-smoke-preflight' | null;
+    title: string;
     reason: string;
 }
 
@@ -867,6 +879,70 @@ function readPreflightWorkspaceReadiness(
     };
 }
 
+function readPreflightCycleReadiness(
+    eventsRoot: string,
+    taskId: string
+): PreflightCycleReadiness {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const timelineErrors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    if (timelineErrors.length > 0 || events.length === 0) {
+        return {
+            ready: true,
+            reason: 'Timeline ordering could not be checked by next-step; downstream gates will report timeline integrity.'
+        };
+    }
+
+    const latestPreflight = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'PREFLIGHT_CLASSIFIED'
+    );
+    if (!latestPreflight) {
+        return {
+            ready: true,
+            reason: 'No PREFLIGHT_CLASSIFIED event exists yet.'
+        };
+    }
+
+    const latestTaskMode = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'TASK_MODE_ENTERED'
+    );
+    if (latestTaskMode && latestPreflight.sequence < latestTaskMode.sequence) {
+        return {
+            ready: false,
+            reason: `Preflight evidence is older than the latest TASK_MODE_ENTERED event (preflight seq ${latestPreflight.sequence}, task-mode seq ${latestTaskMode.sequence}). Refresh classify-change for the current task-mode cycle.`
+        };
+    }
+
+    const latestShellSmoke = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+    );
+    if (latestShellSmoke && latestPreflight.sequence < latestShellSmoke.sequence) {
+        return {
+            ready: false,
+            reason: `Preflight evidence is older than the latest SHELL_SMOKE_PREFLIGHT_RECORDED event (preflight seq ${latestPreflight.sequence}, shell-smoke seq ${latestShellSmoke.sequence}). Refresh classify-change before compile/review/completion.`
+        };
+    }
+
+    const latestCompletionFailure = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'COMPLETION_GATE_FAILED'
+    );
+    if (latestCompletionFailure && latestPreflight.sequence < latestCompletionFailure.sequence) {
+        return {
+            ready: false,
+            reason: `Preflight evidence is older than the latest COMPLETION_GATE_FAILED event (preflight seq ${latestPreflight.sequence}, completion failure seq ${latestCompletionFailure.sequence}). Refresh classify-change for the resumed cycle.`
+        };
+    }
+
+    return {
+        ready: true,
+        reason: 'Preflight evidence is current for the latest startup cycle.'
+    };
+}
+
 function readPostPreflightRulePackReadiness(
     repoRoot: string,
     taskId: string,
@@ -896,6 +972,89 @@ function readPostPreflightRulePackReadiness(
     return {
         ready: false,
         reason: violations.join(' ')
+    };
+}
+
+function readStartupCycleReadiness(
+    eventsRoot: string,
+    taskId: string
+): StartupCycleReadiness {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const timelineErrors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    if (timelineErrors.length > 0 || events.length === 0) {
+        return {
+            ready: true,
+            nextGate: null,
+            title: 'Startup cycle ordering was not checked.',
+            reason: 'Timeline ordering could not be checked by next-step; downstream gates will report timeline integrity.'
+        };
+    }
+
+    const latestTaskMode = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'TASK_MODE_ENTERED'
+    );
+    if (!latestTaskMode) {
+        return {
+            ready: true,
+            nextGate: null,
+            title: 'No task-mode cycle exists yet.',
+            reason: 'No TASK_MODE_ENTERED event exists yet.'
+        };
+    }
+
+    const isStartupRulePackEvent = (entry: TimelineEventEntry): boolean => {
+        if (entry.event_type !== 'RULE_PACK_LOADED') {
+            return false;
+        }
+        const stage = String(entry.details?.stage || '').trim().toUpperCase();
+        return stage !== 'POST_PREFLIGHT';
+    };
+    const latestRulePack = findLatestTimelineEvent(
+        events,
+        (entry) => isStartupRulePackEvent(entry) && entry.sequence > latestTaskMode.sequence
+    );
+    if (!latestRulePack) {
+        return {
+            ready: false,
+            nextGate: 'load-rule-pack',
+            title: 'Record TASK_ENTRY rule files for the current task-mode cycle.',
+            reason: `The latest TASK_MODE_ENTERED event is seq ${latestTaskMode.sequence}, but no RULE_PACK_LOADED event exists after it. Load TASK_ENTRY rules before handshake, preflight, compile, review, or completion.`
+        };
+    }
+
+    const latestHandshake = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED' && entry.sequence > latestRulePack.sequence
+    );
+    if (!latestHandshake) {
+        return {
+            ready: false,
+            nextGate: 'handshake-diagnostics',
+            title: 'Run handshake diagnostics for the current task-mode cycle.',
+            reason: `The latest TASK_MODE_ENTERED event is seq ${latestTaskMode.sequence}, and the latest startup rule-pack event is seq ${latestRulePack.sequence}, but no HANDSHAKE_DIAGNOSTICS_RECORDED event exists after them.`
+        };
+    }
+
+    const latestShellSmoke = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED' && entry.sequence > latestHandshake.sequence
+    );
+    if (!latestShellSmoke) {
+        return {
+            ready: false,
+            nextGate: 'shell-smoke-preflight',
+            title: 'Run shell smoke preflight for the current task-mode cycle.',
+            reason: `The latest HANDSHAKE_DIAGNOSTICS_RECORDED event is seq ${latestHandshake.sequence}, but no SHELL_SMOKE_PREFLIGHT_RECORDED event exists after it.`
+        };
+    }
+
+    return {
+        ready: true,
+        nextGate: null,
+        title: 'Startup cycle is current.',
+        reason: 'TASK_ENTRY rule-pack, handshake, and shell-smoke evidence are current for the latest task-mode cycle.'
     };
 }
 
@@ -1255,23 +1414,39 @@ function getTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null
         : [];
 }
 
+function getPreflightRefreshChangedFiles(
+    taskMode: Record<string, unknown> | null,
+    preflight: Record<string, unknown> | null
+): string[] {
+    const plannedChangedFiles = getTaskModePlannedChangedFiles(taskMode);
+    if (plannedChangedFiles.length > 0) {
+        return plannedChangedFiles;
+    }
+    const detectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
+    if (detectionSource === 'explicit_changed_files') {
+        return getPreflightChangedFiles(preflight);
+    }
+    return [];
+}
+
 function buildClassifyChangeCommand(params: {
     cliPrefix: string;
     taskId: string;
     taskMode: Record<string, unknown> | null;
     preflightCommandPath: string;
     includePlannedScope: boolean;
+    changedFiles?: string[];
 }): string {
     const parts = [
         `${params.cliPrefix} gate classify-change`,
         `--task-id ${quoteCommandValue(params.taskId)}`,
         `--task-intent ${quoteCommandValue(getStringField(params.taskMode, 'task_summary', '<task summary>'))}`
     ];
-    if (params.includePlannedScope) {
-        const plannedChangedFiles = getTaskModePlannedChangedFiles(params.taskMode);
-        for (const plannedChangedFile of plannedChangedFiles) {
-            parts.push(`--changed-file ${quoteCommandValue(plannedChangedFile)}`);
-        }
+    const changedFiles = params.changedFiles || (params.includePlannedScope
+        ? getTaskModePlannedChangedFiles(params.taskMode)
+        : []);
+    for (const changedFile of changedFiles) {
+        parts.push(`--changed-file ${quoteCommandValue(changedFile)}`);
     }
     parts.push(`--output-path ${quoteCommandValue(params.preflightCommandPath)}`);
     parts.push('--repo-root "."');
@@ -1523,6 +1698,28 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
+    const startupCycleReadiness = readStartupCycleReadiness(eventsRoot, taskId);
+    if (!startupCycleReadiness.ready) {
+        const command = startupCycleReadiness.nextGate === 'load-rule-pack'
+            ? buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId)
+            : startupCycleReadiness.nextGate === 'handshake-diagnostics'
+                ? `${cliPrefix} gate handshake-diagnostics --task-id "${taskId}" --repo-root "."`
+                : `${cliPrefix} gate shell-smoke-preflight --task-id "${taskId}" --repo-root "."`;
+        const label = startupCycleReadiness.nextGate === 'load-rule-pack'
+            ? 'Load TASK_ENTRY rules'
+            : startupCycleReadiness.nextGate === 'handshake-diagnostics'
+                ? 'Run handshake diagnostics'
+                : 'Run shell smoke preflight';
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: startupCycleReadiness.nextGate,
+            title: startupCycleReadiness.title,
+            reason: startupCycleReadiness.reason,
+            commands: [buildCommand(label, command)]
+        });
+    }
+
     if (!isGatePassed(summary, 'load-rule-pack') || resolveRulePackStage(rulePack) !== 'TASK_ENTRY' && !preflight) {
         return buildResult({
             ...resultBase,
@@ -1582,6 +1779,30 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
+    const preflightCycleReadiness = readPreflightCycleReadiness(eventsRoot, taskId);
+    if (!preflightCycleReadiness.ready) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'classify-change',
+            title: 'Refresh preflight for the current task cycle.',
+            reason: preflightCycleReadiness.reason,
+            commands: [
+                buildCommand(
+                    'Refresh preflight',
+                    buildClassifyChangeCommand({
+                        cliPrefix,
+                        taskId,
+                        taskMode,
+                        preflightCommandPath,
+                        includePlannedScope: false,
+                        changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+                    })
+                )
+            ]
+        });
+    }
+
     if (
         preflightTouchesProtectedControlPlane(preflight)
         && !taskMode?.orchestrator_work
@@ -1619,7 +1840,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         taskId,
                         taskMode,
                         preflightCommandPath,
-                        includePlannedScope: false
+                        includePlannedScope: false,
+                        changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
                     })
                 )
             ]

@@ -581,6 +581,69 @@ describe('gates/next-step', () => {
         assert.ok(!command.includes('<task summary>'));
     });
 
+    it('routes restarted task-mode cycles through fresh startup gates before reusing old preflight', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            restarted: true
+        });
+
+        const missingRulePack = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingRulePack.next_gate, 'load-rule-pack');
+        assert.match(missingRulePack.reason, /latest TASK_MODE_ENTERED/);
+
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        const missingHandshake = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingHandshake.next_gate, 'handshake-diagnostics');
+        assert.match(missingHandshake.reason, /HANDSHAKE_DIAGNOSTICS_RECORDED/);
+
+        seedHandshake(repoRoot, TASK_ID);
+        const missingShellSmoke = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingShellSmoke.next_gate, 'shell-smoke-preflight');
+        assert.match(missingShellSmoke.reason, /SHELL_SMOKE_PREFLIGHT_RECORDED/);
+
+        seedShellSmoke(repoRoot, TASK_ID);
+        const stalePreflight = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(stalePreflight.next_gate, 'classify-change');
+        assert.match(stalePreflight.reason, /Preflight evidence is older than the latest TASK_MODE_ENTERED/);
+        assert.ok(stalePreflight.commands[0].command.includes('--changed-file "src/app.ts"'));
+    });
+
+    it('preserves planned changed files when refreshing a stale scoped preflight', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh a scoped next-step preflight',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: [
+                'src/app.ts',
+                'docs/cli-reference.md'
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const drift = 2;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "docs/cli-reference.md"'));
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('<path>'));
+    });
+
     it('routes stale POST_PREFLIGHT evidence back to load-rule-pack after preflight refresh', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -656,6 +719,7 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'classify-change');
         assert.ok(result.reason.includes('Preflight scope is stale before compile'));
         assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--changed-file "src/app.ts"'));
     });
 
     it('routes protected control-plane preflight to an orchestrator-work restart command', () => {
@@ -1089,7 +1153,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.notEqual(result.status, 'DONE');
-        assert.equal(result.next_gate, 'completion-gate');
-        assert.ok(result.reason.includes('older than the latest task-mode entry'));
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.ok(result.reason.includes('latest TASK_MODE_ENTERED'));
     });
 });
