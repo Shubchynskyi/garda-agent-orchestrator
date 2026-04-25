@@ -121,7 +121,9 @@ garda gate next-step --preflight-path "garda-agent-orchestrator/runtime/reviews/
 Notes:
 - `next-step` reads current task events and review artifacts, then prints the current status, effective full-suite config, review policy, missing artifacts, and the single next command to run.
 - The command accepts either a positional task id (`T-137`), `--task-id`, or a `--preflight-path` that ends in `<task-id>-preflight.json`.
+- Before the first preflight, `next-step` reuses task-mode `planned_changed_files` to print concrete `classify-change --changed-file` arguments; agents should not invent placeholder paths.
 - After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
+- If preflight scope touches protected orchestrator control-plane files without `--orchestrator-work`, restart task mode with the exact command printed by `next-step` or by the failed preflight gate before continuing.
 
 ### `garda debug env`
 

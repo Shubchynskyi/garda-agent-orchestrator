@@ -951,6 +951,35 @@ function buildOrchestratorWorkRestartCommand(
     return parts.join(' ');
 }
 
+function getTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
+    return Array.isArray(taskMode?.planned_changed_files)
+        ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+}
+
+function buildClassifyChangeCommand(params: {
+    cliPrefix: string;
+    taskId: string;
+    taskMode: Record<string, unknown> | null;
+    preflightCommandPath: string;
+    includePlannedScope: boolean;
+}): string {
+    const parts = [
+        `${params.cliPrefix} gate classify-change`,
+        `--task-id ${quoteCommandValue(params.taskId)}`,
+        `--task-intent ${quoteCommandValue(getStringField(params.taskMode, 'task_summary', '<task summary>'))}`
+    ];
+    if (params.includePlannedScope) {
+        const plannedChangedFiles = getTaskModePlannedChangedFiles(params.taskMode);
+        for (const plannedChangedFile of plannedChangedFiles) {
+            parts.push(`--changed-file ${quoteCommandValue(plannedChangedFile)}`);
+        }
+    }
+    parts.push(`--output-path ${quoteCommandValue(params.preflightCommandPath)}`);
+    parts.push('--repo-root "."');
+    return parts.join(' ');
+}
+
 function getPreflightTriggers(preflight: Record<string, unknown> | null): Record<string, unknown> {
     return isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
 }
@@ -1222,7 +1251,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Classify changed files',
-                    `${cliPrefix} gate classify-change --task-id "${taskId}" --task-intent "<task summary>" --changed-file "<path>" --output-path "${preflightCommandPath}" --repo-root "."`
+                    buildClassifyChangeCommand({
+                        cliPrefix,
+                        taskId,
+                        taskMode,
+                        preflightCommandPath,
+                        includePlannedScope: true
+                    })
                 )
             ]
         });
@@ -1260,7 +1295,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Refresh preflight',
-                    `${cliPrefix} gate classify-change --task-id "${taskId}" --task-intent "<task summary>" --output-path "${preflightCommandPath}" --repo-root "."`
+                    buildClassifyChangeCommand({
+                        cliPrefix,
+                        taskId,
+                        taskMode,
+                        preflightCommandPath,
+                        includePlannedScope: false
+                    })
                 )
             ]
         });

@@ -587,6 +587,52 @@ function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Code
 }
 
 describe('cli/commands/gates', () => {
+    it('fails preflight before writing an artifact when protected control-plane scope lacks orchestrator work', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-preflight-protected';
+        const protectedFile = 'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update protected orchestration rules'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        let error: Error | null = null;
+        try {
+            runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Update protected orchestration rules',
+                changedFiles: [protectedFile],
+                outputPath: preflightPath,
+                emitMetrics: false
+            });
+        } catch (caught: unknown) {
+            error = caught instanceof Error ? caught : new Error(String(caught));
+        }
+
+        assert.ok(error);
+        assert.ok(error.message.includes('--orchestrator-work'));
+        assert.ok(error.message.includes(protectedFile));
+        assert.ok(error.message.includes('Suggested command:'));
+        assert.ok(error.message.includes(`--planned-changed-file "${protectedFile}"`));
+        assert.equal(fs.existsSync(preflightPath), false);
+
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'PREFLIGHT_CLASSIFIED'), false);
+        assert.equal(events.some((event) => event.event_type === 'PREFLIGHT_FAILED'), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails compile gate when preflight already recorded trusted protected manifest drift before task start', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-manifest-drift';

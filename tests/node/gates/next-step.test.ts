@@ -421,6 +421,40 @@ describe('gates/next-step', () => {
         ]);
     });
 
+    it('uses task-mode planned scope when building the initial classify-change command', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Polish next-step planned scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: [
+                'src/gates/next-step.ts',
+                'docs/cli-reference.md'
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--task-intent "Polish next-step planned scope"'));
+        assert.ok(command.includes('--changed-file "docs/cli-reference.md"'));
+        assert.ok(command.includes('--changed-file "src/gates/next-step.ts"'));
+        assert.ok(!command.includes('<path>'));
+        assert.ok(!command.includes('<task summary>'));
+    });
+
     it('routes stale POST_PREFLIGHT evidence back to load-rule-pack after preflight refresh', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

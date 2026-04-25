@@ -1,7 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { resolveBundleNameForTarget } from '../../../core/constants';
+import {
+    getBundleCliCommand,
+    getSourceCliCommand,
+    resolveBundleNameForTarget
+} from '../../../core/constants';
 import { parseTaskMdTableRow } from '../../../core/task-md-table';
 import {
     EXIT_GATE_FAILURE
@@ -306,6 +310,68 @@ function resolveClassifyChangeOutputPath(
     return null;
 }
 
+function quotePowerShellCliValue(value: string): string {
+    return `"${String(value).replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"')}"`;
+}
+
+function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
+    repoRoot: string;
+    taskId: string;
+    taskModeEvidence: ReturnType<typeof getTaskModeEvidence>;
+    taskSummary: string | null;
+    changedProtectedFiles: string[];
+}): string {
+    const cliPrefix = gateHelpers.isOrchestratorSourceCheckout(params.repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(params.repoRoot));
+    const parts = [
+        `${cliPrefix} gate enter-task-mode`,
+        `--repo-root ${quotePowerShellCliValue(path.resolve(params.repoRoot))}`,
+        `--task-id ${quotePowerShellCliValue(params.taskId)}`,
+        `--entry-mode ${quotePowerShellCliValue(params.taskModeEvidence.entry_mode || 'EXPLICIT_TASK_EXECUTION')}`,
+        `--requested-depth ${quotePowerShellCliValue(String(params.taskModeEvidence.requested_depth || 2))}`,
+        `--task-summary ${quotePowerShellCliValue(params.taskSummary || params.taskModeEvidence.task_summary || '')}`,
+        '--orchestrator-work'
+    ];
+    if (params.taskModeEvidence.start_banner) {
+        parts.push(`--start-banner ${quotePowerShellCliValue(params.taskModeEvidence.start_banner)}`);
+    }
+    if (params.taskModeEvidence.provider) {
+        parts.push(`--provider ${quotePowerShellCliValue(params.taskModeEvidence.provider)}`);
+    }
+    if (params.taskModeEvidence.routed_to) {
+        parts.push(`--routed-to ${quotePowerShellCliValue(params.taskModeEvidence.routed_to)}`);
+    }
+
+    const plannedFiles = new Set<string>();
+    for (const plannedFile of params.taskModeEvidence.planned_changed_files || []) {
+        const normalized = gateHelpers.normalizePath(plannedFile);
+        if (normalized) {
+            plannedFiles.add(normalized);
+        }
+    }
+    for (const changedProtectedFile of params.changedProtectedFiles) {
+        const normalized = gateHelpers.normalizePath(changedProtectedFile);
+        if (normalized) {
+            plannedFiles.add(normalized);
+        }
+    }
+    for (const plannedFile of [...plannedFiles].sort()) {
+        parts.push(`--planned-changed-file ${quotePowerShellCliValue(plannedFile)}`);
+    }
+    return parts.join(' ');
+}
+
+function getChangedProtectedFiles(result: ClassificationResult): string[] {
+    const rawValue = (result.triggers as Record<string, unknown>).changed_protected_files;
+    if (!Array.isArray(rawValue)) {
+        return [];
+    }
+    return rawValue
+        .map((entry) => gateHelpers.normalizePath(entry))
+        .filter((entry) => entry.length > 0);
+}
+
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -429,6 +495,20 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             dirtyWorkspaceProtectedScope
         );
         preflightErrors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
+        const changedProtectedFiles = getChangedProtectedFiles(result);
+        if (preflightErrors.length === 0 && changedProtectedFiles.length > 0 && taskModeEvidence.orchestrator_work !== true) {
+            preflightErrors.push(
+                `Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: ${changedProtectedFiles.join(', ')}. ` +
+                'Restart task mode as orchestrator work before preflight classification. ' +
+                `Suggested command: ${buildClassifyChangeOrchestratorWorkRestartCommand({
+                    repoRoot,
+                    taskId: resolvedTaskId,
+                    taskModeEvidence,
+                    taskSummary: currentTaskSummary,
+                    changedProtectedFiles
+                })}`
+            );
+        }
 
         if (dirtyWorkspaceBaseline) {
             (result.triggers as any).dirty_workspace_baseline_changed_files = dirtyWorkspaceBaseline.changed_files;

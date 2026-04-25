@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- bound protected control-plane preflight scopes to `--orchestrator-work` before preflight artifact writes, and taught `next-step` to generate concrete initial `classify-change` commands from task-mode planned scope
 - normalized explicit provider aliases such as `github-copilot-cli` to canonical provider ids during task start and preflight routing, and made task-bound `classify-change` auto-write the canonical preflight artifact when `--output-path` is omitted
 - made `next-step` the default task-loop navigator with exact copy-paste recovery commands for stale preflight/rule-pack/review-context cycles and explicit delegated review routing before review result ingestion
 - split task-event append results into canonical commit status and derived-index warnings so mandatory lifecycle writes no longer fail after the per-task JSONL event is already committed
