@@ -52,6 +52,11 @@ import {
     selectRulePackFiles
 } from './build-review-context';
 import {
+    getClassificationConfig,
+    isDocumentationLikePath,
+    isRuntimeCodeLikePath
+} from './classify-change';
+import {
     getPostPreflightSequenceEvidence,
     getRulePackEvidence,
     getRulePackEvidenceViolations
@@ -1120,24 +1125,59 @@ function requiresSensitiveScopeDocAcknowledgement(preflight: Record<string, unkn
     return ['api', 'security', 'infra', 'dependency', 'db'].some((trigger) => triggers[trigger] === true);
 }
 
+function getPreflightChangedFiles(preflight: Record<string, unknown> | null): string[] {
+    return Array.isArray(preflight?.changed_files)
+        ? [...new Set(preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+}
+
+function isChangelogPath(filePath: string): boolean {
+    return /(^|\/)CHANGELOG/i.test(normalizePath(filePath));
+}
+
+function getDocImpactChangedFiles(
+    preflight: Record<string, unknown> | null,
+    repoRoot: string
+): string[] {
+    const classificationConfig = getClassificationConfig(repoRoot);
+    return getPreflightChangedFiles(preflight).filter((filePath) => (
+        isDocumentationLikePath(filePath)
+        && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
+    ));
+}
+
 function buildDocImpactCommand(
     cliPrefix: string,
     taskId: string,
     preflightCommandPath: string,
-    preflight: Record<string, unknown> | null
+    preflight: Record<string, unknown> | null,
+    repoRoot: string
 ): string {
+    const docsUpdated = getDocImpactChangedFiles(preflight, repoRoot);
+    const changelogUpdated = docsUpdated.some((filePath) => isChangelogPath(filePath));
     const parts = [
         `${cliPrefix} gate doc-impact-gate`,
         `--task-id ${quoteCommandValue(taskId)}`,
-        `--preflight-path ${quoteCommandValue(preflightCommandPath)}`,
-        '--decision "NO_DOC_UPDATES"',
-        '--behavior-changed false',
-        '--changelog-updated false'
+        `--preflight-path ${quoteCommandValue(preflightCommandPath)}`
     ];
+    if (docsUpdated.length > 0) {
+        parts.push('--decision "DOCS_UPDATED"');
+        parts.push('--behavior-changed false');
+        for (const docPath of docsUpdated) {
+            parts.push(`--docs-updated ${quoteCommandValue(docPath)}`);
+        }
+        parts.push(`--changelog-updated ${changelogUpdated ? 'true' : 'false'}`);
+    } else {
+        parts.push('--decision "NO_DOC_UPDATES"');
+        parts.push('--behavior-changed false');
+        parts.push('--changelog-updated false');
+    }
     if (requiresSensitiveScopeDocAcknowledgement(preflight)) {
         parts.push('--sensitive-scope-reviewed true');
     }
-    parts.push('--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."');
+    parts.push(docsUpdated.length > 0
+        ? '--rationale "Documentation or changelog files were changed in the current preflight; next-step records them without requiring a fresh code/test review when non-doc scope is unchanged."'
+        : '--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."');
     parts.push('--repo-root "."');
     return parts.join(' ');
 }
@@ -1813,7 +1853,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Run doc impact gate',
-                    buildDocImpactCommand(cliPrefix, taskId, preflightCommandPath, preflight)
+                    buildDocImpactCommand(cliPrefix, taskId, preflightCommandPath, preflight, repoRoot)
                 )
             ]
         });

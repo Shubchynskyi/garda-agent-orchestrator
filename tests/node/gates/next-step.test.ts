@@ -982,6 +982,36 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."'));
     });
 
+    it('suggests DOCS_UPDATED when changelog changed in the current preflight', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\n- Updated behavior notes.\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true },
+            { seedPostPreflight: false }
+        );
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts', 'CHANGELOG.md']);
+        preflight.scope_category = 'mixed';
+        preflight.changed_files = ['src/app.ts', 'CHANGELOG.md'];
+        preflight.metrics = { changed_lines_total: snapshot.changed_lines_total };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(!result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+        assert.ok(result.commands[0].command.includes('--changelog-updated true'));
+    });
+
     it('includes sensitive-scope acknowledgement in doc-impact command when required', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

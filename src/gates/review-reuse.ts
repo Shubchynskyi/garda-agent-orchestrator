@@ -18,6 +18,15 @@ export interface CodeReviewScopeFingerprint {
     docs_only: boolean;
 }
 
+export interface ReviewRelevantScopeFingerprint {
+    all_changed_files: string[];
+    review_relevant_changed_files: string[];
+    docs_only_changed_files: string[];
+    missing_review_relevant_files: string[];
+    review_scope_sha256: string | null;
+    docs_only: boolean;
+}
+
 function toRecord(value: unknown): Record<string, unknown> {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
         return value as Record<string, unknown>;
@@ -98,6 +107,41 @@ export function computeCodeReviewScopeFingerprint(
         code_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         test_only: sortedNonTestFiles.length === 0 && testChangedFiles.length === allChangedFiles.length,
         docs_only: sortedNonTestFiles.length === 0 && docsOnlyChangedFiles.length === allChangedFiles.length
+    };
+}
+
+export function computeReviewRelevantScopeFingerprint(
+    preflight: Record<string, unknown>,
+    repoRoot: string
+): ReviewRelevantScopeFingerprint {
+    const classificationConfig = getClassificationConfig(repoRoot);
+    const allChangedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+    const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
+        isDocumentationLikePath(filePath)
+        && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
+    ));
+    const docsOnlySet = new Set(docsOnlyChangedFiles);
+    const reviewRelevantFiles = allChangedFiles.filter((filePath) => !docsOnlySet.has(filePath));
+    const sortedReviewRelevantFiles = [...reviewRelevantFiles].sort();
+    const missingReviewRelevantFiles: string[] = [];
+    const fingerprintEntries = sortedReviewRelevantFiles.map((relativePath) => {
+        const absolutePath = path.resolve(repoRoot, relativePath);
+        const hash = fileSha256(absolutePath);
+        if (!hash) {
+            missingReviewRelevantFiles.push(relativePath);
+        }
+        return `${relativePath}:${hash || 'MISSING'}`;
+    });
+
+    return {
+        all_changed_files: allChangedFiles,
+        review_relevant_changed_files: sortedReviewRelevantFiles,
+        docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
+        missing_review_relevant_files: missingReviewRelevantFiles,
+        review_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
+        docs_only: sortedReviewRelevantFiles.length === 0 && docsOnlyChangedFiles.length === allChangedFiles.length
     };
 }
 

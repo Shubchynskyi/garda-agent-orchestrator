@@ -355,6 +355,7 @@ export interface ReviewReceipt {
     review_type: string;
     preflight_sha256: string | null;
     scope_sha256: string | null;
+    review_scope_sha256?: string | null;
     code_scope_sha256?: string | null;
     review_context_sha256: string | null;
     review_context_reuse_sha256?: string | null;
@@ -538,6 +539,7 @@ export function buildReviewReceipt(options: {
     reviewType: string;
     preflightSha256: string | null;
     scopeSha256: string | null;
+    reviewScopeSha256?: string | null;
     codeScopeSha256?: string | null;
     reviewContextSha256: string | null;
     reviewContextReuseSha256?: string | null;
@@ -554,6 +556,7 @@ export function buildReviewReceipt(options: {
         review_type: options.reviewType,
         preflight_sha256: options.preflightSha256,
         scope_sha256: options.scopeSha256,
+        review_scope_sha256: options.reviewScopeSha256 ?? null,
         code_scope_sha256: options.codeScopeSha256 ?? null,
         review_context_sha256: options.reviewContextSha256,
         review_context_reuse_sha256: options.reviewContextReuseSha256 ?? null,

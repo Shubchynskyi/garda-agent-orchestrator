@@ -40,6 +40,7 @@ import { getTaskModeEvidence } from '../../../gates/task-mode';
 import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
 import {
     computeCodeReviewScopeFingerprint,
+    computeReviewRelevantScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../../gates/review-reuse';
 import { taskEventAppendHasBlockingFailure } from '../../../gate-runtime/task-events';
@@ -165,7 +166,7 @@ function readCompileEvidenceSummary(repoRoot: string, taskId: string): CompileEv
     }
 }
 
-async function tryReuseCodeReviewEvidence(options: {
+async function tryReuseReviewEvidence(options: {
     repoRoot: string;
     taskId: string;
     reviewType: string;
@@ -175,11 +176,15 @@ async function tryReuseCodeReviewEvidence(options: {
     previousReviewContextReuseSha256?: string | null;
     timelineEventsSummary?: TimelineEventsSummaryResult | null;
 }): Promise<ReviewReuseResult> {
-    if (options.reviewType !== 'code') {
+    if (!['code', 'test'].includes(options.reviewType)) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
     const codeScopeFingerprint = computeCodeReviewScopeFingerprint(options.preflightPayload, options.repoRoot);
     if (codeScopeFingerprint.missing_non_test_files.length > 0) {
+        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+    }
+    const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(options.preflightPayload, options.repoRoot);
+    if (reviewScopeFingerprint.missing_review_relevant_files.length > 0) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
 
@@ -209,6 +214,7 @@ async function tryReuseCodeReviewEvidence(options: {
     const expectedContextReuseSha256 = String(
         receipt.review_context_reuse_sha256 || options.previousReviewContextReuseSha256 || ''
     ).trim().toLowerCase() || null;
+    const expectedReviewScopeSha256 = String(receipt.review_scope_sha256 || '').trim().toLowerCase() || null;
     const expectedCodeScopeSha256 = String(receipt.code_scope_sha256 || '').trim().toLowerCase() || null;
     if (receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
@@ -224,13 +230,22 @@ async function tryReuseCodeReviewEvidence(options: {
     }
     const hasCurrentCodeScope = codeScopeFingerprint.non_test_changed_files.length > 0;
     if (
-        hasCurrentCodeScope
+        options.reviewType === 'code'
+        && hasCurrentCodeScope
         && (!expectedCodeScopeSha256
             || expectedCodeScopeSha256 !== String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase())
     ) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
-
+    const hasCurrentReviewScope = reviewScopeFingerprint.review_relevant_changed_files.length > 0;
+    if (
+        options.reviewType !== 'code'
+        && hasCurrentReviewScope
+        && (!expectedReviewScopeSha256
+            || expectedReviewScopeSha256 !== String(reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase())
+    ) {
+        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+    }
     const compileEvidence = readCompileEvidenceSummary(options.repoRoot, options.taskId);
     const currentPreflightHash = String(gateHelpers.fileSha256(options.preflightPath) || '').trim().toLowerCase() || null;
     const normalizedPreflightPath = gateHelpers.normalizePath(options.preflightPath);
@@ -331,7 +346,10 @@ async function tryReuseCodeReviewEvidence(options: {
             reviewType: options.reviewType,
             preflightSha256: currentPreflightHash,
             scopeSha256: String((options.preflightPayload.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
-            codeScopeSha256: String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null,
+            reviewScopeSha256: String(reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || null,
+            codeScopeSha256: options.reviewType === 'code'
+                ? String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null
+                : null,
             reviewContextSha256: routingUpdate.contextSha256,
             reviewContextReuseSha256: String(computeReviewContextReuseHash(JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as Record<string, unknown>) || '').trim().toLowerCase() || null,
             reviewArtifactSha256: String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase() || null,
@@ -487,7 +505,7 @@ export async function runBuildReviewContextCommand(
         repoRoot
     );
     let previousReviewContextReuseSha256: string | null = null;
-    if (reviewType === 'code' && fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()) {
+    if (['code', 'test'].includes(reviewType) && fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()) {
         try {
             previousReviewContextReuseSha256 = computeReviewContextReuseHash(
                 JSON.parse(fs.readFileSync(outputPath, 'utf8')) as Record<string, unknown>
@@ -543,7 +561,7 @@ export async function runBuildReviewContextCommand(
                 skillId,
                 'review_context_artifact'
             );
-            reviewReuseResult = await tryReuseCodeReviewEvidence({
+            reviewReuseResult = await tryReuseReviewEvidence({
                 repoRoot,
                 taskId,
                 reviewType,

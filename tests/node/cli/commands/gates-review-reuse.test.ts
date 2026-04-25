@@ -28,6 +28,7 @@ import {
 } from '../../../../src/gate-runtime/review-context';
 import {
     computeCodeReviewScopeFingerprint,
+    computeReviewRelevantScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../../../src/gates/review-reuse';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
@@ -508,6 +509,7 @@ function seedReusableReviewEvidence(
         reviewType: reviewKey,
         preflightSha256: preflightHash,
         scopeSha256: String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
+        reviewScopeSha256: computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256,
         codeScopeSha256: reviewKey === 'code'
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
@@ -1158,6 +1160,173 @@ describe('cli/commands/gates – review-reuse suites', () => {
         ));
         assert.ok(recordedEvents.length >= 1);
         assert.equal((recordedEvents.at(-1)?.details as Record<string, unknown>).reused_existing_review, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('reuses prior code and test review evidence when only changelog is added after reviews', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-docs-only-code-test-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reuse code and test review evidence after changelog-only delta'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const testReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, codeReviewContextPath, 'agent:code-reviewer');
+        seedReusableReviewEvidence(repoRoot, taskId, 'test', 'TEST REVIEW PASSED', priorPreflightPath, testReviewContextPath, 'agent:test-reviewer');
+
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Documented the user-visible change.\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['src/app.ts', 'CHANGELOG.md'],
+            metrics: { changed_lines_total: 4 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: codeReviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+
+        const testBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'test',
+            depth: 2,
+            preflightPath,
+            outputPath: testReviewContextPath
+        });
+        assert.equal(testBuild.reusedReviewEvidence, true);
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const refreshedTestReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-test-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(
+            refreshedTestReceipt.review_scope_sha256,
+            computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const testRecordedEvents = events.filter((event) => (
+            event.event_type === 'REVIEW_RECORDED'
+            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
+        ));
+        assert.equal((testRecordedEvents.at(-1)?.details as Record<string, unknown>).reused_existing_review, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not reuse prior test-review evidence when a test file changes after the review', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-test-change-no-test-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Do not reuse test review evidence after test file changes'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
+            metrics: { changed_lines_total: 4 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const testReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, codeReviewContextPath, 'agent:code-reviewer');
+        seedReusableReviewEvidence(repoRoot, taskId, 'test', 'TEST REVIEW PASSED', priorPreflightPath, testReviewContextPath, 'agent:test-reviewer');
+
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works after change", () => {});\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'code',
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
+            metrics: { changed_lines_total: 4 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: codeReviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+
+        const testBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'test',
+            depth: 2,
+            preflightPath,
+            outputPath: testReviewContextPath
+        });
+        assert.equal(testBuild.reusedReviewEvidence, false);
+
+        const testContext = JSON.parse(fs.readFileSync(testReviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerRouting = testContext.reviewer_routing as Record<string, unknown>;
+        assert.equal(reviewerRouting.actual_execution_mode, null);
+        assert.equal(reviewerRouting.reviewer_session_id, null);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
