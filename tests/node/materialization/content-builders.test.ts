@@ -381,6 +381,8 @@ describe('buildProviderOrchestratorAgentContent', () => {
     it('includes exact copy-paste task-start snippets in full provider bridges', () => {
         const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'AGENTS.md', '.github/agents/orchestrator.md');
         assert.ok(result.includes('Copy-Paste Start Commands'));
+        assert.ok(result.includes('First/resume command (source checkout): `node bin/garda.js next-step "<task-id>" --repo-root "."`'));
+        assert.ok(result.includes('First/resume command (deployed workspace): `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`'));
         assert.ok(result.includes('node bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
         assert.ok(result.includes('--provider "GitHub Copilot"'));
         assert.ok(result.includes('--routed-to ".github/agents/orchestrator.md"'));
@@ -397,6 +399,8 @@ describe('buildProviderOrchestratorAgentContent', () => {
     it('includes exact copy-paste task-start snippets in compact provider bridges too', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result.includes('Copy-Paste Start Commands'));
+        assert.ok(result.includes('First/resume command (source checkout): `node bin/garda.js next-step "<task-id>" --repo-root "."`'));
+        assert.ok(result.includes('First/resume command (deployed workspace): `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`'));
         assert.ok(result.includes('--provider "Antigravity"'));
         assert.ok(result.includes('--routed-to ".antigravity/agents/orchestrator.md"'));
         assert.ok(result.includes('Required runtime identity: use `--provider "Antigravity"`'));
@@ -430,6 +434,8 @@ describe('buildSharedStartTaskWorkflowContent', () => {
     it('builds a compact checklist that routes every surface to canonical orchestration gates', () => {
         const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
         assert.ok(result.includes('# Start Task'));
+        assert.ok(result.includes('next-step "<task-id>"'));
+        assert.ok(result.includes('Static gate order below is policy context'));
         assert.ok(result.includes('gate enter-task-mode'));
         assert.ok(result.includes('--routed-to "<provider-bridge-or-entrypoint>"'));
         assert.ok(result.includes('--provider "<provider>"'));

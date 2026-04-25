@@ -321,7 +321,7 @@ function buildLifecycleGateHelpEntries(
             ], true)
         },
         'next-step': {
-            ...createGateHelpEntry('Show the deterministic next orchestrator command for a task, including effective full-suite and review policy context.', [
+            ...createGateHelpEntry('Default task-loop navigator: show the single next orchestrator command, effective full-suite config, and review policy context.', [
                 `${cliPrefix} next-step "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate next-step "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,

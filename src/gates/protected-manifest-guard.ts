@@ -28,7 +28,7 @@ interface ProtectedManifestLifecycleGuardOptions {
 }
 
 function buildRemediationSuffix(): string {
-    return 'Run setup/update/reinit to refresh the trusted lifecycle baseline, or restart the task with --orchestrator-work if it intentionally changes orchestrator control-plane files.';
+    return 'Run next-step for the task to get the exact recovery command. Refresh the trusted lifecycle baseline with setup/update/reinit only for trusted baseline drift, or restart task mode with --orchestrator-work if this task intentionally changes orchestrator control-plane files.';
 }
 
 function normalizePathList(values: unknown): string[] {

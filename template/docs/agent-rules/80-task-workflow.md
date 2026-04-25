@@ -35,6 +35,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Agent Start Contract
 - The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
+- Default executable navigator is `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`; run it before the first gate, after every suggested command, and after any gate failure.
+- Static gate order below is policy context. Agents must not start at `compile-gate`, infer default flags, or skip to review from the static list when `next-step` can inspect current task evidence.
 - Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.
 - Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.
 - That same reply must list the first mandatory gates to run before implementation.
@@ -58,6 +60,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Final user report contract is mandatory on resume too.
 
 ## Mandatory Gate Contract
+- Before running any specific gate command, run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` and execute only the single recommended command it prints.
+- After that command completes, rerun the exact same `next-step` command. This loop also handles missing preflight artifacts, stale preflight scope, protected control-plane drift, full-suite enablement, and review dependency order.
 - Task-mode entry command must pass before preflight or implementation:
   `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode`.
 - If the likely task file list is already known before task-mode entry, pass repeated `--planned-changed-file` hints to `enter-task-mode`. When those hints include protected orchestrator paths and `--orchestrator-work` is missing, the gate must stop before preflight and print a rerun command with explicit `--orchestrator-work`; it must never auto-enable the flag silently.
@@ -83,11 +87,11 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - audited no-op recorded through `node garda-agent-orchestrator/bin/garda.js gate record-no-op --task-id "<task-id>" --reason "<rationale>"`;
   - explicit `BLOCKED` state explaining why no changes were produced.
 - After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...` with the actual task-specific downstream rules that were opened.
-- Treat `classify-change -> load-rule-pack --stage "POST_PREFLIGHT" -> compile-gate` as one strict same-task chain. Do not parallelize these transitions; a newer `PREFLIGHT_CLASSIFIED` invalidates older post-preflight rule-pack or compile attempts.
-- Compile gate command must pass before `IN_REVIEW`:
+- Treat `classify-change -> load-rule-pack --stage "POST_PREFLIGHT" -> compile-gate` as one strict same-task chain. Do not parallelize these transitions; use `next-step` between them because a newer `PREFLIGHT_CLASSIFIED` invalidates older post-preflight rule-pack or compile attempts.
+- Compile gate command must pass before `IN_REVIEW`, but only run it when `next-step` reports `NextGate: compile-gate`:
   `node garda-agent-orchestrator/bin/garda.js gate compile-gate`.
 - Compile lifecycle telemetry must show `IMPLEMENTATION_STARTED` before `COMPILE_GATE_PASSED`.
-- Compile gate enforces preflight scope freshness; if scope drift is detected, rerun `classify-change` for the current scope, rerun `load-rule-pack --stage "POST_PREFLIGHT"`, and then rerun `compile-gate`.
+- Compile gate enforces preflight scope freshness; if scope drift is detected, rerun `next-step` and follow its refresh sequence instead of hand-authoring recovery flags.
 - When preflight was created from planned `--changed-file` inputs in a clean workspace before implementation, this refresh is expected once the real diff exists; treat it as normal lifecycle recovery, not as an unexpected workflow failure.
 - Compile gate validates post-preflight rule-pack evidence for the same task id and preflight artifact.
 - Compile gate invocation must pass `fail_tail_lines` from `live/config/token-economy.json` (fallback `50`) to keep failure-output budget deterministic.

@@ -14,11 +14,16 @@ Before any code changes:
 - Fresh main-agent task runs must begin with exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits and then list the first mandatory gates to run.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - Enter orchestrator mode with the canonical command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
+- Use `node bin/garda.js next-step "<task-id>" --repo-root "."` in a source checkout, or `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` in a deployed workspace, as the first command and repeat it after every suggested command.
+- Do not start by guessing `compile-gate`, `classify-change`, or default config flags. Static gate order below is policy context; `next-step` is the executable navigator.
 - Use the active profile as the default execution mode; explicit `depth=<1|2|3>` is only a one-run override.
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.
 - Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.
 
 ## Copy-Paste Start Commands
+- First/resume command (source checkout): `node bin/garda.js next-step "<task-id>" --repo-root "."`
+- First/resume command (deployed workspace): `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`
+- Use the same `next-step` command before the first gate, after every suggested command, and after any gate failure. Do not start with `compile-gate`, guess flags, or read default config templates when `next-step` can inspect task evidence.
 - Source checkout (`--provider`): `node bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --repo-root "."`
 - Source checkout (`--provider` + `--routed-to`, optional telemetry): `node bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."`
 - Source checkout (`TASK_ENTRY` rules): `node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md" --repo-root "."`
@@ -28,6 +33,7 @@ Before any code changes:
 - Required runtime identity: use `--provider "<runtime-provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned.
 
 Mandatory gate order:
+0. `next-step "<task-id>"` before the first gate and after every gate; run only the single recommended command it prints unless the user explicitly asks for diagnostics
 1. `gate enter-task-mode` with explicit runtime identity via `--provider "<provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned, and never rely on canonical SourceOfTruth fallback
 2. `gate load-rule-pack --stage TASK_ENTRY`
 3. `gate handshake-diagnostics`

@@ -6,7 +6,7 @@ IMPORTANT: The user prefers running ad-hoc commands manually. Do not execute ad-
 Exception — mandatory gates always run: `compile-gate`, `required-reviews-check`, `doc-impact-gate`, `completion-gate`, and any other gate in the mandatory sequence must execute their underlying commands (including builds, tests, or type-checks) regardless of this preference. The preference applies only to ad-hoc command execution outside the gate pipeline.
 Exception: You may run tests and iterate only when the user explicitly requests this workflow.
 Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name>`.
-When the next mandatory command is unclear, run `node garda-agent-orchestrator/bin/garda.js gate next-step --task-id "<task-id>" --repo-root "."` and follow its single recommended command instead of guessing from defaults or stale artifacts.
+Default task loop: run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure. Follow its single recommended command instead of guessing from defaults, stale artifacts, or the static gate list.
 
 ### Ad-Hoc vs Mandatory Gate Commands
 The "prefer manual commands" preference and mandatory gate execution are separate concerns:
@@ -229,17 +229,17 @@ Notes:
 - After opening baseline downstream rules, record them explicitly via `load-rule-pack --stage TASK_ENTRY`; `classify-change` fails without rule-pack evidence and timeline event `RULE_PACK_LOADED`.
 - When task-mode evidence lives at a nondefault path, pass the same `--task-mode-path` through `classify-change`, `load-rule-pack`, `compile-gate`, `restart-coherent-cycle`, and `restart-review-cycle`; mixed paths are treated as provenance drift.
 - After preflight decides the required reviews, re-run `load-rule-pack --stage POST_PREFLIGHT --preflight-path ...` with the actual downstream rule files loaded for this task.
-- For one task cycle, `classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate` is a strict sequence, not a parallelizable set. If a newer preflight is classified, rerun downstream gates from `load-rule-pack --stage POST_PREFLIGHT` against that latest preflight before compile.
+- For one task cycle, `classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate` is a strict sequence, not a parallelizable set. Use `next-step` between each transition; if a newer preflight is classified, rerun downstream gates from `load-rule-pack --stage POST_PREFLIGHT` against that latest preflight before compile.
 - `record-review-result` accepts exactly one reviewer-output source: `--review-output-path` or `--review-output-stdin`.
 - `--review-output-stdin` is not a bypass path: the gate must first persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md`, then run the same verdict, routing, receipt, and telemetry validation used for file-based ingest.
 - In a dirty workspace, prefer `--use-staged` after staging task-related tracked files.
 - `--use-staged` includes untracked files by default, so new files are classified even before `git add`.
 - Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.
 - For maximum precision, pass planned task file list via repeated `--changed-file`.
-- In a clean workspace, planned `--changed-file` preflight is only the initial scope hint before implementation. If `compile-gate` later reports scope drift after the real diff exists, treat that as expected planned-scope recovery: rerun `classify-change` for the current scope, rerun `load-rule-pack --stage POST_PREFLIGHT`, and then rerun `compile-gate`.
+- In a clean workspace, planned `--changed-file` preflight is only the initial scope hint before implementation. If `next-step` or `compile-gate` later reports scope drift after the real diff exists, treat that as expected planned-scope recovery: rerun the `next-step` command and follow its refresh sequence instead of hand-authoring recovery flags.
 - In a clean workspace, `classify-change` can auto-detect changed files from git without additional flags.
-- Compile gate is mandatory before review phase; run `node garda-agent-orchestrator/bin/garda.js gate compile-gate` and treat non-zero result as blocking.
-- Compile gate is strict: preflight scope drift blocks execution. Refresh the task scope by rerunning `classify-change`, rerunning `load-rule-pack --stage POST_PREFLIGHT`, and then rerunning `compile-gate`.
+- Compile gate is mandatory before review phase, but only run it when `next-step` reports `NextGate: compile-gate`; treat non-zero result as blocking and rerun `next-step` for recovery.
+- Compile gate is strict: preflight scope drift blocks execution. Refresh the task scope through `next-step` so `classify-change`, `load-rule-pack --stage POST_PREFLIGHT`, and `compile-gate` stay bound to the same current preflight.
 - Compile gate additionally validates explicit task-mode entry evidence from `enter-task-mode`.
 - Compile gate additionally validates post-preflight rule-pack evidence from `load-rule-pack`.
 - `required-reviews-check` additionally validates compile evidence in `runtime/task-events/<task-id>.jsonl`; without `COMPILE_GATE_PASSED` the review gate fails.
@@ -266,7 +266,7 @@ Notes:
 - Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.
 - Human-readable timeline can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-events-summary`; summary output includes `IntegrityStatus`.
 - Compact task audit summary can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>"`; it shows status, gates, changed files, evidence paths, blockers, and final closeout contract data. Use `--as-json` for structured output; on `PASS` it also materializes canonical `runtime/reviews/<task-id>-final-closeout.{json,md}` artifacts. Non-zero exit when status is not `PASS`.
-- Deterministic next-step guidance can be generated with `node garda-agent-orchestrator/bin/garda.js gate next-step --task-id "<task-id>"`; it reports the next gate command, effective `full_suite_validation` config path/value, review execution policy, missing artifacts, and review trust status. Use this before reading default config templates or synthesizing review artifacts.
+- Deterministic next-step guidance can be generated with `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`; it reports the next gate command, effective `full_suite_validation` config path/value, review execution policy, missing artifacts, and review trust status. This is the default task loop, not only a diagnostic fallback.
 
 ## Project Discovery Snapshot
 - Discovery source: git_index_and_worktree

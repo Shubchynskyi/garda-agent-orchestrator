@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made `next-step` the default task-loop navigator with exact copy-paste recovery commands for stale preflight/rule-pack/review-context cycles and explicit delegated review routing before review result ingestion
 - split task-event append results into canonical commit status and derived-index warnings so mandatory lifecycle writes no longer fail after the per-task JSONL event is already committed
 - fixed `gate human-commit --repo-root` so the gate consumes the documented repo-root option instead of forwarding it to `git commit`
 - added `gate next-step` as a deterministic lifecycle navigator that reports the next mandatory command, effective full-suite configuration, review policy, missing artifacts, and review trust state for agent task runs

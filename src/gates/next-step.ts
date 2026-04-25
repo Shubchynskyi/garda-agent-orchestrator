@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import {
     getReviewExecutionDependencies,
@@ -39,6 +40,21 @@ import {
 import {
     getWorkspaceSnapshotCached
 } from './workspace-snapshot-cache';
+import {
+    selectRulePackFiles
+} from './build-review-context';
+import {
+    getPostPreflightSequenceEvidence,
+    getRulePackEvidence,
+    getRulePackEvidenceViolations
+} from './rule-pack';
+import {
+    collectOrderedTimelineEvents,
+    type TimelineEventEntry
+} from './completion-evidence';
+import {
+    buildCoherentCycleRestartCommand
+} from './completion-reporting';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -120,6 +136,7 @@ interface ReviewArtifactState {
     artifactPath: string;
     receiptPath: string;
     contextExists: boolean;
+    contextCurrent: boolean;
     artifactExists: boolean;
     receiptExists: boolean;
     passToken: string;
@@ -138,6 +155,29 @@ interface CompileReadiness {
     ready: boolean;
     reason: string;
 }
+
+interface PreflightWorkspaceReadiness {
+    ready: boolean;
+    reason: string;
+}
+
+interface RulePackReadiness {
+    ready: boolean;
+    reason: string;
+}
+
+interface CoherentCycleReadiness {
+    ready: boolean;
+    reason: string;
+    command: string | null;
+}
+
+const COHERENT_CYCLE_BOUNDARY_EVENTS = new Set([
+    'REVIEW_GATE_PASSED',
+    'REVIEW_GATE_PASSED_WITH_OVERRIDE',
+    'COMPLETION_GATE_FAILED',
+    'COMPLETION_GATE_PASSED'
+]);
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -207,13 +247,20 @@ function resolveReviewPolicy(preflight: Record<string, unknown> | null): {
     };
 }
 
-function readReviewArtifactState(reviewsRoot: string, taskId: string, reviewType: string): ReviewArtifactState {
+function readReviewArtifactState(
+    reviewsRoot: string,
+    taskId: string,
+    reviewType: string,
+    preflightPath: string,
+    preflightSha256: string | null
+): ReviewArtifactState {
     const contextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
     const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
     const passToken = REVIEW_VERDICT_PASS_TOKENS[reviewType] || '';
     const violations: string[] = [];
     const contextExists = fileExists(contextPath);
+    let contextCurrent = false;
     const artifactExists = fileExists(artifactPath);
     const receiptExists = fileExists(receiptPath);
     let context: Record<string, unknown> | null = null;
@@ -236,6 +283,24 @@ function readReviewArtifactState(reviewsRoot: string, taskId: string, reviewType
                 ? reviewerRouting.reviewer_session_id.trim()
                 : '';
             contextReviewerIdentity = contextReviewerSessionId || null;
+            const contextPreflightPath = typeof context.preflight_path === 'string'
+                ? normalizePath(context.preflight_path)
+                : '';
+            const contextPreflightHash = typeof context.preflight_sha256 === 'string'
+                ? context.preflight_sha256.trim().toLowerCase()
+                : '';
+            const expectedPreflightPath = normalizePath(preflightPath);
+            const expectedPreflightHash = String(preflightSha256 || '').trim().toLowerCase();
+            if (
+                contextPreflightPath
+                && contextPreflightHash
+                && contextPreflightPath.toLowerCase() === expectedPreflightPath.toLowerCase()
+                && contextPreflightHash === expectedPreflightHash
+            ) {
+                contextCurrent = true;
+            } else {
+                violations.push('review context preflight binding is stale or missing');
+            }
         }
     }
 
@@ -337,6 +402,7 @@ function readReviewArtifactState(reviewsRoot: string, taskId: string, reviewType
         artifactPath,
         receiptPath,
         contextExists,
+        contextCurrent,
         artifactExists,
         receiptExists,
         passToken,
@@ -426,6 +492,54 @@ function timelineHasDelegatedReviewRoute(eventsRoot: string, taskId: string, sta
                 continue;
             }
             return true;
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return false;
+}
+
+function timelineHasDelegatedReviewRoutingAfterCompile(
+    eventsRoot: string,
+    taskId: string,
+    reviewType: string,
+    reviewerIdentity: string
+): boolean {
+    if (!reviewerIdentity.startsWith('agent:')) {
+        return false;
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return false;
+    }
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
+    if (latestCompileSequence == null) {
+        return false;
+    }
+    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (String(event.event_type || '').trim() !== 'REVIEWER_DELEGATION_ROUTED') {
+                continue;
+            }
+            const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+            const taskSequence = typeof integrity?.task_sequence === 'number'
+                ? integrity.task_sequence
+                : Number(integrity?.task_sequence);
+            if (!Number.isInteger(taskSequence) || taskSequence <= latestCompileSequence) {
+                continue;
+            }
+            const details = isPlainRecord(event.details) ? event.details : {};
+            if (
+                String(details.review_type || '').trim() === reviewType
+                && String(details.reviewer_execution_mode || '').trim() === 'delegated_subagent'
+                && String(details.reviewer_session_id || '').trim() === reviewerIdentity
+            ) {
+                return true;
+            }
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
         }
@@ -581,12 +695,272 @@ function readCompileReadiness(
     };
 }
 
+function stringSha256(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function readPreflightWorkspaceReadiness(
+    repoRoot: string,
+    preflight: Record<string, unknown>
+): PreflightWorkspaceReadiness {
+    const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
+    const expectedChangedLinesTotal = typeof metrics.changed_lines_total === 'number'
+        ? metrics.changed_lines_total
+        : Number(metrics.changed_lines_total);
+    if (!Number.isFinite(expectedChangedLinesTotal) || expectedChangedLinesTotal < 0) {
+        return {
+            ready: true,
+            reason: 'Preflight workspace freshness cannot be checked because metrics.changed_lines_total is missing.'
+        };
+    }
+
+    const detectionSource = String(preflight.detection_source || 'git_auto').trim() || 'git_auto';
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? [...new Set(preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+    const expectedChangedFilesSha256 = stringSha256(changedFiles.join('\n'));
+    const currentScope = getWorkspaceSnapshotCached(
+        repoRoot,
+        detectionSource,
+        detectionSource.toLowerCase() === 'git_staged_only'
+            ? false
+            : (typeof preflight.include_untracked === 'boolean' ? preflight.include_untracked : true),
+        changedFiles
+    );
+    const violations: string[] = [];
+    if (currentScope.changed_files_sha256 !== expectedChangedFilesSha256) {
+        violations.push('preflight changed_files differ from the current workspace snapshot');
+    }
+    if (currentScope.changed_lines_total !== expectedChangedLinesTotal) {
+        violations.push(
+            `preflight changed_lines_total=${expectedChangedLinesTotal} differs from current changed_lines_total=${currentScope.changed_lines_total}`
+        );
+    }
+
+    if (violations.length === 0) {
+        return {
+            ready: true,
+            reason: 'Preflight scope still matches the current workspace.'
+        };
+    }
+    return {
+        ready: false,
+        reason: `Preflight scope is stale before compile (${violations.join('; ')}). Refresh classify-change for the current scope first.`
+    };
+}
+
+function readPostPreflightRulePackReadiness(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    rulePackPath: string
+): RulePackReadiness {
+    const evidence = getRulePackEvidence(repoRoot, taskId, 'POST_PREFLIGHT', {
+        preflightPath,
+        artifactPath: rulePackPath
+    });
+    const sequenceEvidence = getPostPreflightSequenceEvidence(repoRoot, taskId, preflightPath, {
+        artifactPath: rulePackPath
+    });
+    const violations = [
+        ...getRulePackEvidenceViolations(evidence),
+        ...sequenceEvidence.violations
+    ];
+    if (violations.length === 0 && evidence.binding_equivalent_to_current_preflight && sequenceEvidence.binding_equivalent_to_current_preflight) {
+        return {
+            ready: true,
+            reason: 'POST_PREFLIGHT rule-pack evidence is current for the latest preflight.'
+        };
+    }
+    if (violations.length === 0) {
+        violations.push('POST_PREFLIGHT rule-pack evidence is not bound to the latest preflight.');
+    }
+    return {
+        ready: false,
+        reason: violations.join(' ')
+    };
+}
+
+function findLatestTimelineEvent(
+    events: TimelineEventEntry[],
+    predicate: (entry: TimelineEventEntry) => boolean
+): TimelineEventEntry | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const entry = events[index];
+        if (predicate(entry)) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+function getDefaultCommandsPath(repoRoot: string): string {
+    return path.resolve(repoRoot, buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/40-commands.md'));
+}
+
+function getDefaultOutputFiltersPath(repoRoot: string): string {
+    return path.resolve(repoRoot, buildBundleRelativePath(repoRoot, 'live/config/output-filters.json'));
+}
+
+function readCoherentCycleReadiness(
+    repoRoot: string,
+    eventsRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    preflightPath: string
+): CoherentCycleReadiness {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const timelineErrors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    if (timelineErrors.length > 0 || events.length === 0) {
+        return {
+            ready: true,
+            reason: 'Timeline ordering could not be checked by next-step; downstream gates will report timeline integrity.',
+            command: null
+        };
+    }
+
+    const latestPreflight = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'PREFLIGHT_CLASSIFIED'
+    );
+    if (!latestPreflight) {
+        return {
+            ready: true,
+            reason: 'No PREFLIGHT_CLASSIFIED event exists yet.',
+            command: null
+        };
+    }
+
+    const latestBoundary = findLatestTimelineEvent(
+        events,
+        (entry) => entry.sequence < latestPreflight.sequence && COHERENT_CYCLE_BOUNDARY_EVENTS.has(entry.event_type)
+    );
+    const lowerBoundExclusive = latestBoundary?.sequence ?? Number.NEGATIVE_INFINITY;
+    const latestHandshake = findLatestTimelineEvent(
+        events,
+        (entry) => (
+            entry.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED'
+            && entry.sequence > lowerBoundExclusive
+            && entry.sequence < latestPreflight.sequence
+        )
+    );
+    const latestShellSmoke = findLatestTimelineEvent(
+        events,
+        (entry) => (
+            entry.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+            && entry.sequence > lowerBoundExclusive
+            && entry.sequence < latestPreflight.sequence
+        )
+    );
+
+    const violations: string[] = [];
+    if (!latestHandshake) {
+        violations.push('HANDSHAKE_DIAGNOSTICS_RECORDED is missing before the latest PREFLIGHT_CLASSIFIED inside the latest execution cycle');
+    }
+    if (!latestShellSmoke) {
+        violations.push('SHELL_SMOKE_PREFLIGHT_RECORDED is missing before the latest PREFLIGHT_CLASSIFIED inside the latest execution cycle');
+    }
+    if (latestHandshake && latestShellSmoke && latestShellSmoke.sequence < latestHandshake.sequence) {
+        violations.push('SHELL_SMOKE_PREFLIGHT_RECORDED predates HANDSHAKE_DIAGNOSTICS_RECORDED inside the latest execution cycle');
+    }
+
+    if (violations.length === 0) {
+        return {
+            ready: true,
+            reason: 'Latest preflight has current-cycle handshake and shell-smoke evidence.',
+            command: null
+        };
+    }
+
+    const compileEvidence = safeReadJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`));
+    const commandsPath = typeof compileEvidence?.commands_path === 'string' && compileEvidence.commands_path.trim()
+        ? compileEvidence.commands_path.trim()
+        : getDefaultCommandsPath(repoRoot);
+    const outputFiltersPath = typeof compileEvidence?.output_filters_path === 'string' && compileEvidence.output_filters_path.trim()
+        ? compileEvidence.output_filters_path.trim()
+        : getDefaultOutputFiltersPath(repoRoot);
+    const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+    const cycleAnchor = latestBoundary
+        ? ` after latest ${latestBoundary.event_type} (seq ${latestBoundary.sequence})`
+        : '';
+
+    return {
+        ready: false,
+        reason: `Latest PREFLIGHT_CLASSIFIED (seq ${latestPreflight.sequence}) is not in a coherent preflight cycle${cycleAnchor}: ${violations.join('; ')}. Run restart-coherent-cycle before compile/review/completion so completion-gate does not fail on stage sequence.`,
+        command: buildCoherentCycleRestartCommand(
+            repoRoot,
+            taskId,
+            normalizePath(preflightPath),
+            taskModePath,
+            commandsPath,
+            outputFiltersPath
+        )
+    };
+}
+
 function buildCommand(label: string, command: string): NextStepCommand {
     return { label, command };
 }
 
 function buildNavigatorCommand(cliPrefix: string, taskId: string): string {
     return `${cliPrefix} next-step "${taskId}" --repo-root "."`;
+}
+
+function quoteCommandValue(value: string): string {
+    return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function getStringField(source: Record<string, unknown> | null, field: string, fallback: string): string {
+    const rawValue = source?.[field];
+    const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+    return value || fallback;
+}
+
+function getNumberField(source: Record<string, unknown> | null, field: string, fallback: string): string {
+    const value = source?.[field];
+    return Number.isInteger(value) ? String(value) : fallback;
+}
+
+function buildOrchestratorWorkRestartCommand(
+    cliPrefix: string,
+    taskId: string,
+    taskMode: Record<string, unknown> | null
+): string {
+    const parts = [
+        `${cliPrefix} gate enter-task-mode`,
+        `--task-id ${quoteCommandValue(taskId)}`,
+        `--entry-mode ${quoteCommandValue(getStringField(taskMode, 'entry_mode', 'EXPLICIT_TASK_EXECUTION'))}`,
+        `--requested-depth ${quoteCommandValue(getNumberField(taskMode, 'requested_depth', '<1|2|3>'))}`,
+        `--task-summary ${quoteCommandValue(getStringField(taskMode, 'task_summary', '<TASK.md summary>'))}`,
+        `--start-banner ${quoteCommandValue(getStringField(taskMode, 'start_banner', '<repo-owned-banner>'))}`,
+        `--provider ${quoteCommandValue(getStringField(taskMode, 'provider', '<provider>'))}`
+    ];
+    const routedTo = getStringField(taskMode, 'routed_to', '');
+    if (routedTo) {
+        parts.push(`--routed-to ${quoteCommandValue(routedTo)}`);
+    }
+    parts.push('--orchestrator-work');
+    const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
+        ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+    for (const plannedChangedFile of plannedChangedFiles) {
+        parts.push(`--planned-changed-file ${quoteCommandValue(plannedChangedFile)}`);
+    }
+    parts.push('--repo-root "."');
+    return parts.join(' ');
+}
+
+function getPreflightTriggers(preflight: Record<string, unknown> | null): Record<string, unknown> {
+    return isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
+}
+
+function preflightTouchesProtectedControlPlane(preflight: Record<string, unknown> | null): boolean {
+    const triggers = getPreflightTriggers(preflight);
+    if (triggers.protected_control_plane_changed === true) {
+        return true;
+    }
+    return Array.isArray(triggers.changed_protected_files) && triggers.changed_protected_files.length > 0;
 }
 
 function buildResult(params: {
@@ -634,17 +1008,63 @@ function buildTaskEntryRulePackCommand(repoRoot: string, cliPrefix: string, task
     ].join(' ');
 }
 
-function buildPostPreflightRulePackCommand(repoRoot: string, cliPrefix: string, taskId: string): string {
+function getEffectiveDepthForPostPreflightRules(
+    preflight: Record<string, unknown> | null,
+    taskMode: Record<string, unknown> | null
+): number {
+    const riskAwareDepth = isPlainRecord(preflight?.risk_aware_depth) ? preflight.risk_aware_depth : null;
+    const preflightDepth = typeof riskAwareDepth?.effective_depth === 'number'
+        ? riskAwareDepth.effective_depth
+        : Number(riskAwareDepth?.effective_depth);
+    if (Number.isInteger(preflightDepth) && preflightDepth >= 1) {
+        return preflightDepth;
+    }
+    const taskModeDepth = typeof taskMode?.effective_depth === 'number'
+        ? taskMode.effective_depth
+        : Number(taskMode?.effective_depth);
+    if (Number.isInteger(taskModeDepth) && taskModeDepth >= 1) {
+        return taskModeDepth;
+    }
+    return 2;
+}
+
+function getPostPreflightRuleFileNames(
+    preflight: Record<string, unknown> | null,
+    taskMode: Record<string, unknown> | null
+): string[] {
+    const fileNames = new Set<string>([
+        '00-core.md',
+        '40-commands.md',
+        '80-task-workflow.md',
+        '90-skill-catalog.md'
+    ]);
+    const requiredReviews = isPlainRecord(preflight?.required_reviews) ? preflight.required_reviews : {};
+    const effectiveDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
+    for (const [reviewType, required] of Object.entries(requiredReviews)) {
+        if (required !== true) {
+            continue;
+        }
+        for (const fileName of selectRulePackFiles(reviewType, effectiveDepth)) {
+            fileNames.add(fileName);
+        }
+    }
+    return [...fileNames].sort();
+}
+
+function buildPostPreflightRulePackCommandForFiles(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    ruleFileNames: string[]
+): string {
     return [
         `${cliPrefix} gate load-rule-pack`,
         `--task-id "${taskId}"`,
         '--stage "POST_PREFLIGHT"',
         `--preflight-path "${buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`)}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/00-core.md')}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/40-commands.md')}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/80-task-workflow.md')}"`,
-        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/90-skill-catalog.md')}"`,
-        '--loaded-rule-file "<task-specific-rule-file>"',
+        ...ruleFileNames.map((fileName) => (
+            `--loaded-rule-file "${buildBundleRelativePath(repoRoot, `live/docs/agent-rules/${fileName}`)}"`
+        )),
         '--repo-root "."'
     ].join(' ');
 }
@@ -671,6 +1091,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const rulePackPath = path.join(reviewsRoot, `${taskId}-rule-pack.json`);
     const preflight = safeReadJson(preflightPath);
     const rulePack = safeReadJson(rulePackPath);
+    const taskMode = safeReadJson(path.join(reviewsRoot, `${taskId}-task-mode.json`));
     const summary = buildTaskAuditSummary({
         taskId,
         repoRoot,
@@ -689,8 +1110,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     };
     const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
     const reviewPolicy = resolveReviewPolicy(preflight);
+    const preflightSha256 = fileExists(preflightPath) ? fileSha256(preflightPath) : null;
     const reviewStates = requiredReviewTypes.map((reviewType) => (
-        readReviewArtifactState(reviewsRoot, taskId, reviewType)
+        readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256)
     ));
     const nextReview = getNextReviewType(
         requiredReviewTypes,
@@ -806,14 +1228,93 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (resolveRulePackStage(rulePack) !== 'POST_PREFLIGHT') {
+    if (
+        preflightTouchesProtectedControlPlane(preflight)
+        && !taskMode?.orchestrator_work
+    ) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'enter-task-mode',
+            title: 'Restart task mode as orchestrator work.',
+            reason: 'The current preflight touches protected orchestrator control-plane files, but task-mode evidence does not declare --orchestrator-work.',
+            commands: [
+                buildCommand(
+                    'Restart task mode with orchestrator work',
+                    buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode)
+                )
+            ]
+        });
+    }
+
+    const preflightWorkspaceReadiness = preflight
+        ? readPreflightWorkspaceReadiness(repoRoot, preflight)
+        : { ready: false, reason: 'No current preflight exists.' };
+    if (!preflightWorkspaceReadiness.ready) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'classify-change',
+            title: 'Refresh preflight for the current workspace.',
+            reason: preflightWorkspaceReadiness.reason,
+            commands: [
+                buildCommand(
+                    'Refresh preflight',
+                    `${cliPrefix} gate classify-change --task-id "${taskId}" --task-intent "<task summary>" --output-path "${preflightCommandPath}" --repo-root "."`
+                )
+            ]
+        });
+    }
+
+    const coherentCycleReadiness = readCoherentCycleReadiness(
+        repoRoot,
+        eventsRoot,
+        reviewsRoot,
+        taskId,
+        preflightPath
+    );
+    if (!coherentCycleReadiness.ready) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'restart-coherent-cycle',
+            title: 'Restart the latest coherent task cycle.',
+            reason: coherentCycleReadiness.reason,
+            commands: [
+                buildCommand(
+                    'Restart coherent cycle',
+                    coherentCycleReadiness.command || navigatorCommand
+                )
+            ]
+        });
+    }
+
+    const postPreflightRulePackReadiness = readPostPreflightRulePackReadiness(
+        repoRoot,
+        taskId,
+        preflightPath,
+        rulePackPath
+    );
+    if (resolveRulePackStage(rulePack) !== 'POST_PREFLIGHT' || !postPreflightRulePackReadiness.ready) {
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
             nextGate: 'load-rule-pack',
             title: 'Record POST_PREFLIGHT rule files.',
-            reason: 'Preflight exists; downstream rule files and risk-specific packs must be recorded for the current scope.',
-            commands: [buildCommand('Load POST_PREFLIGHT rules', buildPostPreflightRulePackCommand(repoRoot, cliPrefix, taskId))]
+            reason: postPreflightRulePackReadiness.ready
+                ? 'Preflight exists; downstream rule files and risk-specific packs must be recorded for the current scope.'
+                : postPreflightRulePackReadiness.reason,
+            commands: [
+                buildCommand(
+                    'Load POST_PREFLIGHT rules',
+                    buildPostPreflightRulePackCommandForFiles(
+                        repoRoot,
+                        cliPrefix,
+                        taskId,
+                        getPostPreflightRuleFileNames(preflight, taskMode)
+                    )
+                )
+            ]
         });
     }
 
@@ -855,17 +1356,39 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (!state || !state.contextExists) {
+        if (!state || !state.contextExists || !state.contextCurrent) {
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
                 nextGate: 'build-review-context',
                 title: `Prepare '${reviewType}' review context.`,
-                reason: `Required review '${reviewType}' has no canonical review-context artifact.`,
+                reason: !state || !state.contextExists
+                    ? `Required review '${reviewType}' has no canonical review-context artifact.`
+                    : `Required review '${reviewType}' review-context artifact is stale for the current preflight.`,
                 commands: [
                     buildCommand(
                         'Build review context',
-                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "<1|2|3>" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${getEffectiveDepthForPostPreflightRules(preflight, taskMode)}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                    )
+                ]
+            });
+        }
+        const contextReviewerIdentity = state.contextReviewerIdentity || '';
+        if (
+            !contextReviewerIdentity.startsWith('agent:')
+            || !timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot, taskId, reviewType, contextReviewerIdentity)
+        ) {
+            const reviewerIdentity = contextReviewerIdentity || '<agent:reviewer-session-id-from-delegated-agent>';
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'record-review-routing',
+                title: `Record '${reviewType}' delegated reviewer routing.`,
+                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded.`,
+                commands: [
+                    buildCommand(
+                        'Record delegated review routing',
+                        `${cliPrefix} gate record-review-routing --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
                     )
                 ]
             });
@@ -976,6 +1499,7 @@ export function formatNextStepText(result: NextStepResult): string {
         'GARDA_NEXT_STEP',
         `Task: ${result.task_id}`,
         `Navigator: ${result.navigator_command}`,
+        'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.',
         `Status: ${result.status}`,
         `NextGate: ${result.next_gate || 'none'}`,
         `Title: ${result.title}`,

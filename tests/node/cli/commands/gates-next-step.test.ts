@@ -125,6 +125,7 @@ describe('cli/commands/gates next-step', () => {
             assert.equal(result.errors.length, 0);
             assert.ok(result.stdout.includes('GARDA_NEXT_STEP'));
             assert.ok(result.stdout.includes('Navigator:'));
+            assert.ok(result.stdout.includes('Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.'));
             assert.ok(result.stdout.includes('NextGate: enter-task-mode'));
             assert.ok(result.stdout.includes('FullSuite:'));
             assert.ok(result.stdout.includes('Commands:'));

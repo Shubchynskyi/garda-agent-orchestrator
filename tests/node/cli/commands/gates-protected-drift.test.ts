@@ -628,6 +628,7 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest was already drifted before task start')));
+        assert.ok(result.outputLines.some((line) => line.includes('next-step')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -684,6 +685,7 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile gate')));
         assert.ok(result.outputLines.some((line) => line.includes('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md')));
+        assert.ok(result.outputLines.some((line) => line.includes('next-step')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

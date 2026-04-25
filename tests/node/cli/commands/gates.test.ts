@@ -98,6 +98,10 @@ function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
 }
 
+function assertCompileFailureIncludesNextStepHint(outputLines: string[]): void {
+    assert.ok(outputLines.some((line) => line.includes('NextStep: run') && line.includes('next-step')));
+}
+
 function getSourceCheckoutNestedCwd(): string {
     return path.join(path.resolve('.'), 'src', 'cli');
 }
@@ -920,6 +924,7 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some(line => line.includes('Task-mode entry evidence missing')));
+        assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -968,6 +973,7 @@ describe('cli/commands/gates', () => {
         assert.ok(result.outputLines.some((line) => line.includes('Preflight scope drift detected.')));
         assert.ok(result.outputLines.some((line) => line.includes('planned --changed-file inputs in a clean workspace')));
         assert.ok(result.outputLines.some((line) => line.includes('load-rule-pack --stage POST_PREFLIGHT')));
+        assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1381,6 +1387,7 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
         assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
+        assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1606,6 +1613,7 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
         assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
+        assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

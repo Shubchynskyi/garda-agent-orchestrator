@@ -109,7 +109,7 @@ Notes:
 
 ### `garda next-step`
 
-Deterministic task navigator. Use this same command whenever the next mandatory gate is unclear.
+Deterministic task navigator. Use this as the default task loop: run it before the first gate, after every suggested command, and after any gate failure.
 
 ```text
 garda next-step "T-137" --target-root "."
@@ -121,7 +121,7 @@ garda gate next-step --preflight-path "garda-agent-orchestrator/runtime/reviews/
 Notes:
 - `next-step` reads current task events and review artifacts, then prints the current status, effective full-suite config, review policy, missing artifacts, and the single next command to run.
 - The command accepts either a positional task id (`T-137`), `--task-id`, or a `--preflight-path` that ends in `<task-id>-preflight.json`.
-- After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing the next gate flags.
+- After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
 
 ### `garda debug env`
 
@@ -450,7 +450,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
 | Human commit | `garda gate human-commit --message "<message>"` |
 
-Use `garda next-step "T-001"` when the next mandatory gate is unclear; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+Use `garda next-step "T-001"` as the task-loop command before and after gates; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
 

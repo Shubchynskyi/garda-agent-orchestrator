@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { resolveBundleNameForTarget } from '../../../core/constants';
 import { parseTaskMdTableRow } from '../../../core/task-md-table';
 import {
     EXIT_GATE_FAILURE
@@ -160,6 +161,22 @@ export interface CompileGateCommandOptions {
     emitMetrics?: unknown;
     allowPlanDrift?: unknown;
     allowPlanDriftReason?: string;
+}
+
+function buildNextStepRecoveryCommand(repoRoot: string, taskId: string): string {
+    const resolvedRepoRoot = path.resolve(repoRoot || '.');
+    const cliPrefix = fs.existsSync(path.join(resolvedRepoRoot, 'bin', 'garda.js'))
+        ? 'node bin/garda.js'
+        : `node ${resolveBundleNameForTarget(resolvedRepoRoot)}/bin/garda.js`;
+    return `${cliPrefix} next-step "${taskId}" --repo-root "."`;
+}
+
+function appendNextStepRecoveryHint(message: string, repoRoot: string, taskId: string): string {
+    const trimmed = String(message || '').trim();
+    if (!trimmed || !taskId || /\bnext-step\b/.test(trimmed)) {
+        return trimmed;
+    }
+    return `${trimmed} NextStep: run ${buildNextStepRecoveryCommand(repoRoot, taskId)} and follow its single recommended command before retrying compile-gate.`;
 }
 
 function getClassificationRenameCount(repoRoot: string, detectionSource: string, changedFiles: string[]): number {
@@ -1045,6 +1062,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (exitCode === 0) {
             exitCode = EXIT_GATE_FAILURE;
         }
+    }
+    if (exceptionMessage) {
+        exceptionMessage = appendNextStepRecoveryHint(exceptionMessage, repoRoot, resolvedTaskId);
     }
 
     const durationMs = Math.max(0, Date.now() - startedAt);
