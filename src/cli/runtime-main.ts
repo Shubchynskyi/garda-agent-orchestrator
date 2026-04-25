@@ -7,7 +7,8 @@ import {
 } from './commands/cli-helpers';
 import {
     getCommandName,
-    getPackageRoot
+    getPackageRoot,
+    ValidationFailureError
 } from './commands/shared-command-utils';
 import { installSignalHandlers } from './signal-handler';
 import {
@@ -70,7 +71,7 @@ export async function runCliRuntimeMainWithHandling(
     try {
         await runCliRuntimeMain(argv, packageRoot);
     } catch (error: unknown) {
-        if (error instanceof Error && error.name === 'ValidationFailureError') {
+        if (error instanceof ValidationFailureError) {
             console.error(getFailureMarker(resolvedCommand));
             console.error(error.message);
             process.exitCode = EXIT_VALIDATION_FAILURE;
