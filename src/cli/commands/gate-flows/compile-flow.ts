@@ -319,7 +319,7 @@ function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
     taskId: string;
     taskModeEvidence: ReturnType<typeof getTaskModeEvidence>;
     taskSummary: string | null;
-    changedProtectedFiles: string[];
+    changedFiles: string[];
 }): string {
     const cliPrefix = gateHelpers.isOrchestratorSourceCheckout(params.repoRoot)
         ? getSourceCliCommand()
@@ -350,8 +350,8 @@ function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
             plannedFiles.add(normalized);
         }
     }
-    for (const changedProtectedFile of params.changedProtectedFiles) {
-        const normalized = gateHelpers.normalizePath(changedProtectedFile);
+    for (const changedFile of params.changedFiles) {
+        const normalized = gateHelpers.normalizePath(changedFile);
         if (normalized) {
             plannedFiles.add(normalized);
         }
@@ -505,7 +505,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     taskId: resolvedTaskId,
                     taskModeEvidence,
                     taskSummary: currentTaskSummary,
-                    changedProtectedFiles
+                    changedFiles: workspaceSnapshot.changed_files
                 })}`
             );
         }

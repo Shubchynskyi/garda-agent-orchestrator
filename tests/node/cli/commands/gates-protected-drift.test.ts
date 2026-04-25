@@ -591,6 +591,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-preflight-protected';
         const protectedFile = 'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md';
+        const nonProtectedFile = 'src/app.ts';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
@@ -611,7 +612,7 @@ describe('cli/commands/gates', () => {
                 repoRoot,
                 taskId,
                 taskIntent: 'Update protected orchestration rules',
-                changedFiles: [protectedFile],
+                changedFiles: [protectedFile, nonProtectedFile],
                 outputPath: preflightPath,
                 emitMetrics: false
             });
@@ -624,6 +625,7 @@ describe('cli/commands/gates', () => {
         assert.ok(error.message.includes(protectedFile));
         assert.ok(error.message.includes('Suggested command:'));
         assert.ok(error.message.includes(`--planned-changed-file "${protectedFile}"`));
+        assert.ok(error.message.includes(`--planned-changed-file "${nonProtectedFile}"`));
         assert.equal(fs.existsSync(preflightPath), false);
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
