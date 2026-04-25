@@ -104,6 +104,143 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.db, true);
         });
 
+        it('does not trigger db review from misleading migration wording without database evidence', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-no-db-scope-'));
+            fs.mkdirSync(path.join(repoRoot, 'src', 'lifecycle'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'no-db-project' }), 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'lifecycle', 'contract-migrations.ts'), 'export const migrateContracts = true;\n', 'utf8');
+
+            try {
+                const result = classifyChange({
+                    normalizedFiles: ['src/lifecycle/contract-migrations.ts'],
+                    repoRoot,
+                    taskIntent: 'Update contract migration wording',
+                    changedLinesTotal: 12,
+                    additionsTotal: 8,
+                    deletionsTotal: 4,
+                    renameCount: 0,
+                    detectionSource: 'git_auto',
+                    classificationConfig: getClassificationConfig(repoRoot),
+                    reviewCapabilities: defaultCapabilities
+                });
+
+                assert.equal(result.triggers.db, false);
+                assert.equal(result.required_reviews.db, false);
+                assert.deepEqual((result.triggers as Record<string, unknown>).db_strong_changed_files, []);
+                assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, ['src/lifecycle/contract-migrations.ts']);
+                assert.deepEqual((result.triggers as Record<string, unknown>).db_project_evidence, []);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('triggers db review for weak migration wording when the project has database evidence', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-db-scope-'));
+            fs.mkdirSync(path.join(repoRoot, 'src', 'lifecycle'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'prisma'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'db-project' }), 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'prisma', 'schema.prisma'), 'datasource db { provider = "postgresql" url = env("DATABASE_URL") }\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'lifecycle', 'contract-migrations.ts'), 'export const migrateContracts = true;\n', 'utf8');
+
+            try {
+                const result = classifyChange({
+                    normalizedFiles: ['src/lifecycle/contract-migrations.ts'],
+                    repoRoot,
+                    taskIntent: 'Update contract migration code in a database-backed project',
+                    changedLinesTotal: 12,
+                    additionsTotal: 8,
+                    deletionsTotal: 4,
+                    renameCount: 0,
+                    detectionSource: 'git_auto',
+                    classificationConfig: getClassificationConfig(repoRoot),
+                    reviewCapabilities: defaultCapabilities
+                });
+
+                assert.equal(result.triggers.db, true);
+                assert.equal(result.required_reviews.db, true);
+                assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, ['src/lifecycle/contract-migrations.ts']);
+                assert.ok(((result.triggers as Record<string, unknown>).db_project_evidence as string[]).includes('prisma/schema.prisma'));
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('detects database evidence from the changed file package scope in monorepos', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-monorepo-db-scope-'));
+            fs.mkdirSync(path.join(repoRoot, 'packages', 'api', 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'root-without-db' }), 'utf8');
+            fs.writeFileSync(
+                path.join(repoRoot, 'packages', 'api', 'package.json'),
+                JSON.stringify({ name: 'api', dependencies: { pg: '^8.0.0' } }),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(repoRoot, 'packages', 'api', 'src', 'UserRepository.ts'), 'export const repository = true;\n', 'utf8');
+
+            try {
+                const result = classifyChange({
+                    normalizedFiles: ['packages/api/src/UserRepository.ts'],
+                    repoRoot,
+                    taskIntent: 'Update repository behavior in a database-backed package',
+                    changedLinesTotal: 12,
+                    additionsTotal: 8,
+                    deletionsTotal: 4,
+                    renameCount: 0,
+                    detectionSource: 'git_auto',
+                    classificationConfig: getClassificationConfig(repoRoot),
+                    reviewCapabilities: defaultCapabilities
+                });
+
+                assert.equal(result.triggers.db, true);
+                assert.equal(result.required_reviews.db, true);
+                assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, ['packages/api/src/UserRepository.ts']);
+                assert.ok(((result.triggers as Record<string, unknown>).db_project_evidence as string[]).includes('packages/api/package:pg'));
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('keeps custom db trigger patterns authoritative as strong changed-scope signals', () => {
+            const result = classifyChange({
+                normalizedFiles: ['src/lifecycle/contract-migrations.ts'],
+                taskIntent: 'Update a project-specific DB contract migration',
+                changedLinesTotal: 12,
+                additionsTotal: 8,
+                deletionsTotal: 4,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig({
+                    db_trigger_regexes: ['contract-migrations\\.ts$']
+                }),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.triggers.db, true);
+            assert.equal(result.required_reviews.db, true);
+            assert.deepEqual((result.triggers as Record<string, unknown>).db_strong_changed_files, ['src/lifecycle/contract-migrations.ts']);
+            assert.deepEqual((result.triggers as Record<string, unknown>).db_project_evidence, []);
+        });
+
+        it('does not force hardcoded strong db paths when configured db triggers are narrowed', () => {
+            const result = classifyChange({
+                normalizedFiles: ['src/schema/generated.ts', 'migrations/001.sql'],
+                taskIntent: 'Update non-database schema artifacts in a project with narrowed DB triggers',
+                changedLinesTotal: 12,
+                additionsTotal: 8,
+                deletionsTotal: 4,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig({
+                    db_trigger_regexes: []
+                }),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.triggers.db, false);
+            assert.equal(result.required_reviews.db, false);
+            assert.deepEqual((result.triggers as Record<string, unknown>).db_strong_changed_files, []);
+            assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, []);
+        });
+
         it('triggers security review for auth files', () => {
             const result = classifyChange({
                 normalizedFiles: ['src/auth/JwtProvider.ts'],

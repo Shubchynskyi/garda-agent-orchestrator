@@ -308,6 +308,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
     const result: ClassificationResult & { task_id?: string } = classifyChange({
         normalizedFiles: workspaceSnapshot.changed_files,
+        repoRoot,
         taskIntent: String(options.taskIntent || ''),
         fastPathMaxFiles: parseIntOption(options.fastPathMaxFiles, 2, 1),
         fastPathMaxChangedLines: parseIntOption(options.fastPathMaxChangedLines, 40, 1),
