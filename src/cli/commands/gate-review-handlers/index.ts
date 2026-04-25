@@ -9,6 +9,9 @@ import {
     restoreReviewerRoutingMetadata
 } from '../../../gate-runtime/review-context';
 import {
+    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
+} from '../../../gate-runtime/reviewer-session-contract';
+import {
     assertValidTaskId,
     taskEventAppendHasBlockingFailure
 } from '../../../gate-runtime/task-events';
@@ -1388,6 +1391,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             console.log(`ReviewerFallbackReason: ${reviewerFallbackReason}`);
         }
         console.log(`VerdictToken: ${verdictToken}`);
+        console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
     } catch (error: unknown) {
         try {
             restoreReviewerRoutingMetadata(contextPath, previousRoutingUpdate);
@@ -1458,4 +1462,5 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         requireStrictBindingMetadata: !!options.reviewContextPath
     });
     console.log(`REVIEW_RECORDED: ${reviewType} (Receipt: ${normalizePath(receiptPath)})`);
+    console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
 }

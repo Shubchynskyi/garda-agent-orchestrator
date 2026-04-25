@@ -215,6 +215,22 @@ describe('cli/commands/gates', () => {
             {
                 argv: ['gate', 'full-suite-validation', '--help'],
                 expectedSnippets: ['gate full-suite-validation', '--task-id "<task-id>"', '--preflight-path']
+            },
+            {
+                argv: ['gate', 'record-review-result', '--help'],
+                expectedSnippets: [
+                    'gate record-review-result',
+                    'close or release the delegated reviewer after the receipt persists',
+                    '--reviewer-execution-mode "delegated_subagent"'
+                ]
+            },
+            {
+                argv: ['gate', 'record-review-receipt', '--help'],
+                expectedSnippets: [
+                    'gate record-review-receipt',
+                    'close or release the delegated reviewer after the receipt persists',
+                    '--reviewer-execution-mode "delegated_subagent"'
+                ]
             }
         ];
 
@@ -2541,6 +2557,8 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes('ReviewOutputMode: path')));
         assert.ok(capturedLogs.some((line) => line.includes('VerdictToken: REVIEW PASSED')));
         assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: exact')));
+        assert.ok(capturedLogs.some((line) => line.includes('ReviewerCleanup: After the review receipt is persisted')));
+        assert.ok(capturedLogs.some((line) => line.includes('close or release the reviewer sub-agent session')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -4695,10 +4713,16 @@ describe('cli/commands/gates', () => {
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
+        const originalLog = console.log;
+        const capturedLogs: string[] = [];
         process.exitCode = 0;
         let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
+            console.log = (...args: unknown[]) => {
+                capturedLogs.push(args.map(String).join(' '));
+                originalLog(...args);
+            };
             await runCliMainWithHandling([
                 'gate',
                 'record-review-receipt',
@@ -4711,6 +4735,7 @@ describe('cli/commands/gates', () => {
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
+            console.log = originalLog;
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
@@ -4718,6 +4743,7 @@ describe('cli/commands/gates', () => {
         assert.equal(observedExitCode, 0);
         assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), true);
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), true);
+        assert.ok(capturedLogs.some((line) => line.includes('ReviewerCleanup: After the review receipt is persisted')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -6429,6 +6455,12 @@ describe('cli/commands/gates', () => {
             assert.equal(reviewerRouting.canonical_source_of_truth, 'Codex');
             assert.equal(reviewerRouting.execution_provider, 'Antigravity');
             assert.equal(reviewerRouting.source_of_truth, 'Antigravity');
+            assert.equal(reviewerRouting.fresh_context_required, true);
+            assert.equal(reviewerRouting.reviewer_session_reuse_forbidden, true);
+            assert.equal(reviewerRouting.cleanup_required_after_receipt, true);
+            assert.ok(String(reviewerRouting.fresh_context_instruction || '').includes('new clean-context delegated reviewer'));
+            assert.ok(String(reviewerRouting.reviewer_session_reuse_note || '').includes('not valid fresh-context launch evidence'));
+            assert.ok(String(reviewerRouting.cleanup_instruction || '').includes('close or release the reviewer sub-agent session'));
 
             fs.writeFileSync(codeReviewOutputPath, [
                 '# Review',

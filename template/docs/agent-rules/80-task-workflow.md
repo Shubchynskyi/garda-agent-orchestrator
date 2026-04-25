@@ -165,6 +165,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Reviewer Independence
 - Mandatory reviews must be spawned as fresh-context sub-agents on every provider. The implementation agent must not satisfy a required review in-place.
+- Reusing a prior review artifact or receipt is valid only through explicit current-cycle reuse evidence. Reusing the same reviewer session for a new mandatory review is not valid fresh-context launch evidence.
+- After the review receipt is persisted by `record-review-result` or `record-review-receipt`, close or release the reviewer sub-agent session.
 - Provider launch contract:
   - Codex: use sub-agents with isolated review context.
   - Cursor: use delegated reviewer sub-agents with isolated context.

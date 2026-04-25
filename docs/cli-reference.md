@@ -124,6 +124,7 @@ Notes:
 - Before the first preflight, `next-step` reuses task-mode `planned_changed_files` to print concrete `classify-change --changed-file` arguments; agents should not invent placeholder paths.
 - After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
 - If preflight scope touches protected orchestrator control-plane files without `--orchestrator-work`, restart task mode with the exact command printed by `next-step` or by the failed preflight gate before continuing.
+- For mandatory reviews, `next-step`, rule packs, orchestration skills, review contexts, and provider bridges expect a newly spawned clean-context reviewer for the current review context; do not reuse an existing reviewer session, and close or release the reviewer sub-agent after `record-review-result` or `record-review-receipt` persists the receipt.
 
 ### `garda debug env`
 
@@ -465,6 +466,7 @@ Task-start identity and preflight notes:
 Reviewer staging note:
 - Keep transient reviewer source files under `.review-temp/<task-id>/<review-type>/review-output.md` when using `record-review-result --review-output-path`.
 - If `--review-output-path` points into `.review-temp`, the path must encode the current task id so Garda can attribute and clean it safely.
+- `build-review-context` records the fresh-context reviewer contract in `reviewer_routing`: required reviews need a new delegated reviewer session, not a reused long-lived reviewer agent. `record-review-result` prints a reviewer cleanup reminder after receipt persistence.
 - Garda now cleans current-task `.review-temp` artifacts deterministically after successful review recording, removes same-task leftovers on terminal `TASK_DONE` or `TASK_BLOCKED`, sweeps aged task-attributable staging files when they no longer belong to active `IN_PROGRESS` or `IN_REVIEW` tasks, and retains stale unattributed paths instead of deleting them by guesswork.
 
 Zero-diff task contract:

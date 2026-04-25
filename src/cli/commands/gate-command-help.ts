@@ -260,7 +260,7 @@ function buildReviewGateHelpEntries(
         },
         'record-review-result': {
             ...createSingleUsageEntry(
-                'Materialize reviewer output into canonical artifacts, receipts, and routing telemetry.',
+                'Materialize reviewer output into canonical artifacts, receipts, and routing telemetry; close or release the delegated reviewer after the receipt persists.',
                 `${cliPrefix} gate record-review-result --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-output-path ".review-temp/${TASK_ID_PLACEHOLDER}/<review-type>/review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
                 true
             )
@@ -274,7 +274,7 @@ function buildReviewGateHelpEntries(
         },
         'record-review-receipt': {
             ...createSingleUsageEntry(
-                'Record a review receipt when verdict capture and routing were completed externally.',
+                'Record a review receipt when verdict capture and routing were completed externally; close or release the delegated reviewer after the receipt persists.',
                 `${cliPrefix} gate record-review-receipt --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
                 true
             )

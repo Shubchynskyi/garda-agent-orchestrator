@@ -18,6 +18,11 @@ import {
     buildSharedStartTaskWorkflowContent,
     buildGitHubSkillBridgeAgentContent
 } from '../../../src/materialization/content-builders';
+import {
+    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
+    REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+    REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
+} from '../../../src/gate-runtime/reviewer-session-contract';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -328,6 +333,26 @@ describe('cross-provider-router-matrix: provider orchestrator bridges', () => {
             assert.ok(
                 content.includes('cannot satisfy a fresh mandatory review cycle'),
                 `${profile.providerLabel} missing delegated-only receipt durability wording`
+            );
+        }
+    });
+
+    it('all provider bridges pin fresh reviewer launch and cleanup wording', () => {
+        for (const profile of PROVIDER_BRIDGE_PROFILES) {
+            const content = buildProviderOrchestratorAgentContent(
+                profile.providerLabel, 'CLAUDE.md', profile.orchestratorRelativePath
+            );
+            assert.ok(
+                content.includes(REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION),
+                `${profile.providerLabel} missing fresh reviewer launch instruction`
+            );
+            assert.ok(
+                content.includes(REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION),
+                `${profile.providerLabel} missing reviewer session reuse boundary`
+            );
+            assert.ok(
+                content.includes(REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION),
+                `${profile.providerLabel} missing reviewer cleanup instruction`
             );
         }
     });

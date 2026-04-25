@@ -32,6 +32,11 @@ import {
     syncManagedGitignoreBlockInContent,
     syncManagedBlockInContent
 } from '../../../src/materialization/content-builders';
+import {
+    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
+    REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+    REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
+} from '../../../src/gate-runtime/reviewer-session-contract';
 
 const TASK_ENTRY_RULE_FILE_SNIPPETS = Object.freeze([
     '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"',
@@ -246,6 +251,18 @@ ${MANAGED_END}`;
         assert.ok(!result.includes('- `garda-agent-orchestrator/live/docs/agent-rules/00-core.md`'));
     });
 
+    it('includes reviewer fresh-context and cleanup rules in canonical entrypoints', () => {
+        const templateClaudeContent = `${MANAGED_START}
+# CLAUDE.md
+- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
+- After the review receipt is persisted by \`record-review-result\` or \`record-review-receipt\`, close or release the reviewer sub-agent session.
+${MANAGED_END}`;
+        const result = buildCanonicalManagedBlock('AGENTS.md', templateClaudeContent);
+        assert.ok(result.includes('Mandatory required reviewer launches must spawn a new clean-context delegated reviewer'));
+        assert.ok(result.includes('do not reuse an existing reviewer session'));
+        assert.ok(result.includes('close or release the reviewer sub-agent session'));
+    });
+
     it('throws for missing managed block', () => {
         assert.throws(
             () => buildCanonicalManagedBlock('AGENTS.md', 'no managed block'),
@@ -336,11 +353,25 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(!result!.includes('same_agent_fallback'));
     });
 
+    it('pins fresh reviewer launch and cleanup contract in full provider bridges', () => {
+        const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'CLAUDE.md', '.github/agents/orchestrator.md');
+        assert.ok(result.includes(REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION));
+        assert.ok(result.includes(REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION));
+        assert.ok(result.includes(REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION));
+    });
+
     it('keeps legacy same_agent_fallback wording out of compact provider bridges too', () => {
         const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
         assert.ok(result.includes('delegated_subagent'));
         assert.ok(result.includes('stale fallback metadata cannot satisfy a fresh cycle'));
         assert.ok(!result.includes('same_agent_fallback'));
+    });
+
+    it('pins fresh reviewer launch and cleanup contract in compact provider bridges', () => {
+        const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result.includes(REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION));
+        assert.ok(result.includes(REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION));
+        assert.ok(result.includes(REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION));
     });
 
     it('builds a compact Antigravity router instead of a full duplicate workflow', () => {
@@ -464,6 +495,13 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('build:node-foundation'));
     });
 
+    it('includes fresh reviewer launch and cleanup blockers in hard stops', () => {
+        const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
+        assert.ok(result.includes(REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION));
+        assert.ok(result.includes(REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION));
+        assert.ok(result.includes(REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION));
+    });
+
     it('includes exact copy-paste task-start snippets for provider and routed task entry', () => {
         const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
         assert.ok(result.includes('Copy-Paste Start Commands'));
@@ -492,6 +530,16 @@ describe('buildGitHubSkillBridgeAgentContent', () => {
         assert.ok(result!.includes('Code Review Bridge'));
         assert.ok(result!.includes('Skill Bridge Contract'));
         assert.ok(result!.includes('required_reviews.code=true'));
+    });
+
+    it('pins fresh reviewer launch and cleanup contract in GitHub skill bridges', () => {
+        const result = buildGitHubSkillBridgeAgentContent(
+            'Code Review Bridge', 'CLAUDE.md',
+            'garda-agent-orchestrator/live/skills/code-review/SKILL.md',
+            'required_reviews.code=true', 'always-on'
+        );
+        assert.ok(result.includes(REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION));
+        assert.ok(result.includes(REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION));
     });
 
     it('includes compact-command protocol reference', () => {

@@ -9,6 +9,11 @@ import {
 } from '../core/review-execution-policy';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
+    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
+    REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+    REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
+} from '../gate-runtime/reviewer-session-contract';
+import {
     buildTaskAuditSummary,
     type TaskAuditSummaryResult
 } from './task-audit-summary';
@@ -1425,10 +1430,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 status: 'BLOCKED',
                 nextGate: 'record-review-routing',
                 title: `Record '${reviewType}' delegated reviewer routing.`,
-                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded.`,
+                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}`,
                 commands: [
                     buildCommand(
-                        'Record delegated review routing',
+                        'Record fresh delegated review routing',
                         `${cliPrefix} gate record-review-routing --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
                     )
                 ]
@@ -1445,10 +1450,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 status: 'BLOCKED',
                 nextGate: 'record-review-result',
                 title: `Record '${reviewType}' review result from a delegated reviewer.`,
-                reason: `Required review '${reviewType}' needs a valid delegated artifact and receipt (${stateViolations}). Expected PASS token: ${state.passToken || '<review-pass-token>'}.`,
+                reason: `Required review '${reviewType}' needs a valid delegated artifact and receipt (${stateViolations}). Expected PASS token: ${state.passToken || '<review-pass-token>'}. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`,
                 commands: [
                     buildCommand(
-                        'Record delegated review output',
+                        'Record delegated review output, then close reviewer',
                         `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path ".review-temp/${taskId}/${reviewType}/review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
                     )
                 ]

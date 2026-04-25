@@ -609,6 +609,10 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'record-review-routing');
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('current REVIEWER_DELEGATION_ROUTED telemetry'));
+        assert.ok(result.reason.includes('new clean-context delegated reviewer'));
+        assert.ok(result.reason.includes('do not reuse an existing reviewer session'));
+        assert.ok(result.reason.includes('fork_context=false'));
+        assert.equal(result.commands[0].label, 'Record fresh delegated review routing');
     });
 
     it('uses the prepared review context identity when suggesting record-review-result', () => {
@@ -627,6 +631,8 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'record-review-result');
+        assert.ok(result.reason.includes('close or release the reviewer sub-agent session'));
+        assert.equal(result.commands[0].label, 'Record delegated review output, then close reviewer');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
     });
 

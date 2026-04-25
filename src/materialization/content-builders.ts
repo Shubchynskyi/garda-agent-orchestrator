@@ -12,6 +12,11 @@ import {
     getRequiredProviderEntryByBridgePath,
     getRequiredReviewSkillBridgeHostEntry
 } from '../core/provider-registry';
+import {
+    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
+    REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+    REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
+} from '../gate-runtime/reviewer-session-contract';
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
 import { getNodeBundleCliCommand, getNodeGateCommandPrefix, getNodeHumanCommitCommand } from './command-constants';
 
@@ -477,7 +482,7 @@ export function buildRedirectManagedBlock(
         'Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.',
         'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
         `After opening downstream workflow files, record them via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/garda.js gate load-rule-pack ...\` inside a materialized/deployed workspace.`,
-        `Before each required reviewer invocation, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/garda.js gate build-review-context ...\` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step. Downstream \`test\` review must wait for current-cycle PASS evidence from every required upstream non-\`test\` review.`,
+        `Before each required reviewer invocation, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/garda.js gate build-review-context ...\` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} Downstream \`test\` review must wait for current-cycle PASS evidence from every required upstream non-\`test\` review.`,
         `Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.`,
         providerBridgeSection,
         MANAGED_END
@@ -556,15 +561,18 @@ Required:
 6. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
 7. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 8. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Garda.
-9. Mandatory reviews on this provider must preserve \`delegated_subagent\` reviewer execution; same-agent self-review is invalid and stale fallback metadata cannot satisfy a fresh cycle.
-10. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
-11. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
-12. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
-13. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
-14. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
-15. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
-16. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
-17. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
+9. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
+10. Mandatory reviews on this provider must preserve \`delegated_subagent\` reviewer execution; same-agent self-review is invalid and stale fallback metadata cannot satisfy a fresh cycle.
+11. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
+12. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
+13. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
+14. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
+15. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
+16. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+17. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
+18. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+19. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
+20. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
 
 ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 
@@ -615,7 +623,7 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 12. Run preflight classification before implementation when requested by \`next-step\`: via \`node bin/garda.js gate classify-change ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} classify-change ...\` inside a materialized/deployed workspace.
 13. After preflight, refresh downstream rule-pack evidence when requested by \`next-step\`: via \`node bin/garda.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack --stage "POST_PREFLIGHT" ...\` inside a materialized/deployed workspace.
 14. Run compile gate before review only after \`next-step\` reports it as the next gate: via \`node bin/garda.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} compile-gate ...\` inside a materialized/deployed workspace.
-15. Before each required review, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace, only when \`next-step\` names that review; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`. Dependent downstream review preparation or reviewer launch must wait until the required upstream PASS artifact and receipt exist for the same cycle.
+15. Before each required review, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace, only when \`next-step\` names that review; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} Dependent downstream review preparation or reviewer launch must wait until the required upstream PASS artifact and receipt exist for the same cycle.
 16. Do not fan out known producer-consumer validation commands as raw shell sidecars around the gate flow. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
 17. Run required independent reviews and gates via \`node bin/garda.js gate required-reviews-check ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} required-reviews-check ...\` inside a materialized/deployed workspace; only independent review types may fan out in parallel for the same cycle. If a cycle changed only test scope, materialize reusable upstream \`code\` review evidence before launching \`test\`, then run \`doc-impact-gate\`, then \`completion-gate\` before marking \`DONE\`.
 18. Update task status and artifacts in \`TASK.md\`.
@@ -625,6 +633,8 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 - Every provider must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid for mandatory reviews.
 ${getDelegationRequiredProviderLaunchLines().join('\n')}
 - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
+- ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
+- ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge for the current cycle.
 - Each review receipt must include \`reviewer_execution_mode\` (\`delegated_subagent\`) and \`reviewer_identity\` (\`agent:...\`). Receipts that do not preserve this delegated reviewer contract cannot satisfy a fresh mandatory review cycle.
@@ -698,6 +708,9 @@ Mandatory gate order:
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
 - Do not make code edits before \`enter-task-mode\`; unscoped pre-task diffs must be isolated first.
+- ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
+- ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
+- ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
@@ -739,7 +752,8 @@ Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`ins
 - Keep downstream rule-pack evidence current via \`${getNodeGateCommandPrefix()} load-rule-pack ...\`; bridge execution is invalid without recorded rule-file loading.
 - Reviewer preparation must run \`${getNodeGateCommandPrefix()} build-review-context --review-type "<review-type>" ...\` before verdict capture; completion for code-changing tasks validates the resulting review-skill telemetry.
 - Downstream \`test\` review must wait for current-cycle PASS evidence from required upstream non-\`test\` reviews; on pure test-scope reruns, materialize reusable upstream \`code\` review evidence first.
-- On \`${reviewSkillBridgeHost.providerLabel}\`, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider.
+- On \`${reviewSkillBridgeHost.providerLabel}\`, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
+- ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Honor specialist skills added after initialization under \`${resolveBundleName()}/live/skills/**\`.
 - Log review invocation and outcomes via \`${getNodeGateCommandPrefix()} log-task-event ...\` into task timeline.
 - Task timeline path (per task): \`${resolveBundleName()}/runtime/task-events/<task-id>.jsonl\`.

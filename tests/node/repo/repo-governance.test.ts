@@ -442,3 +442,64 @@ test('task-status ownership wording stays synced across orchestration guidance f
         assert.ok(content.includes(expectedSnippet), `${relativePath} must preserve gate-owned status wording`);
     }
 });
+
+test('reviewer session contract stays synced across rule-pack guidance files', () => {
+    const requiredSnippets = [
+        'Reusing a prior review artifact or receipt is valid only through explicit current-cycle reuse evidence',
+        'Reusing the same reviewer session for a new mandatory review is not valid fresh-context launch evidence',
+        'After the review receipt is persisted by `record-review-result` or `record-review-receipt`, close or release the reviewer sub-agent session.'
+    ] as const;
+    const trackedFiles = [
+        'template/docs/agent-rules/80-task-workflow.md',
+        'template/docs/agent-rules/90-skill-catalog.md'
+    ] as const;
+    const materializedFiles = [
+        'garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md',
+        'garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
+        'garda-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md'
+    ] as const;
+    const skillSnippets = [
+        'do not reuse an existing reviewer session',
+        'close or release the reviewer',
+        'receipt persistence'
+    ] as const;
+    const trackedSkillFiles = [
+        'template/skills/orchestration/SKILL.md',
+        'template/skills/orchestration-depth1/SKILL.md'
+    ] as const;
+    const materializedSkillFiles = [
+        'garda-agent-orchestrator/live/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/template/skills/orchestration/SKILL.md',
+        'garda-agent-orchestrator/live/skills/orchestration-depth1/SKILL.md',
+        'garda-agent-orchestrator/template/skills/orchestration-depth1/SKILL.md'
+    ] as const;
+
+    for (const relativePath of trackedFiles) {
+        const content = readRepoFile(relativePath);
+        for (const snippet of requiredSnippets) {
+            assert.ok(content.includes(snippet), `${relativePath} must include reviewer session contract snippet: ${snippet}`);
+        }
+    }
+
+    for (const relativePath of materializedFiles) {
+        const content = readGeneratedRepoFile(relativePath);
+        for (const snippet of requiredSnippets) {
+            assert.ok(content.includes(snippet), `${relativePath} must include reviewer session contract snippet: ${snippet}`);
+        }
+    }
+
+    for (const relativePath of trackedSkillFiles) {
+        const content = readRepoFile(relativePath);
+        for (const snippet of skillSnippets) {
+            assert.ok(content.includes(snippet), `${relativePath} must include reviewer session skill snippet: ${snippet}`);
+        }
+    }
+
+    for (const relativePath of materializedSkillFiles) {
+        const content = readGeneratedRepoFile(relativePath);
+        for (const snippet of skillSnippets) {
+            assert.ok(content.includes(snippet), `${relativePath} must include reviewer session skill snippet: ${snippet}`);
+        }
+    }
+});

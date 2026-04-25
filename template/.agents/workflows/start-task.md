@@ -51,6 +51,9 @@ Mandatory gate order:
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
 - Do not make code edits before `enter-task-mode`; unscoped pre-task diffs must be isolated first.
+- Spawn a new clean-context delegated reviewer for this review context; do not reuse an existing reviewer session. Codex/Claude should use fork_context=false when available, and other providers must use provider-equivalent isolated sub-agent or task launch.
+- Reusing a prior review artifact or receipt is valid only through explicit current-cycle reuse evidence; reusing the same reviewer session for a new mandatory review is not valid fresh-context launch evidence.
+- After the review receipt is persisted, close or release the reviewer sub-agent session.
 - Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as `npm run build:node-foundation` -> direct `node --test .node-build/...` must use the guarded workflow path or run strictly sequentially, never in parallel.

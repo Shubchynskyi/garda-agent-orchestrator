@@ -221,6 +221,9 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 - Reviewer routing metadata contract:
   - Each reviewer invocation must capture `reviewer_execution_mode` (`delegated_subagent`) and `reviewer_identity` (`agent:<reviewer-id>`).
   - `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
+  - Fresh-context requirement: do not reuse an existing reviewer session for a new mandatory review.
+  - Reusing a prior review artifact or receipt is valid only through explicit current-cycle reuse evidence; reusing the same reviewer session for a new mandatory review is not valid fresh-context launch evidence.
+  - After the review receipt is persisted by `record-review-result` or `record-review-receipt`, close or release the reviewer sub-agent session.
   - `build-review-context` must fail closed when the pinned runtime identity is unresolved or does not attest launchable reviewer subagents for the current runtime session.
   - Historical `same_agent_fallback` artifacts are compatibility-only diagnostics and must not satisfy a fresh mandatory review cycle.
   - Gate diagnostics (`required-reviews-check`, `completion-gate`) must report whether each review has valid delegated fresh-context execution evidence.
@@ -244,6 +247,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
    3. Feed reviewer output into `record-review-result` using exactly one source: `--review-output-path` or `--review-output-stdin`.
       - `--review-output-stdin` is only a transport convenience. The gate must still persist raw reviewer input to `garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md` before verdict extraction and receipt materialization.
       - Do not introduce a lighter validation branch for stdin. Verdict, routing, receipt, and telemetry checks must be identical to file-based ingest.
+      - After receipt persistence succeeds, close or release the reviewer sub-agent session; do not keep a reviewer session alive for another mandatory review.
    4. Parse verdict token from the persisted reviewer output artifact.
    5. If verdict is failed, or a PASS artifact still leaves active findings/residual risks without justified deferral, fix or explicitly defer the finding and rerun the same reviewer until the final artifact is clean.
 - Reviewer mapping contract:

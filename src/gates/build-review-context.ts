@@ -3,6 +3,11 @@ import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
 import { buildReviewContextSections, type ReviewContextSectionsResult } from '../gate-runtime/review-context';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
+import {
+    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
+    REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+    REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
+} from '../gate-runtime/reviewer-session-contract';
 import { fileSha256, normalizePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { getCanonicalReviewContextPath } from './review-context-paths';
@@ -404,6 +409,12 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             reviewer_subagent_launch_remediation: runtimeIdentity.reviewer_subagent_launch_remediation,
             reviewer_execution_mode_required: !!requiredReview,
             reviewer_identity_required: !!requiredReview,
+            fresh_context_required: !!requiredReview,
+            fresh_context_instruction: requiredReview ? REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION : null,
+            reviewer_session_reuse_forbidden: !!requiredReview,
+            reviewer_session_reuse_note: requiredReview ? REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION : null,
+            cleanup_required_after_receipt: !!requiredReview,
+            cleanup_instruction: requiredReview ? REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION : null,
             actual_execution_mode: null as string | null,
             reviewer_session_id: null as string | null,
             fallback_reason: null as string | null,

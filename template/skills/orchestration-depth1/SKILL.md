@@ -53,6 +53,7 @@ Escalate back to the full orchestration skill immediately if:
 - Depth changes context budget, never gate obligations.
 - Do not continue a normal task run when the workspace already had modified files before `enter-task-mode`; isolate scope first with staged or explicit preflight inputs.
 - Do not skip compile, review, or completion gates.
+- Mandatory reviews still require a fresh clean-context delegated reviewer; do not reuse an existing reviewer session, and close or release the reviewer after receipt persistence.
 - Do not hand-edit forward `TASK.md` status transitions; gate flow owns `IN_PROGRESS`, `IN_REVIEW`, and `DONE`.
 - Re-run preflight after meaningful scope changes.
 - If the original preflight used planned `--changed-file` inputs in a clean workspace before implementation, refresh it before compile by rerunning `classify-change` and `load-rule-pack --stage POST_PREFLIGHT` once the real diff exists.
