@@ -221,10 +221,11 @@ function writePreflight(
     repoRoot: string,
     taskId: string,
     requiredReviews: Record<string, boolean>,
-    options: { seedPostPreflight?: boolean } = {}
+    options: { seedPostPreflight?: boolean; reviewPolicyMode?: string } = {}
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -234,8 +235,8 @@ function writePreflight(
         required_reviews: requiredReviews,
         changed_files: ['src/app.ts'],
         review_execution_policy: {
-            mode: 'code_first_optional',
-            visible_summary_line: 'Review execution policy: code_first_optional'
+            mode: reviewPolicyMode,
+            visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
         }
     });
     appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
@@ -268,12 +269,19 @@ function seedCompilePass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
 }
 
-function writeReviewEvidence(repoRoot: string, taskId: string, reviewType: string): void {
+function writeReviewEvidence(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    options: { verdict?: 'pass' | 'fail'; body?: string } = {}
+): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
     const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
     const passToken = reviewType === 'code' ? 'REVIEW PASSED' : `${reviewType.toUpperCase()} REVIEW PASSED`;
+    const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
+    const verdictToken = options.verdict === 'fail' ? failToken : passToken;
     const reviewContext = {
         task_id: taskId,
         review_type: reviewType,
@@ -286,7 +294,7 @@ function writeReviewEvidence(repoRoot: string, taskId: string, reviewType: strin
     };
     const reviewContextText = `${JSON.stringify(reviewContext, null, 2)}\n`;
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
-    const artifactText = `# ${reviewType} review\n\n## Verdict\n${passToken}\n`;
+    const artifactText = `# ${reviewType} review\n\n${options.body || ''}## Verdict\n${verdictToken}\n`;
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
         review_type: reviewType,
@@ -325,6 +333,22 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
             reviewer_session_id: reviewerIdentity
         }
     });
+}
+
+function writeFreshReviewContextWithoutRouting(repoRoot: string, taskId: string, reviewType: string): string {
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    writeJson(reviewContextPath, {
+        task_id: taskId,
+        review_type: reviewType,
+        preflight_path: preflightPath,
+        preflight_sha256: fileSha256(preflightPath),
+        reviewer_routing: {
+            actual_execution_mode: null,
+            reviewer_session_id: null
+        }
+    });
+    return reviewContextPath;
 }
 
 function seedReviewGatePass(repoRoot: string, taskId: string): void {
@@ -568,6 +592,113 @@ describe('gates/next-step', () => {
         assert.equal(afterCode.next_gate, 'build-review-context');
         assert.equal(afterCode.review.next_review_type, 'test');
         assert.ok(afterCode.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('stops after a failed upstream code review instead of launching downstream test review', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Fix failed 'code' review findings/);
+        assert.match(result.reason, /REVIEW FAILED/);
+        assert.match(result.reason, /Do not launch downstream reviewers/);
+        assert.match(result.reason, /Dependent reviews currently blocked by this failure: test/);
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
+    it('reports strict_sequential downstream blockers after a failed code review', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true, db: true, api: true, test: true },
+            { reviewPolicyMode: 'strict_sequential' }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.reason, /REVIEW FAILED/);
+        assert.match(result.reason, /Do not launch downstream reviewers/);
+        assert.match(result.reason, /Dependent reviews currently blocked by this failure: db, api, test/);
+        assert.ok(!result.commands[0].command.includes('--review-type "db"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('refreshes review context after a failed upstream review becomes stale behind a new compile cycle', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Refresh 'code' review context/);
+        assert.match(result.reason, /no longer current after the latest compile cycle/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('routes to fresh reviewer routing after stale failed review context has been rebuilt', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+        seedCompilePass(repoRoot, TASK_ID);
+        const rebuiltContextPath = writeFreshReviewContextWithoutRouting(repoRoot, TASK_ID, 'code');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code',
+            output_path: normalizeForTimeline(rebuiltContextPath)
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-review-routing');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Record 'code' delegated reviewer routing/);
+        assert.ok(result.commands[0].command.includes('record-review-routing'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('does not treat non-verdict fail-token mentions as failed review verdicts', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            body: [
+                '## Reviewer Notes',
+                'Historical note:',
+                'REVIEW FAILED',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
     });
 
     it('surfaces effective full-suite config before completion', () => {

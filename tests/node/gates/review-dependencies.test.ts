@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+    assertRequiredUpstreamReviewDependencies,
     assessUpstreamReviewDependencyStatus,
     getRequiredUpstreamReviewsFromRecord,
     type ReviewDependencyTimelineEvent
@@ -933,7 +934,7 @@ test('assessUpstreamReviewDependencyStatus rejects upstream PASS when receipt pr
     }
 });
 
-test('assessUpstreamReviewDependencyStatus rejects upstream review artifacts whose verdict regresses to REVIEW FAILED', () => {
+test('review dependency checks reject upstream review artifacts whose verdict regresses to REVIEW FAILED', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-dependencies-'));
     try {
         const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -1065,6 +1066,27 @@ test('assessUpstreamReviewDependencyStatus rejects upstream review artifacts who
 
         assert.equal(result.ready, false);
         assert.match(result.reason, /REVIEW FAILED/i);
+        assert.match(result.reason, /fix implementation/i);
+        assert.match(result.reason, /before launching dependent reviews/i);
+
+        assert.throws(
+            () => assertRequiredUpstreamReviewDependencies({
+                taskId,
+                preflightPath,
+                preflightPayload: JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>,
+                reviewType: 'test',
+                timelineEvents: [
+                    {
+                        event_type: 'COMPILE_GATE_PASSED',
+                        sequence: 10,
+                        details: null
+                    },
+                    timelineEvent
+                ],
+                taskModePath
+            }),
+            /fix implementation.*before launching dependent reviews/i
+        );
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

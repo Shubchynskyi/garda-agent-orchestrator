@@ -212,6 +212,15 @@ export function assessUpstreamReviewDependencyStatus(options: {
     const passToken = REVIEW_CONTRACTS.find(([candidate]) => candidate === options.upstreamReviewType)?.[1] || null;
     const failToken = resolveReviewFailToken(options.upstreamReviewType);
     const reviewVerdict = extractReviewVerdictToken(artifactContent, passToken, failToken);
+    if (failToken && reviewVerdict === failToken) {
+        return {
+            reviewType: options.upstreamReviewType,
+            ready: false,
+            reason:
+                `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
+                `'${options.upstreamReviewType}' review before launching dependent reviews`
+        };
+    }
     if (!passToken || reviewVerdict !== passToken) {
         return {
             reviewType: options.upstreamReviewType,

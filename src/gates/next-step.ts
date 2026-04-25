@@ -14,6 +14,9 @@ import {
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../gate-runtime/reviewer-session-contract';
 import {
+    extractReviewVerdictToken
+} from '../gate-runtime/review-context';
+import {
     buildTaskAuditSummary,
     type TaskAuditSummaryResult
 } from './task-audit-summary';
@@ -74,6 +77,9 @@ const REVIEW_PREPARATION_ORDER = Object.freeze([
 ]);
 
 const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(REVIEW_CONTRACTS));
+const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(
+    REVIEW_CONTRACTS.map(([reviewType, passToken]) => [reviewType, passToken.replace(/\bPASSED\b/g, 'FAILED')])
+));
 
 export type NextStepStatus = 'BLOCKED' | 'READY' | 'DONE';
 
@@ -145,6 +151,9 @@ interface ReviewArtifactState {
     artifactExists: boolean;
     receiptExists: boolean;
     passToken: string;
+    failToken: string;
+    verdictToken: string | null;
+    failed: boolean;
     ready: boolean;
     violations: string[];
     reviewerIdentity: string | null;
@@ -263,6 +272,7 @@ function readReviewArtifactState(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
     const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
     const passToken = REVIEW_VERDICT_PASS_TOKENS[reviewType] || '';
+    const failToken = REVIEW_VERDICT_FAIL_TOKENS[reviewType] || '';
     const violations: string[] = [];
     const contextExists = fileExists(contextPath);
     let contextCurrent = false;
@@ -273,6 +283,8 @@ function readReviewArtifactState(
     let reviewerIdentity: string | null = null;
     let contextReviewerIdentity: string | null = null;
     let reviewerProvenance: ReviewArtifactState['reviewerProvenance'] = null;
+    let verdictToken: string | null = null;
+    let failed = false;
 
     if (!contextExists) {
         violations.push('review context artifact is missing');
@@ -313,7 +325,16 @@ function readReviewArtifactState(
         violations.push('review artifact is missing');
     } else {
         const content = fs.readFileSync(artifactPath, 'utf8');
-        if (!passToken || !content.includes(passToken)) {
+        const parsedVerdictToken = extractReviewVerdictToken(content, passToken || null, failToken || null);
+        if (failToken && parsedVerdictToken === failToken) {
+            verdictToken = failToken;
+            failed = true;
+            violations.push(
+                `review artifact contains fail token '${failToken}'; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
+            );
+        } else if (passToken && parsedVerdictToken === passToken) {
+            verdictToken = passToken;
+        } else {
             violations.push(`review artifact does not contain pass token '${passToken || '<unknown>'}'`);
         }
     }
@@ -411,6 +432,9 @@ function readReviewArtifactState(
         artifactExists,
         receiptExists,
         passToken,
+        failToken,
+        verdictToken,
+        failed,
         ready: violations.length === 0,
         violations,
         reviewerIdentity,
@@ -552,6 +576,50 @@ function timelineHasDelegatedReviewRoutingAfterCompile(
     return false;
 }
 
+function timelineHasReviewContextPreparedAfterCompile(
+    eventsRoot: string,
+    taskId: string,
+    reviewType: string,
+    contextPath: string
+): boolean {
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return false;
+    }
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
+    if (latestCompileSequence == null) {
+        return false;
+    }
+    const expectedContextPath = normalizePath(contextPath).toLowerCase();
+    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (String(event.event_type || '').trim() !== 'REVIEW_PHASE_STARTED') {
+                continue;
+            }
+            const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+            const taskSequence = typeof integrity?.task_sequence === 'number'
+                ? integrity.task_sequence
+                : Number(integrity?.task_sequence);
+            if (!Number.isInteger(taskSequence) || taskSequence <= latestCompileSequence) {
+                continue;
+            }
+            const details = isPlainRecord(event.details) ? event.details : {};
+            const eventReviewType = String(details.review_type || details.reviewType || '').trim();
+            const outputPath = normalizePath(details.output_path || details.outputPath || '').toLowerCase();
+            if (eventReviewType === reviewType && outputPath === expectedContextPath) {
+                return true;
+            }
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return false;
+}
+
 function readReviewTrust(
     reviewsRoot: string,
     taskId: string,
@@ -615,6 +683,37 @@ function getNextReviewType(
         reviewType: null,
         blockedDependencies: []
     };
+}
+
+function getDownstreamReviewTypesFor(
+    failedReviewType: string,
+    requiredReviewTypes: string[],
+    requiredReviews: Record<string, boolean>,
+    policyMode: EffectiveReviewExecutionPolicyMode
+): string[] {
+    return requiredReviewTypes.filter((reviewType) => (
+        reviewType !== failedReviewType
+        && getReviewExecutionDependencies(reviewType, requiredReviews, policyMode).includes(failedReviewType)
+    ));
+}
+
+function describeBlockedReviewDependencies(
+    dependencies: readonly string[],
+    reviewStates: readonly ReviewArtifactState[]
+): string {
+    const stateByType = new Map(reviewStates.map((state) => [state.reviewType, state]));
+    return dependencies
+        .map((dependency) => {
+            const dependencyState = stateByType.get(dependency);
+            if (dependencyState?.failed) {
+                return `${dependency} failed with '${dependencyState.verdictToken || dependencyState.failToken || 'FAILED'}'`;
+            }
+            if (dependencyState?.artifactExists && !dependencyState.ready) {
+                return `${dependency} is not PASS-ready (${dependencyState.violations.join('; ')})`;
+            }
+            return `${dependency} has no current PASS artifact and receipt`;
+        })
+        .join('; ');
 }
 
 function readCompileReadiness(
@@ -1386,18 +1485,70 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     if (nextReview.reviewType) {
         const reviewType = nextReview.reviewType;
         const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
+        const currentReviewRouteAttested = state
+            ? timelineHasDelegatedReviewRoute(eventsRoot, taskId, state)
+            : false;
+        const currentReviewContextPrepared = state
+            ? timelineHasReviewContextPreparedAfterCompile(eventsRoot, taskId, reviewType, state.contextPath)
+            : false;
         const dependencies = nextReview.blockedDependencies;
         if (dependencies.length > 0) {
+            const dependencyDetails = describeBlockedReviewDependencies(dependencies, reviewStates);
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
                 nextGate: 'build-review-context',
                 title: `Review '${reviewType}' is waiting for upstream review evidence.`,
-                reason: `Configured review policy '${reviewPolicy.mode}' requires: ${dependencies.join(', ')}.`,
+                reason: `Configured review policy '${reviewPolicy.mode}' requires upstream PASS evidence before '${reviewType}': ${dependencyDetails}. Do not launch '${reviewType}' reviewer until those dependencies pass.`,
                 commands: [
                     buildCommand(
                         'Finish upstream review first',
                         navigatorCommand
+                    )
+                ]
+            });
+        }
+        if (state?.failed && currentReviewRouteAttested) {
+            const downstreamReviewTypes = getDownstreamReviewTypesFor(
+                reviewType,
+                requiredReviewTypes,
+                summary.required_reviews,
+                reviewPolicy.mode
+            );
+            const downstreamText = downstreamReviewTypes.length > 0
+                ? ` Dependent reviews currently blocked by this failure: ${downstreamReviewTypes.join(', ')}.`
+                : '';
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'implementation',
+                title: `Fix failed '${reviewType}' review findings before continuing.`,
+                reason:
+                    `Recorded '${reviewType}' review verdict is '${state.verdictToken || state.failToken || 'FAILED'}'. ` +
+                    `Do not launch downstream reviewers or rerun '${reviewType}' before implementation changes are made. ` +
+                    `Fix the findings, rerun compile-gate, then rebuild and rerun '${reviewType}' review.${downstreamText}`,
+                commands: [
+                    buildCommand(
+                        'Rerun navigator after fixing implementation',
+                        navigatorCommand
+                    )
+                ]
+            });
+        }
+        if (state?.failed && !currentReviewRouteAttested && !currentReviewContextPrepared) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'build-review-context',
+                title: `Refresh '${reviewType}' review context after implementation changes.`,
+                reason:
+                    `A previous '${reviewType}' review recorded '${state.verdictToken || state.failToken || 'FAILED'}', ` +
+                    'but that failed-review routing is no longer current after the latest compile cycle. ' +
+                    `Rebuild '${reviewType}' review context and launch a fresh reviewer before any dependent reviews.`,
+                commands: [
+                    buildCommand(
+                        'Build review context',
+                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${getEffectiveDepthForPostPreflightRules(preflight, taskMode)}" --preflight-path "${preflightCommandPath}" --repo-root "."`
                     )
                 ]
             });
@@ -1439,7 +1590,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (!state.ready || !timelineHasDelegatedReviewRoute(eventsRoot, taskId, state)) {
+        if (!state.ready || !currentReviewRouteAttested) {
             const stateViolations = state.violations.length > 0
                 ? state.violations.join('; ')
                 : 'matching REVIEWER_DELEGATION_ROUTED telemetry is missing';
