@@ -276,7 +276,7 @@ test('runDoctor includes provider compliance result when activeAgentFiles provid
 
         const output = formatDoctorResult(result);
         assert.ok(output.includes('Provider Control Compliance'));
-        assert.ok(output.includes('Status: PASS'));
+        assert.ok(output.includes('Status: PASSED'));
     } finally {
         ws.cleanup();
     }

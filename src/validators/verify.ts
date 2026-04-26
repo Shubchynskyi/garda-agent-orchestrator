@@ -575,7 +575,7 @@ export function formatVerifyResult(result: VerifyResult): string {
         }
     }
     if (!result.passed) lines.push('Verification failed. Resolve listed issues and rerun.');
-    else lines.push('Verification: PASS');
+    else lines.push('Verification: PASSED');
     return lines.join('\n');
 }
 
@@ -587,5 +587,5 @@ export function formatVerifyResultCompact(result: VerifyResult): string {
     if (!result.passed) {
         return formatVerifyResult(result);
     }
-    return `Verification: PASS | paths=${result.requiredPathsChecked} | violations=0`;
+    return `Verification: PASSED | paths=${result.requiredPathsChecked} | violations=0`;
 }

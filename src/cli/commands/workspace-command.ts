@@ -108,7 +108,7 @@ export function handleInit(commandArgv: string[], packageJson: PackageJsonLike):
         preserveLegacyReviewExecutionPolicyOmission: hasMaterializedWorkflowConfigBaseline(bundlePath),
         dryRun: options.dryRun === true
     }) as Record<string, unknown>;
-    console.log('Init: PASS');
+    console.log('Init: PASSED');
     formatKeyValueOutput(initResult, [
         'targetRoot', 'sourceOfTruth', 'assistantLanguage',
         'ruleFilesMaterialized', 'projectDiscoveryPath', 'usagePath'

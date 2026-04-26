@@ -713,7 +713,7 @@ test('formatVerifyResult shows PASS when all checks pass', () => {
     };
 
     const output = formatVerifyResult(fakeResult);
-    assert.ok(output.includes('Verification: PASS'));
+    assert.ok(output.includes('Verification: PASSED'));
     assert.ok(!output.includes('Verification failed'));
 });
 
@@ -755,7 +755,7 @@ test('formatVerifyResultCompact emits single line on success', () => {
     };
     const output = formatVerifyResultCompact(fakeResult);
     assert.ok(!output.includes('\n'), 'Compact success output must be a single line');
-    assert.ok(output.includes('Verification: PASS'));
+    assert.ok(output.includes('Verification: PASSED'));
     assert.ok(output.includes('paths=10'));
     assert.ok(output.includes('violations=0'));
 });

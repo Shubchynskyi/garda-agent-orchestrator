@@ -600,7 +600,7 @@ function buildPendingCheckpointLine(snapshot: StatusSnapshot): string | null {
         case 'PROJECT_COMMANDS_PENDING':
             return `  Missing project commands: ${snapshot.missingProjectCommands.length}`;
         case 'VALIDATION_PENDING':
-            return '  Pending checkpoint: Run agent-init validation to get verify + manifest PASS';
+            return '  Pending checkpoint: Run agent-init validation to get verify + manifest PASSED';
         case 'AGENT_STATE_INVALID':
             return '  Pending checkpoint: Repair invalid agent-init state file';
         default:

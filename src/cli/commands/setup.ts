@@ -484,7 +484,7 @@ export async function handleSetup(
             snapshot = getStatusSnapshot(targetRoot, initAnswersPath) as StatusSnapshot;
         }
 
-        console.log(`Setup: ${manifestStatus === 'FAIL' ? 'FAIL' : 'PASS'}`);
+        console.log(`Setup: ${manifestStatus === 'FAIL' ? 'FAIL' : 'PASSED'}`);
         console.log(`Verify: ${verifyStatus}`);
         console.log(`ManifestValidation: ${manifestStatus}`);
         console.log('');

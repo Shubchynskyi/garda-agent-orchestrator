@@ -153,7 +153,7 @@ export async function handleReinit(commandArgv: string[], packageJson: PackageJs
         skipVerify: options.skipVerify === true,
         skipManifestValidation: options.skipManifestValidation === true
     }) as Record<string, unknown>;
-    console.log('Reinit: PASS');
+    console.log('Reinit: PASSED');
     formatKeyValueOutput(reinitResult, [
         'targetRoot',
         'initAnswersPath',

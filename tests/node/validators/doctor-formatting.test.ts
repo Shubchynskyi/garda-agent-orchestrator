@@ -24,7 +24,7 @@ test('formatDoctorResult includes verify and manifest output', () => {
 test('formatDoctorResult shows PASS for clean doctor', () => {
     const fakeResult = buildFakeDoctorResult();
     const output = formatDoctorResult(fakeResult);
-    assert.ok(output.includes('Doctor: PASS'));
+    assert.ok(output.includes('Doctor: PASSED'));
     assert.ok(output.includes('Next: Execute task T-001'));
 });
 
@@ -123,7 +123,7 @@ test('formatDoctorResult includes protected manifest section in clean output', (
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.includes('Protected Control-Plane Manifest'));
     assert.ok(output.includes('Status: MATCH'));
-    assert.ok(output.includes('Doctor: PASS'));
+    assert.ok(output.includes('Doctor: PASSED'));
 });
 
 test('formatDoctorResult treats source-checkout protected-manifest drift as informational', () => {
@@ -155,7 +155,7 @@ test('formatDoctorResult treats source-checkout protected-manifest drift as info
     assert.ok(output.includes('Protected Control-Plane Manifest'));
     assert.ok(output.includes('Assessment: INFO_SOURCE_CHECKOUT'));
     assert.ok(output.includes('Informational in a self-hosted source checkout'));
-    assert.ok(output.includes('Doctor: PASS'));
+    assert.ok(output.includes('Doctor: PASSED'));
 });
 
 // ---------------------------------------------------------------------------
@@ -375,9 +375,11 @@ test('formatDoctorResultCompact emits single line on success', () => {
     const fakeResult = buildFakeDoctorResult();
     const output = formatDoctorResultCompact(fakeResult);
     assert.ok(!output.includes('\n'), 'Compact success output must be a single line');
-    assert.ok(output.includes('Doctor: PASS'));
-    assert.ok(output.includes('verify=PASS'));
-    assert.ok(output.includes('manifest=PASS'));
+    assert.ok(output.includes('Doctor: PASSED'));
+    assert.ok(output.includes('verify=PASSED'));
+    assert.ok(output.includes('manifest=PASSED'));
+    assert.ok(!output.includes('verify=PASS |'), 'compact output must not rely on PASS as a prefix of PASSED');
+    assert.ok(!output.includes('manifest=PASS |'), 'compact output must not rely on PASS as a prefix of PASSED');
 });
 
 test('formatDoctorResultCompact emits full output on failure', () => {

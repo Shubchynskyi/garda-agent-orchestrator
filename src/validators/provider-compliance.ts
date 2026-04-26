@@ -429,7 +429,7 @@ export function formatProviderComplianceDetail(result: ProviderComplianceResult)
 
     // Summary
     if (result.passed) {
-        lines.push('  Status: PASS');
+        lines.push('  Status: PASSED');
     } else {
         lines.push('  Status: DRIFT_DETECTED');
         lines.push(`  ViolationCount: ${result.violations.length}`);

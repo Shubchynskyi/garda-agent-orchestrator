@@ -307,7 +307,7 @@ export function formatDoctorResult(result: DoctorResult): string {
     }
 
     if (result.passed) {
-        lines.push('Doctor: PASS');
+        lines.push('Doctor: PASSED');
         lines.push(buildProfileAwareNextLine(getBundlePath(result.targetRoot)));
     }
     else { lines.push('Doctor: FAIL'); lines.push('Resolve listed issues and rerun doctor.'); }
@@ -323,12 +323,12 @@ export function formatDoctorResultCompact(result: DoctorResult): string {
         return formatDoctorResult(result);
     }
     const manifestStatus = result.manifestResult
-        ? (result.manifestResult.passed ? 'PASS' : 'FAIL')
+        ? (result.manifestResult.passed ? 'PASSED' : 'FAIL')
         : (result.manifestError ? 'ERROR' : 'SKIPPED');
     const profileSuffix = result.profileHealthEvidence && result.profileHealthEvidence.active_profile
         ? ` | profile=${result.profileHealthEvidence.active_profile}`
         : '';
-    return `Doctor: PASS | verify=PASS | manifest=${manifestStatus}${profileSuffix}`;
+    return `Doctor: PASSED | verify=PASSED | manifest=${manifestStatus}${profileSuffix}`;
 }
 
 export function formatDoctorResultJson(result: DoctorResult): string {
