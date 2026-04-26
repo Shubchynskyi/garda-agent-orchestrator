@@ -155,7 +155,7 @@ test('getReviewExecutionPreparationBatches keeps strict_sequential fully seriali
     );
 });
 
-test('assessUpstreamReviewDependencyStatus accepts upstream PASS with split canonical/runtime identity', () => {
+test('assessUpstreamReviewDependencyStatus rejects split-identity upstream PASS without independent launch attestation', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-dependencies-'));
     try {
         const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -303,8 +303,8 @@ test('assessUpstreamReviewDependencyStatus accepts upstream PASS with split cano
             taskModePath
         });
 
-        assert.equal(result.ready, true);
-        assert.equal(result.reason, 'pass');
+        assert.equal(result.ready, false);
+        assert.match(result.reason, /independent reviewer launch attestation/i);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -454,13 +454,14 @@ test('assessUpstreamReviewDependencyStatus reuses a precomputed runtime identity
             runtimeReviewerIdentity
         });
 
-        assert.equal(result.ready, true, result.reason);
+        assert.equal(result.ready, false);
+        assert.match(result.reason, /independent reviewer launch attestation/i);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
 });
 
-test('assessUpstreamReviewDependencyStatus accepts explicit custom task-mode paths when the default artifact drifts', () => {
+test('assessUpstreamReviewDependencyStatus rejects custom-path upstream PASS without independent launch attestation', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-dependencies-'));
     try {
         const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -608,8 +609,8 @@ test('assessUpstreamReviewDependencyStatus accepts explicit custom task-mode pat
             taskModePath: customTaskModePath
         });
 
-        assert.equal(result.ready, true);
-        assert.equal(result.reason, 'pass');
+        assert.equal(result.ready, false);
+        assert.match(result.reason, /independent reviewer launch attestation/i);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -1366,7 +1367,7 @@ test('assessUpstreamReviewDependencyStatus rejects legacy-only routing metadata 
     }
 });
 
-test('assessUpstreamReviewDependencyStatus accepts legacy-only routing metadata when task-mode identity is safely backfilled', () => {
+test('assessUpstreamReviewDependencyStatus rejects legacy-only routing metadata without independent launch attestation', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-dependencies-'));
     try {
         const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -1502,8 +1503,8 @@ test('assessUpstreamReviewDependencyStatus accepts legacy-only routing metadata 
             upstreamReviewType: 'code'
         });
 
-        assert.equal(result.ready, true);
-        assert.equal(result.reason, 'pass');
+        assert.equal(result.ready, false);
+        assert.match(result.reason, /independent reviewer launch attestation/i);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

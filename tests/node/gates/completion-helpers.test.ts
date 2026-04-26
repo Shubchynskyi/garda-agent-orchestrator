@@ -103,12 +103,12 @@ describe('gates/completion — helpers and formatters', () => {
                 },
                 review_trust_summary: {
                     visible_summary_line: 'Review trust: legacy LOCAL_AUDITED claim via delegated_subagent; treat as local historical evidence, not independent audited review.',
-                    policy_summary_line: 'Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'
+                    policy_summary_line: 'Review policy: asserted local review cannot satisfy mandatory independent review for this code task; use independent reviewer launch attestation or human sign-off.'
                 }
             });
 
             assert.match(output, /Review trust: legacy LOCAL_AUDITED claim/);
-            assert.match(output, /Review policy: asserted local review may finish this code task/);
+            assert.match(output, /Review policy: asserted local review cannot satisfy mandatory independent review for this code task/);
             assert.doesNotMatch(output, /TrustStatus:/);
         });
 
@@ -139,7 +139,7 @@ describe('gates/completion — helpers and formatters', () => {
             });
 
             assert.match(output, /Review trust: legacy LOCAL_AUDITED claim via DELEGATED_SUBAGENT/);
-            assert.match(output, /Review policy: asserted local review may finish this code task/);
+            assert.match(output, /Review policy: asserted local review cannot satisfy mandatory independent review for this code task/);
         });
 
         it('keeps an unavailable trust line visible for partial compatibility review artifacts', () => {
@@ -156,7 +156,7 @@ describe('gates/completion — helpers and formatters', () => {
             });
 
             assert.match(output, /Review trust: unavailable \(required review trust evidence incomplete or invalid\)\./);
-            assert.match(output, /Review policy: asserted local review may finish this code task/);
+            assert.match(output, /Review policy: asserted local review cannot satisfy mandatory independent review for this code task/);
         });
 
         it('keeps an unavailable trust line visible for receipt-only compatibility review artifacts', () => {
@@ -178,7 +178,7 @@ describe('gates/completion — helpers and formatters', () => {
             });
 
             assert.match(output, /Review trust: unavailable \(required review trust evidence incomplete or invalid\)\./);
-            assert.match(output, /Review policy: asserted local review may finish this code task/);
+            assert.match(output, /Review policy: asserted local review cannot satisfy mandatory independent review for this code task/);
         });
     });
 

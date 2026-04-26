@@ -25,6 +25,7 @@ import {
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
+    buildReviewReceiptReviewerInvocationProvenance,
     buildReviewReceiptReviewerProvenance
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
@@ -71,7 +72,7 @@ function resolveReviewerExecutionFixture(
         reviewerExecutionMode,
         reviewerIdentity: delegatedIdentity,
         reviewerFallbackReason: null,
-        trustLevel: 'LOCAL_ASSERTED'
+        trustLevel: 'INDEPENDENT_AUDITED'
     } as const;
 }
 
@@ -384,7 +385,29 @@ function writeReceiptBackedReviewArtifact(
             delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
             reviewer_fallback_reason: execution.reviewerFallbackReason
         }, { passThru: true });
-        reviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity);
+        const invocationDetails = {
+            task_id: taskId,
+            review_type: reviewKey,
+            reviewer_execution_mode: execution.reviewerExecutionMode,
+            reviewer_session_id: execution.reviewerIdentity,
+            reviewer_identity: execution.reviewerIdentity,
+            review_context_sha256: reviewContextHash,
+            routing_event_sha256: routedEvent?.integrity?.event_sha256
+        };
+        const invocationEvent = appendTaskEvent(
+            orchestratorRoot,
+            taskId,
+            'REVIEWER_INVOCATION_ATTESTED',
+            'INFO',
+            'reviewer invocation attested',
+            invocationDetails,
+            { passThru: true }
+        );
+        reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
+            'REVIEWER_INVOCATION_ATTESTED',
+            invocationEvent?.integrity,
+            invocationDetails
+        );
         fs.writeFileSync(receiptPath, JSON.stringify({
             schema_version: 2,
             task_id: taskId,
@@ -493,6 +516,24 @@ function seedReusableReviewEvidence(
         delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
         reviewer_fallback_reason: execution.reviewerFallbackReason
     }, { passThru: true });
+    const invocationDetails = {
+        task_id: taskId,
+        review_type: reviewKey,
+        reviewer_execution_mode: execution.reviewerExecutionMode,
+        reviewer_session_id: execution.reviewerIdentity,
+        reviewer_identity: execution.reviewerIdentity,
+        review_context_sha256: reviewContextHash,
+        routing_event_sha256: routedEvent?.integrity?.event_sha256
+    };
+    const invocationEvent = appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'REVIEWER_INVOCATION_ATTESTED',
+        'INFO',
+        'historical reviewer invocation attested',
+        invocationDetails,
+        { passThru: true }
+    );
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -507,7 +548,11 @@ function seedReusableReviewEvidence(
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
         reviewerFallbackReason: execution.reviewerFallbackReason,
-        reviewerProvenance: buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity),
+        reviewerProvenance: buildReviewReceiptReviewerInvocationProvenance(
+            'REVIEWER_INVOCATION_ATTESTED',
+            invocationEvent?.integrity,
+            invocationDetails
+        ),
         trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');

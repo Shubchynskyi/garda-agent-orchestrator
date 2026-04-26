@@ -21,6 +21,7 @@ import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
+    buildReviewReceiptReviewerInvocationProvenance,
     buildReviewReceiptReviewerProvenance
 } from '../../../../src/gate-runtime/review-context';
 import {
@@ -73,14 +74,14 @@ function resolveReviewerExecutionFixture(
     reviewerExecutionMode: 'delegated_subagent';
     reviewerIdentity: string;
     reviewerFallbackReason: null;
-    trustLevel: 'LOCAL_ASSERTED';
+    trustLevel: 'INDEPENDENT_AUDITED';
 } {
     const reviewerExecutionMode = resolveReviewerRoutingPolicy(sourceOfTruth, 'provider_entrypoint').expected_execution_mode;
     return {
         reviewerExecutionMode,
         reviewerIdentity: delegatedIdentity,
         reviewerFallbackReason: null,
-        trustLevel: 'LOCAL_ASSERTED'
+        trustLevel: 'INDEPENDENT_AUDITED'
     };
 }
 
@@ -480,7 +481,29 @@ function writeReceiptBackedReviewArtifact(
             delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
             reviewer_fallback_reason: execution.reviewerFallbackReason
         }, { passThru: true });
-        reviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity);
+        const invocationDetails = {
+            task_id: taskId,
+            review_type: reviewKey,
+            reviewer_execution_mode: execution.reviewerExecutionMode,
+            reviewer_session_id: execution.reviewerIdentity,
+            reviewer_identity: execution.reviewerIdentity,
+            review_context_sha256: reviewContextHash,
+            routing_event_sha256: routedEvent?.integrity?.event_sha256
+        };
+        const invocationEvent = appendTaskEvent(
+            orchestratorRoot,
+            taskId,
+            'REVIEWER_INVOCATION_ATTESTED',
+            'INFO',
+            'reviewer invocation attested',
+            invocationDetails,
+            { passThru: true }
+        );
+        reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
+            'REVIEWER_INVOCATION_ATTESTED',
+            invocationEvent?.integrity,
+            invocationDetails
+        );
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
@@ -590,6 +613,24 @@ function seedReusableReviewEvidence(
         delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
         reviewer_fallback_reason: execution.reviewerFallbackReason
     }, { passThru: true });
+    const invocationDetails = {
+        task_id: taskId,
+        review_type: reviewKey,
+        reviewer_execution_mode: execution.reviewerExecutionMode,
+        reviewer_session_id: execution.reviewerIdentity,
+        reviewer_identity: execution.reviewerIdentity,
+        review_context_sha256: reviewContextHash,
+        routing_event_sha256: routedEvent?.integrity?.event_sha256
+    };
+    const invocationEvent = appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'REVIEWER_INVOCATION_ATTESTED',
+        'INFO',
+        'historical reviewer invocation attested',
+        invocationDetails,
+        { passThru: true }
+    );
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -604,7 +645,11 @@ function seedReusableReviewEvidence(
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
         reviewerFallbackReason: execution.reviewerFallbackReason,
-        reviewerProvenance: buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity),
+        reviewerProvenance: buildReviewReceiptReviewerInvocationProvenance(
+            'REVIEWER_INVOCATION_ATTESTED',
+            invocationEvent?.integrity,
+            invocationDetails
+        ),
         trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');

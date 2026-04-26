@@ -320,7 +320,7 @@ describe('gates/completion — stage and evidence validation', () => {
             };
         }
 
-        it('returns no violations when code changed and review telemetry plus artifacts are present', () => {
+        it('rejects local asserted delegated review telemetry even when artifacts and routing hashes are present', () => {
             const codeRoutingIntegrity = {
                 schema_version: 1,
                 task_sequence: 5,
@@ -465,10 +465,11 @@ describe('gates/completion — stage and evidence validation', () => {
                     false,
                     'provider_bridge'
                 );
-                if (result.violations.length > 0) {
-                    console.log('VIOLATIONS:', result.violations);
-                }
-                assert.equal(result.violations.length, 0);
+                assert.equal(
+                    result.violations.filter((entry) => entry.includes('independent reviewer launch attestation')).length,
+                    2,
+                    JSON.stringify(result, null, 2)
+                );
                 assert.deepEqual(result.reviewer_execution_modes, ['delegated_subagent']);
             } finally {
                 fsMock.existsSync = originalExists;
@@ -815,7 +816,9 @@ describe('gates/completion — stage and evidence validation', () => {
                 'provider_bridge'
             );
 
-            assert.equal(result.violations.length, 0, JSON.stringify(result, null, 2));
+            assert.equal(result.violations.length, 1, JSON.stringify(result, null, 2));
+            assert.ok(result.violations[0].includes('independent reviewer launch attestation'));
+            assert.ok(!result.violations.some((entry) => entry.includes('does not match REVIEWER_DELEGATION_ROUTED')));
         });
 
         it('fails when the latest reviewer routing telemetry records a different reviewer identity', () => {
@@ -1765,7 +1768,9 @@ describe('gates/completion — stage and evidence validation', () => {
                 'provider_bridge'
             );
 
-            assert.equal(result.violations.length, 0);
+            assert.equal(result.violations.length, 1);
+            assert.ok(result.violations[0].includes('independent reviewer launch attestation'));
+            assert.ok(!result.violations.some((entry) => entry.includes('does not match REVIEWER_DELEGATION_ROUTED')));
         });
 
         it('fails when receipt execution mode disagrees with review-context execution mode', () => {

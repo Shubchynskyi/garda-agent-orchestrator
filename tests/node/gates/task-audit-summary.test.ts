@@ -1024,7 +1024,7 @@ describe('gates/task-audit-summary', () => {
             });
             assert.equal(result.final_closeout.review_trust?.status, 'UNAVAILABLE');
             assert.ok(result.final_closeout.review_trust?.visible_summary_line?.includes('incomplete or invalid'));
-            assert.ok(result.final_closeout.review_trust?.policy_summary_line?.includes('asserted local review may finish this'));
+            assert.ok(result.final_closeout.review_trust?.policy_summary_line?.includes('asserted local review cannot satisfy mandatory independent review'));
             assert.equal(result.final_closeout.implementation_summary.docs_updated, true);
             assert.deepEqual(result.final_closeout.docs.docs_updated, ['docs/cli-reference.md']);
             assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('Suppressed output: ~62 chars'));
@@ -2527,9 +2527,9 @@ describe('gates/task-audit-summary', () => {
                     trust_levels: ['LOCAL_ASSERTED'],
                     execution_modes: ['DELEGATED_SUBAGENT'],
                     independent_review_attested: false,
-                    completion_policy: 'ASSERTED_LOCAL_ALLOWED',
+                    completion_policy: 'ASSERTED_LOCAL_BLOCKED',
                     visible_summary_line: 'Review trust: LOCAL_ASSERTED via DELEGATED_SUBAGENT; not independent audited review.',
-                    policy_summary_line: 'Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'
+                    policy_summary_line: 'Review policy: asserted local review cannot satisfy mandatory independent review for this code task; use independent reviewer launch attestation or human sign-off.'
                 },
                 workflow: {
                     mandatory_full_suite_enabled: true,
@@ -2549,7 +2549,7 @@ describe('gates/task-audit-summary', () => {
 
             assert.ok(renderedMarkdown.includes('Mandatory full-suite: true'));
             assert.ok(renderedMarkdown.includes('Review trust: LOCAL_ASSERTED via DELEGATED_SUBAGENT; not independent audited review.'));
-            assert.ok(renderedMarkdown.includes('Review policy: asserted local review may finish this code task; independent audited review requires separate attestation or human sign-off.'));
+            assert.ok(renderedMarkdown.includes('Review policy: asserted local review cannot satisfy mandatory independent review for this code task; use independent reviewer launch attestation or human sign-off.'));
         });
 
         it('renders the localized compact agent report block when closeout carries agent report state', () => {

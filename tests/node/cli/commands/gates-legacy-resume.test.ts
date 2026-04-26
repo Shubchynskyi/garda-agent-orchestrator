@@ -21,7 +21,7 @@ import {
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
-    buildReviewReceiptReviewerProvenance
+    buildReviewReceiptReviewerInvocationProvenance
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
@@ -156,7 +156,7 @@ function resolveReviewerExecutionFixture(
         reviewerExecutionMode,
         reviewerIdentity: delegatedIdentity,
         reviewerFallbackReason: null,
-        trustLevel: 'LOCAL_ASSERTED'
+        trustLevel: 'INDEPENDENT_AUDITED'
     } as const;
 }
 
@@ -367,6 +367,24 @@ function seedReusableReviewEvidence(
         },
         { passThru: true }
     );
+    const invocationDetails = {
+        task_id: taskId,
+        review_type: reviewKey,
+        reviewer_execution_mode: execution.reviewerExecutionMode,
+        reviewer_session_id: execution.reviewerIdentity,
+        reviewer_identity: execution.reviewerIdentity,
+        review_context_sha256: reviewContextHash,
+        routing_event_sha256: routedEvent?.integrity?.event_sha256
+    };
+    const invocationEvent = appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'REVIEWER_INVOCATION_ATTESTED',
+        'INFO',
+        'historical reviewer invocation attested',
+        invocationDetails,
+        { passThru: true }
+    );
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -381,7 +399,11 @@ function seedReusableReviewEvidence(
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
         reviewerFallbackReason: execution.reviewerFallbackReason,
-        reviewerProvenance: buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routedEvent?.integrity),
+        reviewerProvenance: buildReviewReceiptReviewerInvocationProvenance(
+            'REVIEWER_INVOCATION_ATTESTED',
+            invocationEvent?.integrity,
+            invocationDetails
+        ),
         trustLevel: execution.trustLevel
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
@@ -536,15 +558,38 @@ function refreshReviewReceiptProvenance(
             && String(details.reviewer_session_id || '').trim() === reviewerIdentity;
     });
     assert.ok(routedEvent, `Expected routed event for ${taskId}/${reviewKey}.`);
-    const provenance = buildReviewReceiptReviewerProvenance(
-        String(routedEvent.event_type || ''),
-        (routedEvent.integrity && typeof routedEvent.integrity === 'object')
-            ? routedEvent.integrity as any
-            : null
+    const routedIntegrity = (routedEvent.integrity && typeof routedEvent.integrity === 'object')
+        ? routedEvent.integrity as { event_sha256?: unknown }
+        : null;
+    assert.ok(routedIntegrity?.event_sha256, `Expected routed event integrity for ${taskId}/${reviewKey}.`);
+    const invocationDetails = {
+        task_id: taskId,
+        review_type: reviewKey,
+        reviewer_execution_mode: reviewerExecutionMode,
+        reviewer_session_id: reviewerIdentity,
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: String(receipt.review_context_sha256 || '').trim(),
+        routing_event_sha256: String(routedIntegrity.event_sha256 || '').trim()
+    };
+    const invocationEvent = appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'REVIEWER_INVOCATION_ATTESTED',
+        'INFO',
+        'Reviewer invocation attested for resumed legacy review fixture.',
+        invocationDetails,
+        { passThru: true }
+    );
+    const provenance = buildReviewReceiptReviewerInvocationProvenance(
+        'REVIEWER_INVOCATION_ATTESTED',
+        (invocationEvent?.integrity && typeof invocationEvent.integrity === 'object')
+            ? invocationEvent.integrity as any
+            : null,
+        invocationDetails
     );
     assert.ok(provenance, `Expected reviewer provenance for ${taskId}/${reviewKey}.`);
     receipt.reviewer_provenance = provenance;
-    receipt.trust_level = 'LOCAL_ASSERTED';
+    receipt.trust_level = 'INDEPENDENT_AUDITED';
     fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
 }
 

@@ -113,6 +113,7 @@ async function recordReviewRoutingViaCli(options: {
     reviewerExecutionMode: 'delegated_subagent';
     reviewerIdentity: string;
     reviewerFallbackReason?: string;
+    reviewContextPath?: string;
 }) {
     const args = [
         'gate',
@@ -127,6 +128,62 @@ async function recordReviewRoutingViaCli(options: {
         args.push('--reviewer-fallback-reason', options.reviewerFallbackReason);
     }
     await runCliMainWithHandling(args);
+    if ((process.exitCode ?? 0) !== 0) {
+        return;
+    }
+    const taskEventsPath = path.join(getOrchestratorRoot(options.repoRoot), 'runtime', 'task-events', `${options.taskId}.jsonl`);
+    if (!fs.existsSync(taskEventsPath)) {
+        return;
+    }
+    attestReviewerInvocationForTest({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewContextPath: options.reviewContextPath || path.join(
+            getReviewsRoot(options.repoRoot),
+            `${options.taskId}-${options.reviewType}-review-context.json`
+        ),
+        reviewerIdentity: options.reviewerIdentity,
+        reviewerExecutionMode: options.reviewerExecutionMode
+    });
+}
+
+function attestReviewerInvocationForTest(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewContextPath: string;
+    reviewerIdentity: string;
+    reviewerExecutionMode?: 'delegated_subagent';
+}): void {
+    const reviewerExecutionMode = options.reviewerExecutionMode || 'delegated_subagent';
+    const events = readTaskTimelineEvents(options.repoRoot, options.taskId);
+    const routedEvent = [...events].reverse().find((event) => (
+        event.event_type === 'REVIEWER_DELEGATION_ROUTED'
+        && String((event.details as Record<string, unknown> | undefined)?.review_type || '').trim().toLowerCase() === options.reviewType
+        && String((event.details as Record<string, unknown> | undefined)?.reviewer_session_id || '').trim() === options.reviewerIdentity
+        && String((event.details as Record<string, unknown> | undefined)?.reviewer_execution_mode || '').trim() === reviewerExecutionMode
+    ));
+    const routedIntegrity = routedEvent?.integrity as { event_sha256?: string } | null | undefined;
+    assert.ok(routedIntegrity?.event_sha256, `Missing routed reviewer integrity for ${options.taskId}/${options.reviewType}.`);
+    applyReviewerRoutingMetadata(options.reviewContextPath, {
+        actualExecutionMode: reviewerExecutionMode,
+        reviewerSessionId: options.reviewerIdentity,
+        fallbackReason: null
+    });
+    const crypto = require('node:crypto');
+    const reviewContextSha256 = crypto.createHash('sha256')
+        .update(fs.readFileSync(options.reviewContextPath))
+        .digest('hex');
+    appendTaskEvent(getOrchestratorRoot(options.repoRoot), options.taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', 'Reviewer invocation attested by test controller fixture.', {
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        reviewer_execution_mode: reviewerExecutionMode,
+        reviewer_session_id: options.reviewerIdentity,
+        reviewer_identity: options.reviewerIdentity,
+        review_context_sha256: reviewContextSha256,
+        routing_event_sha256: routedIntegrity.event_sha256
+    });
 }
 
 function seedNodeBackendOptionalSkillFixture(repoRoot: string, policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory') {
@@ -2486,6 +2543,13 @@ describe('cli/commands/gates', () => {
             reviewer_session_id: 'agent:code-reviewer',
             delegation_used: true
         });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity: 'agent:code-reviewer'
+        });
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -2536,9 +2600,9 @@ describe('cli/commands/gates', () => {
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
         assert.equal(receipt.reviewer_identity, 'agent:code-reviewer');
-        assert.equal(receipt.trust_level, 'LOCAL_ASSERTED');
-        assert.equal(receipt.reviewer_provenance?.attestation_type, 'controller_event_integrity');
-        assert.equal(receipt.reviewer_provenance?.controller_event_type, 'REVIEWER_DELEGATION_ROUTED');
+        assert.equal(receipt.trust_level, 'INDEPENDENT_AUDITED');
+        assert.equal(receipt.reviewer_provenance?.attestation_type, 'reviewer_invocation_attestation');
+        assert.equal(receipt.reviewer_provenance?.controller_event_type, 'REVIEWER_INVOCATION_ATTESTED');
         assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
         assert.equal(receipt.review_materialization_fidelity, 'exact');
         assert.equal(typeof receipt.review_output_sha256, 'string');
@@ -2548,12 +2612,13 @@ describe('cli/commands/gates', () => {
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
         assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 1);
-        const routedEvent = events.find((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED') as Record<string, unknown> | undefined;
-        const routedIntegrity = routedEvent?.integrity as Record<string, unknown> | undefined;
-        assert.equal(receipt.reviewer_provenance?.task_sequence, routedIntegrity?.task_sequence);
-        assert.equal(receipt.reviewer_provenance?.event_sha256, routedIntegrity?.event_sha256);
-        assert.equal(receipt.reviewer_provenance?.prev_event_sha256 ?? null, routedIntegrity?.prev_event_sha256 ?? null);
+        const invocationEvent = events.find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED') as Record<string, unknown> | undefined;
+        const invocationIntegrity = invocationEvent?.integrity as Record<string, unknown> | undefined;
+        assert.equal(receipt.reviewer_provenance?.task_sequence, invocationIntegrity?.task_sequence);
+        assert.equal(receipt.reviewer_provenance?.event_sha256, invocationIntegrity?.event_sha256);
+        assert.equal(receipt.reviewer_provenance?.prev_event_sha256 ?? null, invocationIntegrity?.prev_event_sha256 ?? null);
         assert.ok(capturedLogs.some((line) => line.includes('ReviewOutputMode: path')));
         assert.ok(capturedLogs.some((line) => line.includes('VerdictToken: REVIEW PASSED')));
         assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: exact')));
@@ -2610,6 +2675,13 @@ describe('cli/commands/gates', () => {
             reviewer_session_id: 'agent:code-reviewer',
             delegation_used: true
         });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity: 'agent:code-reviewer'
+        });
         fs.rmSync(aggregatePath, { force: true });
         fs.mkdirSync(aggregatePath, { recursive: true });
 
@@ -2647,6 +2719,7 @@ describe('cli/commands/gates', () => {
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
         assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 1);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -4426,6 +4499,13 @@ describe('cli/commands/gates', () => {
             reviewerSessionId: 'agent:test-reviewer',
             fallbackReason: null
         });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity: 'agent:test-reviewer'
+        });
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -4710,6 +4790,13 @@ describe('cli/commands/gates', () => {
             reviewer_session_id: 'agent:test-reviewer',
             delegation_used: true
         });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity: 'agent:test-reviewer'
+        });
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -4791,6 +4878,13 @@ describe('cli/commands/gates', () => {
             reviewer_session_id: `agent:${taskId}-reviewer`,
             reviewer_fallback_reason: null,
             delegation_used: true
+        });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity: `agent:${taskId}-reviewer`
         });
 
         const previousExitCode = process.exitCode;
@@ -5126,6 +5220,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', `agent:${taskId}-reviewer`
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath,
+                reviewerIdentity: `agent:${taskId}-reviewer`
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-receipt',
@@ -5200,6 +5301,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', `agent:${taskId}-reviewer`
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath,
+                reviewerIdentity: `agent:${taskId}-reviewer`
+            });
 
             const lockPath = `${receiptPath}.lock`;
             fs.mkdirSync(lockPath, { recursive: true });
@@ -5452,6 +5560,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:test-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'test',
+                reviewContextPath,
+                reviewerIdentity: 'agent:test-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-receipt',
@@ -5477,7 +5592,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(reviewResult.exitCode, 0);
         assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_PASSED');
-        assert.ok(reviewResult.outputLines.includes('TrustStatus: LOCAL_ASSERTED'));
+        assert.ok(reviewResult.outputLines.includes('TrustStatus: INDEPENDENT_AUDITED'));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -5498,9 +5613,9 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
-        assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'LOCAL_ASSERTED');
-        assert.ok(completionResult.review_trust_summary?.visible_summary_line?.includes('LOCAL_ASSERTED'));
-        assert.ok(completionResult.review_trust_summary?.policy_summary_line?.includes('asserted local review may finish this'));
+        assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'INDEPENDENT_AUDITED');
+        assert.ok(completionResult.review_trust_summary?.visible_summary_line?.includes('INDEPENDENT_AUDITED'));
+        assert.ok(completionResult.review_trust_summary?.policy_summary_line?.includes('independent reviewer launch attestation satisfies mandatory review'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -5636,6 +5751,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:code-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: codeReviewContextPath,
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -6096,6 +6218,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:code-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: customCodeReviewContextPath,
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -6148,6 +6277,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:test-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'test',
+                reviewContextPath: testReviewContextPath,
+                reviewerIdentity: 'agent:test-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -6489,6 +6625,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:code-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: customCodeReviewContextPath,
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -6731,6 +6874,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:code-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: customCodeReviewContextPath,
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -6791,6 +6941,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:test-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'test',
+                reviewContextPath: customTestReviewContextPath,
+                reviewerIdentity: 'agent:test-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-result',
@@ -6945,6 +7102,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', 'agent:code-reviewer'
             ]);
             routingExitCode = Number(process.exitCode ?? 0);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath,
+                reviewerIdentity: 'agent:code-reviewer'
+            });
 
             process.exitCode = 0;
             await runCliMainWithHandling([
@@ -7469,6 +7633,13 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', 'agent:code-reviewer'
             ]);
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath,
+                reviewerIdentity: 'agent:code-reviewer'
+            });
             await runCliMainWithHandling([
                 'gate',
                 'record-review-receipt',

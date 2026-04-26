@@ -30,6 +30,7 @@ import {
     getRequiredUpstreamReviewsFromRecord,
     normalizeRequiredReviewRecord
 } from './review-dependencies';
+import { getMandatoryDelegatedReviewTrustViolation } from './review-trust-policy';
 import {
     normalizeRuntimeIdentitySource,
     resolveReviewerRoutingPolicy
@@ -453,6 +454,30 @@ export function validateReviewSkillEvidence(
                             && normalizeTimelineDetailString(entry.integrity?.prev_event_sha256) === receiptReviewerProvenance.prev_event_sha256
                         ))
                         : null;
+                    const invocationAttestationEvent = receiptReviewerProvenance?.attestation_type === 'reviewer_invocation_attestation'
+                        ? findLatestTimelineEvent(events, (entry) => {
+                            const details = entry.details;
+                            const detailsTaskId = normalizeTimelineDetailString(details?.task_id ?? details?.taskId);
+                            const detailsReviewerIdentity = normalizeTimelineDetailString(
+                                details?.reviewer_session_id
+                                    ?? details?.reviewerSessionId
+                                    ?? details?.reviewer_identity
+                                    ?? details?.reviewerIdentity
+                            );
+                            return (
+                                entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                                && (!detailsTaskId || detailsTaskId === receiptReviewerProvenance.task_id)
+                                && normalizeTimelineDetailString(details?.review_type ?? details?.reviewType) === key
+                                && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === receiptExecutionMode
+                                && detailsReviewerIdentity === receiptReviewerIdentity
+                                && normalizeTimelineDetailString(details?.review_context_sha256 ?? details?.reviewContextSha256) === receiptReviewerProvenance.review_context_sha256
+                                && normalizeTimelineDetailString(details?.routing_event_sha256 ?? details?.routingEventSha256) === receiptReviewerProvenance.routing_event_sha256
+                                && entry.integrity?.task_sequence === receiptReviewerProvenance.task_sequence
+                                && normalizeTimelineDetailString(entry.integrity?.event_sha256) === receiptReviewerProvenance.event_sha256
+                                && normalizeTimelineDetailString(entry.integrity?.prev_event_sha256) === receiptReviewerProvenance.prev_event_sha256
+                            );
+                        })
+                        : null;
                     if (receipt.reviewer_execution_mode && !receiptExecutionMode) {
                         result.violations.push(
                             `Required review '${key}' has invalid receipt reviewer_execution_mode ` +
@@ -502,10 +527,26 @@ export function validateReviewSkillEvidence(
                                 'Current local routing telemetry is asserted-only until a separate launch-attestation contract exists.'
                             );
                         }
+                        const trustViolation = getMandatoryDelegatedReviewTrustViolation({
+                            reviewKey: key,
+                            trustLevel: receiptTrustLevel,
+                            provenanceAttestationType: receiptReviewerProvenance?.attestation_type
+                        });
+                        if (trustViolation) {
+                            result.violations.push(
+                                trustViolation.replace(`Review receipt for '${key}'`, `Required review '${key}' receipt`)
+                            );
+                        }
                         if (!receiptReviewerProvenance) {
                             result.violations.push(
                                 `Required review '${key}' receipt is missing reviewer_provenance for delegated_subagent execution.`
                             );
+                        } else if (receiptReviewerProvenance.attestation_type === 'reviewer_invocation_attestation') {
+                            if (!invocationAttestationEvent) {
+                                result.violations.push(
+                                    `Required review '${key}' receipt reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
+                                );
+                            }
                         } else if (!attestedRoutingEvent) {
                             result.violations.push(
                                 `Required review '${key}' receipt reviewer_provenance does not match any REVIEWER_DELEGATION_ROUTED telemetry event in the current cycle.`

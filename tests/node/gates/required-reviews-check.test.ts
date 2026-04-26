@@ -600,7 +600,7 @@ describe('gates/required-reviews-check', () => {
             assert.ok(result.violations.some((violation) => violation.includes('missing identity_status')));
         });
 
-        it('accepts legacy review-context routing metadata for backfilled provider-bridge tasks', () => {
+        it('keeps legacy review-context identity backfill but blocks missing independent launch attestation', () => {
             const result = validateReviewArtifactGateEligibility({
                 resolvedTaskId: 'T-105',
                 reviewKey: 'code',
@@ -658,7 +658,8 @@ describe('gates/required-reviews-check', () => {
                 }
             });
 
-            assert.equal(result.violations.length, 0);
+            assert.equal(result.violations.length, 1);
+            assert.ok(result.violations[0].includes('independent reviewer launch attestation'));
             assert.equal(result.reviewerRoutingPolicy?.legacy_identity_compatibility_applied, true);
         });
 

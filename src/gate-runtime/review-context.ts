@@ -368,13 +368,32 @@ export interface ReviewReceipt {
     recorded_at_utc: string;
 }
 
-export interface ReviewReceiptReviewerProvenance {
+export type ReviewReceiptReviewerProvenance =
+    | ControllerEventIntegrityReviewReceiptReviewerProvenance
+    | ReviewerInvocationAttestationReviewReceiptReviewerProvenance;
+
+export interface ControllerEventIntegrityReviewReceiptReviewerProvenance {
     schema_version: number;
     attestation_type: 'controller_event_integrity';
     controller_event_type: 'REVIEWER_DELEGATION_ROUTED';
     task_sequence: number;
     prev_event_sha256: string | null;
     event_sha256: string;
+}
+
+export interface ReviewerInvocationAttestationReviewReceiptReviewerProvenance {
+    schema_version: number;
+    attestation_type: 'reviewer_invocation_attestation';
+    controller_event_type: 'REVIEWER_INVOCATION_ATTESTED';
+    task_sequence: number;
+    prev_event_sha256: string | null;
+    event_sha256: string;
+    task_id: string;
+    review_type: string;
+    reviewer_execution_mode: 'delegated_subagent';
+    reviewer_identity: string;
+    review_context_sha256: string;
+    routing_event_sha256: string;
 }
 
 export interface ReviewContextRoutingMetadataUpdate {
@@ -426,6 +445,11 @@ function normalizeProvenanceSha256(value: unknown): string | null {
     return /^[0-9a-f]{64}$/.test(text) ? text : null;
 }
 
+function normalizeProvenanceText(value: unknown): string | null {
+    const text = String(value || '').trim();
+    return text || null;
+}
+
 export function normalizeReviewReceiptReviewerProvenance(value: unknown): ReviewReceiptReviewerProvenance | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
@@ -443,6 +467,44 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
     const prevEventSha256 = record.prev_event_sha256 == null
         ? null
         : normalizeProvenanceSha256(record.prev_event_sha256);
+    if (attestationType === 'reviewer_invocation_attestation') {
+        const taskId = normalizeProvenanceText(record.task_id);
+        const reviewType = normalizeProvenanceText(record.review_type)?.toLowerCase() || null;
+        const reviewerExecutionMode = normalizeProvenanceText(record.reviewer_execution_mode);
+        const reviewerIdentity = normalizeProvenanceText(record.reviewer_identity);
+        const reviewContextSha256 = normalizeProvenanceSha256(record.review_context_sha256);
+        const routingEventSha256 = normalizeProvenanceSha256(record.routing_event_sha256);
+        if (
+            schemaVersion !== 1
+            || controllerEventType !== 'REVIEWER_INVOCATION_ATTESTED'
+            || !Number.isInteger(taskSequence)
+            || taskSequence <= 0
+            || !eventSha256
+            || (record.prev_event_sha256 != null && prevEventSha256 == null)
+            || !taskId
+            || !reviewType
+            || reviewerExecutionMode !== 'delegated_subagent'
+            || !reviewerIdentity
+            || !reviewContextSha256
+            || !routingEventSha256
+        ) {
+            return null;
+        }
+        return {
+            schema_version: 1,
+            attestation_type: 'reviewer_invocation_attestation',
+            controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+            task_sequence: taskSequence,
+            prev_event_sha256: prevEventSha256,
+            event_sha256: eventSha256,
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256
+        };
+    }
     if (
         schemaVersion !== 1
         || attestationType !== 'controller_event_integrity'
@@ -478,6 +540,33 @@ export function buildReviewReceiptReviewerProvenance(
         task_sequence: integrity.task_sequence,
         prev_event_sha256: integrity.prev_event_sha256 ?? null,
         event_sha256: integrity.event_sha256 ?? null
+    });
+}
+
+export function buildReviewReceiptReviewerInvocationProvenance(
+    eventType: string,
+    integrity: TaskEventIntegrity | null | undefined,
+    details: unknown
+): ReviewReceiptReviewerProvenance | null {
+    if (String(eventType || '').trim().toUpperCase() !== 'REVIEWER_INVOCATION_ATTESTED' || !integrity) {
+        return null;
+    }
+    const record = details && typeof details === 'object' && !Array.isArray(details)
+        ? details as Record<string, unknown>
+        : {};
+    return normalizeReviewReceiptReviewerProvenance({
+        schema_version: 1,
+        attestation_type: 'reviewer_invocation_attestation',
+        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        task_sequence: integrity.task_sequence,
+        prev_event_sha256: integrity.prev_event_sha256 ?? null,
+        event_sha256: integrity.event_sha256 ?? null,
+        task_id: record.task_id,
+        review_type: record.review_type ?? record.reviewType,
+        reviewer_execution_mode: record.reviewer_execution_mode ?? record.reviewerExecutionMode,
+        reviewer_identity: record.reviewer_identity ?? record.reviewerIdentity ?? record.reviewer_session_id ?? record.reviewerSessionId,
+        review_context_sha256: record.review_context_sha256 ?? record.reviewContextSha256,
+        routing_event_sha256: record.routing_event_sha256 ?? record.routingEventSha256
     });
 }
 

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
+    buildReviewReceiptReviewerInvocationProvenance,
     buildReviewReceiptReviewerProvenance,
     extractReviewVerdictToken,
     normalizeCompatibilityReviewerExecutionMode,
@@ -828,6 +829,50 @@ function findMatchingRoutingEvent(
     return null;
 }
 
+function findMatchingReviewerInvocationAttestationEvent(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    options: {
+        taskId: string;
+        reviewType: string;
+        reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
+        reviewerIdentity: string;
+        reviewContextSha256: string;
+        routingEventSha256: string;
+    }
+): ReviewDependencyTimelineEvent | null {
+    const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
+    const normalizedTaskId = String(options.taskId || '').trim();
+    const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
+    const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+        const entry = timelineEvents[index];
+        const details = entry.details;
+        const detailsTaskId = String(details?.task_id || details?.taskId || '').trim();
+        const detailsReviewContextSha256 = String(details?.review_context_sha256 || details?.reviewContextSha256 || '')
+            .trim()
+            .toLowerCase();
+        const detailsRoutingEventSha256 = String(details?.routing_event_sha256 || details?.routingEventSha256 || '')
+            .trim()
+            .toLowerCase();
+        const detailsReviewerIdentity = String(
+            (details?.reviewer_session_id ?? details?.reviewerSessionId ?? details?.reviewer_identity ?? details?.reviewerIdentity) || ''
+        ).trim();
+        if (
+            entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+            && (!detailsTaskId || detailsTaskId === normalizedTaskId)
+            && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+            && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === options.reviewerExecutionMode
+            && detailsReviewerIdentity === options.reviewerIdentity
+            && detailsReviewContextSha256 === normalizedReviewContextSha256
+            && detailsRoutingEventSha256 === normalizedRoutingEventSha256
+            && entry.integrity
+        ) {
+            return entry;
+        }
+    }
+    return null;
+}
+
 function readDependencyTimelineEvents(timelinePath: string): ReviewDependencyTimelineEvent[] {
     if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
         return [];
@@ -982,8 +1027,8 @@ async function recordReviewReceiptFromArtifacts(options: {
             `with reviewer '${options.reviewerIdentity}' and execution mode '${options.reviewerExecutionMode}'.`
         );
     }
-    const reviewerProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
-    if (options.reviewerExecutionMode === 'delegated_subagent' && !reviewerProvenance) {
+    const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
+    if (!routingEventProvenance) {
         throw new Error(
             `Review receipts require controller-attested reviewer_provenance for delegated_subagent '${options.reviewType}' reviews. ` +
             'Matching routing telemetry is missing event integrity.'
@@ -991,6 +1036,28 @@ async function recordReviewReceiptFromArtifacts(options: {
     }
 
     const contextSha256 = fileSha256(options.contextPath);
+    if (!contextSha256) {
+        throw new Error(`Review receipts require a hashable review-context artifact: ${normalizePath(options.contextPath)}.`);
+    }
+    const invocationEvent = findMatchingReviewerInvocationAttestationEvent(timelineEvents, {
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerExecutionMode: options.reviewerExecutionMode,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256: contextSha256,
+        routingEventSha256: routingEventProvenance.event_sha256
+    });
+    const reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
+        invocationEvent?.event_type || '',
+        invocationEvent?.integrity,
+        invocationEvent?.details
+    );
+    if (options.reviewerExecutionMode === 'delegated_subagent' && !reviewerProvenance) {
+        throw new Error(
+            `Review receipts require REVIEWER_INVOCATION_ATTESTED launch provenance for delegated_subagent '${options.reviewType}' reviews. ` +
+            'Run the real delegated reviewer launch path before recording reviewer output; local routing telemetry alone is not enough.'
+        );
+    }
     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight as Record<string, unknown>, options.repoRoot);
     const receipt = buildReviewReceipt({
         taskId: options.taskId,
@@ -1008,7 +1075,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerIdentity: options.reviewerIdentity,
         reviewerFallbackReason: options.reviewerFallbackReason,
         reviewerProvenance,
-        trustLevel: 'LOCAL_ASSERTED'
+        trustLevel: 'INDEPENDENT_AUDITED'
     });
     (receipt as unknown as Record<string, unknown>).review_output_path = options.rawReviewOutputPath
         ? normalizePath(options.rawReviewOutputPath)

@@ -9,12 +9,13 @@ import {
 import {
     emitReviewPhaseStartedEventAsync,
     emitReviewerDelegationRoutedEventAsync,
+    emitReviewerInvocationAttestedEventAsync,
     emitReviewRecordedEventAsync
 } from '../../../gate-runtime/lifecycle-events';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
-    buildReviewReceiptReviewerProvenance,
+    buildReviewReceiptReviewerInvocationProvenance,
     normalizeReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance,
     restoreReviewerRoutingMetadata,
@@ -210,6 +211,7 @@ async function tryReuseReviewEvidence(options: {
     const historicalReviewerProvenance = receipt.reviewer_provenance == null
         ? null
         : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+    const historicalTrustLevel = String(receipt.trust_level || '').trim().toUpperCase();
     const expectedContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
     const expectedContextReuseSha256 = String(
         receipt.review_context_reuse_sha256 || options.previousReviewContextReuseSha256 || ''
@@ -223,6 +225,17 @@ async function tryReuseReviewEvidence(options: {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
     if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
+        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+    }
+    if (
+        historicalTrustLevel !== 'INDEPENDENT_AUDITED'
+        || historicalReviewerProvenance.attestation_type !== 'reviewer_invocation_attestation'
+        || historicalReviewerProvenance.task_id !== options.taskId
+        || historicalReviewerProvenance.review_type !== options.reviewType
+        || historicalReviewerProvenance.reviewer_execution_mode !== reviewerExecutionMode
+        || historicalReviewerProvenance.reviewer_identity !== reviewerIdentity
+        || historicalReviewerProvenance.review_context_sha256 !== expectedContextSha256
+    ) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
     if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase()) {
@@ -264,6 +277,28 @@ async function tryReuseReviewEvidence(options: {
         (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
     );
     if (latestCompilePassSequence == null) {
+        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+    }
+    const historicalInvocationEvent = timelineEvents.find((entry) => (
+        entry.sequence < latestCompilePassSequence
+        && entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+        && entry.integrity
+        && entry.integrity.task_sequence === historicalReviewerProvenance.task_sequence
+        && String(entry.integrity.event_sha256 || '').trim().toLowerCase() === historicalReviewerProvenance.event_sha256
+        && (entry.integrity.prev_event_sha256 == null
+            ? null
+            : String(entry.integrity.prev_event_sha256).trim().toLowerCase() || null) === historicalReviewerProvenance.prev_event_sha256
+        && String(entry.details?.task_id || entry.details?.taskId || '').trim() === options.taskId
+        && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === options.reviewType
+        && String(entry.details?.reviewer_execution_mode || entry.details?.reviewerExecutionMode || '').trim() === reviewerExecutionMode
+        && (
+            String(entry.details?.reviewer_identity || entry.details?.reviewerIdentity || '').trim()
+            || String(entry.details?.reviewer_session_id || entry.details?.reviewerSessionId || '').trim()
+        ) === reviewerIdentity
+        && String(entry.details?.review_context_sha256 || entry.details?.reviewContextSha256 || '').trim().toLowerCase() === expectedContextSha256
+        && String(entry.details?.routing_event_sha256 || entry.details?.routingEventSha256 || '').trim().toLowerCase() === historicalReviewerProvenance.routing_event_sha256
+    ));
+    if (!historicalInvocationEvent) {
         return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
     }
     const hasCurrentCycleReviewEvidence = timelineEvents.some((entry) => (
@@ -337,9 +372,38 @@ async function tryReuseReviewEvidence(options: {
         if (!routingEvent || taskEventAppendHasBlockingFailure(routingEvent, false)) {
             throw new Error('REVIEWER_DELEGATION_ROUTED telemetry could not be persisted for review reuse.');
         }
-        const currentReviewerProvenance = buildReviewReceiptReviewerProvenance('REVIEWER_DELEGATION_ROUTED', routingEvent.integrity);
+        const routingEventSha256 = String(routingEvent.integrity?.event_sha256 || '').trim().toLowerCase();
+        if (!routingEventSha256) {
+            throw new Error('Delegated review reuse could not derive routing integrity from current-cycle routing telemetry.');
+        }
+        const invocationEvent = await emitReviewerInvocationAttestedEventAsync(
+            orchestratorRoot,
+            options.taskId,
+            options.reviewType,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            routingUpdate.contextSha256,
+            routingEventSha256
+        );
+        if (!invocationEvent || taskEventAppendHasBlockingFailure(invocationEvent, false)) {
+            throw new Error('REVIEWER_INVOCATION_ATTESTED telemetry could not be persisted for review reuse.');
+        }
+        const invocationDetails = {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            reviewer_execution_mode: reviewerExecutionMode,
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: routingUpdate.contextSha256,
+            routing_event_sha256: routingEventSha256
+        };
+        const currentReviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
+            'REVIEWER_INVOCATION_ATTESTED',
+            invocationEvent.integrity,
+            invocationDetails
+        );
         if (!currentReviewerProvenance) {
-            throw new Error('Delegated review reuse could not derive reviewer_provenance from current-cycle routing telemetry.');
+            throw new Error('Delegated review reuse could not derive reviewer_provenance from current-cycle invocation telemetry.');
         }
         const refreshedReceipt = buildReviewReceipt({
             taskId: options.taskId,
@@ -357,7 +421,7 @@ async function tryReuseReviewEvidence(options: {
             reviewerIdentity,
             reviewerFallbackReason,
             reviewerProvenance: currentReviewerProvenance,
-            trustLevel: 'LOCAL_ASSERTED'
+            trustLevel: 'INDEPENDENT_AUDITED'
         });
         writeReviewArtifactJson(receiptPath, refreshedReceipt);
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {

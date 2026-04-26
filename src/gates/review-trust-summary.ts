@@ -22,7 +22,7 @@ export interface ReviewTrustSummary {
     trust_levels: string[];
     execution_modes: string[];
     independent_review_attested: boolean;
-    completion_policy: 'ASSERTED_LOCAL_ALLOWED' | 'INDEPENDENT_REVIEW_ATTESTED';
+    completion_policy: 'ASSERTED_LOCAL_BLOCKED' | 'INDEPENDENT_REVIEW_ATTESTED';
     visible_summary_line: string;
     policy_summary_line: string;
 }
@@ -38,9 +38,11 @@ function normalizeToken(value: unknown): string | null {
     return normalized ? normalized : null;
 }
 
-function normalizeLocalTrustLevel(value: unknown): 'LOCAL_ASSERTED' | 'LOCAL_AUDITED' | null {
+type NormalizedReviewTrustLevel = 'LOCAL_ASSERTED' | 'LOCAL_AUDITED' | 'INDEPENDENT_AUDITED';
+
+function normalizeReviewTrustLevel(value: unknown): NormalizedReviewTrustLevel | null {
     const normalized = normalizeToken(value);
-    if (normalized === 'LOCAL_ASSERTED' || normalized === 'LOCAL_AUDITED') {
+    if (normalized === 'LOCAL_ASSERTED' || normalized === 'LOCAL_AUDITED' || normalized === 'INDEPENDENT_AUDITED') {
         return normalized;
     }
     return null;
@@ -150,7 +152,7 @@ export function buildReviewTrustSummary(
     }
 
     const normalizedEntries = entries.map((entry) => {
-        const normalizedTrustLevel = normalizeLocalTrustLevel(entry.trust_level);
+        const normalizedTrustLevel = normalizeReviewTrustLevel(entry.trust_level);
         const normalizedExecutionMode = normalizeReviewerExecutionMode(entry.reviewer_execution_mode);
         const normalizedReviewerIdentity = String(entry.reviewer_identity || '').trim();
         const normalizedFallbackReason = String(entry.reviewer_fallback_reason || '').trim();
@@ -164,6 +166,9 @@ export function buildReviewTrustSummary(
         const missingDelegatedProvenance =
             normalizedExecutionMode === 'DELEGATED_SUBAGENT'
             && normalizedProvenance == null;
+        const invalidIndependentProvenance =
+            normalizedTrustLevel === 'INDEPENDENT_AUDITED'
+            && normalizedProvenance?.attestation_type !== 'reviewer_invocation_attestation';
         const invalidDelegatedIdentity =
             normalizedExecutionMode === 'DELEGATED_SUBAGENT'
             && (!normalizedReviewerIdentity || !normalizedReviewerIdentity.startsWith('agent:'));
@@ -174,7 +179,10 @@ export function buildReviewTrustSummary(
             invalid_fallback_reason:
                 !!normalizedFallbackReason
                 || fallbackReasonRequired === true,
-            invalid_provenance: (provenanceProvided && normalizedProvenance == null) || missingDelegatedProvenance
+            invalid_provenance:
+                (provenanceProvided && normalizedProvenance == null)
+                || missingDelegatedProvenance
+                || invalidIndependentProvenance
         };
     });
     const usableEntries = normalizedEntries.filter(
@@ -187,7 +195,7 @@ export function buildReviewTrustSummary(
     const trustLevels = [...new Set(
         usableEntries
             .map((entry) => entry.trust_level)
-            .filter((entry): entry is 'LOCAL_ASSERTED' | 'LOCAL_AUDITED' => entry != null)
+            .filter((entry): entry is NormalizedReviewTrustLevel => entry != null)
     )].sort();
     const executionModes = [...new Set(
         usableEntries
@@ -207,16 +215,31 @@ export function buildReviewTrustSummary(
             trust_levels: [],
             execution_modes: executionModes,
             independent_review_attested: false,
-            completion_policy: 'ASSERTED_LOCAL_ALLOWED',
+            completion_policy: 'ASSERTED_LOCAL_BLOCKED',
             visible_summary_line: 'Review trust: unavailable (required review trust evidence incomplete or invalid).',
             policy_summary_line:
-                `Review policy: asserted local review may finish this ${scopeLabel}; ` +
-                'independent audited review requires separate attestation or human sign-off.'
+                `Review policy: asserted local review cannot satisfy mandatory independent review for this ${scopeLabel}; ` +
+                'use independent reviewer launch attestation or human sign-off.'
         };
     }
 
     let status: ReviewTrustSummary['status'];
     let visibleSummaryLine: string;
+    if (trustLevels.length === 1 && trustLevels[0] === 'INDEPENDENT_AUDITED') {
+        return {
+            status: 'INDEPENDENT_AUDITED',
+            trust_levels: trustLevels,
+            execution_modes: executionModes,
+            independent_review_attested: true,
+            completion_policy: 'INDEPENDENT_REVIEW_ATTESTED',
+            visible_summary_line:
+                `Review trust: INDEPENDENT_AUDITED via ${formatModes(executionModes)}; ` +
+                'independent reviewer launch attested.',
+            policy_summary_line:
+                `Review policy: independent reviewer launch attestation satisfies mandatory review for this ${scopeLabel}.`
+        };
+    }
+
     if (trustLevels.length === 1 && trustLevels[0] === 'LOCAL_ASSERTED') {
         status = 'ASSERTED_LOCAL_ONLY';
         visibleSummaryLine =
@@ -239,10 +262,10 @@ export function buildReviewTrustSummary(
         trust_levels: trustLevels,
         execution_modes: executionModes,
         independent_review_attested: false,
-        completion_policy: 'ASSERTED_LOCAL_ALLOWED',
+        completion_policy: 'ASSERTED_LOCAL_BLOCKED',
         visible_summary_line: visibleSummaryLine,
         policy_summary_line:
-            `Review policy: asserted local review may finish this ${scopeLabel}; ` +
-            'independent audited review requires separate attestation or human sign-off.'
+            `Review policy: asserted local review cannot satisfy mandatory independent review for this ${scopeLabel}; ` +
+            'use independent reviewer launch attestation or human sign-off.'
     };
 }

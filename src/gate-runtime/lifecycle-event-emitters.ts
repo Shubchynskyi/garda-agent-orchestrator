@@ -297,6 +297,64 @@ export async function emitReviewerDelegationRoutedEventAsync(
     );
 }
 
+export function emitReviewerInvocationAttestedEvent(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    executionMode: 'delegated_subagent',
+    reviewerSessionId: string,
+    reviewContextSha256: string,
+    routingEventSha256: string,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEvent(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEWER_INVOCATION_ATTESTED,
+        'INFO',
+        `Reviewer invocation attested: ${reviewType} → ${reviewerSessionId}.`,
+        {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: executionMode,
+            reviewer_session_id: reviewerSessionId,
+            reviewer_identity: reviewerSessionId,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256
+        },
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
+export async function emitReviewerInvocationAttestedEventAsync(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    executionMode: 'delegated_subagent',
+    reviewerSessionId: string,
+    reviewContextSha256: string,
+    routingEventSha256: string,
+    options: AutoEmitOptions = {}
+) {
+    return emitLifecycleEventAsync(
+        repoRoot,
+        taskId,
+        LIFECYCLE_EVENT_TYPES.REVIEWER_INVOCATION_ATTESTED,
+        'INFO',
+        `Reviewer invocation attested: ${reviewType} → ${reviewerSessionId}.`,
+        {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: executionMode,
+            reviewer_session_id: reviewerSessionId,
+            reviewer_identity: reviewerSessionId,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256
+        },
+        { ...options, actor: options.actor || 'orchestrator' }
+    );
+}
+
 export function emitProviderRoutingEvent(repoRoot: string, taskId: string, provider: string, routedTo: string, reason: string, options: AutoEmitOptions = {}) {
     return emitLifecycleEvent(
         repoRoot,

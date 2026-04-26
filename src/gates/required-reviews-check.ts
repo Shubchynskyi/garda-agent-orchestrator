@@ -13,6 +13,7 @@ import { getNoOpEvidence } from './no-op';
 import { getReviewContextContractViolations } from './review-context-contract';
 import { resolveReviewContextRoutingIdentity } from './review-context-routing';
 import { type ReviewDependencyTimelineEvent } from './review-dependencies';
+import { getMandatoryDelegatedReviewTrustViolation } from './review-trust-policy';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { resolveBundleName } from '../core/constants';
 
@@ -265,7 +266,7 @@ function findMatchingRoutingEvent(
     if (cycleFloorSequence == null) {
         return null;
     }
-    if (reviewerProvenance) {
+    if (reviewerProvenance?.attestation_type === 'controller_event_integrity') {
         for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
             const entry = timelineEvents[index];
             const details = entry.details;
@@ -303,6 +304,67 @@ function findMatchingRoutingEvent(
             && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
             && String((details?.reviewer_session_id ?? details?.reviewerSessionId) || '').trim() === reviewerIdentity
             && (reviewerExecutionMode !== 'same_agent_fallback' || eventFallbackReason === (reviewerFallbackReason || ''))
+        ) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+function findMatchingInvocationAttestationEvent(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    options: {
+        taskId: string;
+        reviewType: string;
+        reviewerExecutionMode: string;
+        reviewerIdentity: string;
+        reviewContextSha256: string | null;
+        routingEventSha256: string | null;
+        reviewerProvenance: NonNullable<ReturnType<typeof normalizeReviewReceiptReviewerProvenance>>;
+    }
+): ReviewDependencyTimelineEvent | null {
+    if (options.reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
+        return null;
+    }
+    const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
+    const normalizedTaskId = String(options.taskId || '').trim();
+    const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
+    const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
+    if (
+        options.reviewerProvenance.task_id !== normalizedTaskId
+        || options.reviewerProvenance.review_type !== normalizedReviewType
+        || options.reviewerProvenance.reviewer_execution_mode !== options.reviewerExecutionMode
+        || options.reviewerProvenance.reviewer_identity !== options.reviewerIdentity
+        || options.reviewerProvenance.review_context_sha256 !== normalizedReviewContextSha256
+        || options.reviewerProvenance.routing_event_sha256 !== normalizedRoutingEventSha256
+    ) {
+        return null;
+    }
+
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+        const entry = timelineEvents[index];
+        const details = entry.details;
+        const detailsTaskId = String(details?.task_id || details?.taskId || '').trim();
+        const detailsReviewContextSha256 = String(details?.review_context_sha256 || details?.reviewContextSha256 || '')
+            .trim()
+            .toLowerCase();
+        const detailsRoutingEventSha256 = String(details?.routing_event_sha256 || details?.routingEventSha256 || '')
+            .trim()
+            .toLowerCase();
+        if (
+            entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+            && (!detailsTaskId || detailsTaskId === normalizedTaskId)
+            && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+            && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === options.reviewerExecutionMode
+            && String((details?.reviewer_session_id ?? details?.reviewerSessionId ?? details?.reviewer_identity ?? details?.reviewerIdentity) || '').trim() === options.reviewerIdentity
+            && detailsReviewContextSha256 === normalizedReviewContextSha256
+            && detailsRoutingEventSha256 === normalizedRoutingEventSha256
+            && entry.integrity
+            && entry.integrity.task_sequence === options.reviewerProvenance.task_sequence
+            && String(entry.integrity.event_sha256 || '').trim().toLowerCase() === options.reviewerProvenance.event_sha256
+            && (entry.integrity.prev_event_sha256 == null
+                ? null
+                : String(entry.integrity.prev_event_sha256).trim().toLowerCase() || null) === options.reviewerProvenance.prev_event_sha256
         ) {
             return entry;
         }
@@ -380,6 +442,7 @@ export function validateReviewArtifactGateEligibility(options: {
     let reviewerFallbackReason: string | null = null;
     let reviewerProvenance: ReturnType<typeof normalizeReviewReceiptReviewerProvenance> = null;
     let trustLevel: string | null = null;
+    let receiptReviewContextSha256: string | null = null;
     let trivialReview = false;
     let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
 
@@ -515,6 +578,7 @@ export function validateReviewArtifactGateEligibility(options: {
                 if (receipt.trust_level) {
                     trustLevel = String(receipt.trust_level).trim().toUpperCase();
                 }
+                receiptReviewContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
             } catch {
                 errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
             }
@@ -604,6 +668,16 @@ export function validateReviewArtifactGateEligibility(options: {
                     `Review receipt for '${reviewKey}' is missing reviewer_provenance for LOCAL_AUDITED delegated_subagent execution.`
                 );
             }
+            if (reviewerExecutionMode === 'delegated_subagent') {
+                const trustViolation = getMandatoryDelegatedReviewTrustViolation({
+                    reviewKey,
+                    trustLevel,
+                    provenanceAttestationType: reviewerProvenance?.attestation_type
+                });
+                if (trustViolation) {
+                    errors.push(trustViolation);
+                }
+            }
             if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && options.timelineEvents && options.timelineEvents.length > 0) {
                 const routingEvent = findMatchingRoutingEvent(
                     options.timelineEvents,
@@ -632,6 +706,24 @@ export function validateReviewArtifactGateEligibility(options: {
                         errors.push(
                             `Review receipt for '${reviewKey}' is missing reviewer_provenance for delegated_subagent execution.`
                         );
+                    } else if (reviewerProvenance.attestation_type === 'reviewer_invocation_attestation') {
+                        const invocationAttestationEvent = findMatchingInvocationAttestationEvent(
+                            options.timelineEvents,
+                            {
+                                taskId: resolvedTaskId || '',
+                                reviewType: reviewKey,
+                                reviewerExecutionMode,
+                                reviewerIdentity,
+                                reviewContextSha256: receiptReviewContextSha256,
+                                routingEventSha256: String(routingEvent.integrity.event_sha256 || '').trim().toLowerCase(),
+                                reviewerProvenance
+                            }
+                        );
+                        if (!invocationAttestationEvent) {
+                            errors.push(
+                                `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
+                            );
+                        }
                     } else if (
                         reviewerProvenance.task_sequence !== routingEvent.integrity.task_sequence
                         || reviewerProvenance.event_sha256 !== String(routingEvent.integrity.event_sha256 || '').trim().toLowerCase()
