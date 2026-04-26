@@ -14,7 +14,8 @@ import {
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../gate-runtime/reviewer-session-contract';
 import {
-    extractReviewVerdictToken
+    extractReviewVerdictToken,
+    normalizeReviewReceiptReviewerProvenance
 } from '../gate-runtime/review-context';
 import {
     buildTaskAuditSummary,
@@ -173,9 +174,17 @@ interface ReviewArtifactState {
     reviewerIdentity: string | null;
     contextReviewerIdentity: string | null;
     reviewerProvenance: {
+        attestation_type: string;
+        controller_event_type: string;
         task_sequence: number | null;
         prev_event_sha256: string | null;
         event_sha256: string | null;
+        task_id?: string;
+        review_type?: string;
+        reviewer_execution_mode?: string;
+        reviewer_identity?: string;
+        review_context_sha256?: string;
+        routing_event_sha256?: string;
     } | null;
 }
 
@@ -399,18 +408,24 @@ function readReviewArtifactState(
             ? receipt.reviewer_identity.trim()
             : '';
         reviewerIdentity = receiptReviewerIdentity || null;
-        const rawProvenance = isPlainRecord(receipt.reviewer_provenance)
-            ? receipt.reviewer_provenance
-            : null;
-        reviewerProvenance = rawProvenance
+        const normalizedProvenance = receipt.reviewer_provenance == null
+            ? null
+            : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+        reviewerProvenance = normalizedProvenance
             ? {
-                task_sequence: typeof rawProvenance.task_sequence === 'number'
-                    ? rawProvenance.task_sequence
-                    : Number(rawProvenance.task_sequence) || null,
-                prev_event_sha256: rawProvenance.prev_event_sha256 == null
+                attestation_type: normalizedProvenance.attestation_type,
+                controller_event_type: normalizedProvenance.controller_event_type,
+                task_sequence: normalizedProvenance.task_sequence,
+                prev_event_sha256: normalizedProvenance.prev_event_sha256 == null
                     ? null
-                    : String(rawProvenance.prev_event_sha256 || '').trim().toLowerCase() || null,
-                event_sha256: String(rawProvenance.event_sha256 || '').trim().toLowerCase() || null
+                    : String(normalizedProvenance.prev_event_sha256 || '').trim().toLowerCase() || null,
+                event_sha256: String(normalizedProvenance.event_sha256 || '').trim().toLowerCase() || null,
+                task_id: 'task_id' in normalizedProvenance ? normalizedProvenance.task_id : undefined,
+                review_type: 'review_type' in normalizedProvenance ? normalizedProvenance.review_type : undefined,
+                reviewer_execution_mode: 'reviewer_execution_mode' in normalizedProvenance ? normalizedProvenance.reviewer_execution_mode : undefined,
+                reviewer_identity: 'reviewer_identity' in normalizedProvenance ? normalizedProvenance.reviewer_identity : undefined,
+                review_context_sha256: 'review_context_sha256' in normalizedProvenance ? normalizedProvenance.review_context_sha256 : undefined,
+                routing_event_sha256: 'routing_event_sha256' in normalizedProvenance ? normalizedProvenance.routing_event_sha256 : undefined
             }
             : null;
         if (receipt.task_id !== taskId) {
@@ -428,6 +443,9 @@ function readReviewArtifactState(
         if (receiptExecutionMode !== 'delegated_subagent') {
             violations.push("review receipt does not use reviewer_execution_mode 'delegated_subagent'");
         }
+        if (String(receipt.trust_level || '').trim() !== 'INDEPENDENT_AUDITED') {
+            violations.push("review receipt trust_level must be 'INDEPENDENT_AUDITED'");
+        }
         if (!receiptReviewerIdentity.startsWith('agent:')) {
             violations.push("review receipt reviewer_identity must use 'agent:' scope");
         }
@@ -439,12 +457,16 @@ function readReviewArtifactState(
         }
         if (receipt.reviewer_provenance == null) {
             violations.push('review receipt is missing reviewer_provenance');
+        } else if (!normalizedProvenance) {
+            violations.push('review receipt reviewer_provenance is invalid');
         } else if (
             !reviewerProvenance?.task_sequence
             || !reviewerProvenance.event_sha256
             || !/^[0-9a-f]{64}$/.test(reviewerProvenance.event_sha256)
         ) {
             violations.push('review receipt reviewer_provenance is incomplete');
+        } else if (reviewerProvenance.controller_event_type !== 'REVIEWER_INVOCATION_ATTESTED') {
+            violations.push('review receipt reviewer_provenance must reference REVIEWER_INVOCATION_ATTESTED telemetry');
         }
     }
 
@@ -499,8 +521,14 @@ function getLatestTaskSequenceForEventTypes(eventsRoot: string, taskId: string, 
     return latestSequence;
 }
 
-function timelineHasDelegatedReviewRoute(eventsRoot: string, taskId: string, state: ReviewArtifactState): boolean {
+function timelineHasDelegatedReviewInvocationAttestation(eventsRoot: string, taskId: string, state: ReviewArtifactState): boolean {
     if (!state.reviewerIdentity || !state.reviewerProvenance?.task_sequence || !state.reviewerProvenance.event_sha256) {
+        return false;
+    }
+    if (
+        state.reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation'
+        || state.reviewerProvenance.controller_event_type !== 'REVIEWER_INVOCATION_ATTESTED'
+    ) {
         return false;
     }
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
@@ -518,17 +546,29 @@ function timelineHasDelegatedReviewRoute(eventsRoot: string, taskId: string, sta
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         try {
             const event = JSON.parse(lines[index]) as Record<string, unknown>;
-            if (String(event.event_type || '').trim() !== 'REVIEWER_DELEGATION_ROUTED') {
+            if (String(event.event_type || '').trim() !== 'REVIEWER_INVOCATION_ATTESTED') {
                 continue;
             }
             const details = isPlainRecord(event.details) ? event.details : {};
+            if (String(details.task_id || '').trim() !== taskId) {
+                continue;
+            }
             if (String(details.review_type || '').trim() !== state.reviewType) {
                 continue;
             }
             if (String(details.reviewer_execution_mode || '').trim() !== 'delegated_subagent') {
                 continue;
             }
-            if (String(details.reviewer_session_id || '').trim() !== state.reviewerIdentity) {
+            const eventReviewerIdentity = String(details.reviewer_identity || details.reviewer_session_id || '').trim();
+            if (eventReviewerIdentity !== state.reviewerIdentity) {
+                continue;
+            }
+            const reviewContextSha256 = String(details.review_context_sha256 || '').trim().toLowerCase();
+            const routingEventSha256 = String(details.routing_event_sha256 || '').trim().toLowerCase();
+            if (
+                reviewContextSha256 !== String(state.reviewerProvenance.review_context_sha256 || '').trim().toLowerCase()
+                || routingEventSha256 !== String(state.reviewerProvenance.routing_event_sha256 || '').trim().toLowerCase()
+            ) {
                 continue;
             }
             const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
@@ -550,6 +590,96 @@ function timelineHasDelegatedReviewRoute(eventsRoot: string, taskId: string, sta
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
         }
+    }
+    return false;
+}
+
+function timelineHasDelegatedReviewInvocationForCurrentContext(
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): boolean {
+    const reviewerIdentity = state.contextReviewerIdentity;
+    if (!reviewerIdentity?.startsWith('agent:') || !state.contextExists || !state.contextCurrent) {
+        return false;
+    }
+    const reviewContextSha256 = fileSha256(state.contextPath);
+    if (!reviewContextSha256) {
+        return false;
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return false;
+    }
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
+    if (latestCompileSequence == null) {
+        return false;
+    }
+    const events = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .flatMap((line) => {
+            try {
+                return [JSON.parse(line) as Record<string, unknown>];
+            } catch {
+                return [];
+            }
+        });
+    let routingEventSha256: string | null = null;
+    let routingSequence: number | null = null;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (String(event.event_type || '').trim() !== 'REVIEWER_DELEGATION_ROUTED') {
+            continue;
+        }
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+        const taskSequence = typeof integrity?.task_sequence === 'number'
+            ? integrity.task_sequence
+            : Number(integrity?.task_sequence);
+        if (!Number.isInteger(taskSequence) || taskSequence <= latestCompileSequence) {
+            continue;
+        }
+        const details = isPlainRecord(event.details) ? event.details : {};
+        if (
+            String(details.review_type || '').trim() !== state.reviewType
+            || String(details.reviewer_execution_mode || '').trim() !== 'delegated_subagent'
+            || String(details.reviewer_session_id || '').trim() !== reviewerIdentity
+        ) {
+            continue;
+        }
+        routingEventSha256 = String(integrity?.event_sha256 || '').trim().toLowerCase();
+        routingSequence = taskSequence;
+        break;
+    }
+    if (!routingEventSha256 || !routingSequence) {
+        return false;
+    }
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (String(event.event_type || '').trim() !== 'REVIEWER_INVOCATION_ATTESTED') {
+            continue;
+        }
+        const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+        const taskSequence = typeof integrity?.task_sequence === 'number'
+            ? integrity.task_sequence
+            : Number(integrity?.task_sequence);
+        if (!Number.isInteger(taskSequence) || taskSequence <= routingSequence) {
+            continue;
+        }
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const eventReviewerIdentity = String(details.reviewer_identity || details.reviewer_session_id || '').trim();
+        if (
+            String(details.task_id || '').trim() !== taskId
+            || String(details.review_type || '').trim() !== state.reviewType
+            || String(details.reviewer_execution_mode || '').trim() !== 'delegated_subagent'
+            || eventReviewerIdentity !== reviewerIdentity
+            || String(details.review_context_sha256 || '').trim().toLowerCase() !== reviewContextSha256
+            || String(details.routing_event_sha256 || '').trim().toLowerCase() !== routingEventSha256
+        ) {
+            continue;
+        }
+        return true;
     }
     return false;
 }
@@ -685,7 +815,7 @@ function getNextReviewType(
 ): { reviewType: string | null; blockedDependencies: string[] } {
     const passedReviews = new Set(
         reviewStates
-            .filter((state) => state.ready && timelineHasDelegatedReviewRoute(eventsRoot, taskId, state))
+            .filter((state) => state.ready && timelineHasDelegatedReviewInvocationAttestation(eventsRoot, taskId, state))
             .map((state) => state.reviewType)
     );
     for (const reviewType of requiredReviewTypes) {
@@ -1922,8 +2052,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     if (nextReview.reviewType) {
         const reviewType = nextReview.reviewType;
         const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
-        const currentReviewRouteAttested = state
-            ? timelineHasDelegatedReviewRoute(eventsRoot, taskId, state)
+        const currentReviewerInvocationAttested = state
+            ? timelineHasDelegatedReviewInvocationAttestation(eventsRoot, taskId, state)
+            : false;
+        const currentReviewContextInvocationAttested = state
+            ? timelineHasDelegatedReviewInvocationForCurrentContext(eventsRoot, taskId, state)
             : false;
         const currentReviewContextPrepared = state
             ? timelineHasReviewContextPreparedAfterCompile(eventsRoot, taskId, reviewType, state.contextPath)
@@ -1945,7 +2078,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (state?.failed && currentReviewRouteAttested) {
+        if (state?.failed && currentReviewerInvocationAttested) {
             const downstreamReviewTypes = getDownstreamReviewTypesFor(
                 reviewType,
                 requiredReviewTypes,
@@ -1972,7 +2105,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (state?.failed && !currentReviewRouteAttested && !currentReviewContextPrepared) {
+        if (state?.failed && !currentReviewerInvocationAttested && !currentReviewContextPrepared) {
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -2027,10 +2160,51 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (!state.ready || !currentReviewRouteAttested) {
+        if (
+            !currentReviewContextInvocationAttested
+            && (
+                !state.artifactExists
+                || !state.receiptExists
+                || state.reviewerIdentity !== state.contextReviewerIdentity
+            )
+        ) {
+            const reviewerIdentity = state.contextReviewerIdentity
+                || '<agent:reviewer-session-id-from-review-context>';
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'record-review-invocation',
+                title: `Record '${reviewType}' delegated reviewer launch attestation.`,
+                reason: `Required review '${reviewType}' needs current REVIEWER_INVOCATION_ATTESTED launch telemetry before reviewer output can become independent review evidence. Record it only from the real delegated reviewer launch artifact for this review context.`,
+                commands: [
+                    buildCommand(
+                        'Record delegated reviewer launch attestation',
+                        `${cliPrefix} gate record-review-invocation --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path ".review-temp/${taskId}/${reviewType}/reviewer-launch.json" --repo-root "."`
+                    )
+                ]
+            });
+        }
+        if (!currentReviewerInvocationAttested) {
+            const reviewerIdentity = state.contextReviewerIdentity
+                || '<agent:reviewer-session-id-from-review-context>';
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'record-review-result',
+                title: `Record '${reviewType}' review result from a delegated reviewer.`,
+                reason: `Required review '${reviewType}' has stale or invalid reviewer_provenance; matching REVIEWER_INVOCATION_ATTESTED launch telemetry is missing for the current receipt, so rerun reviewer output materialization after valid launch telemetry exists. Expected PASS token: ${state.passToken || '<review-pass-token>'}. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`,
+                commands: [
+                    buildCommand(
+                        'Record delegated review output, then close reviewer',
+                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path ".review-temp/${taskId}/${reviewType}/review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
+                    )
+                ]
+            });
+        }
+        if (!state.ready) {
             const stateViolations = state.violations.length > 0
                 ? state.violations.join('; ')
-                : 'matching REVIEWER_DELEGATION_ROUTED telemetry is missing';
+                : 'review artifact or receipt is missing';
             const reviewerIdentity = state.contextReviewerIdentity
                 || '<agent:reviewer-session-id-from-review-context>';
             return buildResult({

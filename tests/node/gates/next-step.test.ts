@@ -346,21 +346,36 @@ function writeReviewEvidence(
         reviewer_execution_mode: 'delegated_subagent',
         reviewer_session_id: `agent:${reviewType}-reviewer`
     });
+    const invocationIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: `agent:${reviewType}-reviewer`,
+        reviewer_identity: `agent:${reviewType}-reviewer`,
+        review_context_sha256: sha256Text(reviewContextText),
+        routing_event_sha256: routeIntegrity.event_sha256
+    });
     writeJson(receiptPath, {
         task_id: taskId,
         review_type: reviewType,
-        trust_level: 'LOCAL_ASSERTED',
+        trust_level: 'INDEPENDENT_AUDITED',
         reviewer_execution_mode: 'delegated_subagent',
         reviewer_identity: `agent:${reviewType}-reviewer`,
         review_artifact_sha256: sha256Text(artifactText),
         review_context_sha256: sha256Text(reviewContextText),
         reviewer_provenance: {
             schema_version: 1,
-            attestation_type: 'controller_event_integrity',
-            controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
-            task_sequence: routeIntegrity.task_sequence,
-            prev_event_sha256: routeIntegrity.prev_event_sha256,
-            event_sha256: routeIntegrity.event_sha256
+            attestation_type: 'reviewer_invocation_attestation',
+            controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+            task_sequence: invocationIntegrity.task_sequence,
+            prev_event_sha256: invocationIntegrity.prev_event_sha256,
+            event_sha256: invocationIntegrity.event_sha256,
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: `agent:${reviewType}-reviewer`,
+            review_context_sha256: sha256Text(reviewContextText),
+            routing_event_sha256: routeIntegrity.event_sha256
         }
     });
 }
@@ -912,7 +927,7 @@ describe('gates/next-step', () => {
         assert.equal(result.commands[0].label, 'Record fresh delegated review routing');
     });
 
-    it('uses the prepared review context identity when suggesting record-review-result', () => {
+    it('uses the prepared review context identity when suggesting record-review-invocation', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -927,9 +942,40 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
+        assert.equal(result.next_gate, 'record-review-invocation');
+        assert.ok(result.reason.includes('REVIEWER_INVOCATION_ATTESTED launch telemetry'));
+        assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
+        assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
+        assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
+    });
+
+    it('routes to record-review-result after current context invocation is attested even when an old receipt exists', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
         assert.equal(result.next_gate, 'record-review-result');
-        assert.ok(result.reason.includes('close or release the reviewer sub-agent session'));
-        assert.equal(result.commands[0].label, 'Record delegated review output, then close reviewer');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
     });
 
@@ -984,7 +1030,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-result');
         assert.equal(result.review.next_review_type, 'code');
-        assert.ok(result.reason.includes('matching REVIEWER_DELEGATION_ROUTED telemetry'));
+        assert.ok(result.reason.includes('matching REVIEWER_INVOCATION_ATTESTED launch telemetry'));
     });
 
     it('routes to completion when full-suite validation is disabled after docs pass', () => {

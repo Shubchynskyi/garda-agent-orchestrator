@@ -18,6 +18,7 @@ import {
     handleDocImpactGate,
     handleRecordReviewResult,
     handleRecordReviewRouting,
+    handleRecordReviewInvocation,
     handleRecordReviewReceipt
 } from './gate-review-handlers';
 import {
@@ -112,6 +113,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleCompletionGate(gateArgv);
         case 'record-review-routing':
             return handleRecordReviewRouting(gateArgv);
+        case 'record-review-invocation':
+            return handleRecordReviewInvocation(gateArgv);
         case 'record-review-receipt':
             return handleRecordReviewReceipt(gateArgv);
         case 'human-commit':

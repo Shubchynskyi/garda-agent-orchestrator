@@ -16,6 +16,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'required-reviews-check',
     'record-review-result',
     'record-review-routing',
+    'record-review-invocation',
     'record-review-receipt',
     'log-task-event',
     'task-events-summary',

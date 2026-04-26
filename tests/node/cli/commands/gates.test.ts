@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import {
     EXIT_GATE_FAILURE,
@@ -86,6 +87,7 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'full-suite-validation',
     'record-review-result',
     'record-review-routing',
+    'record-review-invocation',
     'record-review-receipt',
     'completion-gate',
     'log-task-event',
@@ -175,6 +177,15 @@ function attestReviewerInvocationForTest(options: {
     const reviewContextSha256 = crypto.createHash('sha256')
         .update(fs.readFileSync(options.reviewContextPath))
         .digest('hex');
+    if (events.some((event) => (
+        event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+        && String((event.details as Record<string, unknown> | undefined)?.review_type || '').trim().toLowerCase() === options.reviewType
+        && String((event.details as Record<string, unknown> | undefined)?.reviewer_session_id || '').trim() === options.reviewerIdentity
+        && String((event.details as Record<string, unknown> | undefined)?.review_context_sha256 || '').trim().toLowerCase() === reviewContextSha256
+        && String((event.details as Record<string, unknown> | undefined)?.routing_event_sha256 || '').trim().toLowerCase() === String(routedIntegrity.event_sha256).trim().toLowerCase()
+    ))) {
+        return;
+    }
     appendTaskEvent(getOrchestratorRoot(options.repoRoot), options.taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', 'Reviewer invocation attested by test controller fixture.', {
         task_id: options.taskId,
         review_type: options.reviewType,
@@ -2261,6 +2272,38 @@ describe('cli/commands/gates', () => {
         }
     });
 
+    it('rejects reviewer provenance events through the public log-task-event gate', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904-log-task-event-reviewer-provenance';
+
+        for (const eventType of [
+            'REVIEWER_INVOCATION_ATTESTED',
+            'reviewer_invocation_attested',
+            'REVIEWER_DELEGATION_ROUTED',
+            'reviewer_delegation_routed'
+        ]) {
+            assert.throws(
+                () => runLogTaskEventCommand({
+                    repoRoot,
+                    taskId,
+                    eventType,
+                    outcome: 'INFO',
+                    message: 'forged reviewer invocation',
+                    detailsJson: JSON.stringify({
+                        review_type: 'code',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_session_id: 'agent:forged-reviewer',
+                        review_context_sha256: 'a'.repeat(64),
+                        routing_event_sha256: 'b'.repeat(64)
+                    })
+                }),
+                /reserved and cannot be emitted via log-task-event/
+            );
+        }
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('runs human commit through git with commit guard override', async () => {
         const repoRoot = createTempRepo();
 
@@ -2346,7 +2389,7 @@ describe('cli/commands/gates', () => {
         );
     });
 
-    it('record-review-routing updates review-context routing metadata and emits delegated telemetry', async () => {
+    it('record-review-routing updates review-context routing metadata without minting launch attestation', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a';
         seedTaskQueue(repoRoot, taskId);
@@ -2388,7 +2431,101 @@ describe('cli/commands/gates', () => {
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:test-reviewer');
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation records launch attestation from a task-owned provider artifact', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-invocation';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
+        }, null, 2) + '\n', 'utf8');
+
+        const previousRoutingExitCode = process.exitCode;
+        const previousRoutingCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousRoutingCwd);
+            process.exitCode = previousRoutingExitCode;
+        }
+        let events = readTaskTimelineEvents(repoRoot, taskId);
+        const invocationEventsBefore = events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length;
+        const routingEvent = events.find((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED');
+        const routingIntegrity = routingEvent?.integrity as Record<string, unknown> | undefined;
+        assert.ok(routingIntegrity?.event_sha256);
+        const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
+        fs.writeFileSync(launchArtifactPath, JSON.stringify({
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch',
+            task_id: taskId,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: 'agent:test-reviewer',
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingIntegrity.event_sha256,
+            attestation_source: 'provider_controller',
+            launch_tool: 'test-subagent-spawn',
+            fork_context: false
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-invocation',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer',
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, invocationEventsBefore + 1);
+        const invocationEvent = [...events].reverse().find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        const invocationDetails = invocationEvent?.details as Record<string, unknown> | undefined;
+        assert.equal(invocationDetails?.review_type, 'code');
+        assert.equal(invocationDetails?.reviewer_session_id, 'agent:test-reviewer');
+        assert.equal(invocationDetails?.review_context_sha256, reviewContextSha256);
+        assert.equal(invocationDetails?.routing_event_sha256, routingIntegrity.event_sha256);
+        assert.equal(invocationDetails?.reviewer_launch_artifact_path, launchArtifactPath.replace(/\\/g, '/'));
+        assert.equal(invocationDetails?.reviewer_launch_tool, 'test-subagent-spawn');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2440,6 +2577,7 @@ describe('cli/commands/gates', () => {
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:test-reviewer');
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
         assert.equal(fs.statSync(path.join(taskEventsRoot, 'all-tasks.jsonl')).isDirectory(), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3975,6 +4113,227 @@ describe('cli/commands/gates', () => {
         const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
         assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects delegated reviewer receipts when invocation attestation is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-missing-invocation-attestation';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated `src/cli/commands/gate-review-handlers/index.ts` for the negative delegated-review trust path: a routed delegated review still cannot materialize as independent evidence until reviewer invocation attestation exists for the same review context hash, reviewer identity, execution mode, and routing event hash. This fixture intentionally records only `REVIEWER_DELEGATION_ROUTED` and omits `REVIEWER_INVOCATION_ATTESTED`.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Delegated review routed without launch attestation.', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: 'agent:code-reviewer',
+            delegation_used: true
+        });
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            console.error = (...args: unknown[]) => {
+                capturedErrors.push(args.map((value) => String(value)).join(' '));
+            };
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(fs.existsSync(reviewOutputPath), true);
+        assert.ok(
+            capturedErrors.some((entry) => entry.includes('REVIEWER_INVOCATION_ATTESTED launch provenance')),
+            capturedErrors.join('\n')
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'), false);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects pre-recorded delegated artifacts when invocation attestation is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-review-gate-missing-invocation-attestation';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+
+        const artifactText = [
+            '# Review',
+            '',
+            'Validated the manual artifact bypass path for required reviews with enough concrete detail to prove this fixture represents a realistic delegated review result, while intentionally omitting the separate reviewer invocation attestation event from the task timeline.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n');
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        fs.writeFileSync(artifactPath, artifactText, 'utf8');
+
+        const preflightText = fs.readFileSync(preflightPath, 'utf8');
+        const preflightSha256 = createHash('sha256').update(preflightText).digest('hex');
+        const reviewContext = {
+            schema_version: 2,
+            task_id: taskId,
+            review_type: 'code',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: preflightSha256,
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable',
+                actual_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                fallback_reason: null
+            })
+        };
+        const reviewContextText = JSON.stringify(reviewContext, null, 2) + '\n';
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
+        const reviewContextSha256 = createHash('sha256').update(reviewContextText).digest('hex');
+
+        const routingEvent = appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEWER_DELEGATION_ROUTED',
+            'INFO',
+            'Delegated review routed without launch attestation.',
+            {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: 'agent:code-reviewer',
+                reviewer_fallback_reason: null,
+                delegation_used: true
+            },
+            { passThru: true }
+        );
+        const routingIntegrity = routingEvent?.integrity as {
+            task_sequence?: number;
+            prev_event_sha256?: string | null;
+            event_sha256?: string;
+        } | null | undefined;
+        assert.ok(routingIntegrity?.task_sequence);
+        assert.ok(routingIntegrity?.event_sha256);
+
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        fs.writeFileSync(receiptPath, JSON.stringify({
+            schema_version: 2,
+            task_id: taskId,
+            review_type: 'code',
+            preflight_sha256: preflightSha256,
+            scope_sha256: null,
+            review_scope_sha256: null,
+            code_scope_sha256: null,
+            review_context_sha256: reviewContextSha256,
+            review_context_reuse_sha256: null,
+            review_artifact_sha256: createHash('sha256').update(artifactText).digest('hex'),
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: 'agent:code-reviewer',
+            reviewer_fallback_reason: null,
+            reviewer_provenance: {
+                schema_version: 1,
+                attestation_type: 'controller_event_integrity',
+                controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+                task_sequence: routingIntegrity.task_sequence,
+                prev_event_sha256: routingIntegrity.prev_event_sha256 ?? null,
+                event_sha256: routingIntegrity.event_sha256
+            },
+            trust_level: 'INDEPENDENT_AUDITED',
+            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(
+            reviewResult.outputLines.some((line) => line.includes('REVIEWER_INVOCATION_ATTESTED launch telemetry')),
+            reviewResult.outputLines.join('\n')
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), true);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'), false);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_GATE_PASSED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

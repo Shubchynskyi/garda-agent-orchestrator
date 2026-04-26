@@ -706,7 +706,11 @@ export function validateReviewArtifactGateEligibility(options: {
                         errors.push(
                             `Review receipt for '${reviewKey}' is missing reviewer_provenance for delegated_subagent execution.`
                         );
-                    } else if (reviewerProvenance.attestation_type === 'reviewer_invocation_attestation') {
+                    } else if (reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
+                        errors.push(
+                            `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
+                        );
+                    } else {
                         const invocationAttestationEvent = findMatchingInvocationAttestationEvent(
                             options.timelineEvents,
                             {
@@ -724,16 +728,6 @@ export function validateReviewArtifactGateEligibility(options: {
                                 `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
                             );
                         }
-                    } else if (
-                        reviewerProvenance.task_sequence !== routingEvent.integrity.task_sequence
-                        || reviewerProvenance.event_sha256 !== String(routingEvent.integrity.event_sha256 || '').trim().toLowerCase()
-                        || reviewerProvenance.prev_event_sha256 !== (routingEvent.integrity.prev_event_sha256 == null
-                            ? null
-                            : String(routingEvent.integrity.prev_event_sha256).trim().toLowerCase() || null)
-                    ) {
-                        errors.push(
-                            `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_DELEGATION_ROUTED telemetry integrity.`
-                        );
                     }
                 }
             }

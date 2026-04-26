@@ -8,6 +8,10 @@ import {
 } from './lifecycle-event-core';
 import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
 
+interface ReviewerInvocationAttestedOptions extends AutoEmitOptions {
+    launchDetails?: Record<string, unknown>;
+}
+
 export function emitPlanCreatedEvent(repoRoot: string, taskId: string, details: unknown, options: AutoEmitOptions = {}) {
     return emitLifecycleEvent(repoRoot, taskId, LIFECYCLE_EVENT_TYPES.PLAN_CREATED, 'INFO', 'Task plan created.', details, options, true);
 }
@@ -305,7 +309,7 @@ export function emitReviewerInvocationAttestedEvent(
     reviewerSessionId: string,
     reviewContextSha256: string,
     routingEventSha256: string,
-    options: AutoEmitOptions = {}
+    options: ReviewerInvocationAttestedOptions = {}
 ) {
     return emitLifecycleEvent(
         repoRoot,
@@ -320,7 +324,8 @@ export function emitReviewerInvocationAttestedEvent(
             reviewer_session_id: reviewerSessionId,
             reviewer_identity: reviewerSessionId,
             review_context_sha256: reviewContextSha256,
-            routing_event_sha256: routingEventSha256
+            routing_event_sha256: routingEventSha256,
+            ...(options.launchDetails || {})
         },
         { ...options, actor: options.actor || 'orchestrator' }
     );
@@ -334,7 +339,7 @@ export async function emitReviewerInvocationAttestedEventAsync(
     reviewerSessionId: string,
     reviewContextSha256: string,
     routingEventSha256: string,
-    options: AutoEmitOptions = {}
+    options: ReviewerInvocationAttestedOptions = {}
 ) {
     return emitLifecycleEventAsync(
         repoRoot,
@@ -349,7 +354,8 @@ export async function emitReviewerInvocationAttestedEventAsync(
             reviewer_session_id: reviewerSessionId,
             reviewer_identity: reviewerSessionId,
             review_context_sha256: reviewContextSha256,
-            routing_event_sha256: routingEventSha256
+            routing_event_sha256: routingEventSha256,
+            ...(options.launchDetails || {})
         },
         { ...options, actor: options.actor || 'orchestrator' }
     );

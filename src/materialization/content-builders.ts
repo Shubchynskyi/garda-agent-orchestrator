@@ -842,7 +842,7 @@ Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`ins
 - On \`${reviewSkillBridgeHost.providerLabel}\`, spawn reviewer helper tasks via \`task\` tool with \`agent_type="general-purpose"\` and isolated context; same-agent self-review is invalid on this delegation-capable provider. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Honor specialist skills added after initialization under \`${resolveBundleName()}/live/skills/**\`.
-- Log review invocation and outcomes via \`${getNodeGateCommandPrefix()} log-task-event ...\` into task timeline.
+- Record review routing and outcomes only through the review gates; \`log-task-event\` cannot emit reviewer provenance events.
 - Task timeline path (per task): \`${resolveBundleName()}/runtime/task-events/<task-id>.jsonl\`.
 - Review verdicts and completion status are recorded only through orchestrator workflow.
 - Never mark task \`DONE\` from this profile; hand off to \`${reviewSkillBridgeHost.bridgePath}\`.

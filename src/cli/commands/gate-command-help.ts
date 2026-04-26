@@ -272,6 +272,13 @@ function buildReviewGateHelpEntries(
                 true
             )
         },
+        'record-review-invocation': {
+            ...createSingleUsageEntry(
+                'Record delegated reviewer launch attestation from a task-owned provider launch artifact.',
+                `${cliPrefix} gate record-review-invocation --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --reviewer-launch-artifact-path ".review-temp/${TASK_ID_PLACEHOLDER}/<review-type>/reviewer-launch.json" --repo-root "."`,
+                true
+            )
+        },
         'record-review-receipt': {
             ...createSingleUsageEntry(
                 'Record a review receipt when verdict capture and routing were completed externally; close or release the delegated reviewer after the receipt persists.',
