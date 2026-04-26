@@ -39,25 +39,13 @@ function getTypescriptCliPath(repoRoot: string): string {
 }
 
 function syncGeneratedCliEntrypoint(repoRoot: string): void {
-    const compiledCliTargets = [
-        {
-            compiledPath: path.join(repoRoot, 'dist', 'src', 'bin', 'garda.js'),
-            repoPath: path.join(repoRoot, 'bin', 'garda.js')
-        },
-        {
-            compiledPath: path.join(repoRoot, 'dist', 'src', 'bin', 'garda.js'),
-            repoPath: path.join(repoRoot, 'bin', 'garda.js')
-        }
-    ];
-    for (const target of compiledCliTargets) {
-        if (!fs.existsSync(target.compiledPath)) {
-            throw new Error(`compiled CLI launcher not found: ${target.compiledPath}`);
-        }
+    const compiledCliPath = path.join(repoRoot, 'dist', 'src', 'bin', 'garda.js');
+    const repoPath = path.join(repoRoot, 'bin', 'garda.js');
+    if (!fs.existsSync(compiledCliPath)) {
+        throw new Error(`compiled CLI launcher not found: ${compiledCliPath}`);
     }
     fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
-    for (const target of compiledCliTargets) {
-        fs.copyFileSync(target.compiledPath, target.repoPath);
-    }
+    fs.copyFileSync(compiledCliPath, repoPath);
 }
 
 function quoteWindowsArgument(argument: string): string {

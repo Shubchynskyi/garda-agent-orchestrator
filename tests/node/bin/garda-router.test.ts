@@ -18,7 +18,6 @@ function createGardaPackageRoot(rootPath: string, version = '2.4.0'): void {
     }, null, 2));
     writeFile(path.join(rootPath, 'VERSION'), `${version}\n`);
     writeFile(path.join(rootPath, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
-    writeFile(path.join(rootPath, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
 }
 
 test('global launcher delegates to source checkout in current workspace', () => {
