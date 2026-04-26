@@ -248,6 +248,52 @@ describe('runUpdate', () => {
         }
     });
 
+    it('preserves TASK.md queue and lower local block during ordinary update when managed-end is missing', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(
+                path.join(projectRoot, 'TASK.md'),
+                [
+                    '<!-- garda-agent-orchestrator:managed-start -->',
+                    '# TASK.md',
+                    '',
+                    'Old generated header.',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-237 | 🟦 TODO | P0 | reliability | Keep live queue | gpt-5.4 | 2026-04-24 | balanced | preserve me |',
+                    '',
+                    '',
+                    '## Блок очереди',
+                    '',
+                    '- `T-237` — нижний блок должен сохраниться.'
+                ].join('\n'),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.installStatus, 'PASS');
+            const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
+            assert.ok(taskContent.includes('Canonical instructions entrypoint for orchestration: `CLAUDE.md`.'));
+            assert.ok(taskContent.includes('| T-237 | 🟦 TODO | P0 | reliability | Keep live queue | gpt-5.4 | 2026-04-24 | balanced | preserve me |'));
+            assert.ok(taskContent.includes('## Блок очереди'));
+            assert.ok(taskContent.includes('- `T-237` — нижний блок должен сохраниться.'));
+            assert.ok(taskContent.includes('garda-agent-orchestrator:managed-end'));
+            assert.ok(!taskContent.includes('Old generated header.'));
+            assert.ok(!taskContent.includes('| T-001 |'));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('supports dry-run mode', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {

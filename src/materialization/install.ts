@@ -22,7 +22,7 @@ import {
     COMMIT_GUARD_START,
     COMMIT_GUARD_END,
     INSTALL_BACKUP_CANDIDATE_PATHS,
-    buildTaskManagedBlockWithExistingQueue,
+    buildTaskContentWithExistingQueue,
     buildCanonicalManagedBlock,
       buildRedirectManagedBlock,
       buildCommitGuardManagedBlock,
@@ -289,6 +289,18 @@ export function runInstall(options: RunInstallOptions) {
         return true;
     }
 
+    function syncTaskFileOnDisk(destPath: string, relativePath: string, templateContent: string): boolean {
+        if (!pathExists(destPath)) return false;
+        const content = readTextFile(destPath);
+        const nextContent = buildTaskContentWithExistingQueue(templateContent, content);
+        if (!nextContent || nextContent === content) return false;
+        backupFile(destPath, relativePath);
+        if (!dryRun) {
+            fs.writeFileSync(destPath, nextContent, 'utf8');
+        }
+        return true;
+    }
+
     function removeEmptyParentDirectories(startDir: string): void {
         let current = path.resolve(startDir);
         const root = path.resolve(targetRoot);
@@ -372,13 +384,9 @@ export function runInstall(options: RunInstallOptions) {
                     skippedExisting++;
                     if (relPath === 'TASK.md') {
                         const templateContent = getTemplateContent(sourcePath, relPath);
-                        const existingContent = readTextFile(destPath);
                         if (templateContent !== null) {
-                            const taskBlock = buildTaskManagedBlockWithExistingQueue(templateContent, existingContent);
-                            if (taskBlock) {
-                                if (syncManagedBlockOnDisk(destPath, relPath, taskBlock)) {
-                                    aligned++;
-                                }
+                            if (syncTaskFileOnDisk(destPath, relPath, templateContent)) {
+                                aligned++;
                             }
                         }
                     }
@@ -401,13 +409,9 @@ export function runInstall(options: RunInstallOptions) {
         if (pathExists(taskSourcePath)) {
             if (pathExists(taskDestPath)) {
                 const templateContent = getTemplateContent(taskSourcePath, 'TASK.md');
-                const existingContent = readTextFile(taskDestPath);
                 if (templateContent !== null) {
-                    const taskBlock = buildTaskManagedBlockWithExistingQueue(templateContent, existingContent);
-                    if (taskBlock) {
-                        if (syncManagedBlockOnDisk(taskDestPath, 'TASK.md', taskBlock)) {
-                            aligned++;
-                        }
+                    if (syncTaskFileOnDisk(taskDestPath, 'TASK.md', templateContent)) {
+                        aligned++;
                     }
                 }
             } else {

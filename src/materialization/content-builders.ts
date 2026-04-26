@@ -428,6 +428,93 @@ export function buildTaskManagedBlockWithExistingQueue(templateContent: string, 
     return setTaskQueueRowsInManagedBlock(templateBlock, existingRows);
 }
 
+function getTaskQueueRowsFromRange(range: TaskQueueTableRange): string[] {
+    const rows = [];
+    for (let i = range.rowsStartIndex; i < range.rowsEndIndex; i++) {
+        if (range.lines[i] && range.lines[i].trim()) {
+            rows.push(range.lines[i]);
+        }
+    }
+    return rows;
+}
+
+function joinTaskManagedBlockAndSuffix(
+    managedBlock: string,
+    suffix: string,
+    newline: string
+): string {
+    const normalizedBlock = normalizeLineEndings(managedBlock, newline);
+    const normalizedSuffix = normalizeLineEndings(suffix || '', newline);
+    const content = `${normalizedBlock}${normalizedSuffix}`;
+    return content.endsWith(newline) ? content : `${content}${newline}`;
+}
+
+/**
+ * Builds the full TASK.md content for install/update sync.
+ *
+ * TASK.md is a local operator-owned task surface even though its header is
+ * installer-managed. A normal managed-block replacement is unsafe when an old
+ * or hand-edited TASK.md lost its managed-end marker: the whole task queue and
+ * local lower planning block would be replaced by the template default queue.
+ *
+ * This builder preserves the existing Active Queue rows and everything after
+ * that table, then refreshes only the template-owned managed preamble/table
+ * shape. Valid managed blocks keep any existing prefix/suffix around the block.
+ */
+export function buildTaskContentWithExistingQueue(templateContent: string, existingContent: string): string | null {
+    const templateBlock = extractManagedBlockFromContent(templateContent, MANAGED_START, MANAGED_END);
+    if (!templateBlock) return null;
+
+    const newline = String(existingContent || '').includes('\r\n') ? '\r\n' : '\n';
+    const existingBlock = extractManagedBlockFromContent(existingContent, MANAGED_START, MANAGED_END);
+
+    if (existingBlock) {
+        let existingRows = getTaskQueueRowsFromManagedBlock(existingBlock);
+        if (hasLegacyDepthColumn(existingBlock)) {
+            existingRows = existingRows.map(migrateDepthToProfileRow);
+        }
+
+        const nextBlock = existingRows.length > 0
+            ? setTaskQueueRowsInManagedBlock(templateBlock, existingRows)
+            : templateBlock;
+        const blockStart = existingContent.indexOf(existingBlock);
+        const blockEnd = blockStart + existingBlock.length;
+        const prefix = blockStart > 0 ? existingContent.slice(0, blockStart) : '';
+        const suffix = existingContent.slice(blockEnd);
+        const nextContent = `${prefix}${nextBlock}${suffix}`;
+        return normalizeLineEndings(
+            nextContent.endsWith(newline) ? nextContent : `${nextContent}${newline}`,
+            newline
+        );
+    }
+
+    const existingQueueRange = getTaskQueueTableRange(existingContent);
+    if (!existingQueueRange) {
+        return normalizeLineEndings(
+            templateContent.endsWith(newline) ? templateContent : `${templateContent}${newline}`,
+            newline
+        );
+    }
+
+    let existingRows = getTaskQueueRowsFromRange(existingQueueRange);
+    if (existingRows.length === 0) {
+        return normalizeLineEndings(
+            templateContent.endsWith(newline) ? templateContent : `${templateContent}${newline}`,
+            newline
+        );
+    }
+
+    if (hasLegacyDepthColumn(existingContent)) {
+        existingRows = existingRows.map(migrateDepthToProfileRow);
+    }
+
+    const suffix = existingQueueRange.lines
+        .slice(existingQueueRange.rowsEndIndex)
+        .join('\n');
+    const nextBlock = setTaskQueueRowsInManagedBlock(templateBlock, existingRows);
+    return joinTaskManagedBlockAndSuffix(nextBlock, suffix, newline);
+}
+
 /**
  * Builds the canonical entrypoint managed block (for the source-of-truth file).
  */

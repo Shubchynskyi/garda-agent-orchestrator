@@ -11,6 +11,7 @@ import {
     getTaskQueueRowsFromManagedBlock,
     setTaskQueueRowsInManagedBlock,
     buildTaskManagedBlockWithExistingQueue,
+    buildTaskContentWithExistingQueue,
     hasLegacyDepthColumn,
     migrateDepthToProfileRow,
     buildCanonicalManagedBlock,
@@ -185,6 +186,92 @@ describe('buildTaskManagedBlockWithExistingQueue', () => {
         // Should not duplicate requested_depth
         const matches = result!.match(/requested_depth/g);
         assert.equal(matches!.length, 1);
+    });
+});
+
+describe('buildTaskContentWithExistingQueue', () => {
+    it('preserves queue rows and lower planning block when TASK.md is missing managed-end', () => {
+        const template = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'Canonical instructions entrypoint for orchestration: `AGENTS.md`.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-001 | 🟩 DONE | P1 | process | Template task | unassigned | 2026-01-01 | default | template |',
+            MANAGED_END,
+            ''
+        ].join('\n');
+        const existing = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'Old managed header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-237 | 🟦 TODO | P0 | reliability | Keep live queue | gpt-5.4 | 2026-04-24 | balanced | preserve me |',
+            '',
+            '',
+            '## Блок очереди',
+            '',
+            '- `T-237` — сохранить нижний блок.'
+        ].join('\n');
+
+        const result = buildTaskContentWithExistingQueue(template, existing);
+
+        assert.ok(result);
+        assert.ok(result!.includes('Canonical instructions entrypoint for orchestration: `AGENTS.md`.'));
+        assert.ok(result!.includes('| T-237 | 🟦 TODO | P0 | reliability | Keep live queue | gpt-5.4 | 2026-04-24 | balanced | preserve me |'));
+        assert.ok(result!.includes('## Блок очереди'));
+        assert.ok(result!.includes('- `T-237` — сохранить нижний блок.'));
+        assert.ok(result!.includes(MANAGED_END));
+        assert.ok(!result!.includes('Template task'));
+        assert.ok(!result!.includes('Old managed header.'));
+    });
+
+    it('preserves content outside a valid TASK.md managed block', () => {
+        const template = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'New header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-NEW | TODO | P1 | area | new | me | 2026-01-01 | default | new |',
+            MANAGED_END,
+            ''
+        ].join('\n');
+        const existing = [
+            'preface',
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'Old header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-OLD | DONE | P1 | area | old | me | 2026-01-01 | default | old |',
+            MANAGED_END,
+            '',
+            '## User Notes',
+            'keep this'
+        ].join('\n');
+
+        const result = buildTaskContentWithExistingQueue(template, existing);
+
+        assert.ok(result!.startsWith('preface\n'));
+        assert.ok(result!.includes('New header.'));
+        assert.ok(result!.includes('| T-OLD | DONE | P1 | area | old | me | 2026-01-01 | default | old |'));
+        assert.ok(result!.includes('## User Notes'));
+        assert.ok(result!.includes('keep this'));
+        assert.ok(!result!.includes('T-NEW'));
     });
 });
 
