@@ -61,6 +61,8 @@ interface MatchAnyRegexOptions {
     caseInsensitive?: boolean;
 }
 
+const matchAnyRegexCache = new Map<string, RegExp>();
+
 /**
  * Test if a path matches any of the provided regex patterns.
  */
@@ -73,16 +75,26 @@ export function matchAnyRegex(pathValue: string, regexes: string[], options: Mat
         if (!pattern) {
             continue;
         }
-        try {
-            if (new RegExp(pattern, flags).test(pathValue)) {
-                return true;
+
+        const cacheKey = `${pattern}|${flags}`;
+        let regex = matchAnyRegexCache.get(cacheKey);
+
+        if (!regex) {
+            try {
+                regex = new RegExp(pattern, flags);
+                matchAnyRegexCache.set(cacheKey, regex);
+            } catch (err) {
+                if (!skipInvalid) {
+                    throw err;
+                }
+                const ctxStr = context ? ` for ${context}` : '';
+                process.stderr.write(`WARNING: invalid regex '${pattern}'${ctxStr}: ${err instanceof Error ? err.message : String(err)}\n`);
+                continue;
             }
-        } catch (err) {
-            if (!skipInvalid) {
-                throw err;
-            }
-            const ctxStr = context ? ` for ${context}` : '';
-            process.stderr.write(`WARNING: invalid regex '${pattern}'${ctxStr}: ${err instanceof Error ? err.message : String(err)}\n`);
+        }
+
+        if (regex.test(pathValue)) {
+            return true;
         }
     }
     return false;
