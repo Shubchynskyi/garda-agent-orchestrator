@@ -600,7 +600,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
     const elapsedMs = Date.now() - startedAt;
     if (staleLockRecovered) {
         process.stderr.write(
-            `LIFECYCLE_LOCK_STALE_RECOVERED: target=${normalizedTarget}; operation=${operation}; elapsed_ms=${elapsedMs}\n`
+            `LIFECYCLE_LOCK_STALE_RECOVERED: target=${redactPath(normalizedTarget, normalizedTarget)}; operation=${operation}; elapsed_ms=${elapsedMs}\n`
         );
     }
     return {
