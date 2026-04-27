@@ -36,7 +36,8 @@ import {
     handleNextStep,
     handleFullSuiteValidation,
     handleCompletionGate,
-    handleHumanCommit
+    handleHumanCommit,
+    handleTaskReset
 } from './gate-task-handlers';
 import { handleValidateIsolation, handlePrepareIsolation } from './gate-isolation-handlers';
 
@@ -123,6 +124,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleValidateIsolation(gateArgv);
         case 'prepare-isolation':
             return handlePrepareIsolation(gateArgv);
+        case 'task-reset':
+            return handleTaskReset(gateArgv);
         default:
             throw new Error(`Unknown gate: ${gateName}`);
     }

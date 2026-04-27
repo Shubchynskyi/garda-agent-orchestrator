@@ -56,6 +56,10 @@ export {
     runTaskAuditSummaryCommand
 } from './gate-flows/task-summary-flow';
 
+export {
+    runTaskResetCommand
+} from './gate-flows/task-reset-flow';
+
 // ── Re-exports from gates-subprocess (unchanged) ───────────────────────────
 
 export {

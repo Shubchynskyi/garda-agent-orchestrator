@@ -357,6 +357,16 @@ function buildLifecycleGateHelpEntries(
                 `${cliPrefix} gate prepare-isolation --repo-root "."`,
                 false
             )
+        },
+        'task-reset': {
+            ...createGateHelpEntry(
+                'Clear all task runtime artifacts and mark the task DONE by explicit operator request. Requires --dry-run or --confirm guard.',
+                [
+                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --dry-run --repo-root "."`,
+                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --confirm --repo-root "."`
+                ],
+                true
+            )
         }
     };
 }

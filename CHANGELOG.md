@@ -1,7 +1,8 @@
 # Changelog
 
 ## Unreleased
-- made task-selected profiles a real orchestrator policy source across `enter-task-mode`, `classify-change`, and `next-step`, exposing task-vs-runtime profile selection, effective depth, review policy, and token-budget impact while preserving scope-triggered review floors instead of inflating every capability-backed review
+- added `garda gate task-reset` operator command to clear all runtime artifacts for a given task and mark it DONE, with dry-run preview, explicit `--confirm` safety guardrail, idempotent ALREADY_RESET detection, and a surviving `reset-report.json` audit breadcrumb
+- made task-selected profiles a real orchestrator policy sourceacross `enter-task-mode`, `classify-change`, and `next-step`, exposing task-vs-runtime profile selection, effective depth, review policy, and token-budget impact while preserving scope-triggered review floors instead of inflating every capability-backed review
 - made `next-step` commands safer to copy by avoiding stale source-checkout runtimes, exposing top-level help under parity drift, refusing to fabricate runtime provider identity from SourceOfTruth, shell-quoting generated values safely, and keeping restarted task cycles out of terminal DONE state
 - made mandatory review launch guidance, rule packs, orchestration skills, provider bridges, and review contexts explicitly require fresh clean-context reviewer sessions and reviewer cleanup after receipt persistence
 - bound protected control-plane preflight scopes to `--orchestrator-work` before preflight artifact writes, and taught `next-step` to generate concrete initial `classify-change` commands from task-mode planned scope

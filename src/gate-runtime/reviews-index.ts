@@ -14,7 +14,7 @@ const DEFAULT_INDEX_LOCK_STALE_MS = 30 * 1000;
 
 // Known artifact type suffixes used to split task-id from artifact-type.
 // Ordered longest-first so greedy suffix matching selects the right boundary.
-const KNOWN_SUFFIXES: readonly string[] = Object.freeze([
+export const KNOWN_SUFFIXES: readonly string[] = Object.freeze([
     '-dependency-review-context.json',
     '-performance-review-context.json',
     '-security-review-context.json',

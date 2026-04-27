@@ -28,6 +28,7 @@ import type { ParsedOptionsRecord } from './shared-command-utils';
 import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion-finalization';
 import { runFullSuiteValidationCommand } from './gate-flows/full-suite-validation-flow';
 import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task-summary-flow';
+import { runTaskResetCommand } from './gate-flows/task-reset-flow';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 
 export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
@@ -405,5 +406,23 @@ export async function handleHumanCommit(gateArgv: string[]): Promise<void> {
     const exitCode = await runHumanCommitCommand(gateArgv, { cwd: process.cwd() });
     if (exitCode !== 0) {
         process.exitCode = exitCode;
+    }
+}
+
+export async function handleTaskReset(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--confirm': { key: 'confirm', type: 'boolean' },
+        '--events-root': { key: 'eventsRoot', type: 'string' },
+        '--reviews-root': { key: 'reviewsRoot', type: 'string' },
+        '--as-json': { key: 'asJson', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runTaskResetCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
     }
 }

@@ -28,6 +28,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'command-timeout-diagnostics',
     'validate-isolation',
     'prepare-isolation',
+    'task-reset',
     'validate-config'
 ] as const;
 
