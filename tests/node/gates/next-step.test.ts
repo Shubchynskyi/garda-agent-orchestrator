@@ -9,6 +9,8 @@ import { formatNextStepText, resolveNextStep } from '../../../src/gates/next-ste
 import { getWorkspaceSnapshot } from '../../../src/gates/compile-gate';
 import { buildRulePackArtifact } from '../../../src/gates/rule-pack';
 import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
+import { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from '../../../src/gates/task-audit-summary';
+import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events-helpers';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -146,11 +148,16 @@ function appendEvent(
         ? fs.readFileSync(timelinePath, 'utf8').split('\n').filter((line) => line.trim())
         : [];
     const taskSequence = existingLines.length + 1;
-    const previousEventSha256 = taskSequence > 1
-        ? (taskSequence - 1).toString(16).padStart(64, '0')
+    const previousEvent = taskSequence > 1
+        ? JSON.parse(existingLines[existingLines.length - 1]) as Record<string, unknown>
         : null;
-    const eventSha256 = taskSequence.toString(16).padStart(64, '0');
-    const line = {
+    const previousIntegrity = previousEvent?.integrity && typeof previousEvent.integrity === 'object'
+        ? previousEvent.integrity as Record<string, unknown>
+        : null;
+    const previousEventSha256 = typeof previousIntegrity?.event_sha256 === 'string'
+        ? previousIntegrity.event_sha256
+        : null;
+    const line: Record<string, unknown> = {
         task_id: taskId,
         event_type: eventType,
         outcome,
@@ -162,9 +169,12 @@ function appendEvent(
             schema_version: 1,
             task_sequence: taskSequence,
             prev_event_sha256: previousEventSha256,
-            event_sha256: eventSha256
+            event_sha256: null
         }
     };
+    const integrity = line.integrity as Record<string, unknown>;
+    integrity.event_sha256 = buildEventIntegrityHash(line);
+    const eventSha256 = String(integrity.event_sha256 || '');
     fs.appendFileSync(timelinePath, `${JSON.stringify(line)}\n`, 'utf8');
     return {
         task_sequence: taskSequence,
@@ -437,6 +447,11 @@ function seedCompletionPass(repoRoot: string, taskId: string): void {
         outcome: 'PASS'
     });
     appendEvent(repoRoot, taskId, 'COMPLETION_GATE_PASSED');
+}
+
+function materializeFinalCloseout(repoRoot: string, taskId: string): void {
+    const summary = buildTaskAuditSummary({ taskId, repoRoot });
+    synchronizeFinalCloseoutArtifacts(summary);
 }
 
 afterEach(() => {
@@ -1162,7 +1177,7 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--sensitive-scope-reviewed true'));
     });
 
-    it('reports DONE after completion gate passes', () => {
+    it('routes completed tasks to task-audit-summary until final closeout is materialized', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
@@ -1173,13 +1188,68 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
+        assert.equal(result.status, 'READY');
+        assert.equal(result.next_gate, 'task-audit-summary');
+        assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
+        assert.match(result.reason, /final closeout artifacts are not materialized/i);
+    });
+
+    it('surfaces final report order and commit guidance after final closeout is materialized', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
         assert.equal(result.status, 'DONE');
         assert.equal(result.next_gate, null);
         assert.deepEqual(result.missing_artifacts, []);
-        assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
+        assert.equal(result.commands.length, 0);
+        assert.equal(result.final_report?.required_order.length, 3);
+        assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
+        assert.match(result.reason, /canonical final closeout is materialized/i);
+        assert.ok(text.includes('FinalReportOrder:'));
+        assert.ok(text.includes('1. implementation summary (include depth, path mode, review verdicts, docs updated)'));
+        assert.ok(text.includes('2. git commit -m "'));
+        assert.ok(text.includes('3. Do you want me to commit now? (yes/no)'));
+        assert.ok(text.includes('Commands:'));
+        assert.ok(text.includes('  none'));
     });
 
-    it('keeps completed tasks terminal when the workspace is clean after commit', () => {
+    it('routes back to task-audit-summary when only a stale prior-cycle closeout is materialized', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const nextValue = 2;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'READY');
+        assert.equal(result.next_gate, 'task-audit-summary');
+        assert.equal(result.final_report, null);
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
+        assert.match(result.reason, /final closeout artifacts are not materialized yet/i);
+    });
+
+    it('keeps completed tasks ready for task-audit-summary even when the workspace is clean after commit', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
@@ -1197,10 +1267,10 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.status, 'DONE');
-        assert.equal(result.next_gate, null);
-        assert.deepEqual(result.missing_artifacts, []);
-        assert.ok(!formatNextStepText(result).includes('MissingArtifacts:'));
+        assert.equal(result.status, 'READY');
+        assert.equal(result.next_gate, 'task-audit-summary');
+        assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
+        assert.match(result.reason, /final closeout artifacts are not materialized yet/i);
     });
 
     it('does not let an old completion pass hide a restarted task cycle', () => {

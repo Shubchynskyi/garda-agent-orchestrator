@@ -36,6 +36,9 @@ import {
     type ReviewTrustSummary
 } from './review-trust-summary';
 import {
+    getCycleBindingSnapshotFromPayload
+} from './task-events-summary';
+import {
     fileSha256,
     normalizePath,
     resolvePathInsideRepo
@@ -121,6 +124,14 @@ export interface NextStepReviewSummary {
     trust_note: string | null;
 }
 
+export interface NextStepFinalReportSummary {
+    closeout_json_path: string;
+    closeout_markdown_path: string;
+    required_order: string[];
+    commit_command_suggestion: string;
+    commit_question: string;
+}
+
 export interface NextStepResult {
     schema_version: 1;
     task_id: string;
@@ -136,6 +147,7 @@ export interface NextStepResult {
     full_suite_validation: NextStepFullSuiteSummary;
     review: NextStepReviewSummary;
     audit_status: TaskAuditSummaryResult['status'];
+    final_report: NextStepFinalReportSummary | null;
 }
 
 interface TaskQueueEntry {
@@ -1608,6 +1620,7 @@ function buildResult(params: {
     fullSuite: NextStepFullSuiteSummary;
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
+    finalReport?: NextStepFinalReportSummary | null;
 }): NextStepResult {
     const missingArtifacts = params.status === 'DONE' ? [] : params.missingArtifacts;
     return {
@@ -1624,7 +1637,86 @@ function buildResult(params: {
         present_artifacts: params.presentArtifacts,
         full_suite_validation: params.fullSuite,
         review: params.review,
-        audit_status: params.auditStatus
+        audit_status: params.auditStatus,
+        final_report: params.finalReport || null
+    };
+}
+
+function buildFinalReportOrder(summary: TaskAuditSummaryResult, commitCommandSuggestion: string, commitQuestion: string): string[] {
+    const requirements = summary.final_report_contract.implementation_summary_requirements
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean);
+    const implementationSummary = requirements.length > 0
+        ? `implementation summary (include ${requirements.join(', ')})`
+        : 'implementation summary';
+    return [
+        implementationSummary,
+        commitCommandSuggestion,
+        commitQuestion
+    ];
+}
+
+function finalCloseoutMatchesCurrentCycle(
+    expected: TaskAuditSummaryResult['final_closeout']['cycle_binding'] | null | undefined,
+    actualPayload: Record<string, unknown>,
+    repoRoot: string
+): boolean {
+    const expectedBinding = expected || null;
+    const actualBinding = getCycleBindingSnapshotFromPayload(actualPayload, repoRoot);
+    if (!expectedBinding?.compile_gate_timestamp || !actualBinding?.compile_gate_timestamp) {
+        return false;
+    }
+    if (actualBinding.compile_gate_timestamp !== expectedBinding.compile_gate_timestamp) {
+        return false;
+    }
+    if (expectedBinding.preflight_sha256 && actualBinding.preflight_sha256 !== expectedBinding.preflight_sha256) {
+        return false;
+    }
+    if (expectedBinding.preflight_path && actualBinding.preflight_path !== expectedBinding.preflight_path) {
+        return false;
+    }
+    return true;
+}
+
+function readReadyFinalReportSummary(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    summary: TaskAuditSummaryResult
+): NextStepFinalReportSummary | null {
+    const closeoutJsonPath = path.join(reviewsRoot, `${taskId}-final-closeout.json`);
+    const closeoutMarkdownPath = path.join(reviewsRoot, `${taskId}-final-closeout.md`);
+    if (!fileExists(closeoutJsonPath) || !fileExists(closeoutMarkdownPath)) {
+        return null;
+    }
+
+    const closeout = safeReadJson(closeoutJsonPath);
+    if (!isPlainRecord(closeout)) {
+        return null;
+    }
+    if (String(closeout.task_id || '').trim() !== taskId) {
+        return null;
+    }
+    if (String(closeout.status || '').trim().toUpperCase() !== 'READY') {
+        return null;
+    }
+    if (!finalCloseoutMatchesCurrentCycle(summary.final_closeout.cycle_binding, closeout, repoRoot)) {
+        return null;
+    }
+
+    const commitCommandSuggestion = typeof closeout.commit_command_suggestion === 'string' && closeout.commit_command_suggestion.trim()
+        ? closeout.commit_command_suggestion.trim()
+        : summary.final_report_contract.commit_command_suggestion;
+    const commitQuestion = typeof closeout.commit_question === 'string' && closeout.commit_question.trim()
+        ? closeout.commit_question.trim()
+        : summary.final_report_contract.commit_question;
+
+    return {
+        closeout_json_path: toRepoDisplayPath(repoRoot, closeoutJsonPath),
+        closeout_markdown_path: toRepoDisplayPath(repoRoot, closeoutMarkdownPath),
+        required_order: buildFinalReportOrder(summary, commitCommandSuggestion, commitQuestion),
+        commit_command_suggestion: commitCommandSuggestion,
+        commit_question: commitQuestion
     };
 }
 
@@ -1795,18 +1887,31 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     };
 
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
+        const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
+        if (finalReport) {
+            return buildResult({
+                ...resultBase,
+                status: 'DONE',
+                nextGate: null,
+                title: 'Task gate flow is complete.',
+                reason: 'Completion gate passed and the canonical final closeout is materialized. Deliver the final report in the required order below; do not auto-commit without explicit user approval.',
+                commands: [],
+                finalReport
+            });
+        }
         return buildResult({
             ...resultBase,
-            status: 'DONE',
-            nextGate: null,
-            title: 'Task gate flow is complete.',
-            reason: 'Completion gate passed. Use task-audit-summary for final reporting and commit guidance.',
+            status: 'READY',
+            nextGate: 'task-audit-summary',
+            title: 'Materialize final closeout before stopping.',
+            reason: 'Completion gate passed, but the canonical final closeout artifacts are not materialized yet. Run task-audit-summary to materialize the final report order and commit guidance before stopping.',
             commands: [
                 buildCommand(
                     'Build final audit summary',
                     `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
                 )
-            ]
+            ],
+            finalReport: null
         });
     }
 
@@ -2333,10 +2438,24 @@ export function formatNextStepText(result: NextStepResult): string {
     if (result.missing_artifacts.length > 0) {
         lines.push(`MissingArtifacts: ${result.missing_artifacts.map((artifact) => artifact.key).join(', ')}`);
     }
-    lines.push('');
-    lines.push('Commands:');
-    for (const command of result.commands) {
-        lines.push(`  ${command.label}: ${command.command}`);
+    if (result.final_report) {
+        lines.push(`CloseoutArtifact: ${result.final_report.closeout_json_path}`);
+        lines.push(`CloseoutMarkdown: ${result.final_report.closeout_markdown_path}`);
+        lines.push('FinalReportOrder:');
+        for (const [index, entry] of result.final_report.required_order.entries()) {
+            lines.push(`  ${index + 1}. ${entry}`);
+        }
+    }
+    if (result.commands.length > 0 || result.final_report) {
+        lines.push('');
+        lines.push('Commands:');
+        if (result.commands.length === 0) {
+            lines.push('  none');
+        } else {
+            for (const command of result.commands) {
+                lines.push(`  ${command.label}: ${command.command}`);
+            }
+        }
     }
     if (result.status !== 'DONE') {
         lines.push(`AfterCommand: rerun ${result.navigator_command} after the command above completes.`);

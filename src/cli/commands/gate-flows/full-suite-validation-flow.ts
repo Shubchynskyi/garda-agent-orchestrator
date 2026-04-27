@@ -13,7 +13,7 @@ import {
     loadFullSuiteValidationConfig,
     type FullSuiteValidationCycleBinding
 } from '../../../gates/full-suite-validation';
-import { executeCommand } from '../gates-subprocess';
+import { executeCommandAsync } from '../gates-subprocess';
 import { EXIT_GATE_FAILURE, EXIT_GENERAL_FAILURE } from '../../exit-codes';
 import {
     normalizePathValue,
@@ -330,7 +330,7 @@ export async function runFullSuiteValidationCommand(
     let timedOut = false;
     let outputLines: string[] = [];
     try {
-        const execution = executeCommand(config.command, {
+        const execution = await executeCommandAsync(config.command, {
             cwd: repoRoot,
             timeoutMs: config.timeout_ms
         });

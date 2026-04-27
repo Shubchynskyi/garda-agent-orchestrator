@@ -64,6 +64,7 @@ export interface FinalCloseoutArtifact {
     status: 'READY' | 'NOT_READY';
     blocker: string | null;
     artifact_state: 'PENDING' | 'MATERIALIZED' | 'REMOVED' | 'NOT_READY';
+    cycle_binding?: TaskCycleBindingSnapshot | null;
     artifact_paths: FinalCloseoutArtifactPaths;
     implementation_summary: FinalCloseoutImplementationSummary;
     review_trust?: FinalCloseoutReviewTrustSummary | null;
@@ -1012,6 +1013,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         status: finalReportContract.status,
         blocker: finalReportContract.blocker,
         artifact_state: status === 'PASS' ? 'PENDING' : 'NOT_READY',
+        cycle_binding: currentCycle
+            ? {
+                preflight_path: currentCycle.preflight_path,
+                preflight_sha256: currentCycle.preflight_sha256,
+                compile_gate_timestamp: currentCycle.compile_gate_timestamp
+            }
+            : null,
         artifact_paths: {
             json: toPosix(finalCloseoutJsonPath),
             markdown: toPosix(finalCloseoutMarkdownPath)
