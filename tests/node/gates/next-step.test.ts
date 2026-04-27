@@ -625,6 +625,25 @@ describe('gates/next-step', () => {
         assert.ok(stalePreflight.commands[0].command.includes('--changed-file "src/app.ts"'));
     });
 
+    it('routes late TASK_ENTRY after shell-smoke through handshake and shell-smoke recovery in order', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+
+        const missingHandshake = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingHandshake.next_gate, 'handshake-diagnostics');
+        assert.match(missingHandshake.reason, /latest startup rule-pack event/);
+        assert.match(missingHandshake.reason, /no HANDSHAKE_DIAGNOSTICS_RECORDED event exists after them/);
+
+        seedHandshake(repoRoot, TASK_ID);
+        const missingShellSmoke = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingShellSmoke.next_gate, 'shell-smoke-preflight');
+        assert.match(missingShellSmoke.reason, /latest HANDSHAKE_DIAGNOSTICS_RECORDED event/);
+    });
+
     it('preserves planned changed files when refreshing a stale scoped preflight', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({

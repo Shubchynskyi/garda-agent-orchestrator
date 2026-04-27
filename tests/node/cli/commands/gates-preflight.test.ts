@@ -1391,6 +1391,45 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('allows handshake and shell-smoke recovery after a later TASK_ENTRY rule-pack supersedes the old startup cycle', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-handshake-after-late-task-entry';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow startup-cycle recovery after a late TASK_ENTRY rule-pack'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'RULE_PACK_LOADED',
+            'PASS',
+            'TASK_ENTRY rules re-recorded after shell-smoke for startup-cycle recovery.',
+            {
+                stage: 'TASK_ENTRY'
+            },
+            { actor: 'gate', passThru: true }
+        );
+
+        const handshakeResult = runHandshakeDiagnosticsCommand({
+            repoRoot,
+            taskId
+        });
+        assert.equal(handshakeResult.exitCode, 0);
+        assert.equal(handshakeResult.outputLines[0], 'HANDSHAKE_DIAGNOSTICS_PASSED');
+        assert.ok(!handshakeResult.outputLines.some((line) => line.includes('already has valid SHELL_SMOKE_PREFLIGHT_RECORDED evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('keeps custom task-mode paths in handshake rerun remediation commands', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-handshake-remediation-custom-task-mode';

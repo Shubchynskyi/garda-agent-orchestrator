@@ -3334,6 +3334,31 @@ describe('cli/commands/gates', () => {
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-completion-recovery.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Record stale early startup ordering noise'
+        });
+        runHandshakeForTask(repoRoot, taskId);
+        loadTaskEntryRulePack(repoRoot, taskId);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Recover a later coherent completion cycle'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
         const preflightPath = writePreflight(repoRoot, taskId, {
             metrics: { changed_lines_total: 3, changed_files_count: 1 },
             changed_files: ['src/app.ts'],
@@ -3349,23 +3374,6 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
-        const commandsPath = path.join(repoRoot, 'commands-completion-recovery.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
-
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Recover a later coherent completion cycle'
-        });
-        runHandshakeForTask(repoRoot, taskId);
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
 
         await runCompileGateCommand({

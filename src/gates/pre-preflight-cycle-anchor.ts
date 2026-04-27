@@ -30,25 +30,21 @@ export function getLatestPrePreflightCycleAnchor<T extends PrePreflightTimelineE
         return null;
     }
 
-    let latestClosedBoundaryAfterTaskMode: T | null = null;
+    let lowerBoundExclusive = latestTaskMode.sequence;
     for (let index = events.length - 1; index >= 0; index -= 1) {
         const entry = events[index];
         if (entry.sequence <= latestTaskMode.sequence) {
             break;
         }
         if (PRE_PREFLIGHT_CYCLE_RESET_BOUNDARY_EVENTS.has(entry.event_type)) {
-            latestClosedBoundaryAfterTaskMode = entry;
+            lowerBoundExclusive = entry.sequence;
             break;
         }
     }
 
-    if (!latestClosedBoundaryAfterTaskMode) {
-        return latestTaskMode;
-    }
-
     for (let index = events.length - 1; index >= 0; index -= 1) {
         const entry = events[index];
-        if (entry.sequence <= latestClosedBoundaryAfterTaskMode.sequence) {
+        if (entry.sequence <= lowerBoundExclusive) {
             break;
         }
         if (isTaskEntryRulePackLoadedEvent(entry)) {
