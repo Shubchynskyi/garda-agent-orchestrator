@@ -36,6 +36,9 @@ import type { CommandCompactnessAudit } from '../../../gates/task-events-summary
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../gates/classify-change';
 import { loadReviewExecutionPolicyConfig } from '../../../core/review-execution-policy';
+import {
+    resolveTaskProfileSelection
+} from '../../../policy/task-profile-selection';
 import { detectCodeChanged } from '../../../gates/preflight-code-change';
 import {
     buildOptionalSkillSelectionArtifact,
@@ -75,6 +78,9 @@ import {
     getTaskModeEvidence,
     getTaskModeEvidenceViolations
 } from '../../../gates/task-mode';
+import {
+    readTaskQueueMetadata
+} from '../../../gates/task-audit-summary-collectors';
 import {
     validateTaskPlan,
     computeTaskPlanDigest,
@@ -475,6 +481,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     }
 
     let currentTaskSummary: string | null = null;
+    let effectiveTaskPolicy: ReturnType<typeof resolveTaskProfileSelection>['effective_policy'] | null = null;
     if (resolvedTaskId) {
         prePreflightSequenceLockHandle = acquireFilesystemLock(
             resolvePrePreflightSequenceLockPath(repoRoot, resolvedTaskId),
@@ -484,7 +491,42 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
 
         const preflightErrors: string[] = [];
         const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath);
+        const taskQueueMetadata = readTaskQueueMetadata(repoRoot, resolvedTaskId);
         currentTaskSummary = readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary);
+        const rawTaskProfile = taskModeEvidence.task_profile || taskQueueMetadata?.profile || null;
+        const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
+        if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
+            try {
+                const resolvedProfile = resolveTaskProfileSelection(
+                    orchestratorRoot,
+                    rawTaskProfile,
+                    typeof result.scope_category === 'string' ? result.scope_category : null
+                );
+                effectiveTaskPolicy = resolvedProfile.effective_policy;
+                (result as Record<string, unknown>).profile_selection = resolvedProfile.selection;
+                (result as Record<string, unknown>).profile_guardrails = effectiveTaskPolicy.guardrail_diagnostics;
+
+                const guardrailDecisions = new Map(
+                    (effectiveTaskPolicy.guardrail_diagnostics?.decisions || []).map((decision) => [decision.review_type, decision])
+                );
+                for (const [reviewType, currentValue] of Object.entries(result.required_reviews)) {
+                    const guardrailDecision = guardrailDecisions.get(reviewType);
+                    if (currentValue === true) {
+                        (result.required_reviews as Record<string, boolean>)[reviewType] = true;
+                    } else if (guardrailDecision?.profile_wanted === true) {
+                        (result.required_reviews as Record<string, boolean>)[reviewType] = true;
+                    } else {
+                        (result.required_reviews as Record<string, boolean>)[reviewType] = false;
+                    }
+                }
+            } catch (error: unknown) {
+                preflightErrors.push(error instanceof Error ? error.message : String(error));
+            }
+        } else if (String(rawTaskProfile || '').trim() && String(rawTaskProfile || '').trim().toLowerCase() !== 'default') {
+            preflightErrors.push(
+                `Task profile '${String(rawTaskProfile).trim()}' cannot be resolved because profiles config is missing: ${gateHelpers.normalizePath(profilesConfigPath)}`
+            );
+        }
         const dirtyWorkspaceBaseline = taskModeEvidence.dirty_workspace_baseline;
         const dirtyWorkspaceProtectedScope = deriveProtectedDirtyWorkspaceScope(
             dirtyWorkspaceBaseline,
@@ -648,6 +690,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 if (typeof teConfig.compact_reviewer_output === 'boolean') baseCompactReviewerOutput = teConfig.compact_reviewer_output;
             }
         } catch { /* use defaults */ }
+
+        if (effectiveTaskPolicy) {
+            tokenEconomyEnabled = effectiveTaskPolicy.token_economy.enabled;
+            enabledDepths = effectiveTaskPolicy.token_economy.enabled_depths;
+            baseStripExamples = effectiveTaskPolicy.token_economy.strip_examples;
+            baseStripCodeBlocks = effectiveTaskPolicy.token_economy.strip_code_blocks;
+            baseScopedDiffs = effectiveTaskPolicy.token_economy.scoped_diffs;
+            baseCompactReviewerOutput = effectiveTaskPolicy.token_economy.compact_reviewer_output;
+        }
 
         const riskTriggers = {
             db: !!result.triggers.db,
@@ -833,6 +884,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     code_changed: codeChanged,
                     required_reviews: result.required_reviews,
                     review_execution_policy: (result as Record<string, unknown>).review_execution_policy ?? null,
+                    profile_selection: (result as Record<string, unknown>).profile_selection ?? null,
+                    profile_guardrails: (result as Record<string, unknown>).profile_guardrails ?? null,
                     optional_skill_selection_artifact_path: optionalSkillSelectionArtifactPath,
                     zero_diff_guard: result.zero_diff_guard,
                     budget_forecast: (result as any).budget_forecast || null,

@@ -87,8 +87,12 @@ export interface TaskModeArtifact {
     actor: string;
     plan: TaskModePlanMetadata | null;
     planned_changed_files: string[];
+    task_profile: string | null;
+    profile_selection_source: 'task_queue' | 'workspace_active' | null;
     active_profile: string | null;
     profile_source: 'built_in' | 'user' | null;
+    runtime_active_profile: string | null;
+    runtime_profile_source: 'built_in' | 'user' | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
 }
 
@@ -117,8 +121,12 @@ export interface BuildTaskModeArtifactOptions {
     actor?: string;
     plan?: TaskModePlanMetadata | null;
     plannedChangedFiles?: string[] | null;
+    taskProfile?: string | null;
+    profileSelectionSource?: 'task_queue' | 'workspace_active' | null;
     activeProfile?: string | null;
     profileSource?: 'built_in' | 'user' | null;
+    runtimeActiveProfile?: string | null;
+    runtimeProfileSource?: 'built_in' | 'user' | null;
     dirtyWorkspaceBaseline?: DirtyWorkspaceBaseline | null;
 }
 
@@ -158,8 +166,12 @@ export interface TaskModeEvidenceResult {
     routed_to: string | null;
     plan: TaskModePlanMetadata | null;
     planned_changed_files: string[];
+    task_profile: string | null;
+    profile_selection_source: string | null;
     active_profile: string | null;
     profile_source: string | null;
+    runtime_active_profile: string | null;
+    runtime_profile_source: string | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
 }
 
@@ -480,8 +492,12 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         actor,
         plan,
         planned_changed_files: plannedChangedFiles,
+        task_profile: String(options.taskProfile || '').trim() || null,
+        profile_selection_source: options.profileSelectionSource || null,
         active_profile: String(options.activeProfile || '').trim() || null,
         profile_source: options.profileSource || null,
+        runtime_active_profile: String(options.runtimeActiveProfile || '').trim() || null,
+        runtime_profile_source: options.runtimeProfileSource || null,
         dirty_workspace_baseline: dirtyWorkspaceBaseline
     };
 }
@@ -523,8 +539,12 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         routed_to: null,
         plan: null,
         planned_changed_files: [],
+        task_profile: null,
+        profile_selection_source: null,
         active_profile: null,
         profile_source: null,
+        runtime_active_profile: null,
+        runtime_profile_source: null,
         dirty_workspace_baseline: null
     };
 
@@ -616,8 +636,12 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         : [];
 
     // Extract optional profile metadata
+    result.task_profile = String(artifactObject.task_profile || '').trim() || null;
+    result.profile_selection_source = String(artifactObject.profile_selection_source || '').trim() || null;
     result.active_profile = String(artifactObject.active_profile || '').trim() || null;
     result.profile_source = String(artifactObject.profile_source || '').trim() || null;
+    result.runtime_active_profile = String(artifactObject.runtime_active_profile || '').trim() || null;
+    result.runtime_profile_source = String(artifactObject.runtime_profile_source || '').trim() || null;
     result.dirty_workspace_baseline = normalizeDirtyWorkspaceBaseline(artifactObject.dirty_workspace_baseline);
 
     const requestedDepth = artifactObject.requested_depth;

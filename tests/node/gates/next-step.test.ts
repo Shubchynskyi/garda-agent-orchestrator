@@ -531,6 +531,110 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('\\"'));
     });
 
+    it('shows selected, runtime, and effective profiles plus depth budget in compile-phase guidance', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | ux/test | Make next-step output executable in tests | gpt-5.4 | 2026-04-25 | fast | Test queue entry. |`,
+            ''
+        ].join('\n'), 'utf8');
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                fast: {
+                    description: 'Fast',
+                    depth: 1,
+                    review_policy: { code: true, test: false },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Seeded next-step task',
+            taskProfile: 'fast',
+            profileSelectionSource: 'task_queue',
+            activeProfile: 'fast',
+            profileSource: 'built_in',
+            runtimeActiveProfile: 'balanced',
+            runtimeProfileSource: 'built_in',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { code: true, test: true });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+        preflight.profile_selection = {
+            task_profile: 'fast',
+            profile_selection_source: 'task_queue',
+            effective_profile: 'fast',
+            effective_profile_source: 'built_in',
+            runtime_active_profile: 'balanced',
+            runtime_profile_source: 'built_in'
+        };
+        preflight.depth_escalation = {
+            requested_depth: 1,
+            effective_depth: 2,
+            escalated: true,
+            escalation_reason: 'full_path_minimum_depth_2, test_review_required'
+        };
+        preflight.budget_forecast = {
+            requested_depth: 1,
+            effective_depth: 2,
+            total_forecast_tokens: 1800,
+            effective_forecast_tokens: 1170,
+            token_economy_active_for_depth: true
+        };
+        writeJson(preflightPath, preflight);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.profile?.task_selected_profile, 'fast');
+        assert.equal(result.profile?.runtime_active_profile, 'balanced');
+        assert.equal(result.profile?.effective_profile, 'fast');
+        assert.equal(result.profile?.effective_depth, 2);
+        assert.ok(text.includes('TaskProfile: fast (task_queue)'));
+        assert.ok(text.includes('RuntimeActiveProfile: balanced (built_in)'));
+        assert.ok(text.includes('EffectiveProfile: fast (built_in)'));
+        assert.ok(text.includes('Depth: requested=1; effective=2; escalation=full_path_minimum_depth_2, test_review_required'));
+        assert.ok(text.includes('TokenBudget: total~1800; effective~1170; token_economy_active=true'));
+    });
+
     it('routes task-mode-only runs to TASK_ENTRY rule-pack loading', () => {
         const repoRoot = makeTempRepo();
         seedTaskModeOnly(repoRoot, TASK_ID);

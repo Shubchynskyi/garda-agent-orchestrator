@@ -1123,7 +1123,21 @@ test('runEnterTaskModeCommand banner includes ActiveProfile when profile is set'
         fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
             version: 1,
             active_profile: 'strict',
-            built_in_profiles: { strict: { description: 'Strict', depth: 3 } },
+            built_in_profiles: {
+                strict: {
+                    description: 'Strict',
+                    depth: 3,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: false,
+                        strip_code_blocks: false,
+                        scoped_diffs: true,
+                        compact_reviewer_output: false
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
             user_profiles: {}
         }), 'utf8');
 
@@ -1143,6 +1157,85 @@ test('runEnterTaskModeCommand banner includes ActiveProfile when profile is set'
         const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.equal(artifact.active_profile, 'strict');
         assert.equal(artifact.profile_source, 'built_in');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand records task-selected and runtime profiles separately', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Profile routing test | gpt-5.4 | 2026-04-27 | fast | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                fast: {
+                    description: 'Fast',
+                    depth: 1,
+                    review_policy: { code: true, test: false },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }), 'utf8');
+
+        const result = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Profile routing test',
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.some(l => l.includes('TaskProfile: fast (task_queue)')));
+        assert.ok(result.outputLines.some(l => l.includes('ActiveProfile: fast (built_in)')));
+        assert.ok(result.outputLines.some(l => l.includes('RuntimeActiveProfile: balanced (built_in)')));
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(artifact.task_profile, 'fast');
+        assert.equal(artifact.profile_selection_source, 'task_queue');
+        assert.equal(artifact.active_profile, 'fast');
+        assert.equal(artifact.profile_source, 'built_in');
+        assert.equal(artifact.runtime_active_profile, 'balanced');
+        assert.equal(artifact.runtime_profile_source, 'built_in');
     } finally {
         cleanupDir(tmpDir);
     }

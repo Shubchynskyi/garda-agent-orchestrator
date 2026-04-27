@@ -63,7 +63,13 @@ import {
     buildNoOpArtifact,
     resolveNoOpArtifactPath
 } from '../../../gates/no-op';
+import {
+    readTaskQueueMetadata
+} from '../../../gates/task-audit-summary-collectors';
 import * as gateHelpers from '../../../gates/helpers';
+import {
+    resolveTaskProfileSelection
+} from '../../../policy/task-profile-selection';
 import {
     normalizeOptionalPath,
     removeArtifactIfExists,
@@ -538,25 +544,33 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         );
     }
 
+    const taskQueueMetadata = readTaskQueueMetadata(repoRoot, taskId);
+    const rawTaskProfile = taskQueueMetadata?.profile || null;
+    let taskProfile: string | null = null;
+    let profileSelectionSource: 'task_queue' | 'workspace_active' | null = null;
     let activeProfile: string | null = null;
     let profileSource: 'built_in' | 'user' | null = null;
+    let runtimeActiveProfile: string | null = null;
+    let runtimeProfileSource: 'built_in' | 'user' | null = null;
     const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
     try {
         if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
-            const profilesRaw = JSON.parse(fs.readFileSync(profilesConfigPath, 'utf8')) as Record<string, unknown>;
-            if (typeof profilesRaw.active_profile === 'string' && profilesRaw.active_profile.trim()) {
-                activeProfile = profilesRaw.active_profile.trim();
-                if (profilesRaw.built_in_profiles && typeof profilesRaw.built_in_profiles === 'object' &&
-                    Object.hasOwn(profilesRaw.built_in_profiles as Record<string, unknown>, activeProfile)) {
-                    profileSource = 'built_in';
-                } else if (profilesRaw.user_profiles && typeof profilesRaw.user_profiles === 'object' &&
-                    Object.hasOwn(profilesRaw.user_profiles as Record<string, unknown>, activeProfile)) {
-                    profileSource = 'user';
-                }
-            }
+            const resolvedProfile = resolveTaskProfileSelection(orchestratorRoot, rawTaskProfile);
+            taskProfile = resolvedProfile.selection.task_profile;
+            profileSelectionSource = resolvedProfile.selection.profile_selection_source;
+            activeProfile = resolvedProfile.selection.effective_profile;
+            profileSource = resolvedProfile.selection.effective_profile_source;
+            runtimeActiveProfile = resolvedProfile.selection.runtime_active_profile;
+            runtimeProfileSource = resolvedProfile.selection.runtime_profile_source;
+        } else if (String(rawTaskProfile || '').trim() && String(rawTaskProfile || '').trim().toLowerCase() !== 'default') {
+            throw new Error(
+                `Task profile '${String(rawTaskProfile).trim()}' cannot be resolved because profiles config is missing: ${gateHelpers.normalizePath(profilesConfigPath)}`
+            );
         }
-    } catch {
-        // profiles read failure is non-fatal for task-mode entry
+    } catch (error: unknown) {
+        if (String(rawTaskProfile || '').trim() && String(rawTaskProfile || '').trim().toLowerCase() !== 'default') {
+            throw error;
+        }
     }
 
     const taskModeArtifact = buildTaskModeArtifact({
@@ -592,8 +606,12 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         actor: String(options.actor || 'orchestrator'),
         plan: planMetadata,
         plannedChangedFiles,
+        taskProfile,
+        profileSelectionSource,
         activeProfile,
         profileSource,
+        runtimeActiveProfile,
+        runtimeProfileSource,
         dirtyWorkspaceBaseline
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
@@ -614,8 +632,12 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         orchestrator_work: taskModeArtifact.orchestrator_work,
         actor: taskModeArtifact.actor,
         plan_guided: !!taskModeArtifact.plan,
+        task_profile: taskModeArtifact.task_profile,
+        profile_selection_source: taskModeArtifact.profile_selection_source,
         active_profile: taskModeArtifact.active_profile,
         profile_source: taskModeArtifact.profile_source,
+        runtime_active_profile: taskModeArtifact.runtime_active_profile,
+        runtime_profile_source: taskModeArtifact.runtime_profile_source,
         dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
         dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
     }, parseBooleanOption(options.emitMetrics, true));
@@ -655,8 +677,12 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 plan_guided: !!taskModeArtifact.plan,
                 plan_path: taskModeArtifact.plan?.plan_path ?? null,
                 plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
+                task_profile: taskModeArtifact.task_profile,
+                profile_selection_source: taskModeArtifact.profile_selection_source,
                 active_profile: taskModeArtifact.active_profile,
                 profile_source: taskModeArtifact.profile_source,
+                runtime_active_profile: taskModeArtifact.runtime_active_profile,
+                runtime_profile_source: taskModeArtifact.runtime_profile_source,
                 dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
                 dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
             }
@@ -720,7 +746,13 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             ...(routingDecision.reviewerSubagentLaunchStatus ? [`ReviewerSubagentLaunchStatus: ${routingDecision.reviewerSubagentLaunchStatus}`] : []),
             ...(routingDecision.reviewerSubagentLaunchRoute ? [`ReviewerSubagentLaunchRoute: ${routingDecision.reviewerSubagentLaunchRoute}`] : []),
             ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`]),
+            ...(taskModeArtifact.profile_selection_source
+                ? [`TaskProfile: ${taskModeArtifact.task_profile || 'default'} (${taskModeArtifact.profile_selection_source})`]
+                : []),
             ...(taskModeArtifact.active_profile ? [`ActiveProfile: ${taskModeArtifact.active_profile} (${taskModeArtifact.profile_source || 'unknown'})`] : []),
+            ...(taskModeArtifact.runtime_active_profile
+                ? [`RuntimeActiveProfile: ${taskModeArtifact.runtime_active_profile} (${taskModeArtifact.runtime_profile_source || 'unknown'})`]
+                : []),
             ...(plannedChangedFiles.length > 0 ? [`PlannedChangedFilesCount: ${plannedChangedFiles.length}`] : []),
             ...(protectedPlannedFiles.length > 0 ? [`PlannedProtectedFilesCount: ${protectedPlannedFiles.length}`] : []),
             `DirtyWorkspaceBaselineCount: ${taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0}`

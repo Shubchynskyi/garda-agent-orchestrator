@@ -182,11 +182,11 @@ function seedNodeBackendOptionalSkillFixture(
     return path.join(skillRoot, 'SKILL.md');
 }
 
-function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
+function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO', profile = 'default'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | default | fixture |`
+        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | ${profile} | fixture |`
     ].join('\n'), 'utf8');
 }
 
@@ -624,6 +624,98 @@ describe('cli/commands/gates — preflight', () => {
         // Budget forecast should use the promoted depth
         assert.equal(payload.budget_forecast.effective_depth, 3);
         assert.equal(payload.budget_forecast.depth_escalated, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change emits task profile selection and keeps full-path safety floors for fast tasks', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const testFilePath = path.join(repoRoot, 'tests', 'app.test.ts');
+        fs.mkdirSync(path.dirname(testFilePath), { recursive: true });
+        fs.writeFileSync(testFilePath, 'export const suite = true;\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'review-capabilities.json'), JSON.stringify({
+            code: true,
+            db: true,
+            security: true,
+            refactor: true,
+            api: true,
+            test: true,
+            performance: true,
+            infra: false,
+            dependency: true
+        }, null, 2));
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                fast: {
+                    description: 'Fast',
+                    depth: 1,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }, null, 2));
+        const outputPath = path.join(repoRoot, 'preflight-fast-profile.json');
+        seedTaskQueue(repoRoot, 'T-930-fast-profile', 'TODO', 'fast');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId: 'T-930-fast-profile',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Honor fast task profile without bypassing full-path floors'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, 'T-930-fast-profile').exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-930-fast-profile');
+        runShellSmokeForTask(repoRoot, 'T-930-fast-profile');
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts', 'tests/app.test.ts'],
+            taskId: 'T-930-fast-profile',
+            taskIntent: 'Honor fast task profile without bypassing full-path floors',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.profile_selection.task_profile, 'fast');
+        assert.equal(payload.profile_selection.profile_selection_source, 'task_queue');
+        assert.equal(payload.profile_selection.effective_profile, 'fast');
+        assert.equal(payload.profile_selection.runtime_active_profile, 'balanced');
+        assert.ok(payload.profile_guardrails, 'profile_guardrails should be present');
+        assert.equal(payload.budget_forecast.requested_depth, 1);
+        assert.equal(payload.budget_forecast.effective_depth, 2);
+        assert.equal(payload.depth_escalation.escalated, true);
+        assert.match(String(payload.depth_escalation.escalation_reason || ''), /full_path_minimum_depth_2/);
+        assert.equal(payload.required_reviews.test, true);
+        assert.equal(payload.required_reviews.api, false);
+        assert.equal(payload.required_reviews.dependency, false);
+        assert.equal(payload.required_reviews.security, false);
+        assert.equal(payload.budget_forecast.token_economy_active_for_depth, true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

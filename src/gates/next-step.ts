@@ -75,6 +75,9 @@ import {
 import {
     normalizeProviderId
 } from '../core/provider-registry';
+import {
+    resolveTaskProfileSelection
+} from '../policy/task-profile-selection';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -132,6 +135,21 @@ export interface NextStepFinalReportSummary {
     commit_question: string;
 }
 
+export interface NextStepProfileSummary {
+    task_selected_profile: string | null;
+    profile_selection_source: string | null;
+    effective_profile: string | null;
+    effective_profile_source: string | null;
+    runtime_active_profile: string | null;
+    runtime_active_profile_source: string | null;
+    requested_depth: number | null;
+    effective_depth: number | null;
+    depth_escalation_reason: string | null;
+    total_forecast_tokens: number | null;
+    effective_forecast_tokens: number | null;
+    token_economy_active_for_depth: boolean | null;
+}
+
 export interface NextStepResult {
     schema_version: 1;
     task_id: string;
@@ -147,6 +165,7 @@ export interface NextStepResult {
     full_suite_validation: NextStepFullSuiteSummary;
     review: NextStepReviewSummary;
     audit_status: TaskAuditSummaryResult['status'];
+    profile: NextStepProfileSummary | null;
     final_report: NextStepFinalReportSummary | null;
 }
 
@@ -1376,6 +1395,101 @@ function resolveDefaultDepthFromTaskQueue(taskEntry: TaskQueueEntry | null): str
     return '2';
 }
 
+function parseOptionalNumberField(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildNextStepProfileSummary(
+    repoRoot: string,
+    taskEntry: TaskQueueEntry | null,
+    taskMode: Record<string, unknown> | null,
+    preflight: Record<string, unknown> | null
+): NextStepProfileSummary | null {
+    const rawTaskProfile = typeof taskMode?.task_profile === 'string' && taskMode.task_profile.trim()
+        ? taskMode.task_profile.trim()
+        : typeof taskEntry?.profile === 'string' && taskEntry.profile.trim()
+            ? taskEntry.profile.trim()
+            : null;
+
+    let resolvedSelection: ReturnType<typeof resolveTaskProfileSelection>['selection'] | null = null;
+    try {
+        resolvedSelection = resolveTaskProfileSelection(
+            path.join(repoRoot, 'garda-agent-orchestrator'),
+            rawTaskProfile,
+            typeof preflight?.scope_category === 'string' ? preflight.scope_category : null
+        ).selection;
+    } catch {
+        resolvedSelection = null;
+    }
+
+    const budgetForecast = preflight?.budget_forecast && typeof preflight.budget_forecast === 'object'
+        ? preflight.budget_forecast as Record<string, unknown>
+        : null;
+    const depthEscalation = preflight?.depth_escalation && typeof preflight.depth_escalation === 'object'
+        ? preflight.depth_escalation as Record<string, unknown>
+        : null;
+
+    const summary: NextStepProfileSummary = {
+        task_selected_profile: rawTaskProfile || resolvedSelection?.task_profile || null,
+        profile_selection_source:
+            (typeof taskMode?.profile_selection_source === 'string' && taskMode.profile_selection_source.trim())
+            || resolvedSelection?.profile_selection_source
+            || null,
+        effective_profile:
+            (typeof taskMode?.active_profile === 'string' && taskMode.active_profile.trim())
+            || resolvedSelection?.effective_profile
+            || null,
+        effective_profile_source:
+            (typeof taskMode?.profile_source === 'string' && taskMode.profile_source.trim())
+            || resolvedSelection?.effective_profile_source
+            || null,
+        runtime_active_profile:
+            (typeof taskMode?.runtime_active_profile === 'string' && taskMode.runtime_active_profile.trim())
+            || resolvedSelection?.runtime_active_profile
+            || null,
+        runtime_active_profile_source:
+            (typeof taskMode?.runtime_profile_source === 'string' && taskMode.runtime_profile_source.trim())
+            || resolvedSelection?.runtime_profile_source
+            || null,
+        requested_depth:
+            parseOptionalNumberField(budgetForecast?.requested_depth)
+            ?? parseOptionalNumberField(taskMode?.requested_depth),
+        effective_depth:
+            parseOptionalNumberField(budgetForecast?.effective_depth)
+            ?? parseOptionalNumberField(preflight?.risk_aware_depth && typeof preflight.risk_aware_depth === 'object'
+                ? (preflight.risk_aware_depth as Record<string, unknown>).effective_depth
+                : null)
+            ?? parseOptionalNumberField(taskMode?.effective_depth),
+        depth_escalation_reason:
+            typeof depthEscalation?.escalation_reason === 'string' && depthEscalation.escalation_reason.trim()
+                ? depthEscalation.escalation_reason.trim()
+                : null,
+        total_forecast_tokens: parseOptionalNumberField(budgetForecast?.total_forecast_tokens),
+        effective_forecast_tokens: parseOptionalNumberField(budgetForecast?.effective_forecast_tokens),
+        token_economy_active_for_depth:
+            typeof budgetForecast?.token_economy_active_for_depth === 'boolean'
+                ? budgetForecast.token_economy_active_for_depth
+                : null
+    };
+
+    if (
+        summary.task_selected_profile == null
+        && summary.effective_profile == null
+        && summary.runtime_active_profile == null
+        && summary.requested_depth == null
+        && summary.effective_depth == null
+        && summary.total_forecast_tokens == null
+    ) {
+        return null;
+    }
+
+    return summary;
+}
+
 function resolveProviderFromEnvironment(): string | null {
     const explicitProvider = normalizeProviderId(process.env.GARDA_EXECUTION_PROVIDER);
     if (explicitProvider) {
@@ -1620,6 +1734,7 @@ function buildResult(params: {
     fullSuite: NextStepFullSuiteSummary;
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
+    profile: NextStepProfileSummary | null;
     finalReport?: NextStepFinalReportSummary | null;
 }): NextStepResult {
     const missingArtifacts = params.status === 'DONE' ? [] : params.missingArtifacts;
@@ -1638,6 +1753,7 @@ function buildResult(params: {
         full_suite_validation: params.fullSuite,
         review: params.review,
         audit_status: params.auditStatus,
+        profile: params.profile,
         final_report: params.finalReport || null
     };
 }
@@ -1819,6 +1935,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const taskMode = safeReadJson(path.join(reviewsRoot, `${taskId}-task-mode.json`));
     const taskEntry = readTaskQueueEntry(repoRoot, taskId);
     const defaultExecutionProvider = resolveProviderFromEnvironment();
+    const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
     const summary = buildTaskAuditSummary({
         taskId,
         repoRoot,
@@ -1883,6 +2000,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         presentArtifacts: coreArtifacts.present,
         fullSuite: fullSuiteSummary,
         review: reviewSummary,
+        profile: profileSummary,
         auditStatus: summary.status
     };
 
@@ -2416,10 +2534,39 @@ export function formatNextStepText(result: NextStepResult): string {
         `Status: ${result.status}`,
         `NextGate: ${result.next_gate || 'none'}`,
         `Title: ${result.title}`,
-        `Reason: ${result.reason}`,
-        `FullSuite: enabled=${result.full_suite_validation.enabled}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`,
-        `ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`
+        `Reason: ${result.reason}`
     ];
+    if (result.profile) {
+        lines.push(`TaskProfile: ${result.profile.task_selected_profile || 'default'} (${result.profile.profile_selection_source || 'unknown'})`);
+        if (result.profile.runtime_active_profile) {
+            lines.push(`RuntimeActiveProfile: ${result.profile.runtime_active_profile} (${result.profile.runtime_active_profile_source || 'unknown'})`);
+        }
+        if (result.profile.effective_profile) {
+            lines.push(`EffectiveProfile: ${result.profile.effective_profile} (${result.profile.effective_profile_source || 'unknown'})`);
+        }
+        if (result.profile.requested_depth != null || result.profile.effective_depth != null) {
+            const depthParts = [
+                `requested=${result.profile.requested_depth != null ? result.profile.requested_depth : 'unknown'}`,
+                `effective=${result.profile.effective_depth != null ? result.profile.effective_depth : 'unknown'}`
+            ];
+            if (result.profile.depth_escalation_reason) {
+                depthParts.push(`escalation=${result.profile.depth_escalation_reason}`);
+            }
+            lines.push(`Depth: ${depthParts.join('; ')}`);
+        }
+        if (result.profile.total_forecast_tokens != null) {
+            const tokenParts = [`total~${result.profile.total_forecast_tokens}`];
+            if (result.profile.effective_forecast_tokens != null) {
+                tokenParts.push(`effective~${result.profile.effective_forecast_tokens}`);
+            }
+            if (result.profile.token_economy_active_for_depth != null) {
+                tokenParts.push(`token_economy_active=${result.profile.token_economy_active_for_depth}`);
+            }
+            lines.push(`TokenBudget: ${tokenParts.join('; ')}`);
+        }
+    }
+    lines.push(`FullSuite: enabled=${result.full_suite_validation.enabled}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`);
+    lines.push(`ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
     if (result.review.required_reviews.length > 0) {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);
     } else {
