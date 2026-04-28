@@ -40,9 +40,7 @@ export function yellow(text: string): string { return colorize(text, '33'); }
 export function red(text: string): string { return colorize(text, '31'); }
 export function dim(text: string): string { return colorize(text, '2'); }
 
-export type AgentReportLocale = 'en' | 'ru' | 'de' | 'fr' | 'es';
-
-export interface LocalizedAgentReportInput {
+export interface AgentReportInput {
     context: 'setup_handoff' | 'agent_init' | 'task_closeout';
     assistantLanguage: string | null;
     assistantLanguageConfirmed?: boolean | null;
@@ -55,8 +53,8 @@ export interface LocalizedAgentReportInput {
     latestUpdateNotice?: string | null;
 }
 
-interface AgentReportMessages {
-    titles: Record<LocalizedAgentReportInput['context'], string>;
+export interface AgentReportMessages {
+    titles: Record<AgentReportInput['context'], string>;
     labels: {
         language: string;
         profile: string;
@@ -97,282 +95,83 @@ interface AgentReportMessages {
     };
 }
 
-const AGENT_REPORT_MESSAGES: Record<AgentReportLocale, AgentReportMessages> = {
-    en: {
-        titles: {
-            setup_handoff: 'Setup handoff',
-            agent_init: 'Agent-init summary',
-            task_closeout: 'Task closeout'
-        },
-        labels: {
-            language: 'Language',
-            profile: 'Profile',
-            reviewMode: 'Review mode',
-            optionalSkills: 'Optional skills',
-            mandatoryFullSuite: 'Mandatory full-suite',
-            nextCommand: 'Next command',
-            nextTaskPrompt: 'Tell the agent',
-            updateNotice: 'Latest update notice',
-            noLanguage: 'not recorded',
-            noProfile: 'not configured'
-        },
-        statuses: {
-            normalized: 'normalized',
-            pendingConfirmation: 'pending confirmation',
-            unknown: 'unknown'
-        },
-        fullSuite: {
-            enabled: 'enabled',
-            disabled: 'disabled',
-            unknown: 'unknown'
-        },
-        summaries: {
-            mandatoryOrchestratorGates: 'mandatory orchestrator gates',
-            askDuringAgentInit: 'ask during AGENT_INIT_PROMPT',
-            confirmedDuringAgentInit: 'confirmed during agent-init',
-            pendingDuringAgentInit: 'still pending in agent-init',
-            independentReviewAttested: 'independent review attested',
-            localReview: 'local review',
-            noRequiredReview: 'no required review',
-            verdicts: 'verdicts',
-            selected: 'selected',
-            recommendedPacks: 'recommended packs',
-            noAdditionalSkills: 'no additional skills',
-            unavailable: 'unavailable',
-            noneUsed: 'none used',
-            reason: 'reason'
-        }
+const AGENT_REPORT_MESSAGES: AgentReportMessages = {
+    titles: {
+        setup_handoff: 'Setup handoff',
+        agent_init: 'Agent-init summary',
+        task_closeout: 'Task closeout'
     },
-    ru: {
-        titles: {
-            setup_handoff: 'Передача после setup',
-            agent_init: 'Итог agent-init',
-            task_closeout: 'Итог задачи'
-        },
-        labels: {
-            language: 'Язык',
-            profile: 'Профиль',
-            reviewMode: 'Режим ревью',
-            optionalSkills: 'Опциональные навыки',
-            mandatoryFullSuite: 'Обязательный full-suite',
-            nextCommand: 'Следующая команда',
-            nextTaskPrompt: 'Скажите агенту',
-            updateNotice: 'Последнее update-уведомление',
-            noLanguage: 'не указан',
-            noProfile: 'не настроен'
-        },
-        statuses: {
-            normalized: 'нормализован',
-            pendingConfirmation: 'ждет подтверждения',
-            unknown: 'неизвестно'
-        },
-        fullSuite: {
-            enabled: 'включен',
-            disabled: 'выключен',
-            unknown: 'неизвестно'
-        },
-        summaries: {
-            mandatoryOrchestratorGates: 'обязательные оркестраторные gate\'ы',
-            askDuringAgentInit: 'уточнить в AGENT_INIT_PROMPT',
-            confirmedDuringAgentInit: 'подтверждены на agent-init',
-            pendingDuringAgentInit: 'еще не подтверждены на agent-init',
-            independentReviewAttested: 'независимое ревью подтверждено',
-            localReview: 'локальное ревью',
-            noRequiredReview: 'ревью не требовалось',
-            verdicts: 'вердикты',
-            selected: 'выбрано',
-            recommendedPacks: 'рекомендуются пакеты',
-            noAdditionalSkills: 'без дополнительных навыков',
-            unavailable: 'недоступно',
-            noneUsed: 'не использовались',
-            reason: 'причина'
-        }
+    labels: {
+        language: 'Language',
+        profile: 'Profile',
+        reviewMode: 'Review mode',
+        optionalSkills: 'Optional skills',
+        mandatoryFullSuite: 'Mandatory full-suite',
+        nextCommand: 'Next command',
+        nextTaskPrompt: 'Tell the agent',
+        updateNotice: 'Latest update notice',
+        noLanguage: 'not recorded',
+        noProfile: 'not configured'
     },
-    de: {
-        titles: {
-            setup_handoff: 'Setup-Uebergabe',
-            agent_init: 'Agent-init-Zusammenfassung',
-            task_closeout: 'Aufgabenabschluss'
-        },
-        labels: {
-            language: 'Sprache',
-            profile: 'Profil',
-            reviewMode: 'Review-Modus',
-            optionalSkills: 'Optionale Skills',
-            mandatoryFullSuite: 'Verbindliche Full-Suite',
-            nextCommand: 'Naechster Befehl',
-            nextTaskPrompt: 'Sage dem Agenten',
-            updateNotice: 'Letzter Update-Hinweis',
-            noLanguage: 'nicht erfasst',
-            noProfile: 'nicht konfiguriert'
-        },
-        statuses: {
-            normalized: 'normalisiert',
-            pendingConfirmation: 'Bestaetigung ausstehend',
-            unknown: 'unbekannt'
-        },
-        fullSuite: {
-            enabled: 'aktiviert',
-            disabled: 'deaktiviert',
-            unknown: 'unbekannt'
-        },
-        summaries: {
-            mandatoryOrchestratorGates: 'verbindliche Orchestrator-Gates',
-            askDuringAgentInit: 'waehrend AGENT_INIT_PROMPT klaeren',
-            confirmedDuringAgentInit: 'waehrend agent-init bestaetigt',
-            pendingDuringAgentInit: 'in agent-init noch ausstehend',
-            independentReviewAttested: 'unabhaengiges Review bestaetigt',
-            localReview: 'lokales Review',
-            noRequiredReview: 'kein Pflicht-Review',
-            verdicts: 'Verdikte',
-            selected: 'ausgewaehlt',
-            recommendedPacks: 'empfohlene Pakete',
-            noAdditionalSkills: 'keine zusaetzlichen Skills',
-            unavailable: 'nicht verfuegbar',
-            noneUsed: 'nicht verwendet',
-            reason: 'Grund'
-        }
+    statuses: {
+        normalized: 'normalized',
+        pendingConfirmation: 'pending confirmation',
+        unknown: 'unknown'
     },
-    fr: {
-        titles: {
-            setup_handoff: 'Relais apres setup',
-            agent_init: 'Resume agent-init',
-            task_closeout: 'Cloture de la tache'
-        },
-        labels: {
-            language: 'Langue',
-            profile: 'Profil',
-            reviewMode: 'Mode de revue',
-            optionalSkills: 'Competences optionnelles',
-            mandatoryFullSuite: 'Full-suite obligatoire',
-            nextCommand: 'Commande suivante',
-            nextTaskPrompt: 'Dites a l\'agent',
-            updateNotice: 'Derniere notification de mise a jour',
-            noLanguage: 'non renseignee',
-            noProfile: 'non configure'
-        },
-        statuses: {
-            normalized: 'normalise',
-            pendingConfirmation: 'confirmation en attente',
-            unknown: 'inconnu'
-        },
-        fullSuite: {
-            enabled: 'active',
-            disabled: 'desactive',
-            unknown: 'inconnu'
-        },
-        summaries: {
-            mandatoryOrchestratorGates: 'gates d\'orchestration obligatoires',
-            askDuringAgentInit: 'a preciser pendant AGENT_INIT_PROMPT',
-            confirmedDuringAgentInit: 'confirme pendant agent-init',
-            pendingDuringAgentInit: 'encore en attente dans agent-init',
-            independentReviewAttested: 'revue independante attestee',
-            localReview: 'revue locale',
-            noRequiredReview: 'aucune revue obligatoire',
-            verdicts: 'verdicts',
-            selected: 'selectionne',
-            recommendedPacks: 'packs recommandes',
-            noAdditionalSkills: 'aucune competence supplementaire',
-            unavailable: 'indisponible',
-            noneUsed: 'non utilisees',
-            reason: 'raison'
-        }
+    fullSuite: {
+        enabled: 'enabled',
+        disabled: 'disabled',
+        unknown: 'unknown'
     },
-    es: {
-        titles: {
-            setup_handoff: 'Transferencia tras setup',
-            agent_init: 'Resumen de agent-init',
-            task_closeout: 'Cierre de la tarea'
-        },
-        labels: {
-            language: 'Idioma',
-            profile: 'Perfil',
-            reviewMode: 'Modo de revision',
-            optionalSkills: 'Habilidades opcionales',
-            mandatoryFullSuite: 'Full-suite obligatoria',
-            nextCommand: 'Siguiente comando',
-            nextTaskPrompt: 'Dile al agente',
-            updateNotice: 'Ultimo aviso de actualizacion',
-            noLanguage: 'no registrado',
-            noProfile: 'no configurado'
-        },
-        statuses: {
-            normalized: 'normalizado',
-            pendingConfirmation: 'confirmacion pendiente',
-            unknown: 'desconocido'
-        },
-        fullSuite: {
-            enabled: 'habilitada',
-            disabled: 'deshabilitada',
-            unknown: 'desconocida'
-        },
-        summaries: {
-            mandatoryOrchestratorGates: 'gates obligatorios del orquestador',
-            askDuringAgentInit: 'aclarar durante AGENT_INIT_PROMPT',
-            confirmedDuringAgentInit: 'confirmadas durante agent-init',
-            pendingDuringAgentInit: 'todavia pendientes en agent-init',
-            independentReviewAttested: 'revision independiente atestiguada',
-            localReview: 'revision local',
-            noRequiredReview: 'no se requirio revision',
-            verdicts: 'veredictos',
-            selected: 'seleccionado',
-            recommendedPacks: 'packs recomendados',
-            noAdditionalSkills: 'sin habilidades adicionales',
-            unavailable: 'no disponible',
-            noneUsed: 'sin uso',
-            reason: 'motivo'
-        }
+    summaries: {
+        mandatoryOrchestratorGates: 'mandatory orchestrator gates',
+        askDuringAgentInit: 'ask during AGENT_INIT_PROMPT',
+        confirmedDuringAgentInit: 'confirmed during agent-init',
+        pendingDuringAgentInit: 'still pending in agent-init',
+        independentReviewAttested: 'independent review attested',
+        localReview: 'local review',
+        noRequiredReview: 'no required review',
+        verdicts: 'verdicts',
+        selected: 'selected',
+        recommendedPacks: 'recommended packs',
+        noAdditionalSkills: 'no additional skills',
+        unavailable: 'unavailable',
+        noneUsed: 'none used',
+        reason: 'reason'
     }
 };
 
-export function resolveAgentReportLocale(assistantLanguage: string | null | undefined): AgentReportLocale {
-    const normalized = String(assistantLanguage || '').trim().toLowerCase();
-    if (/(^|\s)(russian|рус)/i.test(normalized)) return 'ru';
-    if (/(^|\s)(german|deutsch)/i.test(normalized)) return 'de';
-    if (/(^|\s)(french|francais|fran[çc]ais)/i.test(normalized)) return 'fr';
-    if (/(^|\s)(spanish|espanol|español)/i.test(normalized)) return 'es';
-    return 'en';
-}
-
-export function getAgentReportMessages(locale: AgentReportLocale): AgentReportMessages {
-    return AGENT_REPORT_MESSAGES[locale];
-}
-
-function localizeAgentReportTitle(
-    locale: AgentReportLocale,
-    context: LocalizedAgentReportInput['context']
+function formatAgentReportTitle(
+    context: AgentReportInput['context']
 ): string {
-    return getAgentReportMessages(locale).titles[context];
+    return AGENT_REPORT_MESSAGES.titles[context];
 }
 
-function localizeAgentReportLanguageStatus(
-    locale: AgentReportLocale,
+function formatAgentReportLanguageStatus(
     confirmed?: boolean | null
 ): string {
-    const messages = getAgentReportMessages(locale);
+    const messages = AGENT_REPORT_MESSAGES;
     if (confirmed === true) return messages.statuses.normalized;
     if (confirmed === false) return messages.statuses.pendingConfirmation;
     return messages.statuses.unknown;
 }
 
-function localizeAgentReportFullSuite(
-    locale: AgentReportLocale,
+function formatAgentReportFullSuite(
     enabled: boolean | null | undefined
 ): string {
-    const messages = getAgentReportMessages(locale);
+    const messages = AGENT_REPORT_MESSAGES;
     if (enabled === true) return messages.fullSuite.enabled;
     if (enabled === false) return messages.fullSuite.disabled;
     return messages.fullSuite.unknown;
 }
 
-export function buildLocalizedAgentReportBlock(input: LocalizedAgentReportInput): string {
-    const locale = resolveAgentReportLocale(input.assistantLanguage);
-    const labels = getAgentReportMessages(locale).labels;
+export function buildAgentReportBlock(input: AgentReportInput): string {
+    const labels = AGENT_REPORT_MESSAGES.labels;
 
     const lines = [
         'GARDA_AGENT_REPORT',
-        localizeAgentReportTitle(locale, input.context),
-        `${labels.language}: ${(input.assistantLanguage || labels.noLanguage)} (${localizeAgentReportLanguageStatus(locale, input.assistantLanguageConfirmed)})`,
+        formatAgentReportTitle(input.context),
+        `${labels.language}: ${(input.assistantLanguage || labels.noLanguage)} (${formatAgentReportLanguageStatus(input.assistantLanguageConfirmed)})`,
         `${labels.profile}: ${input.profileSummary || labels.noProfile}`
     ];
 
@@ -383,7 +182,7 @@ export function buildLocalizedAgentReportBlock(input: LocalizedAgentReportInput)
         lines.push(`${labels.optionalSkills}: ${input.optionalSkillsSummary}`);
     }
     if (input.mandatoryFullSuiteEnabled !== undefined && input.mandatoryFullSuiteEnabled !== null) {
-        lines.push(`${labels.mandatoryFullSuite}: ${localizeAgentReportFullSuite(locale, input.mandatoryFullSuiteEnabled)}`);
+        lines.push(`${labels.mandatoryFullSuite}: ${formatAgentReportFullSuite(input.mandatoryFullSuiteEnabled)}`);
     }
     if (input.nextCommand) {
         lines.push(`${labels.nextCommand}: ${input.nextCommand}`);
@@ -868,3 +667,5 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
 
     return sections.map((section) => section.join('\n')).join('\n\n');
 }
+
+export function getAgentReportMessages(): AgentReportMessages { return AGENT_REPORT_MESSAGES; }

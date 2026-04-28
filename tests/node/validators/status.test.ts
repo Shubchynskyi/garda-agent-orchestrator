@@ -311,7 +311,7 @@ test('getStatusSnapshot prefers confirmed agent-init language while still exposi
     }
 });
 
-test('buildAgentInitOutput localizes the compact report from confirmed agent-init language even when setup answers are stale', () => {
+test('buildAgentInitOutput renders compact report labels in English while preserving confirmed agent-init language', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {
         seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
@@ -356,9 +356,9 @@ test('buildAgentInitOutput localizes the compact report from confirmed agent-ini
             }
         } as unknown as Parameters<typeof buildAgentInitOutput>[0]);
 
-        assert.ok(output.includes('Итог agent-init'));
-        assert.ok(output.includes('Язык: Russian (нормализован)'));
-        assert.ok(output.includes('Следующая команда: Next: resolve blockers and rerun agent-init ()'));
+        assert.ok(output.includes('Agent-init summary'));
+        assert.ok(output.includes('Language: Russian (normalized)'));
+        assert.ok(output.includes('Next command: Next: resolve blockers and rerun agent-init ()'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

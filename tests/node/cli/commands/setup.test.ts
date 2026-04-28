@@ -544,7 +544,7 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate'));
 });
 
-test('buildSetupHandoffText localizes the compact report using assistant language', () => {
+test('buildSetupHandoffText renders compact report labels in English while preserving assistant language', () => {
     const snapshot = {
         bundlePath: '/workspace/garda-agent-orchestrator',
         activeAgentFiles: 'AGENTS.md',
@@ -554,13 +554,13 @@ test('buildSetupHandoffText localizes the compact report using assistant languag
         latestUpdateNotice: '1.2.3'
     };
     const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
-    assert.ok(text.includes('Передача после setup'));
-    assert.ok(text.includes('Язык: Russian (ждет подтверждения)'));
-    assert.ok(text.includes('Обязательный full-suite: включен'));
-    assert.ok(text.includes('Последнее update-уведомление: 1.2.3'));
+    assert.ok(text.includes('Setup handoff'));
+    assert.ok(text.includes('Language: Russian (pending confirmation)'));
+    assert.ok(text.includes('Mandatory full-suite: enabled'));
+    assert.ok(text.includes('Latest update notice: 1.2.3'));
 });
 
-test('buildSetupHandoffText keeps the compact report localized for German assistant language', () => {
+test('buildSetupHandoffText does not infer a locale from German assistant language', () => {
     const snapshot = {
         bundlePath: '/workspace/garda-agent-orchestrator',
         activeAgentFiles: 'AGENTS.md',
@@ -570,12 +570,12 @@ test('buildSetupHandoffText keeps the compact report localized for German assist
         latestUpdateNotice: '1.2.3'
     };
     const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
-    assert.ok(text.includes('Setup-Uebergabe'));
-    assert.ok(text.includes('Sprache: Deutsch (normalisiert)'));
-    assert.ok(text.includes('Review-Modus: verbindliche Orchestrator-Gates'));
-    assert.ok(text.includes('Optionale Skills: waehrend AGENT_INIT_PROMPT klaeren'));
-    assert.ok(text.includes('Verbindliche Full-Suite: deaktiviert'));
-    assert.ok(text.includes('Letzter Update-Hinweis: 1.2.3'));
+    assert.ok(text.includes('Setup handoff'));
+    assert.ok(text.includes('Language: Deutsch (normalized)'));
+    assert.ok(text.includes('Review mode: mandatory orchestrator gates'));
+    assert.ok(text.includes('Optional skills: ask during AGENT_INIT_PROMPT'));
+    assert.ok(text.includes('Mandatory full-suite: disabled'));
+    assert.ok(text.includes('Latest update notice: 1.2.3'));
 });
 
 test('buildSetupHandoffText reports the active profile and default depth', () => {

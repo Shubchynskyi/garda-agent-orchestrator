@@ -2552,7 +2552,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(renderedMarkdown.includes('Review policy: asserted local review cannot satisfy mandatory independent review for this code task; use independent reviewer launch attestation or human sign-off.'));
         });
 
-        it('renders the localized compact agent report block when closeout carries agent report state', () => {
+        it('renders the compact agent report block with stable English labels when closeout carries agent report state', () => {
             const renderedMarkdown = formatFinalCloseoutMarkdown({
                 schema_version: 1,
                 event_source: 'task-audit-summary',
@@ -2604,19 +2604,19 @@ describe('gates/task-audit-summary', () => {
                     latest_update_notice: '1.2.3'
                 },
                 commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
-                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_command_suggestion: 'git commit -m "fix(ux): compact report block"',
                 commit_question: 'Do you want me to commit now? (yes/no)'
             });
 
             assert.ok(renderedMarkdown.includes('GARDA_AGENT_REPORT'));
-            assert.ok(renderedMarkdown.includes('Итог задачи'));
-            assert.ok(renderedMarkdown.includes('Язык: Russian (нормализован)'));
-            assert.ok(renderedMarkdown.includes('Профиль: balanced'));
-            assert.ok(renderedMarkdown.includes('Обязательный full-suite: выключен'));
-            assert.ok(renderedMarkdown.includes('Скажите агенту: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+            assert.ok(renderedMarkdown.includes('Task closeout'));
+            assert.ok(renderedMarkdown.includes('Language: Russian (normalized)'));
+            assert.ok(renderedMarkdown.includes('Profile: balanced'));
+            assert.ok(renderedMarkdown.includes('Mandatory full-suite: disabled'));
+            assert.ok(renderedMarkdown.includes('Tell the agent: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
         });
 
-        it('renders the compact agent report block in French when closeout language is French', () => {
+        it('renders stable English compact report labels when closeout language is French', () => {
             const renderedMarkdown = formatFinalCloseoutMarkdown({
                 schema_version: 1,
                 event_source: 'task-audit-summary',
@@ -2668,20 +2668,20 @@ describe('gates/task-audit-summary', () => {
                     latest_update_notice: '1.2.3'
                 },
                 commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
-                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_command_suggestion: 'git commit -m "fix(ux): compact report block"',
                 commit_question: 'Do you want me to commit now? (yes/no)'
             });
 
             assert.ok(renderedMarkdown.includes('GARDA_AGENT_REPORT'));
-            assert.ok(renderedMarkdown.includes('Cloture de la tache'));
-            assert.ok(renderedMarkdown.includes('Langue: French (normalise)'));
-            assert.ok(renderedMarkdown.includes('Mode de revue: aucune revue obligatoire; verdicts: code=REVIEW PASSED, test=TEST REVIEW PASSED'));
-            assert.ok(renderedMarkdown.includes('Competences optionnelles: aucune competence supplementaire (generic_context_sufficient)'));
-            assert.ok(renderedMarkdown.includes('Full-suite obligatoire: active'));
-            assert.ok(renderedMarkdown.includes('Dites a l\'agent: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+            assert.ok(renderedMarkdown.includes('Task closeout'));
+            assert.ok(renderedMarkdown.includes('Language: French (normalized)'));
+            assert.ok(renderedMarkdown.includes('Review mode: no required review; verdicts: code=REVIEW PASSED, test=TEST REVIEW PASSED'));
+            assert.ok(renderedMarkdown.includes('Optional skills: no additional skills (generic_context_sufficient)'));
+            assert.ok(renderedMarkdown.includes('Mandatory full-suite: enabled'));
+            assert.ok(renderedMarkdown.includes('Tell the agent: Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
         });
 
-        it('localizes unavailable optional-skill summaries inside the compact report block', () => {
+        it('renders unavailable optional-skill summaries inside the compact report block', () => {
             const renderedMarkdown = formatFinalCloseoutMarkdown({
                 schema_version: 1,
                 event_source: 'task-audit-summary',
@@ -2733,14 +2733,14 @@ describe('gates/task-audit-summary', () => {
                     latest_update_notice: null
                 },
                 commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
-                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_command_suggestion: 'git commit -m "fix(ux): compact report block"',
                 commit_question: 'Do you want me to commit now? (yes/no)'
             });
 
-            assert.ok(renderedMarkdown.includes('Competences optionnelles: indisponible (raison: task_events_integrity)'));
+            assert.ok(renderedMarkdown.includes('Optional skills: unavailable (reason: task_events_integrity)'));
         });
 
-        it('localizes none-used optional-skill summaries inside the compact report block', () => {
+        it('renders none-used optional-skill summaries inside the compact report block', () => {
             const renderedMarkdown = formatFinalCloseoutMarkdown({
                 schema_version: 1,
                 event_source: 'task-audit-summary',
@@ -2792,11 +2792,11 @@ describe('gates/task-audit-summary', () => {
                     latest_update_notice: null
                 },
                 commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
-                commit_command_suggestion: 'git commit -m "fix(ux): localized report block"',
+                commit_command_suggestion: 'git commit -m "fix(ux): compact report block"',
                 commit_question: 'Do you want me to commit now? (yes/no)'
             });
 
-            assert.ok(renderedMarkdown.includes('Optionale Skills: nicht verwendet (ausgewaehlt: node-backend, Grund: task_text+paths)'));
+            assert.ok(renderedMarkdown.includes('Optional skills: none used (selected: node-backend, reason: task_text+paths)'));
         });
 
         it('renders the compact optional skill summary line when present', () => {

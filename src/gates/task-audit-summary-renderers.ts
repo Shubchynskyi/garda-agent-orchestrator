@@ -2,10 +2,8 @@ import type { FinalCloseoutArtifact, TaskAuditSummaryResult } from './task-audit
 import { toPosix } from './helpers';
 import type { TaskQueueMetadata } from './task-audit-summary-collectors';
 import {
-    buildLocalizedAgentReportBlock,
-    getAgentReportMessages,
-    resolveAgentReportLocale,
-    type AgentReportLocale
+    buildAgentReportBlock,
+    getAgentReportMessages
 } from '../cli/commands/cli-format-output';
 
 function normalizeCommitToken(value: string): string {
@@ -117,10 +115,9 @@ export function buildCommitCommandSuggestion(
 }
 
 function buildLocalizedCloseoutReviewMode(
-    closeout: FinalCloseoutArtifact,
-    locale: AgentReportLocale
+    closeout: FinalCloseoutArtifact
 ): string {
-    const reportMessages = getAgentReportMessages(locale);
+    const reportMessages = getAgentReportMessages();
     const trustPrefix = closeout.review_trust?.independent_review_attested
         ? reportMessages.summaries.independentReviewAttested
         : (closeout.review_trust
@@ -135,10 +132,9 @@ function buildLocalizedCloseoutReviewMode(
 }
 
 function buildLocalizedOptionalSkillsSummary(
-    closeout: FinalCloseoutArtifact,
-    locale: AgentReportLocale
+    closeout: FinalCloseoutArtifact
 ): string | null {
-    const reportMessages = getAgentReportMessages(locale);
+    const reportMessages = getAgentReportMessages();
     const summary = closeout.optional_skills;
     if (!summary) {
         return null;
@@ -175,7 +171,6 @@ function buildLocalizedOptionalSkillsSummary(
 }
 
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
-    const reportLocale = resolveAgentReportLocale(closeout.agent_report?.assistant_language || null);
     const depthParts: string[] = [];
     if (closeout.implementation_summary.requested_depth != null) {
         depthParts.push(`requested depth=${closeout.implementation_summary.requested_depth}`);
@@ -191,13 +186,13 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     const docsUpdatedText = closeout.implementation_summary.docs_updated ? '`yes`' : '`no`';
 
     const lines: string[] = [
-        buildLocalizedAgentReportBlock({
+        buildAgentReportBlock({
             context: 'task_closeout',
             assistantLanguage: closeout.agent_report?.assistant_language || null,
             assistantLanguageConfirmed: closeout.agent_report?.assistant_language_confirmed ?? null,
             profileSummary: closeout.implementation_summary.active_profile,
-            reviewModeSummary: buildLocalizedCloseoutReviewMode(closeout, reportLocale),
-            optionalSkillsSummary: buildLocalizedOptionalSkillsSummary(closeout, reportLocale),
+            reviewModeSummary: buildLocalizedCloseoutReviewMode(closeout),
+            optionalSkillsSummary: buildLocalizedOptionalSkillsSummary(closeout),
             mandatoryFullSuiteEnabled: closeout.workflow?.mandatory_full_suite_enabled ?? null,
             nextTaskPrompt: closeout.agent_report?.next_task_command || null,
             latestUpdateNotice: closeout.agent_report?.latest_update_notice || null

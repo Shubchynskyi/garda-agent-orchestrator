@@ -7,9 +7,8 @@ import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
 import { readActiveProfileHint } from '../../validators/task-command';
 import {
-    buildLocalizedAgentReportBlock,
-    getAgentReportMessages,
-    resolveAgentReportLocale
+    buildAgentReportBlock,
+    getAgentReportMessages
 } from './cli-format-output';
 import {
     acquireSourceRoot,
@@ -240,8 +239,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
     const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate';
     const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
-    const reportLocale = resolveAgentReportLocale(snapshot.assistantLanguage);
-    const reportMessages = getAgentReportMessages(reportLocale);
+    const reportMessages = getAgentReportMessages();
     const activeProfileSummary = activeProfileHint.activeProfile
         ? `${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth})`
         : null;
@@ -251,7 +249,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
         ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
         : 'Use explicit depth only as a one-run override.';
     const lines = [
-        buildLocalizedAgentReportBlock({
+        buildAgentReportBlock({
             context: 'setup_handoff',
             assistantLanguage: snapshot.assistantLanguage,
             assistantLanguageConfirmed: snapshot.assistantLanguageConfirmed,

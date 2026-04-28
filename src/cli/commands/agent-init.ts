@@ -4,10 +4,9 @@ import { runAgentInit } from '../../lifecycle/agent-init';
 import { getStatusSnapshot } from '../../validators/status';
 import { buildProfileAwareNextLine } from '../../validators/task-command';
 import {
+    buildAgentReportBlock,
     buildGuardedCommandHelpText,
-    buildLocalizedAgentReportBlock,
-    getAgentReportMessages,
-    resolveAgentReportLocale
+    getAgentReportMessages
 } from './cli-format-output';
 import {
     bold,
@@ -30,10 +29,9 @@ export const AGENT_INIT_DEFINITIONS = {
 
 export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): string {
     const snapshot = getStatusSnapshot(result.targetRoot, result.initAnswersPath);
-    const reportLocale = resolveAgentReportLocale(snapshot.assistantLanguage);
-    const reportMessages = getAgentReportMessages(reportLocale);
+    const reportMessages = getAgentReportMessages();
     const lines: string[] = [];
-    lines.push(buildLocalizedAgentReportBlock({
+    lines.push(buildAgentReportBlock({
         context: 'agent_init',
         assistantLanguage: snapshot.assistantLanguage,
         assistantLanguageConfirmed: snapshot.assistantLanguageConfirmed,
