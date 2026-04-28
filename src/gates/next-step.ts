@@ -14,7 +14,10 @@ import {
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../gate-runtime/reviewer-session-contract';
 import {
+    buildReviewVerdictTokenSet,
     extractReviewVerdictToken,
+    formatAcceptedReviewVerdictTokens,
+    formatReviewVerdictTokenList,
     normalizeReviewReceiptReviewerProvenance
 } from '../gate-runtime/review-context';
 import {
@@ -391,7 +394,8 @@ function readReviewArtifactState(
         violations.push('review artifact is missing');
     } else {
         const content = fs.readFileSync(artifactPath, 'utf8');
-        const parsedVerdictToken = extractReviewVerdictToken(content, passToken || null, failToken || null);
+        const parsedVerdictToken = extractReviewVerdictToken(content, passToken || null, failToken || null, reviewType);
+        const acceptedTokens = buildReviewVerdictTokenSet(reviewType, passToken || null, failToken || null);
         if (failToken && parsedVerdictToken === failToken) {
             verdictToken = failToken;
             failed = true;
@@ -401,7 +405,10 @@ function readReviewArtifactState(
         } else if (passToken && parsedVerdictToken === passToken) {
             verdictToken = passToken;
         } else {
-            violations.push(`review artifact does not contain pass token '${passToken || '<unknown>'}'`);
+            violations.push(
+                `review artifact does not contain an accepted pass token ` +
+                `(${formatReviewVerdictTokenList(acceptedTokens.passTokens)})`
+            );
         }
     }
 
@@ -2410,12 +2417,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         if (!currentReviewerInvocationAttested) {
             const reviewerIdentity = state.contextReviewerIdentity
                 || '<agent:reviewer-session-id-from-review-context>';
+            const acceptedVerdictTokens = formatAcceptedReviewVerdictTokens(
+                buildReviewVerdictTokenSet(reviewType, state.passToken || null, state.failToken || null)
+            );
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
                 nextGate: 'record-review-result',
                 title: `Record '${reviewType}' review result from a delegated reviewer.`,
-                reason: `Required review '${reviewType}' has stale or invalid reviewer_provenance; matching REVIEWER_INVOCATION_ATTESTED launch telemetry is missing for the current receipt, so rerun reviewer output materialization after valid launch telemetry exists. Expected PASS token: ${state.passToken || '<review-pass-token>'}. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`,
+                reason: `Required review '${reviewType}' has stale or invalid reviewer_provenance; matching REVIEWER_INVOCATION_ATTESTED launch telemetry is missing for the current receipt, so rerun reviewer output materialization after valid launch telemetry exists. ${acceptedVerdictTokens} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`,
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',
@@ -2430,12 +2440,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 : 'review artifact or receipt is missing';
             const reviewerIdentity = state.contextReviewerIdentity
                 || '<agent:reviewer-session-id-from-review-context>';
+            const acceptedVerdictTokens = formatAcceptedReviewVerdictTokens(
+                buildReviewVerdictTokenSet(reviewType, state.passToken || null, state.failToken || null)
+            );
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
                 nextGate: 'record-review-result',
                 title: `Record '${reviewType}' review result from a delegated reviewer.`,
-                reason: `Required review '${reviewType}' needs a valid delegated artifact and receipt (${stateViolations}). Expected PASS token: ${state.passToken || '<review-pass-token>'}. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`,
+                reason: `Required review '${reviewType}' needs a valid delegated artifact and receipt (${stateViolations}). ${acceptedVerdictTokens} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`,
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',

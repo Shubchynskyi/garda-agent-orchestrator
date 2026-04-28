@@ -1,7 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { auditReviewArtifactCompaction } from '../../../gate-runtime/review-context';
+import {
+    auditReviewArtifactCompaction,
+    buildReviewVerdictTokenSet,
+    extractReviewVerdictToken,
+    formatReviewVerdictTokenList
+} from '../../../gate-runtime/review-context';
 import { getWorkspaceSnapshot } from '../../../gates/compile-gate';
 import * as gateHelpers from '../../../gates/helpers';
 import {
@@ -138,9 +143,14 @@ export function testReviewArtifacts(
         entry.present = true;
         entry.sha256 = gateHelpers.fileSha256(artifactPath);
         const content = fs.readFileSync(artifactPath, 'utf8');
-        entry.token_found = content.includes(passToken);
+        const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
+        const acceptedTokens = buildReviewVerdictTokenSet(reviewKey, passToken, failToken);
+        entry.token_found = extractReviewVerdictToken(content, passToken, failToken, reviewKey) === passToken;
         if (!entry.token_found) {
-            result.violations.push(`Review artifact '${entry.path}' does not contain pass token '${passToken}'.`);
+            result.violations.push(
+                `Review artifact '${entry.path}' does not contain an accepted pass token ` +
+                `(${formatReviewVerdictTokenList(acceptedTokens.passTokens)}).`
+            );
         }
 
         const reviewContextPath = resolveReviewContextPath(reviewsRoot, resolvedTaskId, reviewKey);

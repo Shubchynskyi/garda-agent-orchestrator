@@ -211,7 +211,12 @@ export function assessUpstreamReviewDependencyStatus(options: {
 
     const passToken = REVIEW_CONTRACTS.find(([candidate]) => candidate === options.upstreamReviewType)?.[1] || null;
     const failToken = resolveReviewFailToken(options.upstreamReviewType);
-    const reviewVerdict = extractReviewVerdictToken(artifactContent, passToken, failToken);
+    const reviewVerdict = extractReviewVerdictToken(
+        artifactContent,
+        passToken,
+        failToken,
+        options.upstreamReviewType
+    );
     if (failToken && reviewVerdict === failToken) {
         return {
             reviewType: options.upstreamReviewType,

@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     auditReviewArtifactCompaction,
+    buildReviewVerdictTokenSet,
     normalizeCompatibilityReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
@@ -41,7 +42,7 @@ export function resolveExpectedReviewVerdicts(
     for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
         const explicitVerdict = String(providedVerdicts[reviewKey] || '').trim();
         if (explicitVerdict) {
-            resolved[reviewKey] = explicitVerdict;
+            resolved[reviewKey] = normalizeExplicitReviewVerdict(reviewKey, explicitVerdict, passToken);
             continue;
         }
         resolved[reviewKey] = requiredReviews[reviewKey] && !skipSet.has(reviewKey)
@@ -50,6 +51,22 @@ export function resolveExpectedReviewVerdicts(
     }
 
     return resolved;
+}
+
+function normalizeExplicitReviewVerdict(
+    reviewKey: string,
+    explicitVerdict: string,
+    passToken: string
+): string {
+    const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
+    const tokenSet = buildReviewVerdictTokenSet(reviewKey, passToken, failToken);
+    if (tokenSet.passTokens.includes(explicitVerdict)) {
+        return passToken;
+    }
+    if (tokenSet.failTokens.includes(explicitVerdict)) {
+        return failToken;
+    }
+    return explicitVerdict;
 }
 
 /**

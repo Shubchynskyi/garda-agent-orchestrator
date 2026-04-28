@@ -8,7 +8,9 @@ import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
     buildReviewReceiptReviewerProvenance,
+    buildReviewVerdictTokenSet,
     extractReviewVerdictToken,
+    formatAcceptedReviewVerdictTokens,
     compactMarkdownContent,
     getCompactReviewBudget,
     auditReviewArtifactCompaction,
@@ -445,6 +447,90 @@ test('extractReviewVerdictToken accepts canonical bullet-form verdict lines', ()
     ].join('\n'), 'REVIEW PASSED', 'REVIEW FAILED');
 
     assert.equal(verdict, 'REVIEW PASSED');
+});
+
+test('extractReviewVerdictToken accepts typed code aliases and normalizes to canonical verdicts', () => {
+    const failedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        'CODE REVIEW FAILED'
+    ].join('\n'), 'REVIEW PASSED', 'REVIEW FAILED', 'code');
+    const passedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        '- CODE REVIEW PASSED'
+    ].join('\n'), 'REVIEW PASSED', 'REVIEW FAILED', 'code');
+
+    assert.equal(failedVerdict, 'REVIEW FAILED');
+    assert.equal(passedVerdict, 'REVIEW PASSED');
+});
+
+test('extractReviewVerdictToken accepts canonical typed review verdicts', () => {
+    const dbFailedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        'DB REVIEW FAILED'
+    ].join('\n'), 'DB REVIEW PASSED', 'DB REVIEW FAILED', 'db');
+    const securityPassedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        'SECURITY REVIEW PASSED'
+    ].join('\n'), 'SECURITY REVIEW PASSED', 'SECURITY REVIEW FAILED', 'security');
+
+    assert.equal(dbFailedVerdict, 'DB REVIEW FAILED');
+    assert.equal(securityPassedVerdict, 'SECURITY REVIEW PASSED');
+});
+
+test('extractReviewVerdictToken rejects generic aliases for typed review contracts', () => {
+    const dbFailedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        'REVIEW FAILED'
+    ].join('\n'), 'DB REVIEW PASSED', 'DB REVIEW FAILED', 'db');
+    const securityPassedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        'REVIEW PASSED'
+    ].join('\n'), 'SECURITY REVIEW PASSED', 'SECURITY REVIEW FAILED', 'security');
+
+    assert.equal(dbFailedVerdict, null);
+    assert.equal(securityPassedVerdict, null);
+});
+
+test('extractReviewVerdictToken rejects embedded or fuzzy verdict prose', () => {
+    const embeddedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        'The reviewer mentioned SECURITY REVIEW PASSED in explanatory prose, but did not issue a verdict.',
+        '',
+        '## Verdict',
+        'The final verdict is SECURITY REVIEW PASSED.'
+    ].join('\n'), 'SECURITY REVIEW PASSED', 'SECURITY REVIEW FAILED', 'security');
+    const suffixedVerdict = extractReviewVerdictToken([
+        '# Review',
+        '',
+        '## Verdict',
+        'SECURITY REVIEW PASSED after checking the parser.'
+    ].join('\n'), 'SECURITY REVIEW PASSED', 'SECURITY REVIEW FAILED', 'security');
+
+    assert.equal(embeddedVerdict, null);
+    assert.equal(suffixedVerdict, null);
+});
+
+test('formatAcceptedReviewVerdictTokens reports pass and fail aliases', () => {
+    const tokens = buildReviewVerdictTokenSet('code', 'REVIEW PASSED', 'REVIEW FAILED');
+    const message = formatAcceptedReviewVerdictTokens(tokens);
+
+    assert.ok(message.includes("'REVIEW PASSED'"));
+    assert.ok(message.includes("'CODE REVIEW PASSED'"));
+    assert.ok(message.includes("'REVIEW FAILED'"));
+    assert.ok(message.includes("'CODE REVIEW FAILED'"));
 });
 
 test('extractReviewVerdictToken returns null when no exact verdict token exists', () => {

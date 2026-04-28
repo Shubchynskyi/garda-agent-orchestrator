@@ -5,7 +5,9 @@ import {
     buildReviewReceipt,
     buildReviewReceiptReviewerInvocationProvenance,
     buildReviewReceiptReviewerProvenance,
+    buildReviewVerdictTokenSet,
     extractReviewVerdictToken,
+    formatAcceptedReviewVerdictTokens,
     normalizeCompatibilityReviewerExecutionMode,
     restoreReviewerRoutingMetadata
 } from '../../../gate-runtime/review-context';
@@ -1575,11 +1577,12 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         throw new Error(`Unsupported review type '${reviewType}' for record-review-result.`);
     }
     const expectedFailVerdict = expectedPassVerdict.replace(/\bPASSED\b/, 'FAILED');
-    const verdictToken = extractReviewVerdictToken(reviewContent, expectedPassVerdict, expectedFailVerdict);
+    const verdictTokenSet = buildReviewVerdictTokenSet(reviewType, expectedPassVerdict, expectedFailVerdict);
+    const verdictToken = extractReviewVerdictToken(reviewContent, expectedPassVerdict, expectedFailVerdict, reviewType);
     if (!verdictToken) {
         throw new Error(
             `Review output must contain a recognized verdict token for '${reviewType}'. ` +
-            `Expected '${expectedPassVerdict}' or '${expectedFailVerdict}'.`
+            formatAcceptedReviewVerdictTokens(verdictTokenSet)
         );
     }
     const materializationAnalysis = analyzeEarlyReviewMaterialization({

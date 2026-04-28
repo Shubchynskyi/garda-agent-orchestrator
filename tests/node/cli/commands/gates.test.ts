@@ -3262,7 +3262,7 @@ describe('cli/commands/gates', () => {
             'none',
             '',
             '## Verdict',
-            '- REVIEW FAILED'
+            '- CODE REVIEW FAILED'
         ].join('\n'), 'utf8');
 
         const previousExitCode = process.exitCode;
@@ -3306,7 +3306,7 @@ describe('cli/commands/gates', () => {
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         assert.equal(fs.existsSync(artifactPath), true);
         assert.equal(fs.existsSync(receiptPath), true);
-        assert.ok(fs.readFileSync(artifactPath, 'utf8').includes('## Verdict\n- REVIEW FAILED'));
+        assert.ok(fs.readFileSync(artifactPath, 'utf8').includes('## Verdict\n- CODE REVIEW FAILED'));
         assert.ok(fs.readFileSync(artifactPath, 'utf8').includes('High: `src/app.ts:1` reviewer intentionally failed this artifact'));
         assert.ok(capturedLogs.some((line) => line.includes('VerdictToken: REVIEW FAILED')));
 

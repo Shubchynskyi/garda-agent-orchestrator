@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     checkRequiredReviews,
     parseSkipReviews,
+    resolveExpectedReviewVerdicts,
     testExpectedVerdict,
     REVIEW_CONTRACTS,
     detectZeroDiffFromPreflight,
@@ -108,6 +109,37 @@ describe('gates/required-reviews-check', () => {
             });
 
             assert.ok(result.violations.some((violation) => violation.includes('Task timeline missing or unreadable')));
+        });
+    });
+
+    describe('resolveExpectedReviewVerdicts', () => {
+        it('normalizes explicit verdict aliases to canonical review tokens', () => {
+            const verdicts = resolveExpectedReviewVerdicts(
+                {
+                    code: true,
+                    db: true
+                },
+                {
+                    code: 'CODE REVIEW PASSED',
+                    db: 'DB REVIEW FAILED'
+                }
+            );
+
+            assert.equal(verdicts.code, 'REVIEW PASSED');
+            assert.equal(verdicts.db, 'DB REVIEW FAILED');
+        });
+
+        it('does not normalize generic verdict aliases for typed review contracts', () => {
+            const verdicts = resolveExpectedReviewVerdicts(
+                {
+                    security: true
+                },
+                {
+                    security: 'REVIEW PASSED'
+                }
+            );
+
+            assert.equal(verdicts.security, 'REVIEW PASSED');
         });
     });
 
