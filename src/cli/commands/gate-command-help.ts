@@ -272,9 +272,16 @@ function buildReviewGateHelpEntries(
                 true
             )
         },
+        'prepare-reviewer-launch': {
+            ...createSingleUsageEntry(
+                'Prepare task-owned delegated reviewer launch metadata from the current routing event and review context; this is not completed invocation evidence.',
+                `${cliPrefix} gate prepare-reviewer-launch --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --reviewer-launch-artifact-path ".review-temp/${TASK_ID_PLACEHOLDER}/<review-type>/reviewer-launch.json" --repo-root "."`,
+                true
+            )
+        },
         'record-review-invocation': {
             ...createSingleUsageEntry(
-                'Record delegated reviewer launch attestation from a task-owned provider launch artifact.',
+                'Record delegated reviewer launch attestation from a completed task-owned provider launch artifact.',
                 `${cliPrefix} gate record-review-invocation --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --reviewer-launch-artifact-path ".review-temp/${TASK_ID_PLACEHOLDER}/<review-type>/reviewer-launch.json" --repo-root "."`,
                 true
             )

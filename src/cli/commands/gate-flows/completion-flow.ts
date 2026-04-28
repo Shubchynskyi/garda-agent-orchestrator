@@ -173,6 +173,7 @@ export function runLogTaskEventCommand(options: LogTaskEventCommandOptions): { o
         'REVIEW_PHASE_STARTED',
         'REVIEW_RECORDED',
         'REVIEWER_DELEGATION_ROUTED',
+        'REVIEWER_LAUNCH_PREPARED',
         'REVIEWER_INVOCATION_ATTESTED'
     ]);
     const reservedEventPattern = /^(COMPILE_GATE_|REVIEW_GATE_|PREFLIGHT_|COMPLETION_GATE_|FULL_SUITE_VALIDATION_|DOC_IMPACT_)/;

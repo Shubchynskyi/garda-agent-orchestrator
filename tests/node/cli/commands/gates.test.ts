@@ -87,6 +87,7 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'full-suite-validation',
     'record-review-result',
     'record-review-routing',
+    'prepare-reviewer-launch',
     'record-review-invocation',
     'record-review-receipt',
     'completion-gate',
@@ -195,6 +196,71 @@ function attestReviewerInvocationForTest(options: {
         review_context_sha256: reviewContextSha256,
         routing_event_sha256: routedIntegrity.event_sha256
     });
+}
+
+async function seedRoutedReviewerLaunchFixture(options: {
+    repoRoot: string;
+    taskId: string;
+    provider?: string;
+    reviewerIdentity?: string;
+}) {
+    const provider = options.provider || 'Antigravity';
+    const reviewerIdentity = options.reviewerIdentity || 'agent:test-reviewer';
+    const reviewType = 'code';
+    seedTaskQueue(options.repoRoot, options.taskId);
+    seedInitAnswers(options.repoRoot, provider);
+    const preflightPath = writePreflight(options.repoRoot, options.taskId);
+    prepareCurrentReviewPhase(options.repoRoot, options.taskId, preflightPath, provider);
+    const reviewsRoot = getReviewsRoot(options.repoRoot);
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const reviewerPromptPath = path.join(reviewsRoot, `${options.taskId}-${reviewType}-review-context.md`);
+    fs.writeFileSync(reviewerPromptPath, 'reviewer prompt payload\n', 'utf8');
+    const reviewContextPath = path.join(reviewsRoot, `${options.taskId}-${reviewType}-review-context.json`);
+    fs.writeFileSync(reviewContextPath, JSON.stringify({
+        review_type: reviewType,
+        rule_context: {
+            artifact_path: reviewerPromptPath.replace(/\\/g, '/')
+        },
+        reviewer_routing: createReviewerRoutingFixture(provider, {
+            capability_level: 'delegation_capable'
+        })
+    }, null, 2) + '\n', 'utf8');
+
+    const previousExitCode = process.exitCode;
+    const previousCwd = process.cwd();
+    process.exitCode = 0;
+    try {
+        process.chdir(options.repoRoot);
+        await runCliMainWithHandling([
+            'gate',
+            'record-review-routing',
+            '--task-id', options.taskId,
+            '--review-type', reviewType,
+            '--repo-root', options.repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ]);
+        assert.equal(process.exitCode ?? 0, 0);
+    } finally {
+        process.chdir(previousCwd);
+        process.exitCode = previousExitCode;
+    }
+
+    const events = readTaskTimelineEvents(options.repoRoot, options.taskId);
+    const routingEvent = [...events].reverse().find((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED');
+    const routingIntegrity = routingEvent?.integrity as Record<string, unknown> | undefined;
+    assert.ok(routingIntegrity?.event_sha256);
+    const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
+    return {
+        preflightPath,
+        reviewsRoot,
+        reviewType,
+        reviewerIdentity,
+        reviewerPromptPath,
+        reviewContextPath,
+        reviewContextSha256,
+        routingEventSha256: String(routingIntegrity.event_sha256)
+    };
 }
 
 function seedNodeBackendOptionalSkillFixture(repoRoot: string, policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory') {
@@ -2437,7 +2503,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-invocation records launch attestation from a task-owned provider artifact', async () => {
+    it('record-review-invocation rejects self-authored completed launch artifacts even after current preparation', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-invocation';
         seedTaskQueue(repoRoot, taskId);
@@ -2476,27 +2542,48 @@ describe('cli/commands/gates', () => {
         const routingEvent = events.find((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED');
         const routingIntegrity = routingEvent?.integrity as Record<string, unknown> | undefined;
         assert.ok(routingIntegrity?.event_sha256);
-        const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
         const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
-        fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
+        const previousPrepareExitCode = process.exitCode;
+        const previousPrepareCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer',
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousPrepareCwd);
+            process.exitCode = previousPrepareExitCode;
+        }
+        const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
-            schema_version: 1,
+            ...preparedLaunchArtifact,
             evidence_type: 'delegated_reviewer_launch',
-            task_id: taskId,
-            review_type: 'code',
-            reviewer_execution_mode: 'delegated_subagent',
-            reviewer_identity: 'agent:test-reviewer',
-            review_context_sha256: reviewContextSha256,
-            routing_event_sha256: routingIntegrity.event_sha256,
-            attestation_source: 'provider_controller',
+            attestation_state: 'launched',
+            attestation_source: 'test_provider_controller',
             launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-123',
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
             fork_context: false
         }, null, 2) + '\n', 'utf8');
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
         process.exitCode = 0;
         let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
         try {
             process.chdir(repoRoot);
             await runCliMainWithHandling([
@@ -2511,21 +2598,390 @@ describe('cli/commands/gates', () => {
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.notEqual(observedExitCode, 0);
+        assert.ok(capturedErrors.some((line) => line.includes('self-authored local reviewer launch artifacts cannot satisfy independent REVIEWER_INVOCATION_ATTESTED')));
+        events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, invocationEventsBefore);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch writes current prepared launch metadata without attesting invocation', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleLog = console.log;
+        const capturedLogs: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.log = (...args: unknown[]) => {
+            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.log = originalConsoleLog;
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
 
         assert.equal(observedExitCode, 0);
-        events = readTaskTimelineEvents(repoRoot, taskId);
-        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, invocationEventsBefore + 1);
-        const invocationEvent = [...events].reverse().find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
-        const invocationDetails = invocationEvent?.details as Record<string, unknown> | undefined;
-        assert.equal(invocationDetails?.review_type, 'code');
-        assert.equal(invocationDetails?.reviewer_session_id, 'agent:test-reviewer');
-        assert.equal(invocationDetails?.review_context_sha256, reviewContextSha256);
-        assert.equal(invocationDetails?.routing_event_sha256, routingIntegrity.event_sha256);
-        assert.equal(invocationDetails?.reviewer_launch_artifact_path, launchArtifactPath.replace(/\\/g, '/'));
-        assert.equal(invocationDetails?.reviewer_launch_tool, 'test-subagent-spawn');
+        assert.equal(fs.existsSync(launchArtifactPath), true);
+        const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        assert.equal(launchArtifact.schema_version, 1);
+        assert.equal(launchArtifact.evidence_type, 'delegated_reviewer_launch_preparation');
+        assert.equal(launchArtifact.attestation_state, 'prepared');
+        assert.equal(launchArtifact.task_id, taskId);
+        assert.equal(launchArtifact.review_type, 'code');
+        assert.equal(launchArtifact.reviewer_identity, fixture.reviewerIdentity);
+        assert.equal(launchArtifact.review_context_sha256, fixture.reviewContextSha256);
+        assert.equal(launchArtifact.routing_event_sha256, fixture.routingEventSha256);
+        assert.equal(launchArtifact.reviewer_prompt_path, fixture.reviewerPromptPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.attestation_source, 'garda_prepare_reviewer_launch');
+        assert.equal(typeof launchArtifact.launch_binding_sha256, 'string');
+        assert.ok(launchArtifact.launch_binding_sha256.length > 0);
+        assert.equal(launchArtifact.launch_completion_token, undefined);
+        assert.equal(launchArtifact.controller_launch_completion_token, undefined);
+        assert.equal(typeof launchArtifact.prepared_launch_event_sha256, 'string');
+        assert.ok(launchArtifact.prepared_launch_event_sha256.length > 0);
+        assert.equal(typeof launchArtifact.launch_tool, 'string');
+        assert.ok(String(launchArtifact.launch_tool).length > 0);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
+        const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
+        assert.equal(launchPreparedIntegrity?.event_sha256, launchArtifact.prepared_launch_event_sha256);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
+        assert.ok(capturedLogs.some((line) => line.includes('REVIEWER_LAUNCH_PREPARED: code')));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`RoutingEventSha256: ${fixture.routingEventSha256}`)));
+        assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
+        assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
+        assert.ok(capturedLogs.some((line) => line.includes('PreparedLaunchEventSha256:')));
+        assert.ok(capturedLogs.some((line) => line.includes('AttestationState: prepared')));
+        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch replaces stale prepared hashes with the current routing and context hashes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-stale';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
+        fs.writeFileSync(launchArtifactPath, JSON.stringify({
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch_preparation',
+            attestation_state: 'prepared',
+            task_id: taskId,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: fixture.reviewerIdentity,
+            review_context_sha256: 'a'.repeat(64),
+            routing_event_sha256: 'b'.repeat(64),
+            attestation_source: 'garda_prepare_reviewer_launch',
+            launch_tool: 'stale'
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        assert.equal(launchArtifact.review_context_sha256, fixture.reviewContextSha256);
+        assert.equal(launchArtifact.routing_event_sha256, fixture.routingEventSha256);
+        assert.notEqual(launchArtifact.launch_tool, 'stale');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects prepared-only launch metadata', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepared-not-attested';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+
+        const previousPrepareExitCode = process.exitCode;
+        const previousPrepareCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousPrepareCwd);
+            process.exitCode = previousPrepareExitCode;
+        }
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-invocation',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.ok(capturedErrors.some((line) => line.includes('prepared reviewer launch metadata cannot satisfy REVIEWER_INVOCATION_ATTESTED')));
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects hand-authored completed launch artifacts without prepared telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-launch-without-prepared-event';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
+        fs.writeFileSync(launchArtifactPath, JSON.stringify({
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch',
+            attestation_state: 'launched',
+            task_id: taskId,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: fixture.reviewerIdentity,
+            review_context_sha256: fixture.reviewContextSha256,
+            routing_event_sha256: fixture.routingEventSha256,
+            attestation_source: 'test_provider_controller',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-123',
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            fork_context: false
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-invocation',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.ok(capturedErrors.some((line) => line.includes('launch_binding_sha256 is required')));
+        assert.ok(capturedErrors.some((line) => line.includes('prepared_launch_event_sha256 is required')));
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects completed launch artifacts that only copy prepared metadata', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-launch-without-completion-token';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+
+        const previousPrepareExitCode = process.exitCode;
+        const previousPrepareCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousPrepareCwd);
+            process.exitCode = previousPrepareExitCode;
+        }
+
+        const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        fs.writeFileSync(launchArtifactPath, JSON.stringify({
+            ...preparedLaunchArtifact,
+            evidence_type: 'delegated_reviewer_launch',
+            attestation_state: 'launched',
+            attestation_source: 'test_provider_controller',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-123',
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            fork_context: false
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-invocation',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.ok(capturedErrors.some((line) => line.includes('self-authored local reviewer launch artifacts cannot satisfy independent REVIEWER_INVOCATION_ATTESTED')));
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects completed-looking launch artifacts without provider invocation provenance', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-launch-missing-provider-proof';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
+        fs.writeFileSync(launchArtifactPath, JSON.stringify({
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch',
+            attestation_state: 'launched',
+            task_id: taskId,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: fixture.reviewerIdentity,
+            review_context_sha256: fixture.reviewContextSha256,
+            routing_event_sha256: fixture.routingEventSha256,
+            attestation_source: 'provider_controller',
+            launch_tool: 'test-subagent-spawn',
+            fork_context: false
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-invocation',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.ok(capturedErrors.some((line) => line.includes('provider_invocation_id or controller_invocation_id is required')));
+        assert.ok(capturedErrors.some((line) => line.includes('launched_at_utc is required')));
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -838,6 +838,135 @@ function timelineHasDelegatedReviewRoutingAfterCompile(
     return false;
 }
 
+function getDelegatedReviewRoutingShaAfterCompile(
+    eventsRoot: string,
+    taskId: string,
+    reviewType: string,
+    reviewerIdentity: string
+): string | null {
+    if (!reviewerIdentity.startsWith('agent:')) {
+        return null;
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return null;
+    }
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
+    if (latestCompileSequence == null) {
+        return null;
+    }
+    const lines = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const event = JSON.parse(lines[index]) as Record<string, unknown>;
+            if (String(event.event_type || '').trim() !== 'REVIEWER_DELEGATION_ROUTED') {
+                continue;
+            }
+            const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+            const taskSequence = typeof integrity?.task_sequence === 'number'
+                ? integrity.task_sequence
+                : Number(integrity?.task_sequence);
+            if (!Number.isInteger(taskSequence) || taskSequence <= latestCompileSequence) {
+                continue;
+            }
+            const details = isPlainRecord(event.details) ? event.details : {};
+            if (
+                String(details.review_type || '').trim() === reviewType
+                && String(details.reviewer_execution_mode || '').trim() === 'delegated_subagent'
+                && String(details.reviewer_session_id || '').trim() === reviewerIdentity
+            ) {
+                const eventSha256 = String(integrity?.event_sha256 || '').trim().toLowerCase();
+                return /^[0-9a-f]{64}$/.test(eventSha256) ? eventSha256 : null;
+            }
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return null;
+}
+
+function hasCurrentPreparedReviewerLaunchArtifact(
+    repoRoot: string,
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): boolean {
+    const reviewerIdentity = state.contextReviewerIdentity || '';
+    if (!reviewerIdentity.startsWith('agent:') || !state.contextExists || !state.contextCurrent) {
+        return false;
+    }
+    const reviewContextSha256 = fileSha256(state.contextPath);
+    const routingEventSha256 = getDelegatedReviewRoutingShaAfterCompile(
+        eventsRoot,
+        taskId,
+        state.reviewType,
+        reviewerIdentity
+    );
+    if (!reviewContextSha256 || !routingEventSha256) {
+        return false;
+    }
+    const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, state.reviewType, 'reviewer-launch.json');
+    const launchArtifact = safeReadJson(launchArtifactPath);
+    if (!launchArtifact) {
+        return false;
+    }
+    const launchBindingSha256 = String(launchArtifact.launch_binding_sha256 || launchArtifact.launchBindingSha256 || '').trim().toLowerCase();
+    const preparedLaunchEventSha256 = String(launchArtifact.prepared_launch_event_sha256 || launchArtifact.preparedLaunchEventSha256 || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(launchBindingSha256) || !/^[0-9a-f]{64}$/.test(preparedLaunchEventSha256)) {
+        return false;
+    }
+    const artifactMatchesCurrentContext = (
+        String(launchArtifact.evidence_type || launchArtifact.artifact_type || '').trim() === 'delegated_reviewer_launch_preparation'
+        && String(launchArtifact.attestation_state || launchArtifact.attestationState || '').trim() === 'prepared'
+        && String(launchArtifact.task_id || launchArtifact.taskId || '').trim() === taskId
+        && String(launchArtifact.review_type || launchArtifact.reviewType || '').trim() === state.reviewType
+        && String(launchArtifact.reviewer_execution_mode || launchArtifact.reviewerExecutionMode || '').trim() === 'delegated_subagent'
+        && String(
+            launchArtifact.reviewer_identity
+            || launchArtifact.reviewerIdentity
+            || launchArtifact.reviewer_session_id
+            || launchArtifact.reviewerSessionId
+            || ''
+        ).trim() === reviewerIdentity
+        && String(launchArtifact.review_context_sha256 || launchArtifact.reviewContextSha256 || '').trim().toLowerCase() === reviewContextSha256
+        && String(launchArtifact.routing_event_sha256 || launchArtifact.routingEventSha256 || '').trim().toLowerCase() === routingEventSha256
+    );
+    if (!artifactMatchesCurrentContext) {
+        return false;
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (String(event.event_type || '').trim() !== 'REVIEWER_LAUNCH_PREPARED') {
+                continue;
+            }
+            const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+            const details = isPlainRecord(event.details) ? event.details : {};
+            if (
+                String(integrity?.event_sha256 || '').trim().toLowerCase() === preparedLaunchEventSha256
+                && String(details.review_type || '').trim() === state.reviewType
+                && String(details.reviewer_execution_mode || '').trim() === 'delegated_subagent'
+                && String(details.reviewer_session_id || details.reviewer_identity || '').trim() === reviewerIdentity
+                && String(details.review_context_sha256 || '').trim().toLowerCase() === reviewContextSha256
+                && String(details.routing_event_sha256 || '').trim().toLowerCase() === routingEventSha256
+                && String(details.launch_binding_sha256 || '').trim().toLowerCase() === launchBindingSha256
+            ) {
+                return true;
+            }
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return false;
+}
+
 function timelineHasReviewContextPreparedAfterCompile(
     eventsRoot: string,
     taskId: string,
@@ -2480,18 +2609,31 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ) {
             const reviewerIdentity = state.contextReviewerIdentity
                 || '<agent:reviewer-session-id-from-review-context>';
+            const launchArtifactPath = `.review-temp/${taskId}/${reviewType}/reviewer-launch.json`;
+            if (!hasCurrentPreparedReviewerLaunchArtifact(repoRoot, eventsRoot, taskId, state)) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'prepare-reviewer-launch',
+                    title: `Prepare '${reviewType}' delegated reviewer launch metadata.`,
+                    reason: `Required review '${reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. This prepares hashes and prompt paths only; it is not completed invocation evidence.`,
+                    commands: [
+                        buildCommand(
+                            'Prepare delegated reviewer launch metadata',
+                            `${cliPrefix} gate prepare-reviewer-launch --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --repo-root "."`
+                        )
+                    ]
+                });
+            }
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
-                nextGate: 'record-review-invocation',
-                title: `Record '${reviewType}' delegated reviewer launch attestation.`,
-                reason: `Required review '${reviewType}' needs current REVIEWER_INVOCATION_ATTESTED launch telemetry before reviewer output can become independent review evidence. Record it only from the real delegated reviewer launch artifact for this review context.`,
-                commands: [
-                    buildCommand(
-                        'Record delegated reviewer launch attestation',
-                        `${cliPrefix} gate record-review-invocation --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path ".review-temp/${taskId}/${reviewType}/reviewer-launch.json" --repo-root "."`
-                    )
-                ]
+                nextGate: 'provider-launch-receipt',
+                title: `Provider-native '${reviewType}' launch receipt required.`,
+                reason:
+                    `Required review '${reviewType}' has prepared launch metadata, but local .review-temp launch artifacts are not completed invocation evidence. ` +
+                    'A self-authored reviewer-launch.json cannot satisfy independent review policy; use provider-native verifiable launch receipt support or explicit audited fallback approval.',
+                commands: []
             });
         }
         if (!currentReviewEvidenceSatisfied) {

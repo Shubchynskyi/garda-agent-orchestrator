@@ -1065,7 +1065,7 @@ describe('gates/next-step', () => {
         assert.equal(result.commands[0].label, 'Record fresh delegated review routing');
     });
 
-    it('uses the prepared review context identity when suggesting record-review-invocation', () => {
+    it('uses the prepared review context identity when suggesting prepare-reviewer-launch', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -1080,11 +1080,57 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'record-review-invocation');
-        assert.ok(result.reason.includes('REVIEWER_INVOCATION_ATTESTED launch telemetry'));
-        assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
+        assert.equal(result.next_gate, 'prepare-reviewer-launch');
+        assert.ok(result.reason.includes('task-owned reviewer launch metadata'));
+        assert.equal(result.commands[0].label, 'Prepare delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
-        assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
+        assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
+    });
+
+    it('blocks for provider-native launch receipt after current launch metadata is prepared', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        const launchBindingSha256 = 'c'.repeat(64);
+        const preparedIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256
+        });
+        writeJson(path.join(repoRoot, '.review-temp', TASK_ID, 'code', 'reviewer-launch.json'), {
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch_preparation',
+            attestation_state: 'prepared',
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256,
+            prepared_launch_event_sha256: preparedIntegrity.event_sha256
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'provider-launch-receipt');
+        assert.ok(result.reason.includes('prepared launch metadata'));
+        assert.ok(result.reason.includes('provider-native verifiable launch receipt'));
+        assert.equal(result.commands.length, 0);
     });
 
     it('routes to record-review-result after current context invocation is attested even when an old receipt exists', () => {
