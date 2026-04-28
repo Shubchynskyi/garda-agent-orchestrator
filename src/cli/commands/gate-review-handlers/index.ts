@@ -563,7 +563,8 @@ function buildLosslessPassReviewNormalization(options: {
         ...activeFindings,
         ...activeResidualRisks
     ];
-    if (pendingDeferredEntries.length === 0) {
+    const hasMissingSections = !findingsEvidence.findings_section_present || !findingsEvidence.residual_risks_section_present;
+    if (pendingDeferredEntries.length === 0 && !hasMissingSections) {
         return null;
     }
 

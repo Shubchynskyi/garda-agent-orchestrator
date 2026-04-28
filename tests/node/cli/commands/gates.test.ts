@@ -8217,4 +8217,104 @@ describe('executeCommand timeout protection (T-061)', () => {
             fixture.cleanup();
         }
     });
+
+    it('record-review-result materializes pass review losslessly through stdin when sections are missing (T-199 regression)', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-199-stdin-normalization';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        // Review content missing ## Findings by Severity and ## Residual Risks, but has PASS verdict.
+        // Needs at least 100 characters and enough words/references to pass the triviality check.
+        const stdinReviewOutput = [
+            '# Review',
+            '',
+            'Focused regression for T-199. This review is missing required lifecycle sections but carries a PASS verdict.',
+            'It contains enough implementation details and qualitative analysis to pass the triviality filter used by the materialization gate.',
+            'The changes in `src/cli/commands/gate-review-handlers/index.ts` properly handle the transition from raw input to normalized artifact.',
+            'By including backticks and more than sixty words of descriptive text, this artifact should be considered meaningful by the `isTrivialReview` validator.',
+            'This ensures that the lossless normalization path is properly exercised for stdin-based review ingestion as well.',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleLog = console.log;
+        const originalReadReviewOutputFromStdin = gateReviewHandlers.readReviewOutputFromStdin;
+        const mutableGateReviewHandlers = gateReviewHandlers as { readReviewOutputFromStdin: () => Promise<string> };
+        const capturedLogs: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.log = (...args: unknown[]) => {
+            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        };
+        mutableGateReviewHandlers.readReviewOutputFromStdin = async () => stdinReviewOutput;
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-stdin',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            mutableGateReviewHandlers.readReviewOutputFromStdin = originalReadReviewOutputFromStdin;
+            console.log = originalConsoleLog;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
+
+        assert.equal(rawReviewContent, stdinReviewOutput);
+        assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
+        assert.ok(artifactContent.includes('> # Review'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+        assert.equal(typeof receipt.review_output_sha256, 'string');
+        assert.ok(receipt.review_output_sha256.length > 0);
+        assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
+        assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
 });
