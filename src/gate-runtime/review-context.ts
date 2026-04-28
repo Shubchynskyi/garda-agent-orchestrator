@@ -365,6 +365,12 @@ export interface ReviewReceipt {
     reviewer_fallback_reason: string | null;
     reviewer_provenance?: ReviewReceiptReviewerProvenance | null;
     trust_level?: string;
+    reused_existing_review?: boolean;
+    reused_from_receipt_path?: string | null;
+    reused_from_review_context_sha256?: string | null;
+    reused_from_review_context_reuse_sha256?: string | null;
+    reused_from_review_scope_sha256?: string | null;
+    reused_from_code_scope_sha256?: string | null;
     recorded_at_utc: string;
 }
 
@@ -766,6 +772,12 @@ export function buildReviewReceipt(options: {
     reviewerFallbackReason?: string | null;
     reviewerProvenance?: ReviewReceiptReviewerProvenance | null;
     trustLevel?: string;
+    reusedExistingReview?: boolean;
+    reusedFromReceiptPath?: string | null;
+    reusedFromReviewContextSha256?: string | null;
+    reusedFromReviewContextReuseSha256?: string | null;
+    reusedFromReviewScopeSha256?: string | null;
+    reusedFromCodeScopeSha256?: string | null;
 }): ReviewReceipt {
     return {
         schema_version: 2,
@@ -783,6 +795,12 @@ export function buildReviewReceipt(options: {
         reviewer_fallback_reason: options.reviewerFallbackReason ?? null,
         reviewer_provenance: options.reviewerProvenance ?? null,
         trust_level: options.trustLevel || 'LOCAL_ASSERTED',
+        reused_existing_review: options.reusedExistingReview === true,
+        reused_from_receipt_path: options.reusedFromReceiptPath ?? null,
+        reused_from_review_context_sha256: options.reusedFromReviewContextSha256 ?? null,
+        reused_from_review_context_reuse_sha256: options.reusedFromReviewContextReuseSha256 ?? null,
+        reused_from_review_scope_sha256: options.reusedFromReviewScopeSha256 ?? null,
+        reused_from_code_scope_sha256: options.reusedFromCodeScopeSha256 ?? null,
         recorded_at_utc: new Date().toISOString()
     };
 }

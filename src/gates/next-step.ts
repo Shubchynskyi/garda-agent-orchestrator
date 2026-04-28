@@ -59,6 +59,9 @@ import {
     selectRulePackFiles
 } from './build-review-context';
 import {
+    validateReviewReuseRecordedEventMatch
+} from './review-reuse-telemetry';
+import {
     getClassificationConfig,
     isDocumentationLikePath,
     isRuntimeCodeLikePath
@@ -207,6 +210,10 @@ interface ReviewArtifactState {
     violations: string[];
     reviewerIdentity: string | null;
     contextReviewerIdentity: string | null;
+    reusedExistingReview: boolean;
+    reusedFromReceiptPath: string | null;
+    reusedFromReviewContextSha256: string | null;
+    reusedFromReviewContextReuseSha256: string | null;
     reviewerProvenance: {
         attestation_type: string;
         controller_event_type: string;
@@ -351,6 +358,10 @@ function readReviewArtifactState(
     let receipt: Record<string, unknown> | null = null;
     let reviewerIdentity: string | null = null;
     let contextReviewerIdentity: string | null = null;
+    let reusedExistingReview = false;
+    let reusedFromReceiptPath: string | null = null;
+    let reusedFromReviewContextSha256: string | null = null;
+    let reusedFromReviewContextReuseSha256: string | null = null;
     let reviewerProvenance: ReviewArtifactState['reviewerProvenance'] = null;
     let verdictToken: string | null = null;
     let failed = false;
@@ -446,6 +457,16 @@ function readReviewArtifactState(
             ? receipt.reviewer_identity.trim()
             : '';
         reviewerIdentity = receiptReviewerIdentity || null;
+        reusedExistingReview = receipt.reused_existing_review === true;
+        reusedFromReceiptPath = typeof receipt.reused_from_receipt_path === 'string'
+            ? receipt.reused_from_receipt_path.trim() || null
+            : null;
+        reusedFromReviewContextSha256 = typeof receipt.reused_from_review_context_sha256 === 'string'
+            ? receipt.reused_from_review_context_sha256.trim().toLowerCase() || null
+            : null;
+        reusedFromReviewContextReuseSha256 = typeof receipt.reused_from_review_context_reuse_sha256 === 'string'
+            ? receipt.reused_from_review_context_reuse_sha256.trim().toLowerCase() || null
+            : null;
         const normalizedProvenance = receipt.reviewer_provenance == null
             ? null
             : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
@@ -487,10 +508,10 @@ function readReviewArtifactState(
         if (!receiptReviewerIdentity.startsWith('agent:')) {
             violations.push("review receipt reviewer_identity must use 'agent:' scope");
         }
-        if (contextExecutionMode !== 'delegated_subagent') {
+        if (!reusedExistingReview && contextExecutionMode !== 'delegated_subagent') {
             violations.push("review context is missing delegated_subagent routing metadata");
         }
-        if (contextReviewerSessionId !== receiptReviewerIdentity) {
+        if (!reusedExistingReview && contextReviewerSessionId !== receiptReviewerIdentity) {
             violations.push('review context reviewer identity does not match the receipt');
         }
         if (receipt.reviewer_provenance == null) {
@@ -525,6 +546,10 @@ function readReviewArtifactState(
         violations,
         reviewerIdentity,
         contextReviewerIdentity,
+        reusedExistingReview,
+        reusedFromReceiptPath,
+        reusedFromReviewContextSha256,
+        reusedFromReviewContextReuseSha256,
         reviewerProvenance
     };
 }
@@ -625,6 +650,49 @@ function timelineHasDelegatedReviewInvocationAttestation(eventsRoot: string, tas
                 continue;
             }
             return true;
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return false;
+}
+
+function timelineHasReviewReuseRecordedAfterCompile(eventsRoot: string, taskId: string, state: ReviewArtifactState): boolean {
+    if (!state.reusedExistingReview || !state.receiptExists || !state.contextExists || !state.contextCurrent || !state.artifactExists) {
+        return false;
+    }
+    const reviewContextSha256 = fileSha256(state.contextPath);
+    const reviewArtifactSha256 = fileSha256(state.artifactPath);
+    if (!reviewContextSha256 || !reviewArtifactSha256) {
+        return false;
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return false;
+    }
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
+    if (latestCompileSequence == null) {
+        return false;
+    }
+    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (validateReviewReuseRecordedEventMatch({
+                event,
+                reviewType: state.reviewType,
+                receiptPath: state.receiptPath,
+                reviewContextSha256,
+                reviewArtifactSha256,
+                reusedFromReceiptPath: state.reusedFromReceiptPath || null,
+                reusedFromReviewContextSha256: state.reusedFromReviewContextSha256,
+                reusedFromReviewContextReuseSha256: state.reusedFromReviewContextReuseSha256,
+                minTaskSequenceExclusive: latestCompileSequence
+            }).matched) {
+                return true;
+            }
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
         }
@@ -853,7 +921,10 @@ function getNextReviewType(
 ): { reviewType: string | null; blockedDependencies: string[] } {
     const passedReviews = new Set(
         reviewStates
-            .filter((state) => state.ready && timelineHasDelegatedReviewInvocationAttestation(eventsRoot, taskId, state))
+            .filter((state) => state.ready && (
+                timelineHasDelegatedReviewInvocationAttestation(eventsRoot, taskId, state)
+                || timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state)
+            ))
             .map((state) => state.reviewType)
     );
     for (const reviewType of requiredReviewTypes) {
@@ -2285,6 +2356,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         const currentReviewerInvocationAttested = state
             ? timelineHasDelegatedReviewInvocationAttestation(eventsRoot, taskId, state)
             : false;
+        const currentReviewReuseRecorded = state
+            ? timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state)
+            : false;
+        const currentReviewEvidenceSatisfied = currentReviewerInvocationAttested || currentReviewReuseRecorded;
         const currentReviewContextInvocationAttested = state
             ? timelineHasDelegatedReviewInvocationForCurrentContext(eventsRoot, taskId, state)
             : false;
@@ -2308,7 +2383,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (state?.failed && currentReviewerInvocationAttested) {
+        if (state?.failed && currentReviewEvidenceSatisfied) {
             const downstreamReviewTypes = getDownstreamReviewTypesFor(
                 reviewType,
                 requiredReviewTypes,
@@ -2335,7 +2410,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (state?.failed && !currentReviewerInvocationAttested && !currentReviewContextPrepared) {
+        if (state?.failed && !currentReviewEvidenceSatisfied && !currentReviewContextPrepared) {
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -2372,8 +2447,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
         const contextReviewerIdentity = state.contextReviewerIdentity || '';
         if (
-            !contextReviewerIdentity.startsWith('agent:')
-            || !timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot, taskId, reviewType, contextReviewerIdentity)
+            !currentReviewReuseRecorded
+            && (
+                !contextReviewerIdentity.startsWith('agent:')
+                || !timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot, taskId, reviewType, contextReviewerIdentity)
+            )
         ) {
             const reviewerIdentity = contextReviewerIdentity || '<agent:reviewer-session-id-from-delegated-agent>';
             return buildResult({
@@ -2391,6 +2469,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         if (
+            !currentReviewReuseRecorded
+            &&
             !currentReviewContextInvocationAttested
             && (
                 !state.artifactExists
@@ -2414,7 +2494,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (!currentReviewerInvocationAttested) {
+        if (!currentReviewEvidenceSatisfied) {
             const reviewerIdentity = state.contextReviewerIdentity
                 || '<agent:reviewer-session-id-from-review-context>';
             const acceptedVerdictTokens = formatAcceptedReviewVerdictTokens(

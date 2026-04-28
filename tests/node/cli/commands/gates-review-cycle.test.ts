@@ -26,7 +26,9 @@ import {
 } from '../../../../src/gate-runtime/review-context';
 import {
     computeCodeReviewScopeFingerprint,
-    computeReviewContextReuseHash
+    computeReviewContextReuseHash,
+    computeReviewRelevantScopeFingerprint,
+    isNonTestReviewScope
 } from '../../../../src/gates/review-reuse';
 import {
     resolveReviewerRoutingPolicy,
@@ -636,7 +638,8 @@ function seedReusableReviewEvidence(
         reviewType: reviewKey,
         preflightSha256: preflightHash,
         scopeSha256: String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
-        codeScopeSha256: reviewKey === 'code'
+        reviewScopeSha256: computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256,
+        codeScopeSha256: isNonTestReviewScope(reviewKey)
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
         reviewContextSha256: reviewContextHash,
@@ -654,7 +657,10 @@ function seedReusableReviewEvidence(
     });
     fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
     appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'historical review recorded', {
-        review_type: reviewKey
+        ...receipt,
+        receipt_path: path.normalize(artifactPath.replace(/\.md$/, '-receipt.json')).replace(/\\/g, '/'),
+        review_artifact_path: path.normalize(artifactPath).replace(/\\/g, '/'),
+        review_context_path: path.normalize(reviewContextPath).replace(/\\/g, '/')
     });
     return reviewContextPath;
 }

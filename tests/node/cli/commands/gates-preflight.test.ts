@@ -21,6 +21,7 @@ import {
     runLoadRulePackCommand,
     runShellSmokePreflightCommand
 } from '../../../../src/cli/commands/gates';
+import { runCliWithCapturedOutput } from './gate-test-cli-capture';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import * as childProcess from 'node:child_process';
 
@@ -218,6 +219,55 @@ function writeWorkflowConfig(repoRoot: string, payload: string): string {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, payload, 'utf8');
     return configPath;
+}
+
+function seedStrictProfileConfig(repoRoot: string): void {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'review-capabilities.json'), JSON.stringify({
+        code: true,
+        db: true,
+        security: true,
+        refactor: true,
+        api: true,
+        test: true,
+        performance: true,
+        infra: true,
+        dependency: true
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                description: 'Balanced',
+                depth: 2,
+                review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: true,
+                    strip_code_blocks: true,
+                    scoped_diffs: true,
+                    compact_reviewer_output: true
+                },
+                skills: { auto_suggest: true }
+            },
+            strict: {
+                description: 'Strict',
+                depth: 3,
+                review_policy: { code: true, db: true, security: true, refactor: true },
+                token_economy: {
+                    enabled: true,
+                    strip_examples: false,
+                    strip_code_blocks: false,
+                    scoped_diffs: true,
+                    compact_reviewer_output: false
+                },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    }, null, 2), 'utf8');
 }
 
 function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
@@ -717,6 +767,250 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(payload.required_reviews.security, false);
         assert.equal(payload.budget_forecast.token_economy_active_for_depth, true);
 
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change strict profile does not force DB review without DB surface evidence', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-no-db-surface.json');
+        const taskId = 'T-930-strict-no-db-surface';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Keep strict reviews domain-aware without forcing DB in a no-database project'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId,
+            taskIntent: 'Keep strict reviews domain-aware without forcing DB in a no-database project',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.profile_selection.effective_profile, 'strict');
+        assert.equal(payload.triggers.db, false);
+        assert.deepEqual(payload.triggers.db_project_evidence, []);
+        assert.equal(payload.required_reviews.code, true);
+        assert.equal(payload.required_reviews.security, true);
+        assert.equal(payload.required_reviews.refactor, true);
+        assert.equal(payload.required_reviews.db, false);
+        assert.equal(payload.required_reviews.api, false);
+        assert.equal(payload.required_reviews.performance, false);
+        assert.equal(payload.required_reviews.dependency, false);
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'db')?.decision,
+            'not_applicable_no_domain_surface'
+        );
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'api')?.decision,
+            'not_applicable_no_domain_surface'
+        );
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'dependency')?.decision,
+            'not_applicable_no_domain_surface'
+        );
+        assert.deepEqual(payload.budget_forecast.required_reviews.includes('db'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change strict profile keeps DB review when DB surface evidence is present', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const migrationPath = path.join(repoRoot, 'src', 'db', 'migrations', '001_init.sql');
+        fs.mkdirSync(path.dirname(migrationPath), { recursive: true });
+        fs.writeFileSync(migrationPath, 'create table users (id text primary key);\n', 'utf8');
+        const outputPath = path.join(repoRoot, 'preflight-strict-db-surface.json');
+        const taskId = 'T-930-strict-db-surface';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Keep strict DB review when database migration scope exists'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/db/migrations/001_init.sql'],
+            taskId,
+            taskIntent: 'Keep strict DB review when database migration scope exists',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.triggers.db, true);
+        assert.equal(payload.required_reviews.db, true);
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'db')?.decision,
+            'domain_triggered'
+        );
+        assert.equal(payload.budget_forecast.required_reviews.includes('db'), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change strict profile keeps DB review when project DB evidence exists', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
+            dependencies: {
+                pg: '^8.0.0'
+            }
+        }, null, 2), 'utf8');
+        const outputPath = path.join(repoRoot, 'preflight-strict-db-project-evidence.json');
+        const taskId = 'T-930-strict-db-project-evidence';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Keep strict DB review when project database capability exists'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId,
+            taskIntent: 'Keep strict DB review when project database capability exists',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.triggers.db, false);
+        assert.ok(payload.triggers.db_project_evidence.includes('package:pg'));
+        assert.equal(payload.required_reviews.db, true);
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'db')?.decision,
+            'domain_triggered'
+        );
+        assert.equal(payload.budget_forecast.required_reviews.includes('db'), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change strict profile supports explicit all-domain review override', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-force-domain.json');
+        const taskId = 'T-930-strict-force-domain';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Force all strict domain reviews for an audited override'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts'],
+            taskId,
+            taskIntent: 'Force all strict domain reviews for an audited override',
+            forceAllDomainReviews: true,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.triggers.db, false);
+        assert.equal(payload.required_reviews.db, true);
+        assert.equal(payload.required_reviews.api, true);
+        assert.equal(payload.required_reviews.performance, true);
+        assert.equal(payload.required_reviews.dependency, true);
+        assert.equal(payload.required_reviews.infra, true);
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'db')?.decision,
+            'profile_forced'
+        );
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'api')?.decision,
+            'profile_forced'
+        );
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'dependency')?.decision,
+            'profile_forced'
+        );
+        assert.equal(payload.budget_forecast.required_reviews.includes('db'), true);
+        assert.equal(payload.budget_forecast.required_reviews.includes('api'), true);
+        assert.equal(payload.budget_forecast.required_reviews.includes('dependency'), true);
+        assert.equal(payload.budget_forecast.required_reviews.includes('infra'), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change public CLI parses explicit all-domain review override', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-force-domain-cli.json');
+        const taskId = 'T-930-strict-force-domain-cli';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Force all strict domain reviews through the public CLI flag'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'classify-change',
+            '--task-id', taskId,
+            '--task-intent', 'Force all strict domain reviews through the public CLI flag',
+            '--changed-file', 'src/app.ts',
+            '--force-all-domain-reviews',
+            '--output-path', outputPath,
+            '--repo-root', repoRoot
+        ], { cwd: repoRoot });
+
+        assert.equal(result.exitCode, 0);
+        assert.deepEqual(result.errors, []);
+        assert.equal(fs.existsSync(outputPath), true);
+        const payload = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+        assert.equal(payload.triggers.db, false);
+        assert.equal(payload.required_reviews.db, true);
+        assert.equal(payload.required_reviews.api, true);
+        assert.equal(payload.required_reviews.performance, true);
+        assert.equal(payload.required_reviews.dependency, true);
+        assert.equal(payload.required_reviews.infra, true);
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'db')?.decision,
+            'profile_forced'
+        );
+        assert.equal(payload.budget_forecast.required_reviews.includes('db'), true);
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

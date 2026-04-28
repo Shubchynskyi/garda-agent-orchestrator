@@ -14,6 +14,10 @@ import { getNoOpEvidence } from './no-op';
 import { getReviewContextContractViolations } from './review-context-contract';
 import { resolveReviewContextRoutingIdentity } from './review-context-routing';
 import { type ReviewDependencyTimelineEvent } from './review-dependencies';
+import {
+    findMatchingHistoricalReviewRecordedTelemetryEvent,
+    findMatchingReviewReuseRecordedTelemetryEvent
+} from './review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from './review-trust-policy';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { resolveBundleName } from '../core/constants';
@@ -389,6 +393,47 @@ function findMatchingInvocationAttestationEvent(
     return null;
 }
 
+function findMatchingReviewReuseRecordedEvent(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    options: {
+        reviewType: string;
+        receiptPath: string;
+        reviewContextSha256: string | null;
+        reviewContextReuseSha256?: string | null;
+        reviewScopeSha256?: string | null;
+        codeScopeSha256?: string | null;
+        reviewArtifactSha256: string | null;
+        reusedFromReceiptPath: string | null;
+        reusedFromReviewContextSha256: string | null;
+        reusedFromReviewContextReuseSha256: string | null;
+        reusedFromReviewScopeSha256?: string | null;
+        reusedFromCodeScopeSha256?: string | null;
+    }
+): ReviewDependencyTimelineEvent | null {
+    const latestCompilePassSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
+    );
+    if (latestCompilePassSequence == null) {
+        return null;
+    }
+    return findMatchingReviewReuseRecordedTelemetryEvent(timelineEvents, {
+        reviewType: options.reviewType,
+        receiptPath: options.receiptPath,
+        reviewContextSha256: options.reviewContextSha256,
+        reviewContextReuseSha256: options.reviewContextReuseSha256,
+        reviewScopeSha256: options.reviewScopeSha256,
+        codeScopeSha256: options.codeScopeSha256,
+        reviewArtifactSha256: options.reviewArtifactSha256,
+        reusedFromReceiptPath: options.reusedFromReceiptPath,
+        reusedFromReviewContextSha256: options.reusedFromReviewContextSha256,
+        reusedFromReviewContextReuseSha256: options.reusedFromReviewContextReuseSha256,
+        reusedFromReviewScopeSha256: options.reusedFromReviewScopeSha256,
+        reusedFromCodeScopeSha256: options.reusedFromCodeScopeSha256,
+        minEventSequenceExclusive: latestCompilePassSequence
+    });
+}
+
 export function validateReviewArtifactGateEligibility(options: {
     resolvedTaskId: string | null;
     reviewKey: string;
@@ -460,6 +505,9 @@ export function validateReviewArtifactGateEligibility(options: {
     let reviewerProvenance: ReturnType<typeof normalizeReviewReceiptReviewerProvenance> = null;
     let trustLevel: string | null = null;
     let receiptReviewContextSha256: string | null = null;
+    let validatedReceipt: ReviewReceipt | null = null;
+    let currentArtifactSha256: string | null = null;
+    let reusedExistingReview = false;
     let trivialReview = false;
     let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
 
@@ -555,7 +603,9 @@ export function validateReviewArtifactGateEligibility(options: {
         if (reviewArtifact.receipt || fs.existsSync(receiptPath)) {
             try {
                 const receipt = reviewArtifact.receipt ?? JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
+                validatedReceipt = receipt;
                 const currentArtifactHash = reviewArtifact.artifactSha256 ?? fileSha256(artifactPath);
+                currentArtifactSha256 = currentArtifactHash;
                 if (receipt.task_id !== resolvedTaskId) {
                     errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
                 } else if (receipt.review_type !== reviewKey) {
@@ -595,6 +645,7 @@ export function validateReviewArtifactGateEligibility(options: {
                 if (receipt.trust_level) {
                     trustLevel = String(receipt.trust_level).trim().toUpperCase();
                 }
+                reusedExistingReview = receipt.reused_existing_review === true;
                 receiptReviewContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
             } catch {
                 errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
@@ -610,19 +661,19 @@ export function validateReviewArtifactGateEligibility(options: {
             if (!reviewerIdentity) {
                 errors.push(`Review receipt for '${reviewKey}' is missing reviewer_identity.`);
             }
-            if (!contextExecutionMode) {
+            if (!reusedExistingReview && !contextExecutionMode) {
                 errors.push(`Review '${reviewKey}' is missing reviewer_routing.actual_execution_mode in review-context.`);
             }
-            if (!contextReviewerSessionId) {
+            if (!reusedExistingReview && !contextReviewerSessionId) {
                 errors.push(`Review '${reviewKey}' is missing reviewer_routing.reviewer_session_id in review-context.`);
             }
-            if (reviewerExecutionMode && contextExecutionMode && reviewerExecutionMode !== contextExecutionMode) {
+            if (!reusedExistingReview && reviewerExecutionMode && contextExecutionMode && reviewerExecutionMode !== contextExecutionMode) {
                 errors.push(
                     `Review '${reviewKey}' has inconsistent execution mode between receipt (${reviewerExecutionMode}) ` +
                     `and review-context (${contextExecutionMode}).`
                 );
             }
-            if (reviewerIdentity && contextReviewerSessionId && reviewerIdentity !== contextReviewerSessionId) {
+            if (!reusedExistingReview && reviewerIdentity && contextReviewerSessionId && reviewerIdentity !== contextReviewerSessionId) {
                 errors.push(
                     `Review '${reviewKey}' has inconsistent reviewer identity between receipt (${reviewerIdentity}) ` +
                     `and review-context (${contextReviewerSessionId}).`
@@ -637,7 +688,7 @@ export function validateReviewArtifactGateEligibility(options: {
                     'Record a fresh delegated_subagent review for the current cycle.'
                 );
             }
-            if (contextExecutionMode === 'same_agent_fallback') {
+            if (!reusedExistingReview && contextExecutionMode === 'same_agent_fallback') {
                 errors.push(
                     `Review '${reviewKey}' review-context records deprecated same_agent_fallback routing. ` +
                     'Record fresh delegated reviewer routing for the current cycle.'
@@ -648,7 +699,7 @@ export function validateReviewArtifactGateEligibility(options: {
                     `Review '${reviewKey}' receipt includes reviewer_fallback_reason, but mandatory reviews now require delegated_subagent only.`
                 );
             }
-            if (contextFallbackReason) {
+            if (!reusedExistingReview && contextFallbackReason) {
                 errors.push(
                     `Review '${reviewKey}' review-context includes reviewer_routing.fallback_reason, but mandatory reviews now require delegated_subagent only.`
                 );
@@ -658,9 +709,9 @@ export function validateReviewArtifactGateEligibility(options: {
             } else if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && !reviewerIdentity.startsWith('agent:')) {
                 errors.push(`Review '${reviewKey}' claims delegated_subagent execution but reviewer_identity must be agent-scoped (expected prefix 'agent:').`);
             }
-            if (contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && contextReviewerSessionId.startsWith('self:')) {
+            if (!reusedExistingReview && contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && contextReviewerSessionId.startsWith('self:')) {
                 errors.push(`Review '${reviewKey}' review-context claims delegated_subagent execution but reviewer_session_id is self-scoped (${contextReviewerSessionId}).`);
-            } else if (contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && !contextReviewerSessionId.startsWith('agent:')) {
+            } else if (!reusedExistingReview && contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId && !contextReviewerSessionId.startsWith('agent:')) {
                 errors.push(`Review '${reviewKey}' review-context claims delegated_subagent execution but reviewer_session_id must be agent-scoped (expected prefix 'agent:').`);
             }
             if (routingPolicy.delegation_required && reviewerExecutionMode !== 'delegated_subagent') {
@@ -696,54 +747,139 @@ export function validateReviewArtifactGateEligibility(options: {
                 }
             }
             if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && options.timelineEvents && options.timelineEvents.length > 0) {
-                const routingEvent = findMatchingRoutingEvent(
-                    options.timelineEvents,
-                    reviewKey,
-                    reviewerExecutionMode,
-                    reviewerIdentity,
-                    reviewerFallbackReason,
-                    reviewerProvenance
-                );
-                if (!routingEvent) {
-                    errors.push(
-                        `Review '${reviewKey}' is missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle for reviewer '${reviewerIdentity}'.`
+                if (reusedExistingReview) {
+                    const latestCompilePassSequence = findLatestTimelineSequence(
+                        options.timelineEvents,
+                        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
                     );
-                } else if (!routingEvent.integrity) {
-                    errors.push(
-                        `Review '${reviewKey}' cannot validate reviewer_provenance because matching REVIEWER_DELEGATION_ROUTED telemetry is missing integrity.`
+                    const reuseRecordedEvent = findMatchingReviewReuseRecordedEvent(
+                        options.timelineEvents,
+                        {
+                            reviewType: reviewKey,
+                            receiptPath,
+                            reviewContextSha256: receiptReviewContextSha256,
+                            reviewContextReuseSha256: validatedReceipt?.review_context_reuse_sha256,
+                            reviewScopeSha256: validatedReceipt?.review_scope_sha256,
+                            codeScopeSha256: validatedReceipt?.code_scope_sha256,
+                            reviewArtifactSha256: currentArtifactSha256 ?? reviewArtifact.artifactSha256 ?? fileSha256(artifactPath),
+                            reusedFromReceiptPath: typeof validatedReceipt?.reused_from_receipt_path === 'string'
+                                ? validatedReceipt.reused_from_receipt_path
+                                : null,
+                            reusedFromReviewContextSha256: typeof validatedReceipt?.reused_from_review_context_sha256 === 'string'
+                                ? validatedReceipt.reused_from_review_context_sha256
+                                : null,
+                            reusedFromReviewContextReuseSha256: typeof validatedReceipt?.reused_from_review_context_reuse_sha256 === 'string'
+                                ? validatedReceipt.reused_from_review_context_reuse_sha256
+                                : null,
+                            reusedFromReviewScopeSha256: typeof validatedReceipt?.reused_from_review_scope_sha256 === 'string'
+                                ? validatedReceipt.reused_from_review_scope_sha256
+                                : null,
+                            reusedFromCodeScopeSha256: typeof validatedReceipt?.reused_from_code_scope_sha256 === 'string'
+                                ? validatedReceipt.reused_from_code_scope_sha256
+                                : null
+                        }
                     );
-                } else {
-                    if (trustLevel === 'LOCAL_AUDITED') {
+                    if (!reuseRecordedEvent) {
                         errors.push(
-                            `Review receipt for '${reviewKey}' cannot claim LOCAL_AUDITED trust for delegated_subagent execution. ` +
-                            'Current local routing telemetry is asserted-only until a separate launch-attestation contract exists.'
+                            `Review '${reviewKey}' is missing current-cycle REVIEW_RECORDED reuse telemetry.`
                         );
                     }
                     if (!reviewerProvenance) {
                         errors.push(
-                            `Review receipt for '${reviewKey}' is missing reviewer_provenance for delegated_subagent execution.`
+                            `Review receipt for '${reviewKey}' is missing historical reviewer_provenance for delegated_subagent reuse.`
                         );
                     } else if (reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
                         errors.push(
-                            `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
+                            `Review receipt for '${reviewKey}' reuse must preserve historical REVIEWER_INVOCATION_ATTESTED provenance.`
                         );
                     } else {
-                        const invocationAttestationEvent = findMatchingInvocationAttestationEvent(
+                        const historicalInvocationEvent = findMatchingInvocationAttestationEvent(
                             options.timelineEvents,
                             {
                                 taskId: resolvedTaskId || '',
                                 reviewType: reviewKey,
                                 reviewerExecutionMode,
                                 reviewerIdentity,
-                                reviewContextSha256: receiptReviewContextSha256,
-                                routingEventSha256: String(routingEvent.integrity.event_sha256 || '').trim().toLowerCase(),
+                                reviewContextSha256: reviewerProvenance.review_context_sha256,
+                                routingEventSha256: reviewerProvenance.routing_event_sha256,
                                 reviewerProvenance
                             }
                         );
-                        if (!invocationAttestationEvent) {
+                        if (!historicalInvocationEvent) {
+                            errors.push(
+                                `Review receipt for '${reviewKey}' reused historical reviewer_provenance that does not match REVIEWER_INVOCATION_ATTESTED telemetry.`
+                            );
+                        } else if (!findMatchingHistoricalReviewRecordedTelemetryEvent(options.timelineEvents, {
+                            taskId: resolvedTaskId || '',
+                            reviewType: reviewKey,
+                            receiptPath: typeof validatedReceipt?.reused_from_receipt_path === 'string'
+                                ? validatedReceipt.reused_from_receipt_path
+                                : receiptPath,
+                            reviewContextSha256: validatedReceipt?.reused_from_review_context_sha256 || reviewerProvenance.review_context_sha256,
+                            reviewContextReuseSha256: validatedReceipt?.reused_from_review_context_reuse_sha256,
+                            reviewScopeSha256: validatedReceipt?.reused_from_review_scope_sha256,
+                            codeScopeSha256: validatedReceipt?.reused_from_code_scope_sha256,
+                            reviewArtifactSha256: currentArtifactSha256 ?? reviewArtifact.artifactSha256 ?? fileSha256(artifactPath),
+                            reviewerExecutionMode,
+                            reviewerIdentity,
+                            reviewerProvenance: reviewerProvenance as unknown as Record<string, unknown>,
+                            maxEventSequenceExclusive: latestCompilePassSequence
+                        })) {
+                            errors.push(
+                                `Review receipt for '${reviewKey}' reused historical reviewer_provenance that does not match historical REVIEW_RECORDED telemetry.`
+                            );
+                        }
+                    }
+                } else {
+                    const routingEvent = findMatchingRoutingEvent(
+                        options.timelineEvents,
+                        reviewKey,
+                        reviewerExecutionMode,
+                        reviewerIdentity,
+                        reviewerFallbackReason,
+                        reviewerProvenance
+                    );
+                    if (!routingEvent) {
+                        errors.push(
+                            `Review '${reviewKey}' is missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle for reviewer '${reviewerIdentity}'.`
+                        );
+                    } else if (!routingEvent.integrity) {
+                        errors.push(
+                            `Review '${reviewKey}' cannot validate reviewer_provenance because matching REVIEWER_DELEGATION_ROUTED telemetry is missing integrity.`
+                        );
+                    } else {
+                        if (trustLevel === 'LOCAL_AUDITED') {
+                            errors.push(
+                                `Review receipt for '${reviewKey}' cannot claim LOCAL_AUDITED trust for delegated_subagent execution. ` +
+                                'Current local routing telemetry is asserted-only until a separate launch-attestation contract exists.'
+                            );
+                        }
+                        if (!reviewerProvenance) {
+                            errors.push(
+                                `Review receipt for '${reviewKey}' is missing reviewer_provenance for delegated_subagent execution.`
+                            );
+                        } else if (reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
                             errors.push(
                                 `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
                             );
+                        } else {
+                            const invocationAttestationEvent = findMatchingInvocationAttestationEvent(
+                                options.timelineEvents,
+                                {
+                                    taskId: resolvedTaskId || '',
+                                    reviewType: reviewKey,
+                                    reviewerExecutionMode,
+                                    reviewerIdentity,
+                                    reviewContextSha256: receiptReviewContextSha256,
+                                    routingEventSha256: String(routingEvent.integrity.event_sha256 || '').trim().toLowerCase(),
+                                    reviewerProvenance
+                                }
+                            );
+                            if (!invocationAttestationEvent) {
+                                errors.push(
+                                    `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
+                                );
+                            }
                         }
                     }
                 }

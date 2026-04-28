@@ -35,7 +35,8 @@ import {
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
-    computeReviewContextReuseHash
+    computeReviewContextReuseHash,
+    isNonTestReviewScope
 } from '../../../gates/review-reuse';
 import { resolveCanonicalReviewContextPath } from '../../../gates/review-context-paths';
 import { getReviewContextContractViolations } from '../../../gates/review-context-contract';
@@ -1184,14 +1185,15 @@ async function recordReviewReceiptFromArtifacts(options: {
         );
     }
     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight as Record<string, unknown>, options.repoRoot);
+    const codeScopeFingerprint = computeCodeReviewScopeFingerprint(preflight as Record<string, unknown>, options.repoRoot);
     const receipt = buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
         preflightSha256,
         scopeSha256: preflight.metrics?.changed_files_sha256 || null,
         reviewScopeSha256: reviewScopeFingerprint.review_scope_sha256,
-        codeScopeSha256: options.reviewType === 'code'
-            ? computeCodeReviewScopeFingerprint(preflight as Record<string, unknown>, options.repoRoot).code_scope_sha256
+        codeScopeSha256: isNonTestReviewScope(options.reviewType)
+            ? codeScopeFingerprint.code_scope_sha256
             : null,
         reviewContextSha256: contextSha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),

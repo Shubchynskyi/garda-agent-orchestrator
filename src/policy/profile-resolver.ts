@@ -109,6 +109,10 @@ export interface ResolveOptions {
     isCodeChangingTask?: boolean;
     /** Scope category from preflight classification. */
     scopeCategory?: string;
+    /** Domain-surface evidence from the current preflight trigger set. */
+    domainSurface?: Record<string, boolean>;
+    /** Explicit escape hatch for operators that intentionally want every domain review. */
+    forceAllDomainReviews?: boolean;
 }
 
 /**
@@ -127,12 +131,20 @@ const CODE_CHANGING_SAFETY_FLOORS: ReadonlyMap<string, boolean> = new Map([
  * Only these non-code categories allow profiles to relax mandatory reviews.
  */
 const LIGHTENABLE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only']);
+const DOMAIN_SURFACE_REVIEW_TYPES = new Set(['db', 'api', 'performance', 'infra', 'dependency']);
 
 export interface ProfileReviewDecision {
     review_type: string;
     profile_wanted: boolean | 'auto';
     effective_value: boolean;
-    decision: 'profile_override' | 'safety_floor_enforced' | 'capability_default' | 'lightened_by_profile';
+    decision:
+        | 'profile_override'
+        | 'profile_forced'
+        | 'safety_floor_enforced'
+        | 'capability_default'
+        | 'lightened_by_profile'
+        | 'domain_triggered'
+        | 'not_applicable_no_domain_surface';
     reason: string;
 }
 
@@ -144,6 +156,11 @@ export interface ProfileGuardrailResult {
     lightening_eligible: boolean;
     decisions: ProfileReviewDecision[];
     safety_floors_applied: string[];
+}
+
+export interface ProfileGuardrailOptions {
+    domainSurface?: Record<string, boolean>;
+    forceAllDomainReviews?: boolean;
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -322,7 +339,8 @@ export function applyProfileGuardrails(
     profilePolicy: ProfileReviewPolicy,
     capabilities: ReviewCapabilities,
     scopeCategory: string,
-    profileName: string
+    profileName: string,
+    options: ProfileGuardrailOptions = {}
 ): ProfileGuardrailResult {
     const isCodeChangingTask = !LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
     const lightEligible = LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
@@ -334,14 +352,48 @@ export function applyProfileGuardrails(
     for (const key of Object.keys(merged)) {
         const profileValue = key in profilePolicy ? profilePolicy[key] : undefined;
         const capabilityValue = capabilities[key] ?? false;
-        const effectiveValue = merged[key] === true;
+        const hasDomainSurfaceEvidence = options.domainSurface && Object.hasOwn(options.domainSurface, key);
+        const domainSurfacePresent = hasDomainSurfaceEvidence
+            ? options.domainSurface![key] === true
+            : true;
+        const isDomainReview = DOMAIN_SURFACE_REVIEW_TYPES.has(key);
+        const mergedWantsReview = merged[key] === true;
+        const needsDomainSurface = (
+            isDomainReview
+            && mergedWantsReview
+            && options.forceAllDomainReviews !== true
+            && hasDomainSurfaceEvidence
+        );
+        const domainSurfaceMissing = needsDomainSurface && !domainSurfacePresent;
+        const effectiveValue = domainSurfaceMissing ? false : mergedWantsReview;
+        const forcedDomainWithoutSurface = isDomainReview
+            && mergedWantsReview
+            && options.forceAllDomainReviews === true
+            && hasDomainSurfaceEvidence
+            && !domainSurfacePresent
+            && effectiveValue;
 
         let decision: ProfileReviewDecision['decision'];
         let reason: string;
 
         const wasFloored = floorsApplied.some((f) => f.startsWith(`${key}:`));
 
-        if (wasFloored) {
+        if (domainSurfaceMissing) {
+            decision = 'not_applicable_no_domain_surface';
+            reason = `${key} review requested by profile '${profileName}', but no ${key} trigger or project surface evidence was found`;
+        } else if (forcedDomainWithoutSurface) {
+            decision = 'profile_forced';
+            reason = `${key} review explicitly forced by profile '${profileName}' even though no ${key} domain surface evidence was found`;
+        } else if (
+            isDomainReview
+            && mergedWantsReview
+            && hasDomainSurfaceEvidence
+            && domainSurfacePresent
+            && effectiveValue
+        ) {
+            decision = 'domain_triggered';
+            reason = `${key} review requested by profile '${profileName}' and kept because ${key} domain surface evidence is present`;
+        } else if (wasFloored) {
             decision = 'safety_floor_enforced';
             reason = `${key} review is mandatory for code-changing tasks; profile '${profileName}' wanted ${String(profileValue ?? 'auto')} but safety floor enforced true`;
         } else if (profileValue === 'auto' || profileValue === undefined) {
@@ -350,6 +402,9 @@ export function applyProfileGuardrails(
         } else if (profileValue === false && lightEligible && !effectiveValue) {
             decision = 'lightened_by_profile';
             reason = `${key} review lightened by profile '${profileName}' for ${scopeCategory} scope`;
+        } else if (profileValue === true && effectiveValue) {
+            decision = 'profile_forced';
+            reason = `${key} review forced by profile '${profileName}'`;
         } else {
             decision = 'profile_override';
             reason = `${key} review set to ${String(profileValue)} by profile '${profileName}'`;
@@ -390,8 +445,9 @@ export function formatProfileGuardrailDiagnostics(result: ProfileGuardrailResult
     lines.push('Decisions:');
     for (const d of result.decisions) {
         const marker = d.decision === 'safety_floor_enforced' ? '[!]'
-            : d.decision === 'lightened_by_profile' ? '[-]'
-                : '[=]';
+            : d.decision === 'lightened_by_profile' || d.decision === 'not_applicable_no_domain_surface' ? '[-]'
+                : d.decision === 'domain_triggered' ? '[+]'
+                    : '[=]';
         lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision}) — ${d.reason}`);
     }
     if (result.safety_floors_applied.length > 0) {
@@ -462,8 +518,11 @@ export function resolveConfigPaths(bundleRoot: string): {
  * with the existing config files. Config files are never modified.
  *
  * Safety floors:
- * - For code-changing tasks, `code`, `security`, `db`, and `refactor`
+ * - For code-changing tasks, `code`, `security`, and `refactor`
  *   reviews are always `true` regardless of profile.
+ * - `db` remains a legacy safety floor when no domain-surface input is
+ *   supplied; domain-aware callers may filter it to false when no DB surface
+ *   evidence exists, unless the explicit all-domain override is set.
  * - For non-code scopes (docs-only, config-only, audit-only), profiles
  *   may relax reviews.
  */
@@ -518,8 +577,17 @@ export function resolveEffectivePolicy(
             entry.review_policy,
             capabilities,
             scopeCategory,
-            profileName
+            profileName,
+            {
+                domainSurface: options.domainSurface,
+                forceAllDomainReviews: options.forceAllDomainReviews
+            }
         );
+        for (const decision of guardrailDiagnostics.decisions) {
+            if (Object.hasOwn(reviewPolicy, decision.review_type)) {
+                reviewPolicy[decision.review_type] = decision.effective_value;
+            }
+        }
     }
 
     return {

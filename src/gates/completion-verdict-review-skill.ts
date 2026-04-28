@@ -30,6 +30,10 @@ import {
     getRequiredUpstreamReviewsFromRecord,
     normalizeRequiredReviewRecord
 } from './review-dependencies';
+import {
+    findMatchingHistoricalReviewRecordedTelemetryEvent,
+    validateReviewReuseRecordedEventMatch
+} from './review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from './review-trust-policy';
 import {
     normalizeRuntimeIdentitySource,
@@ -139,6 +143,7 @@ export function validateReviewSkillEvidence(
             entry.event_type === 'REVIEW_RECORDED' &&
             String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
         ));
+        const recordEventIsReuse = recordEvent?.details?.reused_existing_review === true;
         reviewRecordedEventByKey.set(key, recordEvent);
         const routingEvent = findLatestTimelineEvent(events, (entry) => (
             entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
@@ -212,12 +217,12 @@ export function validateReviewSkillEvidence(
                 `Do not backfill '${key}' review evidence from an older execution cycle.`
             );
         }
-        if (!routingEvent) {
+        if (!routingEvent && !recordEventIsReuse) {
             result.violations.push(
                 `Code-changing task is missing REVIEWER_DELEGATION_ROUTED telemetry for required review '${key}'. ` +
                 'Required reviews must record whether delegated fresh-context execution or fallback mode was used.'
             );
-        } else {
+        } else if (routingEvent && !recordEventIsReuse) {
             const executionMode = normalizeTimelineDetailString(
                 routingEvent.details?.reviewer_execution_mode ?? routingEvent.details?.reviewerExecutionMode
             );
@@ -308,6 +313,7 @@ export function validateReviewSkillEvidence(
                     : reviewPhaseSequenceForKey == null
                         ? compilePassSequence
                         : Math.max(compilePassSequence, reviewPhaseSequenceForKey);
+                const recordEvent = reviewRecordedEventByKey.get(key) ?? null;
                 const routingEvent = findLatestTimelineEvent(events, (entry) => (
                     entry.event_type === 'REVIEWER_DELEGATION_ROUTED' &&
                     String(entry.details?.review_type || entry.details?.reviewType || '').toLowerCase() === key.toLowerCase()
@@ -386,13 +392,13 @@ export function validateReviewSkillEvidence(
                         `Required review '${key}' has invalid reviewer_routing.actual_execution_mode ` +
                         `('${String(reviewerRouting.actual_execution_mode)}') in review-context.`
                     );
-                } else if (!actualExecutionMode) {
+                } else if (!actualExecutionMode && artifact.receipt?.reused_existing_review !== true) {
                     result.violations.push(`Required review '${key}' is missing reviewer_routing.actual_execution_mode in review-context.`);
                 } else {
-                    if (!result.reviewer_execution_modes.includes(actualExecutionMode)) {
+                    if (actualExecutionMode && !result.reviewer_execution_modes.includes(actualExecutionMode)) {
                         result.reviewer_execution_modes.push(actualExecutionMode);
                     }
-                    if (routingPolicy.delegation_required && actualExecutionMode !== 'delegated_subagent') {
+                    if (actualExecutionMode && routingPolicy.delegation_required && actualExecutionMode !== 'delegated_subagent') {
                         result.violations.push(
                             `Required review '${key}' must use delegated_subagent for provider '${routingPolicy.source_of_truth || 'unknown'}'.`
                         );
@@ -403,13 +409,13 @@ export function validateReviewSkillEvidence(
                             'Record a fresh delegated_subagent reviewer for the current cycle.'
                         );
                     }
-                    if (routingPolicy.expected_execution_mode !== 'delegated_subagent' || !routingPolicy.delegation_required) {
+                    if (actualExecutionMode && (routingPolicy.expected_execution_mode !== 'delegated_subagent' || !routingPolicy.delegation_required)) {
                         result.violations.push(
                             `Required review '${key}' resolved non-delegated reviewer policy metadata for provider '${routingPolicy.source_of_truth || 'unknown'}'. ` +
                             'Mandatory reviews require delegated_subagent routing.'
                         );
                     }
-                    if (routingPolicy.fallback_allowed || routingPolicy.fallback_reason_required) {
+                    if (actualExecutionMode && (routingPolicy.fallback_allowed || routingPolicy.fallback_reason_required)) {
                         result.violations.push(
                             `Required review '${key}' resolved stale fallback-capable reviewer policy metadata for provider '${routingPolicy.source_of_truth || 'unknown'}'.`
                         );
@@ -427,11 +433,12 @@ export function validateReviewSkillEvidence(
                         );
                     }
                 }
-                if (!reviewerSessionId) {
+                if (!reviewerSessionId && artifact.receipt?.reused_existing_review !== true) {
                     result.violations.push(`Required review '${key}' is missing reviewer_routing.reviewer_session_id in review-context.`);
                 }
                 const receipt = artifact.receipt;
                 if (receipt) {
+                    const reusedExistingReview = receipt.reused_existing_review === true;
                     const receiptExecutionMode = normalizeCompatibilityReviewerExecutionMode(receipt.reviewer_execution_mode);
                     const receiptReviewerIdentity = normalizeTimelineDetailString(receipt.reviewer_identity);
                     const receiptFallbackReason = normalizeTimelineDetailString(receipt.reviewer_fallback_reason);
@@ -514,7 +521,79 @@ export function validateReviewSkillEvidence(
                             `Required review '${key}' receipt has invalid reviewer_provenance.`
                         );
                     }
-                    if (receiptExecutionMode === 'delegated_subagent' && routingEvent) {
+                    if (reusedExistingReview) {
+                        const expectedReceiptPath = normalizePath(artifact.path.replace(/\.md$/, '-receipt.json')).toLowerCase();
+                        const reuseTelemetryMatch = validateReviewReuseRecordedEventMatch({
+                            event: recordEvent,
+                            reviewType: key,
+                            receiptPath: expectedReceiptPath,
+                            reviewContextSha256: receipt.review_context_sha256,
+                            reviewContextReuseSha256: receipt.review_context_reuse_sha256,
+                            reviewScopeSha256: receipt.review_scope_sha256,
+                            codeScopeSha256: receipt.code_scope_sha256,
+                            reviewArtifactSha256: receipt.review_artifact_sha256,
+                            reusedFromReceiptPath: receipt.reused_from_receipt_path || null,
+                            reusedFromReviewContextSha256: receipt.reused_from_review_context_sha256 || null,
+                            reusedFromReviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256 || null,
+                            reusedFromReviewScopeSha256: receipt.reused_from_review_scope_sha256 || null,
+                            reusedFromCodeScopeSha256: receipt.reused_from_code_scope_sha256 || null
+                        });
+                        if (!recordEvent || recordEvent.details?.reused_existing_review !== true) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt is missing REVIEW_RECORDED reuse telemetry.`
+                            );
+                        } else if (!reuseTelemetryMatch.hasIntegrity) {
+                            result.violations.push(
+                                `Required review '${key}' REVIEW_RECORDED reuse telemetry is missing integrity.`
+                            );
+                        }
+                        else if (!reuseTelemetryMatch.matched) {
+                            result.violations.push(
+                                `Required review '${key}' REVIEW_RECORDED reuse telemetry does not match receipt reuse fields.`
+                            );
+                        }
+                        const trustViolation = getMandatoryDelegatedReviewTrustViolation({
+                            reviewKey: key,
+                            trustLevel: receiptTrustLevel,
+                            provenanceAttestationType: receiptReviewerProvenance?.attestation_type
+                        });
+                        if (trustViolation) {
+                            result.violations.push(
+                                trustViolation.replace(`Review receipt for '${key}'`, `Required review '${key}' receipt`)
+                            );
+                        }
+                        if (!receiptReviewerProvenance) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt is missing historical reviewer_provenance.`
+                            );
+                        } else if (receiptReviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt must preserve REVIEWER_INVOCATION_ATTESTED provenance.`
+                            );
+                        } else if (!invocationAttestationEvent) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED telemetry.`
+                            );
+                        } else if (!findMatchingHistoricalReviewRecordedTelemetryEvent(events, {
+                            taskId: receiptReviewerProvenance.task_id,
+                            reviewType: key,
+                            receiptPath: receipt.reused_from_receipt_path || expectedReceiptPath,
+                            reviewContextSha256: receipt.reused_from_review_context_sha256 || receiptReviewerProvenance.review_context_sha256,
+                            reviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256,
+                            reviewScopeSha256: receipt.reused_from_review_scope_sha256,
+                            codeScopeSha256: receipt.reused_from_code_scope_sha256,
+                            reviewArtifactSha256: receipt.review_artifact_sha256,
+                            reviewerExecutionMode: receiptExecutionMode,
+                            reviewerIdentity: receiptReviewerIdentity,
+                            reviewerProvenance: receiptReviewerProvenance as unknown as Record<string, unknown>,
+                            maxEventSequenceExclusive: compilePassSequence
+                        })) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt reviewer_provenance does not match historical REVIEW_RECORDED telemetry.`
+                            );
+                        }
+                    }
+                    if (receiptExecutionMode === 'delegated_subagent' && routingEvent && !reusedExistingReview) {
                         const provenanceRoutingEvent = attestedRoutingEvent || routingEvent;
                         if (!provenanceRoutingEvent.integrity) {
                             result.violations.push(
@@ -585,13 +664,13 @@ export function validateReviewSkillEvidence(
                             );
                         }
                     }
-                    if (receiptExecutionMode && actualExecutionMode && receiptExecutionMode !== actualExecutionMode) {
+                    if (!reusedExistingReview && receiptExecutionMode && actualExecutionMode && receiptExecutionMode !== actualExecutionMode) {
                         result.violations.push(
                             `Required review '${key}' has inconsistent execution mode between receipt (${receiptExecutionMode}) ` +
                             `and review-context (${actualExecutionMode}).`
                         );
                     }
-                    if (receiptReviewerIdentity && reviewerSessionId && receiptReviewerIdentity !== reviewerSessionId) {
+                    if (!reusedExistingReview && receiptReviewerIdentity && reviewerSessionId && receiptReviewerIdentity !== reviewerSessionId) {
                         result.violations.push(
                             `Required review '${key}' has inconsistent reviewer identity between receipt (${receiptReviewerIdentity}) ` +
                             `and review-context (${reviewerSessionId}).`

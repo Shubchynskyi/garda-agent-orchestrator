@@ -632,6 +632,97 @@ test('resolveEffectivePolicy: strict profile overrides all reviews to true', () 
     }
 });
 
+test('resolveEffectivePolicy: strict profile suppresses domain reviews without domain surface evidence', () => {
+    const bundleRoot = makeTempBundle({
+        reviewCapabilities: {
+            code: true, db: true, security: true, refactor: true,
+            api: true, test: true, performance: true, infra: true, dependency: true
+        }
+    });
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, {
+            profileOverride: 'strict',
+            scopeCategory: 'code',
+            domainSurface: {
+                db: false,
+                api: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        assert.equal(policy.review_policy.code, true);
+        assert.equal(policy.review_policy.security, true);
+        assert.equal(policy.review_policy.refactor, true);
+        assert.equal(policy.review_policy.db, false);
+        assert.equal(policy.review_policy.api, false);
+        assert.equal(policy.review_policy.performance, false);
+        assert.equal(policy.review_policy.dependency, false);
+        const dbDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'db');
+        const apiDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'api');
+        const performanceDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'performance');
+        const dependencyDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'dependency');
+        assert.equal(dbDecision?.decision, 'not_applicable_no_domain_surface');
+        assert.equal(dbDecision?.effective_value, false);
+        assert.equal(apiDecision?.decision, 'not_applicable_no_domain_surface');
+        assert.equal(performanceDecision?.decision, 'not_applicable_no_domain_surface');
+        assert.equal(dependencyDecision?.decision, 'not_applicable_no_domain_surface');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy: strict profile keeps domain review when domain surface evidence is present', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, {
+            profileOverride: 'strict',
+            scopeCategory: 'code',
+            domainSurface: { db: true }
+        });
+        assert.equal(policy.review_policy.db, true);
+        const dbDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'db');
+        assert.equal(dbDecision?.decision, 'domain_triggered');
+        assert.equal(dbDecision?.effective_value, true);
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy: explicit all-domain override keeps strict domain reviews without surface evidence', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, {
+            profileOverride: 'strict',
+            scopeCategory: 'code',
+            domainSurface: {
+                db: false,
+                api: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            forceAllDomainReviews: true
+        });
+        assert.equal(policy.review_policy.db, true);
+        assert.equal(policy.review_policy.api, true);
+        assert.equal(policy.review_policy.performance, true);
+        assert.equal(policy.review_policy.dependency, true);
+        assert.equal(policy.review_policy.infra, false);
+        const dbDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'db');
+        const apiDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'api');
+        const performanceDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'performance');
+        const dependencyDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'dependency');
+        assert.equal(dbDecision?.decision, 'profile_forced');
+        assert.equal(dbDecision?.effective_value, true);
+        assert.equal(apiDecision?.decision, 'profile_forced');
+        assert.equal(performanceDecision?.decision, 'profile_forced');
+        assert.equal(dependencyDecision?.decision, 'profile_forced');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
 test('resolveEffectivePolicy: resolution_sources populated', () => {
     const bundleRoot = makeTempBundle({});
     try {

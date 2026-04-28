@@ -6,6 +6,7 @@ import {
 } from '../../exit-codes';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../../gate-runtime/token-telemetry';
 import { applyOutputFilterProfile } from '../../../gate-runtime/output-filters';
+import { type ReviewReceipt } from '../../../gate-runtime/review-context';
 import {
     emitMandatoryReviewPhaseStartedEvent,
     emitStatusChangedEvent
@@ -477,12 +478,24 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         reviewContext?: Record<string, unknown>;
         reviewContextPath?: string | null;
         reviewContextSha256?: string | null;
+        artifactSha256?: string | null;
+        receipt?: ReviewReceipt | null;
     }> = {};
     for (const entry of artifactEvidence.checked) {
         if (entry.present && entry.path) {
             try {
                 let reviewContext: Record<string, unknown> | undefined;
                 let reviewContextPath: string | null = null;
+                const artifactSha256 = gateHelpers.fileSha256(entry.path);
+                const receiptPath = entry.path.replace(/\.md$/, '-receipt.json');
+                let receipt: ReviewReceipt | null = null;
+                if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
+                    try {
+                        receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
+                    } catch {
+                        receipt = null;
+                    }
+                }
                 if (entry.review_context_present && entry.review_context_path) {
                     reviewContextPath = path.resolve(entry.review_context_path);
                     if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
@@ -499,7 +512,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                     reviewContextPath,
                     reviewContextSha256: reviewContextPath && fs.existsSync(reviewContextPath)
                         ? gateHelpers.fileSha256(reviewContextPath)
-                        : null
+                        : null,
+                    artifactSha256,
+                    receipt
                 };
             } catch (e) {
                 // ignore

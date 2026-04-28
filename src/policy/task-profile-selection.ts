@@ -23,6 +23,11 @@ export interface ResolvedTaskProfileSelection {
     effective_policy: EffectivePolicy;
 }
 
+export interface TaskProfileSelectionOptions {
+    domainSurface?: Record<string, boolean>;
+    forceAllDomainReviews?: boolean;
+}
+
 export function normalizeTaskProfileValue(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized || null;
@@ -31,7 +36,8 @@ export function normalizeTaskProfileValue(value: unknown): string | null {
 export function resolveTaskProfileSelection(
     bundleRoot: string,
     taskProfile: unknown,
-    scopeCategory: string | null = null
+    scopeCategory: string | null = null,
+    options: TaskProfileSelectionOptions = {}
 ): ResolvedTaskProfileSelection {
     const profilesPath = path.join(bundleRoot, 'live', 'config', 'profiles.json');
     const profilesData = loadProfilesData(profilesPath);
@@ -41,7 +47,9 @@ export function resolveTaskProfileSelection(
     const usesTaskQueueProfile = normalizedTaskProfile != null && normalizedTaskProfile !== 'default';
     const effectivePolicy = resolveEffectivePolicy(bundleRoot, {
         ...(usesTaskQueueProfile ? { profileOverride: normalizedTaskProfile } : {}),
-        ...(scopeCategory ? { scopeCategory } : {})
+        ...(scopeCategory ? { scopeCategory } : {}),
+        ...(options.domainSurface ? { domainSurface: options.domainSurface } : {}),
+        ...(options.forceAllDomainReviews === true ? { forceAllDomainReviews: true } : {})
     });
 
     return {

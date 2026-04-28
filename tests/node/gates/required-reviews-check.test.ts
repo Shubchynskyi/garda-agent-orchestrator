@@ -1292,6 +1292,137 @@ describe('gates/required-reviews-check', () => {
             assert.ok(result.violations.some((violation) => violation.includes('missing reviewer_provenance')));
         });
 
+        it('rejects reused review telemetry when the current-cycle REVIEW_RECORDED event has no integrity', () => {
+            const originalContextSha = '1'.repeat(64);
+            const currentContextSha = '2'.repeat(64);
+            const contextReuseSha = '3'.repeat(64);
+            const routingEventSha = '4'.repeat(64);
+            const invocationEventSha = '5'.repeat(64);
+            const artifactSha = '6'.repeat(64);
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-053',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                timelineEvents: [
+                    {
+                        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        sequence: 0,
+                        details: {
+                            task_id: 'T-053',
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            review_context_sha256: originalContextSha,
+                            routing_event_sha256: routingEventSha
+                        },
+                        integrity: {
+                            schema_version: 1,
+                            task_sequence: 12,
+                            prev_event_sha256: null,
+                            event_sha256: invocationEventSha
+                        }
+                    },
+                    { event_type: 'COMPILE_GATE_PASSED', sequence: 1, details: {}, integrity: null },
+                    {
+                        event_type: 'REVIEW_RECORDED',
+                        sequence: 2,
+                        details: {
+                            review_type: 'code',
+                            reused_existing_review: true,
+                            receipt_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-code-receipt.json',
+                            review_context_sha256: currentContextSha,
+                            review_artifact_sha256: artifactSha,
+                            reused_from_receipt_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-code-receipt.json',
+                            reused_from_review_context_sha256: originalContextSha,
+                            reused_from_review_context_reuse_sha256: contextReuseSha
+                        },
+                        integrity: null
+                    }
+                ],
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated reused review evidence with concrete implementation detail and a non-trivial receipt fixture.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-053',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-preflight.json',
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'explicit_provider',
+                            identity_status: 'resolved',
+                            actual_execution_mode: null,
+                            reviewer_session_id: null
+                        }
+                    },
+                    reviewContextSha256: currentContextSha,
+                    artifactSha256: artifactSha,
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-053',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_scope_sha256: null,
+                        code_scope_sha256: null,
+                        review_context_sha256: currentContextSha,
+                        review_context_reuse_sha256: contextReuseSha,
+                        review_artifact_sha256: artifactSha,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:code-reviewer',
+                        reviewer_fallback_reason: null,
+                        reviewer_provenance: {
+                            schema_version: 1,
+                            attestation_type: 'reviewer_invocation_attestation',
+                            controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                            task_sequence: 12,
+                            prev_event_sha256: null,
+                            event_sha256: invocationEventSha,
+                            task_id: 'T-053',
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            review_context_sha256: originalContextSha,
+                            routing_event_sha256: routingEventSha
+                        },
+                        trust_level: 'INDEPENDENT_AUDITED',
+                        reused_existing_review: true,
+                        reused_from_receipt_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-053-code-receipt.json',
+                        reused_from_review_context_sha256: originalContextSha,
+                        reused_from_review_context_reuse_sha256: contextReuseSha,
+                        recorded_at_utc: '2026-04-28T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => (
+                violation.includes('missing current-cycle REVIEW_RECORDED reuse telemetry')
+            )));
+        });
+
         it('rejects receipts whose fallback reason diverges from review-context routing metadata', () => {
             const result = validateReviewArtifactGateEligibility({
                 resolvedTaskId: 'T-105',

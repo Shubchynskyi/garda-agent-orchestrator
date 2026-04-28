@@ -1914,6 +1914,112 @@ describe('gates/completion — stage and evidence validation', () => {
             assert.ok(result.violations.some(v => v.includes('REVIEWER_DELEGATION_ROUTED telemetry')));
         });
 
+        it('fails reused review receipts when REVIEW_RECORDED reuse telemetry lacks integrity', () => {
+            const originalContextSha = '1'.repeat(64);
+            const currentContextSha = '2'.repeat(64);
+            const contextReuseSha = '3'.repeat(64);
+            const routingEventSha = '4'.repeat(64);
+            const invocationEventSha = '5'.repeat(64);
+            const artifactSha = '6'.repeat(64);
+            const events = [
+                makeEvent('REVIEWER_INVOCATION_ATTESTED', 0, {
+                    task_id: 'T-123',
+                    review_type: 'code',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer',
+                    reviewer_identity: 'agent:code-reviewer',
+                    review_context_sha256: originalContextSha,
+                    routing_event_sha256: routingEventSha
+                }, {
+                    schema_version: 1,
+                    task_sequence: 12,
+                    prev_event_sha256: null,
+                    event_sha256: invocationEventSha
+                }),
+                makeEvent('COMPILE_GATE_PASSED', 1),
+                makeEvent('REVIEW_PHASE_STARTED', 2, { review_type: 'code' }),
+                makeEvent('SKILL_SELECTED', 3, { skill_id: 'code-review' }),
+                makeEvent('SKILL_REFERENCE_LOADED', 4, {
+                    skill_id: 'code-review',
+                    reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
+                }),
+                makeEvent('REVIEW_RECORDED', 5, {
+                    review_type: 'code',
+                    reused_existing_review: true,
+                    receipt_path: '/reviews/T-123-code-receipt.json',
+                    review_context_sha256: currentContextSha,
+                    review_artifact_sha256: artifactSha,
+                    reused_from_receipt_path: '/reviews/T-123-code-receipt.json',
+                    reused_from_review_context_sha256: originalContextSha,
+                    reused_from_review_context_reuse_sha256: contextReuseSha
+                }),
+                makeEvent('REVIEW_GATE_PASSED', 6)
+            ];
+            const result = validateReviewSkillEvidence(
+                events,
+                { code: true },
+                {
+                    code: {
+                        path: '/reviews/T-123-code.md',
+                        reviewContext: {
+                            reviewer_routing: {
+                                source_of_truth: 'Codex',
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                execution_provider_source: 'explicit_provider',
+                                identity_status: 'resolved',
+                                actual_execution_mode: null,
+                                reviewer_session_id: null
+                            }
+                        },
+                        receipt: {
+                            schema_version: 2,
+                            task_id: 'T-123',
+                            review_type: 'code',
+                            preflight_sha256: null,
+                            scope_sha256: null,
+                            review_context_sha256: currentContextSha,
+                            review_context_reuse_sha256: contextReuseSha,
+                            review_artifact_sha256: artifactSha,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            reviewer_fallback_reason: null,
+                            reviewer_provenance: {
+                                schema_version: 1,
+                                attestation_type: 'reviewer_invocation_attestation',
+                                controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                                task_sequence: 12,
+                                prev_event_sha256: null,
+                                event_sha256: invocationEventSha,
+                                task_id: 'T-123',
+                                review_type: 'code',
+                                reviewer_execution_mode: 'delegated_subagent',
+                                reviewer_identity: 'agent:code-reviewer',
+                                review_context_sha256: originalContextSha,
+                                routing_event_sha256: routingEventSha
+                            },
+                            trust_level: 'INDEPENDENT_AUDITED',
+                            reused_existing_review: true,
+                            reused_from_receipt_path: '/reviews/T-123-code-receipt.json',
+                            reused_from_review_context_sha256: originalContextSha,
+                            reused_from_review_context_reuse_sha256: contextReuseSha,
+                            recorded_at_utc: '2026-01-01T00:00:00.000Z'
+                        }
+                    }
+                },
+                true,
+                '/repo/garda-agent-orchestrator/runtime/task-events/T-123.jsonl',
+                'Codex',
+                'Codex',
+                false,
+                'explicit_provider'
+            );
+
+            assert.ok(result.violations.some((violation) => (
+                violation.includes("Required review 'code' REVIEW_RECORDED reuse telemetry is missing integrity")
+            )), JSON.stringify(result, null, 2));
+        });
+
         // T-1005: Receipt field presence enforcement tests
         it('fails when receipt is missing reviewer_execution_mode', () => {
             const events = [

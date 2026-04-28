@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
 import { buildReviewContextSections, type ReviewContextSectionsResult } from '../gate-runtime/review-context';
+import { stringSha256 } from '../gate-runtime/hash';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
@@ -11,6 +12,13 @@ import {
 import { fileSha256, normalizePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
 import { resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { getCanonicalReviewContextPath } from './review-context-paths';
+import {
+    buildGitDiffSummary,
+    readReviewContextChangedFiles,
+    REVIEW_CONTEXT_DIFF_MAX_CHARS,
+    REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS,
+    type GitDiffSummary
+} from './review-context-diff';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 import { getReviewSkillCandidates, hasSkillEntrypoint } from '../core/review-capabilities';
@@ -104,6 +112,104 @@ export function toNonNegativeInt(value: unknown): number | null {
         const parsed = parseInt(String(value).trim(), 10);
         return parsed >= 0 ? parsed : null;
     } catch { return null; }
+}
+
+function summarizeBooleanRecord(record: unknown): string[] {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+        return [];
+    }
+    return Object.entries(record as Record<string, unknown>)
+        .filter(([, value]) => value === true)
+        .map(([key]) => key)
+        .sort();
+}
+
+function buildTaskScopeMarkdown(options: {
+    taskId: string | null;
+    reviewType: string;
+    depth: number;
+    preflightPath: string;
+    preflightSha256: string | null;
+    preflight: Record<string, unknown>;
+    changedFiles: string[];
+    requiredReviews: string[];
+    activeTriggers: string[];
+    gitDiff: GitDiffSummary;
+}): string {
+    const lines: string[] = [];
+    const fullDiffText = options.gitDiff.diff || '';
+    const promptDiffMaxChars = options.reviewType === 'code'
+        ? REVIEW_CONTEXT_DIFF_MAX_CHARS
+        : REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS;
+    const promptDiffText = fullDiffText.slice(0, promptDiffMaxChars);
+    const promptDiffExcerptTruncated = fullDiffText.length > promptDiffMaxChars;
+    const diffFence = buildMarkdownFence(promptDiffText, 'diff');
+    const statFence = buildMarkdownFence(options.gitDiff.stat || '', 'text');
+    lines.push(`# Review Context: ${options.taskId || '<unknown>'} ${options.reviewType}`);
+    lines.push('');
+    lines.push('## Task Scope');
+    lines.push(`- Review type: ${options.reviewType}`);
+    lines.push(`- Depth: ${options.depth}`);
+    lines.push(`- Path mode: ${String(options.preflight.mode || 'unknown')}`);
+    lines.push(`- Scope category: ${String(options.preflight.scope_category || 'unknown')}`);
+    lines.push(`- Preflight path: ${normalizePath(options.preflightPath)}`);
+    lines.push(`- Preflight sha256: ${options.preflightSha256 || 'unknown'}`);
+    lines.push(`- Required reviews: ${options.requiredReviews.length > 0 ? options.requiredReviews.join(', ') : 'none'}`);
+    lines.push(`- Active triggers: ${options.activeTriggers.length > 0 ? options.activeTriggers.join(', ') : 'none'}`);
+    lines.push('');
+    lines.push('## Changed Files');
+    if (options.changedFiles.length === 0) {
+        lines.push('- none');
+    } else {
+        for (const changedFile of options.changedFiles) {
+            lines.push(`- ${changedFile}`);
+        }
+    }
+    lines.push('');
+    lines.push('## Current Diff Stat');
+    if (options.gitDiff.stat) {
+        lines.push(statFence.open);
+        lines.push(options.gitDiff.stat);
+        lines.push(statFence.close);
+    } else {
+        lines.push(options.gitDiff.error ? `Unavailable: ${options.gitDiff.error}` : 'none');
+    }
+    lines.push('');
+    lines.push('## Current Scoped Diff');
+    if (promptDiffText) {
+        lines.push(diffFence.open);
+        lines.push(promptDiffText);
+        if (options.gitDiff.diff_truncated || promptDiffExcerptTruncated) {
+            lines.push('');
+            if (options.reviewType === 'code' && !promptDiffExcerptTruncated) {
+                lines.push(`[diff truncated at ${REVIEW_CONTEXT_DIFF_MAX_CHARS} chars from ${options.gitDiff.diff_char_count} chars]`);
+            } else {
+                const fullBoundedNote = options.gitDiff.diff_truncated
+                    ? ` from ${options.gitDiff.diff_char_count} chars`
+                    : '';
+                const cacheNote = options.gitDiff.cache_path
+                    ? `; full bounded scoped diff cache: ${options.gitDiff.cache_path}`
+                    : '';
+                lines.push(`[diff excerpt truncated at ${promptDiffMaxChars} chars${fullBoundedNote}${cacheNote}]`);
+            }
+        }
+        lines.push(diffFence.close);
+    } else {
+        lines.push(options.gitDiff.error ? `Unavailable: ${options.gitDiff.error}` : 'none');
+    }
+    lines.push('');
+    lines.push('## Rule Context');
+    return lines.join('\n');
+}
+
+function buildMarkdownFence(content: string, info: string): { open: string; close: string } {
+    const longestFence = [...content.matchAll(/`{3,}/g)]
+        .reduce((maxLength, match) => Math.max(maxLength, match[0].length), 2);
+    const fence = '`'.repeat(longestFence + 1);
+    return {
+        open: `${fence}${info}`,
+        close: fence
+    };
 }
 
 export interface TokenEconomyConfig {
@@ -299,6 +405,23 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         fail_tail_lines: failTailLines
     };
     const tokenEconomyOmissionReason = (omittedSections.length > 0 || omittedRulePaths.length > 0) ? 'token_economy_compaction' : 'none';
+    const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
+    const requiredReviewTypes = summarizeBooleanRecord(preflight.required_reviews);
+    const activeTriggers = summarizeBooleanRecord(preflight.triggers);
+    const gitDiff = buildGitDiffSummary(repoRoot, changedFiles, preflight, preflightPath);
+    const preflightSha256 = fileSha256(preflightPath);
+    const taskScopeMarkdown = buildTaskScopeMarkdown({
+        taskId,
+        reviewType,
+        depth,
+        preflightPath,
+        preflightSha256,
+        preflight,
+        changedFiles,
+        requiredReviews: requiredReviewTypes,
+        activeTriggers,
+        gitDiff
+    });
 
     // Build the rule context artifact using gate-runtime
     const ruleContextArtifactPath = outputPath.replace(/\.json$/, '.md');
@@ -329,10 +452,11 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         });
         options.ruleContextSectionsCache?.set(ruleContextSectionsCacheKey, ruleContextSections);
     }
+    const promptArtifactText = `${taskScopeMarkdown}\n\n${ruleContextSections.artifact_text}`;
 
     const ruleContextArtifact = {
         artifact_path: normalizePath(ruleContextArtifactPath),
-        artifact_sha256: ruleContextSections.artifact_sha256,
+        artifact_sha256: stringSha256(promptArtifactText),
         source_file_count: ruleContextSections.source_file_count,
         strip_examples_applied: stripExamplesApplied,
         strip_code_blocks_applied: stripCodeBlocksApplied,
@@ -364,7 +488,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         token_economy_active: !!tokenEconomyActive,
         required_review: !!requiredReview,
         preflight_path: normalizePath(preflightPath),
-        preflight_sha256: fileSha256(preflightPath),
+        preflight_sha256: preflightSha256,
         output_path: normalizePath(outputPath),
         token_economy_config_path: normalizePath(tokenEconomyConfigPath),
         compatibility,
@@ -384,6 +508,27 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             omission_reason: tokenEconomyOmissionReason
         },
         rule_context: ruleContextArtifact,
+        task_scope: {
+            changed_files: changedFiles,
+            changed_file_count: changedFiles.length,
+            required_reviews: requiredReviewTypes,
+            active_triggers: activeTriggers,
+            diff_stat: gitDiff.stat,
+            diff: {
+                available: !!gitDiff.diff,
+                source: gitDiff.source,
+                char_count: gitDiff.diff_char_count,
+                truncated: gitDiff.diff_truncated,
+                max_chars: REVIEW_CONTEXT_DIFF_MAX_CHARS,
+                prompt_max_chars: reviewType === 'code'
+                    ? REVIEW_CONTEXT_DIFF_MAX_CHARS
+                    : REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS,
+                command_status: gitDiff.command_status,
+                error: gitDiff.error,
+                cache_path: gitDiff.cache_path,
+                cached: gitDiff.cached
+            }
+        },
         scoped_diff: {
             expected: !!scopedDiffExpected,
             metadata_path: normalizePath(scopedDiffMetadataPath),
@@ -425,7 +570,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     };
 
     withReviewArtifactLock(outputPath, () => {
-        writeArtifactFileAtomically(ruleContextArtifactPath, String(ruleContextSections.artifact_text));
+        writeArtifactFileAtomically(ruleContextArtifactPath, promptArtifactText);
         writeArtifactFileAtomically(outputPath, JSON.stringify(result, null, 2) + '\n');
     });
 

@@ -151,6 +151,7 @@ export interface ClassifyChangeCommandOptions {
     taskId?: unknown;
     taskModePath?: string;
     rulePackPath?: string;
+    forceAllDomainReviews?: unknown;
     outputPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -187,6 +188,20 @@ function appendNextStepRecoveryHint(message: string, repoRoot: string, taskId: s
         return trimmed;
     }
     return `${trimmed} NextStep: run ${buildNextStepRecoveryCommand(repoRoot, taskId)} and follow its single recommended command before retrying compile-gate.`;
+}
+
+function hasArrayEntries(value: unknown): boolean {
+    return Array.isArray(value) && value.length > 0;
+}
+
+function buildDomainReviewSurface(triggers: Record<string, unknown>): Record<string, boolean> {
+    return {
+        db: triggers.db === true || hasArrayEntries(triggers.db_project_evidence),
+        api: triggers.api === true,
+        performance: triggers.performance === true,
+        infra: triggers.infra === true,
+        dependency: triggers.dependency === true
+    };
 }
 
 function getClassificationRenameCount(repoRoot: string, detectionSource: string, changedFiles: string[]): number {
@@ -569,7 +584,11 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 const resolvedProfile = resolveTaskProfileSelection(
                     orchestratorRoot,
                     rawTaskProfile,
-                    typeof result.scope_category === 'string' ? result.scope_category : null
+                    typeof result.scope_category === 'string' ? result.scope_category : null,
+                    {
+                        domainSurface: buildDomainReviewSurface(result.triggers as Record<string, unknown>),
+                        forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false)
+                    }
                 );
                 effectiveTaskPolicy = resolvedProfile.effective_policy;
                 (result as Record<string, unknown>).profile_selection = resolvedProfile.selection;
@@ -582,7 +601,13 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     const guardrailDecision = guardrailDecisions.get(reviewType);
                     if (currentValue === true) {
                         (result.required_reviews as Record<string, boolean>)[reviewType] = true;
-                    } else if (guardrailDecision?.profile_wanted === true) {
+                    } else if (
+                        guardrailDecision?.effective_value === true
+                        && (
+                            guardrailDecision.profile_wanted === true
+                            || guardrailDecision.decision === 'profile_forced'
+                        )
+                    ) {
                         (result.required_reviews as Record<string, boolean>)[reviewType] = true;
                     } else {
                         (result.required_reviews as Record<string, boolean>)[reviewType] = false;

@@ -43,7 +43,7 @@
       }
     },
     "strict": {
-      "description": "Maximum rigour: deep depth, all reviews enabled, full token economy with no stripping.",
+      "description": "Maximum rigour: deep depth, core reviews enabled, and domain reviews kept evidence-aware.",
       "depth": 3,
       "review_policy": {
         "code": true,

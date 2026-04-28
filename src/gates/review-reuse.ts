@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
 
 import { matchAnyRegex } from '../gate-runtime/text-utils';
 import { getClassificationConfig, isDocumentationLikePath, isRuntimeCodeLikePath } from './classify-change';
@@ -25,6 +26,10 @@ export interface ReviewRelevantScopeFingerprint {
     missing_review_relevant_files: string[];
     review_scope_sha256: string | null;
     docs_only: boolean;
+}
+
+export function isNonTestReviewScope(reviewType: string): boolean {
+    return String(reviewType || '').trim().toLowerCase() !== 'test';
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -64,8 +69,65 @@ function toSourceFileSummary(value: unknown): Array<Record<string, unknown>> {
         .filter((entry) => Object.keys(entry).length > 0)
         .map((entry) => ({
             path: String(entry.path || entry.file || '').trim() || null,
-            sha256: String(entry.sha256 || entry.hash || '').trim() || null
+            sha256: String(entry.content_sha256 || entry.sha256 || entry.hash || '').trim() || null
         }));
+}
+
+function getDetectionSource(preflight: Record<string, unknown>): string {
+    return String(preflight.detection_source || '').trim().toLowerCase();
+}
+
+function usesStagedContent(preflight: Record<string, unknown>): boolean {
+    const detectionSource = getDetectionSource(preflight);
+    return detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked';
+}
+
+function getStagedBlobFingerprint(repoRoot: string, relativePath: string): string | null {
+    try {
+        const result = childProcess.spawnSync('git', ['ls-files', '-s', '--', `:(literal)${relativePath}`], {
+            cwd: repoRoot,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+            timeout: 30_000
+        });
+        if (result.status !== 0) {
+            return null;
+        }
+        const firstLine = String(result.stdout || '').split(/\r?\n/).find((line) => line.trim());
+        if (!firstLine) {
+            return null;
+        }
+        const match = /^(\d+)\s+([0-9a-f]{40,64})\s+\d+\t/.exec(firstLine);
+        if (!match || !match[1] || !match[2]) {
+            return null;
+        }
+        return `staged:${match[1]}:${match[2].toLowerCase()}`;
+    } catch {
+        return null;
+    }
+}
+
+function getScopedContentFingerprint(
+    repoRoot: string,
+    preflight: Record<string, unknown>,
+    relativePath: string
+): { fingerprint: string | null; missing: boolean } {
+    if (usesStagedContent(preflight)) {
+        const stagedFingerprint = getStagedBlobFingerprint(repoRoot, relativePath);
+        if (stagedFingerprint) {
+            return { fingerprint: stagedFingerprint, missing: false };
+        }
+        if (getDetectionSource(preflight) === 'git_staged_only') {
+            return { fingerprint: null, missing: true };
+        }
+    }
+    const absolutePath = path.resolve(repoRoot, relativePath);
+    const hash = fileSha256(absolutePath);
+    return {
+        fingerprint: hash ? `worktree:${hash}` : null,
+        missing: !hash
+    };
 }
 
 export function computeCodeReviewScopeFingerprint(
@@ -91,12 +153,11 @@ export function computeCodeReviewScopeFingerprint(
     const sortedNonTestFiles = [...nonTestChangedFiles].sort();
     const missingNonTestFiles: string[] = [];
     const fingerprintEntries = sortedNonTestFiles.map((relativePath) => {
-        const absolutePath = path.resolve(repoRoot, relativePath);
-        const hash = fileSha256(absolutePath);
-        if (!hash) {
+        const scopedFingerprint = getScopedContentFingerprint(repoRoot, preflight, relativePath);
+        if (scopedFingerprint.missing) {
             missingNonTestFiles.push(relativePath);
         }
-        return `${relativePath}:${hash || 'MISSING'}`;
+        return `${relativePath}:${scopedFingerprint.fingerprint || 'MISSING'}`;
     });
 
     return {
@@ -127,12 +188,11 @@ export function computeReviewRelevantScopeFingerprint(
     const sortedReviewRelevantFiles = [...reviewRelevantFiles].sort();
     const missingReviewRelevantFiles: string[] = [];
     const fingerprintEntries = sortedReviewRelevantFiles.map((relativePath) => {
-        const absolutePath = path.resolve(repoRoot, relativePath);
-        const hash = fileSha256(absolutePath);
-        if (!hash) {
+        const scopedFingerprint = getScopedContentFingerprint(repoRoot, preflight, relativePath);
+        if (scopedFingerprint.missing) {
             missingReviewRelevantFiles.push(relativePath);
         }
-        return `${relativePath}:${hash || 'MISSING'}`;
+        return `${relativePath}:${scopedFingerprint.fingerprint || 'MISSING'}`;
     });
 
     return {
@@ -175,11 +235,9 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
             omission_reason: String(tokenEconomy.omission_reason || '').trim() || null
         },
         rule_context: {
-            artifact_sha256: String(ruleContext.artifact_sha256 || '').trim().toLowerCase() || null,
             source_file_count: typeof ruleContext.source_file_count === 'number' ? ruleContext.source_file_count : null,
             strip_examples_applied: ruleContext.strip_examples_applied === true,
             strip_code_blocks_applied: ruleContext.strip_code_blocks_applied === true,
-            summary: toRecord(ruleContext.summary),
             source_files: toSourceFileSummary(ruleContext.source_files)
         },
         scoped_diff: {
