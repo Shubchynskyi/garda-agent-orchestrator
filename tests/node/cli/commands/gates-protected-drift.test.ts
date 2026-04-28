@@ -701,6 +701,10 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest was already drifted before task start')));
+        assert.ok(result.outputLines.some((line) => line.includes('Restart task mode with:')));
+        assert.ok(result.outputLines.some((line) => line.includes('--orchestrator-work')));
+        assert.ok(result.outputLines.some((line) => line.includes('--planned-changed-file "src/app.ts"')));
+        assert.equal(result.outputLines.some((line) => line.includes('--planned-changed-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"')), false);
         assert.ok(result.outputLines.some((line) => line.includes('next-step')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -979,6 +983,287 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.status, 'PASSED');
         assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'PASS');
         assert.deepEqual(completionResult.isolation_mode_warnings, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('emits restart command on unrelated protected manifest drift without widening planned scope', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-compile-restart-cmd';
+        const driftedFile = 'garda-agent-orchestrator/live/docs/agent-rules/00-core.md';
+
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Test compile-gate restart command on manifest drift'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            triggers: {
+                protected_control_plane_manifest_status: 'MATCH',
+                protected_control_plane_manifest_changed_files: []
+            }
+        });
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        writeDriftedProtectedManifest(repoRoot, [driftedFile]);
+
+        const commandsPath = path.join(repoRoot, 'commands-compile-restart.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile gate')));
+        assert.ok(result.outputLines.some((line) => line.includes(driftedFile)));
+        assert.ok(result.outputLines.some((line) => line.includes('Restart task mode with:')));
+        assert.ok(result.outputLines.some((line) => line.includes('--orchestrator-work')));
+        assert.ok(result.outputLines.some((line) => line.includes('--planned-changed-file "src/app.ts"')));
+        assert.equal(result.outputLines.some((line) => line.includes(`--planned-changed-file "${driftedFile}"`)), false);
+        assert.ok(result.outputLines.some((line) => line.includes('next-step')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('includes task-owned generated protected manifest drift in compile-gate restart command', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-compile-generated-restart-cmd';
+        const generatedFile = 'dist/src/app.js';
+
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Test task-owned generated manifest drift in restart command'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            triggers: {
+                protected_control_plane_manifest_status: 'MATCH',
+                protected_control_plane_manifest_changed_files: []
+            }
+        });
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        writeDriftedProtectedManifest(repoRoot, [generatedFile]);
+
+        const commandsPath = path.join(repoRoot, 'commands-compile-generated-restart.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile gate')));
+        assert.ok(result.outputLines.some((line) => line.includes(generatedFile)));
+        assert.ok(result.outputLines.some((line) => line.includes('Restart task mode with:')));
+        assert.ok(result.outputLines.some((line) => line.includes('--orchestrator-work')));
+        assert.ok(result.outputLines.some((line) => line.includes('--planned-changed-file "src/app.ts"')));
+        assert.ok(result.outputLines.some((line) => line.includes(`--planned-changed-file "${generatedFile}"`)));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change restart command keeps explicitly supplied protected files in planned scope', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-merge-planned-scope';
+        const protectedFile = 'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md';
+        const nonProtectedFile = 'src/app.ts';
+        const extraPlannedFile = 'src/feature/extra.ts';
+
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Merge planned and observed protected scope',
+            plannedChangedFiles: [extraPlannedFile]
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        let error: Error | null = null;
+        try {
+            runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Merge planned and observed protected scope',
+                changedFiles: [protectedFile, nonProtectedFile],
+                outputPath: preflightPath,
+                emitMetrics: false
+            });
+        } catch (caught: unknown) {
+            error = caught instanceof Error ? caught : new Error(String(caught));
+        }
+
+        assert.ok(error);
+        assert.ok(error.message.includes('--orchestrator-work'));
+        assert.ok(error.message.includes('Suggested command:'));
+        assert.ok(error.message.includes(`--planned-changed-file "${protectedFile}"`));
+        assert.ok(error.message.includes(`--planned-changed-file "${nonProtectedFile}"`));
+        assert.ok(error.message.includes(`--planned-changed-file "${extraPlannedFile}"`));
+        assert.equal(fs.existsSync(preflightPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change restart command excludes mutable optional task-mode metadata from copy-paste remediation', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-exact-rerun-metadata';
+        const protectedFile = 'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md';
+        const planPath = path.join(repoRoot, 'runtime-plan.json');
+        const normalizedPlanPath = planPath.replace(/\\/g, '/');
+
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(planPath, JSON.stringify({ ok: true }, null, 2), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Preserve exact rerun metadata',
+            requestedDepth: 2,
+            effectiveDepth: 3,
+            actor: 'review-operator'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const taskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        taskModeArtifact.plan = {
+            plan_path: normalizedPlanPath,
+            plan_sha256: 'test-plan-sha256',
+            plan_summary: 'Preserve exact rerun metadata'
+        };
+        fs.writeFileSync(taskModePath, JSON.stringify(taskModeArtifact, null, 2), 'utf8');
+
+        const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        let error: Error | null = null;
+        try {
+            runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Preserve exact rerun metadata',
+                changedFiles: [protectedFile],
+                outputPath: preflightPath,
+                emitMetrics: false
+            });
+        } catch (caught: unknown) {
+            error = caught instanceof Error ? caught : new Error(String(caught));
+        }
+
+        assert.ok(error);
+        assert.ok(error.message.includes('--effective-depth "3"'));
+        assert.equal(error.message.includes('--actor "review-operator"'), false);
+        assert.equal(error.message.includes(`--plan-path "${normalizedPlanPath}"`), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('emits restart command when compile command generates a protected file causing post-compile drift', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-compile-drift';
+        const generatedFile = 'garda-agent-orchestrator/live/docs/agent-rules/generated-rule.md';
+        const generatedFileAbs = path.join(repoRoot, ...generatedFile.split('/'));
+
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        fs.mkdirSync(path.dirname(generatedFileAbs), { recursive: true });
+        fs.writeFileSync(generatedFileAbs, '# initial content\n', 'utf8');
+        writeDriftedProtectedManifest(repoRoot, []);
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Test post-compile manifest drift'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(repoRoot, taskId, 'Test post-compile manifest drift', ['src/app.ts']);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const triggers = preflight.triggers as Record<string, unknown>;
+        assert.equal(triggers.protected_control_plane_manifest_status, 'MATCH');
+
+        const commandsPath = path.join(repoRoot, 'commands-post-compile-drift.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const compileScript = `require('node:fs').writeFileSync('${generatedFile}', '# modified by compile')`;
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            `node -e "${compileScript}"`,
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile output validation')));
+        assert.ok(result.outputLines.some((line) => line.includes(generatedFile)));
+        assert.ok(result.outputLines.some((line) => line.includes('Restart task mode with:')));
+        assert.ok(result.outputLines.some((line) => line.includes('--orchestrator-work')));
+        assert.ok(result.outputLines.some((line) => line.includes('--planned-changed-file "src/app.ts"')));
+        assert.ok(result.outputLines.some((line) => line.includes(`--planned-changed-file "${generatedFile}"`)));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

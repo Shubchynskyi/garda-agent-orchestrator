@@ -25,6 +25,7 @@ interface ProtectedManifestLifecycleGuardOptions {
     manifestEvidence?: ProtectedControlPlaneManifestEvidence | null;
     dirtyWorkspaceProtectionStatus?: string | null;
     dirtyWorkspaceProtectedFiles?: string[] | null;
+    restartCommandHint?: string;
 }
 
 function buildRemediationSuffix(): string {
@@ -155,11 +156,14 @@ export function getProtectedManifestLifecycleGuard(
         const driftFiles = preflightManifestChangedFiles.length > 0
             ? preflightManifestChangedFiles
             : manifestEvidence.changed_files;
+        const remediation = options.restartCommandHint
+            ? `Restart task mode with: ${options.restartCommandHint}`
+            : buildRemediationSuffix();
         return {
             status: 'BLOCK',
             manifest_evidence: manifestEvidence,
             violations: [
-                `Trusted protected control-plane manifest was already drifted before task start: ${driftFiles.join(', ') || 'unknown protected files'}. ${buildRemediationSuffix()}`
+                `Trusted protected control-plane manifest was already drifted before task start: ${driftFiles.join(', ') || 'unknown protected files'}. ${remediation}`
             ]
         };
     }
@@ -174,11 +178,15 @@ export function getProtectedManifestLifecycleGuard(
         };
     }
     if (manifestEvidence.status === 'DRIFT' && currentManifestAllowance.status !== 'INHERITED_BASELINE_ONLY') {
+        const driftFiles = manifestEvidence.changed_files.join(', ') || 'unknown protected files';
+        const remediation = options.restartCommandHint
+            ? `Restart task mode with: ${options.restartCommandHint}`
+            : buildRemediationSuffix();
         return {
             status: 'BLOCK',
             manifest_evidence: manifestEvidence,
             violations: [
-                `Trusted protected control-plane manifest drift detected before ${options.phaseLabel}: ${manifestEvidence.changed_files.join(', ') || 'unknown protected files'}. ${buildRemediationSuffix()}`
+                `Trusted protected control-plane manifest drift detected before ${options.phaseLabel}: ${driftFiles}. ${remediation}`
             ]
         };
     }

@@ -320,6 +320,73 @@ function quotePowerShellCliValue(value: string): string {
     return `"${String(value).replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"')}"`;
 }
 
+function getDistGeneratedSourceCandidates(filePath: string): string[] {
+    const normalized = gateHelpers.normalizePath(filePath);
+    const distPayload = normalized.startsWith('dist/')
+        ? normalized.slice('dist/'.length)
+        : (() => {
+            const marker = '/dist/';
+            const markerIndex = normalized.indexOf(marker);
+            return markerIndex >= 0
+                ? `${normalized.slice(0, markerIndex + 1)}${normalized.slice(markerIndex + marker.length)}`
+                : '';
+        })();
+    if (!distPayload) {
+        return [];
+    }
+    const sourceExtensions = ['.ts', '.tsx', '.mts', '.cts'];
+    if (distPayload.endsWith('.d.ts')) {
+        const base = distPayload.slice(0, -'.d.ts'.length);
+        return sourceExtensions.map((extension) => `${base}${extension}`);
+    }
+    const generatedExtensions = ['.js', '.jsx', '.mjs', '.cjs'];
+    const generatedExtension = generatedExtensions.find((extension) => distPayload.endsWith(extension));
+    if (!generatedExtension) {
+        return [];
+    }
+    const base = distPayload.slice(0, -generatedExtension.length);
+    return sourceExtensions.map((extension) => `${base}${extension}`);
+}
+
+function getTaskOwnedManifestChangedFiles(taskScopeFiles: string[], manifestChangedFiles: string[]): string[] {
+    const normalizedTaskScope = new Set(
+        taskScopeFiles
+            .map((entry) => gateHelpers.normalizePath(entry))
+            .filter(Boolean)
+    );
+    const relevantManifestFiles = new Set<string>();
+    for (const manifestFile of manifestChangedFiles) {
+        const normalizedManifestFile = gateHelpers.normalizePath(manifestFile);
+        if (!normalizedManifestFile) {
+            continue;
+        }
+        if (normalizedTaskScope.has(normalizedManifestFile)) {
+            relevantManifestFiles.add(normalizedManifestFile);
+            continue;
+        }
+        if (getDistGeneratedSourceCandidates(normalizedManifestFile).some((candidate) => normalizedTaskScope.has(candidate))) {
+            relevantManifestFiles.add(normalizedManifestFile);
+        }
+    }
+    return [...relevantManifestFiles].sort();
+}
+
+function getNewManifestChangedFiles(
+    beforeManifestChangedFiles: string[],
+    afterManifestChangedFiles: string[]
+): string[] {
+    const before = new Set(
+        beforeManifestChangedFiles
+            .map((entry) => gateHelpers.normalizePath(entry))
+            .filter(Boolean)
+    );
+    return [...new Set(
+        afterManifestChangedFiles
+            .map((entry) => gateHelpers.normalizePath(entry))
+            .filter((entry) => entry && !before.has(entry))
+    )].sort();
+}
+
 function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
     repoRoot: string;
     taskId: string;
@@ -342,13 +409,15 @@ function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
     if (params.taskModeEvidence.start_banner) {
         parts.push(`--start-banner ${quotePowerShellCliValue(params.taskModeEvidence.start_banner)}`);
     }
+    if (params.taskModeEvidence.effective_depth) {
+        parts.push(`--effective-depth ${quotePowerShellCliValue(String(params.taskModeEvidence.effective_depth))}`);
+    }
     if (params.taskModeEvidence.provider) {
         parts.push(`--provider ${quotePowerShellCliValue(params.taskModeEvidence.provider)}`);
     }
     if (params.taskModeEvidence.routed_to) {
         parts.push(`--routed-to ${quotePowerShellCliValue(params.taskModeEvidence.routed_to)}`);
     }
-
     const plannedFiles = new Set<string>();
     for (const plannedFile of params.taskModeEvidence.planned_changed_files || []) {
         const normalized = gateHelpers.normalizePath(plannedFile);
@@ -644,13 +713,27 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             preflightErrors.push(...dirtyWorkspaceProtectionDrift.violations);
         }
         if (preflightErrors.length === 0) {
+            const taskOwnedManifestChangedFiles = getTaskOwnedManifestChangedFiles(
+                workspaceSnapshot.changed_files,
+                protectedManifestEvidence.changed_files
+            );
+            const classifyManifestRestartHint = taskModeEvidence.orchestrator_work !== true
+                ? buildClassifyChangeOrchestratorWorkRestartCommand({
+                    repoRoot,
+                    taskId: resolvedTaskId,
+                    taskModeEvidence,
+                    taskSummary: currentTaskSummary,
+                    changedFiles: [...workspaceSnapshot.changed_files, ...taskOwnedManifestChangedFiles]
+                })
+                : undefined;
             const protectedManifestGuard = getProtectedManifestLifecycleGuard({
                 repoRoot,
                 orchestratorWork: taskModeEvidence.orchestrator_work === true,
                 phaseLabel: 'preflight classification',
                 manifestEvidence: protectedManifestEvidence,
                 dirtyWorkspaceProtectionStatus: dirtyWorkspaceProtectionDrift.status,
-                dirtyWorkspaceProtectedFiles: dirtyWorkspaceProtectedScope?.protected_files || []
+                dirtyWorkspaceProtectedFiles: dirtyWorkspaceProtectedScope?.protected_files || [],
+                restartCommandHint: classifyManifestRestartHint
             });
             preflightErrors.push(...protectedManifestGuard.violations);
         }
@@ -990,17 +1073,33 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = rulePackViolations.join(' ');
         }
+        const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
+        const preCompileManifestEvidence = gateHelpers.evaluateProtectedControlPlaneManifest(repoRoot, null, true);
+        const preCompileTaskOwnedManifestFiles = getTaskOwnedManifestChangedFiles(
+            preflightChangedFiles,
+            preCompileManifestEvidence.changed_files
+        );
+        const preCompileRestartHint = taskModeEvidence.orchestrator_work !== true
+            ? buildClassifyChangeOrchestratorWorkRestartCommand({
+                repoRoot,
+                taskId: resolvedTaskId,
+                taskModeEvidence,
+                taskSummary: taskModeEvidence.task_summary || null,
+                changedFiles: [...preflightChangedFiles, ...preCompileTaskOwnedManifestFiles]
+            })
+            : undefined;
         protectedManifestGuard = getProtectedManifestLifecycleGuard({
             repoRoot,
             orchestratorWork: taskModeEvidence.orchestrator_work === true,
             phaseLabel: 'compile gate',
-            preflight: preflightContext.preflight
+            preflight: preflightContext.preflight,
+            manifestEvidence: preCompileManifestEvidence,
+            restartCommandHint: preCompileRestartHint
         });
         if (!exceptionMessage && protectedManifestGuard.status === 'BLOCK') {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = protectedManifestGuard.violations.join(' ');
         }
-        const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
         workspaceSnapshot = getWorkspaceSnapshotCached(
             repoRoot,
             preflightContext.detection_source,
@@ -1203,6 +1302,38 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             }
             if (compileOutputPath && compileOutputInitialized) {
                 writeTextArtifact(compileOutputPath, compileOutputChunks.join(''));
+            }
+        }
+        if (!exceptionMessage && taskModeEvidence.orchestrator_work !== true) {
+            const postCompileManifestEvidence = gateHelpers.evaluateProtectedControlPlaneManifest(repoRoot, null, true);
+            if (postCompileManifestEvidence.status === 'DRIFT') {
+                const postCompileGeneratedManifestFiles = getNewManifestChangedFiles(
+                    preCompileManifestEvidence.changed_files,
+                    postCompileManifestEvidence.changed_files
+                );
+                const postCompileRestartHint = buildClassifyChangeOrchestratorWorkRestartCommand({
+                    repoRoot,
+                    taskId: resolvedTaskId,
+                    taskModeEvidence,
+                    taskSummary: taskModeEvidence.task_summary || null,
+                    changedFiles: [
+                        ...preflightChangedFiles,
+                        ...preCompileTaskOwnedManifestFiles,
+                        ...postCompileGeneratedManifestFiles
+                    ]
+                });
+                const postCompileManifestGuard = getProtectedManifestLifecycleGuard({
+                    repoRoot,
+                    orchestratorWork: false,
+                    phaseLabel: 'compile output validation',
+                    preflight: preflightContext?.preflight,
+                    manifestEvidence: postCompileManifestEvidence,
+                    restartCommandHint: postCompileRestartHint
+                });
+                if (postCompileManifestGuard.status === 'BLOCK') {
+                    exitCode = EXIT_GATE_FAILURE;
+                    exceptionMessage = postCompileManifestGuard.violations.join(' ');
+                }
             }
         }
     } catch (error) {
