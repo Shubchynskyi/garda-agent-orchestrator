@@ -72,6 +72,7 @@ events, review receipts, metrics), and managed blocks in user-owned files.
 | Agent modifies control-plane files during task | Gate integrity undermined | Medium | Protected-path enforcement (SHA-256 snapshot comparison at preflight vs completion), `--orchestrator-work` opt-in for legitimate changes, fail-closed completion gate ([docs/orchestrator-work-and-isolation.md](orchestrator-work-and-isolation.md)) |
 | Path traversal in artifact writes | Write outside expected directories | Low | `ensureWithinRoot()` boundary check on all artifact write paths, symlink/junction alias rejection, lexical `isSubpath()` validation |
 | Review artifact tampering (post-write) | Forged review verdicts | Medium | Atomic temp-file replace under per-artifact locks, review-gate validation of artifact content and timeline hash-chain, delegated reviewer identity recorded in receipts |
+| Local delegated-review launch artifact forgery | False claim that an independent reviewer was launched | Medium | Launch artifacts under `.review-temp/<task>/<review>/` are local convenience metadata only. Gates bind them to the current review context, routing event, prepared-launch event, launch binding, provider invocation id, and fresh-context marker, but a same-user local agent can still hand-author those files. Non-forgeable provenance requires a provider-owned host, signer, or external audit log outside the implementation agent's filesystem authority. |
 | Task-event log tampering | Falsified gate evidence | Medium | Best-effort append locking, per-event `event_sha256` hash-chain, replay detection in `status`/`doctor` (procedural hardening, not a cryptographic trust anchor) |
 | Managed-block injection in user files | Unexpected content in project files | Low | Sentinel-delimited managed blocks (`<!-- garda-agent-orchestrator:managed-start/end -->`), `indexOf`/`slice` marker search (no regex injection), managed content never executed as code |
 
@@ -101,6 +102,10 @@ the reviewer agent all run under the **same OS user**. This means:
   file.
 - Isolation mode, protected-path enforcement, and manifest validation are
   **detection and deterrence** layers, not prevention layers.
+- Local reviewer-launch artifacts are in the same trust category: they reduce
+  operator error by binding a delegated-review launch to the current routing
+  and review context, but they are not cryptographic proof of reviewer
+  execution while the implementation agent can write the workspace.
 
 **Implication:** The orchestrator's trust model is analogous to a linter or
 CI gate — it raises the bar for accidental or casual bypasses and makes
