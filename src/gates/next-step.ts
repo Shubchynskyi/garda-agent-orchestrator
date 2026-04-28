@@ -101,6 +101,8 @@ const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.
 const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(
     REVIEW_CONTRACTS.map(([reviewType, passToken]) => [reviewType, passToken.replace(/\bPASSED\b/g, 'FAILED')])
 ));
+const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
+const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
 
 export type NextStepStatus = 'BLOCKED' | 'READY' | 'DONE';
 
@@ -888,7 +890,39 @@ function getDelegatedReviewRoutingShaAfterCompile(
     return null;
 }
 
-function hasCurrentPreparedReviewerLaunchArtifact(
+function getArtifactStringField(artifact: Record<string, unknown>, ...fieldNames: string[]): string {
+    for (const fieldName of fieldNames) {
+        const rawValue = artifact[fieldName];
+        if (typeof rawValue === 'string' && rawValue.trim()) {
+            return rawValue.trim();
+        }
+    }
+    return '';
+}
+
+function hasCompletedReviewerLaunchEvidence(launchArtifact: Record<string, unknown>): boolean {
+    const providerInvocationId = getArtifactStringField(
+        launchArtifact,
+        'provider_invocation_id',
+        'providerInvocationId',
+        'controller_invocation_id',
+        'controllerInvocationId'
+    );
+    const freshContext = launchArtifact.fresh_context === true
+        || launchArtifact.freshContext === true
+        || launchArtifact.isolated_context === true
+        || launchArtifact.isolatedContext === true
+        || launchArtifact.fork_context === false
+        || launchArtifact.forkContext === false;
+    return Boolean(
+        getArtifactStringField(launchArtifact, 'launch_tool', 'launchTool')
+        && providerInvocationId
+        && getArtifactStringField(launchArtifact, 'launched_at_utc', 'launchedAtUtc')
+        && freshContext
+    );
+}
+
+function hasCurrentReviewerLaunchArtifactForInvocation(
     repoRoot: string,
     eventsRoot: string,
     taskId: string,
@@ -913,26 +947,41 @@ function hasCurrentPreparedReviewerLaunchArtifact(
     if (!launchArtifact) {
         return false;
     }
-    const launchBindingSha256 = String(launchArtifact.launch_binding_sha256 || launchArtifact.launchBindingSha256 || '').trim().toLowerCase();
-    const preparedLaunchEventSha256 = String(launchArtifact.prepared_launch_event_sha256 || launchArtifact.preparedLaunchEventSha256 || '').trim().toLowerCase();
+    const evidenceType = getArtifactStringField(launchArtifact, 'evidence_type', 'artifact_type');
+    const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
+    const launchBindingSha256 = getArtifactStringField(launchArtifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
+    const preparedLaunchEventSha256 = getArtifactStringField(
+        launchArtifact,
+        'prepared_launch_event_sha256',
+        'preparedLaunchEventSha256'
+    ).toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(launchBindingSha256) || !/^[0-9a-f]{64}$/.test(preparedLaunchEventSha256)) {
         return false;
     }
+    const artifactHasUsableState = (
+        evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+        && attestationState === 'prepared'
+    ) || (
+        evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+        && attestationState === 'launched'
+        && hasCompletedReviewerLaunchEvidence(launchArtifact)
+    );
+    if (!artifactHasUsableState) {
+        return false;
+    }
     const artifactMatchesCurrentContext = (
-        String(launchArtifact.evidence_type || launchArtifact.artifact_type || '').trim() === 'delegated_reviewer_launch_preparation'
-        && String(launchArtifact.attestation_state || launchArtifact.attestationState || '').trim() === 'prepared'
-        && String(launchArtifact.task_id || launchArtifact.taskId || '').trim() === taskId
-        && String(launchArtifact.review_type || launchArtifact.reviewType || '').trim() === state.reviewType
-        && String(launchArtifact.reviewer_execution_mode || launchArtifact.reviewerExecutionMode || '').trim() === 'delegated_subagent'
-        && String(
-            launchArtifact.reviewer_identity
-            || launchArtifact.reviewerIdentity
-            || launchArtifact.reviewer_session_id
-            || launchArtifact.reviewerSessionId
-            || ''
-        ).trim() === reviewerIdentity
-        && String(launchArtifact.review_context_sha256 || launchArtifact.reviewContextSha256 || '').trim().toLowerCase() === reviewContextSha256
-        && String(launchArtifact.routing_event_sha256 || launchArtifact.routingEventSha256 || '').trim().toLowerCase() === routingEventSha256
+        getArtifactStringField(launchArtifact, 'task_id', 'taskId') === taskId
+        && getArtifactStringField(launchArtifact, 'review_type', 'reviewType') === state.reviewType
+        && getArtifactStringField(launchArtifact, 'reviewer_execution_mode', 'reviewerExecutionMode') === 'delegated_subagent'
+        && getArtifactStringField(
+            launchArtifact,
+            'reviewer_identity',
+            'reviewerIdentity',
+            'reviewer_session_id',
+            'reviewerSessionId'
+        ) === reviewerIdentity
+        && getArtifactStringField(launchArtifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() === reviewContextSha256
+        && getArtifactStringField(launchArtifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() === routingEventSha256
     );
     if (!artifactMatchesCurrentContext) {
         return false;
@@ -2610,7 +2659,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             const reviewerIdentity = state.contextReviewerIdentity
                 || '<agent:reviewer-session-id-from-review-context>';
             const launchArtifactPath = `.review-temp/${taskId}/${reviewType}/reviewer-launch.json`;
-            if (!hasCurrentPreparedReviewerLaunchArtifact(repoRoot, eventsRoot, taskId, state)) {
+            if (!hasCurrentReviewerLaunchArtifactForInvocation(repoRoot, eventsRoot, taskId, state)) {
                 return buildResult({
                     ...resultBase,
                     status: 'BLOCKED',
@@ -2631,7 +2680,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 nextGate: 'record-review-invocation',
                 title: `Record '${reviewType}' delegated reviewer launch attestation.`,
                 reason:
-                    `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
+                    `Required review '${reviewType}' has launch metadata for the current routing event and review context. ` +
                     'Launch the delegated reviewer with the prepared prompt, then record the completed launch metadata.',
                 commands: [
                     buildCommand(
