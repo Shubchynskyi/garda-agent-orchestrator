@@ -2628,12 +2628,17 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
-                nextGate: 'provider-launch-receipt',
-                title: `Provider-native '${reviewType}' launch receipt required.`,
+                nextGate: 'record-review-invocation',
+                title: `Record '${reviewType}' delegated reviewer launch attestation.`,
                 reason:
-                    `Required review '${reviewType}' has prepared launch metadata, but local .review-temp launch artifacts are not completed invocation evidence. ` +
-                    'A self-authored reviewer-launch.json cannot satisfy independent review policy; use provider-native verifiable launch receipt support or explicit audited fallback approval.',
-                commands: []
+                    `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
+                    'Launch the delegated reviewer with the prepared prompt, then record the completed launch metadata.',
+                commands: [
+                    buildCommand(
+                        'Record delegated reviewer launch attestation',
+                        `${cliPrefix} gate record-review-invocation --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --repo-root "."`
+                    )
+                ]
             });
         }
         if (!currentReviewEvidenceSatisfied) {

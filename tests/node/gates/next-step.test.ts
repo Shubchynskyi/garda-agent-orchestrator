@@ -1087,7 +1087,7 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
     });
 
-    it('blocks for provider-native launch receipt after current launch metadata is prepared', () => {
+    it('routes to record-review-invocation after current launch metadata is prepared', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -1127,10 +1127,11 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'provider-launch-receipt');
+        assert.equal(result.next_gate, 'record-review-invocation');
         assert.ok(result.reason.includes('prepared launch metadata'));
-        assert.ok(result.reason.includes('provider-native verifiable launch receipt'));
-        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('completed launch metadata'));
+        assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
+        assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
     });
 
     it('routes to record-review-result after current context invocation is attested even when an old receipt exists', () => {

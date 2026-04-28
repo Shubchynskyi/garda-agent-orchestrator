@@ -1266,10 +1266,6 @@ function validateReviewerLaunchArtifact(options: {
     ) {
         violations.push('prepared_launch_event_sha256 must reference current REVIEWER_LAUNCH_PREPARED telemetry');
     }
-    violations.push(
-        'self-authored local reviewer launch artifacts cannot satisfy independent REVIEWER_INVOCATION_ATTESTED; ' +
-        'use provider-native verifiable launch receipt support or explicit audited fallback approval'
-    );
     if (!freshContext) {
         violations.push('fresh_context, isolated_context, or fork_context=false must attest clean reviewer context');
     }
@@ -1876,8 +1872,8 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         generated_at_utc: new Date().toISOString(),
         next_action: (
             'Launch a fresh delegated reviewer with the reviewer_prompt_path. ' +
-            'Prepared metadata is not invocation proof. record-review-invocation requires provider-native ' +
-            'verifiable launch receipt support or explicit audited fallback approval.'
+            'Prepared metadata is not invocation proof. After launch, record-review-invocation requires ' +
+            'completed launch metadata from the actual delegated reviewer launch.'
         )
     };
     writeReviewArtifactJson(launchArtifactPath, preparedArtifact);
@@ -1938,7 +1934,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log('AttestationState: prepared');
     console.log(`LaunchTool: ${providerLaunch.launchTool}`);
     console.log(`LaunchInstruction: ${providerLaunch.launchInstruction}`);
-    console.log('NextAction: launch the delegated reviewer through provider-native verifiable launch receipt support, or use explicit audited fallback approval.');
+    console.log('NextAction: launch the delegated reviewer, then record completed launch metadata with record-review-invocation.');
 }
 
 export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<void> {

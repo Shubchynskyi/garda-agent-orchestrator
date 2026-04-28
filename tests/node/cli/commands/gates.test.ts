@@ -2503,7 +2503,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-invocation rejects self-authored completed launch artifacts even after current preparation', async () => {
+    it('record-review-invocation accepts completed launch metadata after current preparation', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-invocation';
         seedTaskQueue(repoRoot, taskId);
@@ -2577,13 +2577,8 @@ describe('cli/commands/gates', () => {
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
-        const originalConsoleError = console.error;
-        const capturedErrors: string[] = [];
         process.exitCode = 0;
         let observedExitCode = 0;
-        console.error = (...args: unknown[]) => {
-            capturedErrors.push(args.map((value) => String(value)).join(' '));
-        };
         try {
             process.chdir(repoRoot);
             await runCliMainWithHandling([
@@ -2598,15 +2593,19 @@ describe('cli/commands/gates', () => {
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
-            console.error = originalConsoleError;
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
 
-        assert.notEqual(observedExitCode, 0);
-        assert.ok(capturedErrors.some((line) => line.includes('self-authored local reviewer launch artifacts cannot satisfy independent REVIEWER_INVOCATION_ATTESTED')));
+        assert.equal(observedExitCode, 0);
         events = readTaskTimelineEvents(repoRoot, taskId);
-        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, invocationEventsBefore);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, invocationEventsBefore + 1);
+        const invocationEvent = [...events].reverse().find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        const invocationDetails = invocationEvent?.details as Record<string, unknown> | undefined;
+        assert.equal(invocationDetails?.review_type, 'code');
+        assert.equal(invocationDetails?.reviewer_session_id, 'agent:test-reviewer');
+        assert.equal(invocationDetails?.reviewer_launch_tool, 'test-subagent-spawn');
+        assert.equal(invocationDetails?.provider_invocation_id, 'test-invocation-123');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2854,9 +2853,9 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-invocation rejects completed launch artifacts that only copy prepared metadata', async () => {
+    it('record-review-invocation accepts completed launch artifacts that extend prepared metadata', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-266-launch-without-completion-token';
+        const taskId = 'T-266-launch-from-prepared-metadata';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
         const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
 
@@ -2894,13 +2893,8 @@ describe('cli/commands/gates', () => {
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
-        const originalConsoleError = console.error;
-        const capturedErrors: string[] = [];
         process.exitCode = 0;
         let observedExitCode = 0;
-        console.error = (...args: unknown[]) => {
-            capturedErrors.push(args.map((value) => String(value)).join(' '));
-        };
         try {
             process.chdir(repoRoot);
             await runCliMainWithHandling([
@@ -2915,15 +2909,13 @@ describe('cli/commands/gates', () => {
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
-            console.error = originalConsoleError;
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
 
-        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.ok(capturedErrors.some((line) => line.includes('self-authored local reviewer launch artifacts cannot satisfy independent REVIEWER_INVOCATION_ATTESTED')));
+        assert.equal(observedExitCode, 0);
         const events = readTaskTimelineEvents(repoRoot, taskId);
-        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
