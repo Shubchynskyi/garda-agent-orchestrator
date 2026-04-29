@@ -346,8 +346,8 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     if (typeof options.reviewExecutionPolicy === 'string') {
         nextConfig.review_execution_policy = {
             mode: normalizeReviewExecutionPolicyMode(
-            options.reviewExecutionPolicy,
-            '--review-execution-policy'
+                options.reviewExecutionPolicy,
+                '--review-execution-policy'
             )
         };
         changedFields.push('review_execution_policy.mode');

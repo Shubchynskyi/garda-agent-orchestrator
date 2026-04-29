@@ -42,40 +42,40 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
     );
     try {
         await withLifecycleOperationLockAsync(targetRoot, 'install', async () => {
-        const bundlePath = getBundlePath(targetRoot);
-        const bundleHadMaterializedLiveBeforeInstall = hasMaterializedWorkflowConfigBaseline(bundlePath);
-        const sourceResolved = path.resolve(source.sourceRoot);
-        const bundleResolved = path.resolve(bundlePath);
-        if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase() && !options.dryRun) {
-            syncBundleItems(source.sourceRoot, bundlePath);
-        }
-
-        const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
-        const initAnswersPath = resolveInitAnswersPath(options.initAnswersPath, targetRoot, bundlePath);
-        const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'install');
-        const installResult = runInstall({
-            targetRoot,
-            bundleRoot: effectiveBundlePath,
-            assistantLanguage: answers.assistantLanguage,
-            assistantBrevity: answers.assistantBrevity,
-            sourceOfTruth: answers.sourceOfTruth,
-            initAnswersPath: answers.resolvedPath,
-            dryRun: options.dryRun === true,
-            initRunner(initOptions) {
-                return runInit({
-                    ...initOptions,
-                    bundleRoot: effectiveBundlePath,
-                    preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeInstall
-                });
+            const bundlePath = getBundlePath(targetRoot);
+            const bundleHadMaterializedLiveBeforeInstall = hasMaterializedWorkflowConfigBaseline(bundlePath);
+            const sourceResolved = path.resolve(source.sourceRoot);
+            const bundleResolved = path.resolve(bundlePath);
+            if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase() && !options.dryRun) {
+                syncBundleItems(source.sourceRoot, bundlePath);
             }
-        }) as Record<string, unknown>;
-        formatKeyValueOutput(installResult, [
-            'targetRoot', 'sourceOfTruth', 'canonicalEntrypoint',
-            'assistantLanguage', 'assistantBrevity',
-            'filesDeployed', 'initInvoked', 'liveVersionWritten',
-            'workflowConfigMergeStatus',
-            'dryRun'
-        ]);
+
+            const effectiveBundlePath = fs.existsSync(bundlePath) ? bundlePath : source.sourceRoot;
+            const initAnswersPath = resolveInitAnswersPath(options.initAnswersPath, targetRoot, bundlePath);
+            const answers = readInitAnswersArtifact(targetRoot, initAnswersPath, bundlePath, 'install');
+            const installResult = runInstall({
+                targetRoot,
+                bundleRoot: effectiveBundlePath,
+                assistantLanguage: answers.assistantLanguage,
+                assistantBrevity: answers.assistantBrevity,
+                sourceOfTruth: answers.sourceOfTruth,
+                initAnswersPath: answers.resolvedPath,
+                dryRun: options.dryRun === true,
+                initRunner(initOptions) {
+                    return runInit({
+                        ...initOptions,
+                        bundleRoot: effectiveBundlePath,
+                        preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeInstall
+                    });
+                }
+            }) as Record<string, unknown>;
+            formatKeyValueOutput(installResult, [
+                'targetRoot', 'sourceOfTruth', 'canonicalEntrypoint',
+                'assistantLanguage', 'assistantBrevity',
+                'filesDeployed', 'initInvoked', 'liveVersionWritten',
+                'workflowConfigMergeStatus',
+                'dryRun'
+            ]);
         });
     } finally {
         source.cleanup();

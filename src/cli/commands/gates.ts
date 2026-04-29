@@ -12,8 +12,6 @@
  * tests) continue to import from './gates' without changes.
  */
 
-// ── Re-exports from gate-flows ──────────────────────────────────────────────
-
 export {
     runEnterTaskModeCommand,
     runLoadRulePackCommand,
@@ -59,8 +57,6 @@ export {
 export {
     runTaskResetCommand
 } from './gate-flows/task-reset-flow';
-
-// ── Re-exports from gates-subprocess (unchanged) ───────────────────────────
 
 export {
     executeCommand,

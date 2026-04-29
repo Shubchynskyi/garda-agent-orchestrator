@@ -344,11 +344,9 @@ export function buildPublishRuntime(): BuildResult {
     return withBuildRootLock(buildRoot, () => {
         resetBuildRoot(buildRoot);
 
-        // Compile src/ with tsc to dist/
         runTsc(['-p', 'tsconfig.build.json'], repoRoot);
         const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
 
-        // Collect compiled files
         const srcBuildRoot = path.join(buildRoot, 'src');
         const copiedFiles: string[] = fs.existsSync(srcBuildRoot)
             ? collectFiles(srcBuildRoot, '.js').map((f: string) =>

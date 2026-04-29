@@ -64,8 +64,6 @@ import {
     removeArtifactIfExists
 } from '../shared-command-utils';
 
-
-
 interface ResolvedCanonicalReviewPaths {
     preflightPath: string;
     reviewsRoot: string;
@@ -1539,8 +1537,6 @@ async function recordReviewReceiptFromArtifacts(options: {
     }
     return receiptPath;
 }
-
-
 
 export async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
     const defs = {
