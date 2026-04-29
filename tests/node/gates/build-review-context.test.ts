@@ -520,6 +520,10 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifact.includes('# Review Context: T-901-scope code'));
             assert.ok(promptArtifact.includes('## Changed Files'));
             assert.ok(promptArtifact.includes('- src/app.ts'));
+            assert.ok(promptArtifact.includes('## Reviewer Output Contract'));
+            assert.ok(promptArtifact.includes('1-3 concise sentences naming the reviewed files and behavior checked'));
+            assert.ok(promptArtifact.includes('Do not return only headings, `none`, and a PASS verdict'));
+            assert.ok(promptArtifact.includes('record-review-result rejects trivial or obviously synthetic reports'));
             assert.deepEqual(result.task_scope.changed_files, ['src/app.ts']);
             assert.deepEqual(result.task_scope.required_reviews, ['code', 'security']);
             fs.rmSync(repoRoot, { recursive: true, force: true });

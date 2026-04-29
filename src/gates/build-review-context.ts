@@ -124,6 +124,18 @@ function summarizeBooleanRecord(record: unknown): string[] {
         .sort();
 }
 
+function buildReviewerOutputContractMarkdown(reviewType: string): string[] {
+    const reviewLabel = reviewType ? `${reviewType} review` : 'review';
+    return [
+        '## Reviewer Output Contract',
+        `- Return a canonical ${reviewLabel} report with Findings by Severity, Deferred Findings, Residual Risks, and Verdict sections.`,
+        '- A no-findings PASS must still include 1-3 concise sentences naming the reviewed files and behavior checked.',
+        '- Do not return only headings, `none`, and a PASS verdict; record-review-result rejects trivial or obviously synthetic reports.',
+        '- Keep PASS analysis compact and concrete; put accepted non-blocking follow-ups only in Deferred Findings with `Justification:`.',
+        ''
+    ];
+}
+
 function buildTaskScopeMarkdown(options: {
     taskId: string | null;
     reviewType: string;
@@ -198,6 +210,7 @@ function buildTaskScopeMarkdown(options: {
         lines.push(options.gitDiff.error ? `Unavailable: ${options.gitDiff.error}` : 'none');
     }
     lines.push('');
+    lines.push(...buildReviewerOutputContractMarkdown(options.reviewType));
     lines.push('## Rule Context');
     return lines.join('\n');
 }
