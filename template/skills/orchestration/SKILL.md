@@ -192,7 +192,8 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
     - `BLOCKED` when any mandatory gate failed or cannot run; keep the blocked reason explicit and stop the pipeline.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 27. Report to user in exact order:
-    1. implementation summary (include depth, path mode, review verdicts, docs updated)
+    1. concise implementation summary (include depth, path mode, review verdicts, docs updated)
+       - do not paste the full final-closeout markdown or duplicate its complete section order in chat; link or name the canonical artifact when useful, then report only the status, key changes, validations, and commit readiness;
        - at `depth=1` and `depth=2`, include an output-compaction line; at `depth=3` it is optional;
        - use chars as the primary unit, keep approximate percentage when baseline is known, keep spaced breakdown formatting, and include token estimate only as a secondary note when available;
        - keep spaces between numeric values and labels and around `+`; do not emit compressed fragments like `824code review context` or `+25DB review context`;

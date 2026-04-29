@@ -139,7 +139,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
 - Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.
-- Final user report order is mandatory: implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.
+- Final user report order is mandatory: concise implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.
+- The user-facing final report must not paste the full final-closeout markdown or duplicate every canonical closeout section. Treat `*-final-closeout.*` as the source of truth and report only the status, key changes, validations, review/doc results, and commit readiness.
 - At `depth=1` and `depth=2`, the implementation summary must include an output-compaction line; at `depth=3` it is optional. Use chars as the primary unit, keep approximate percentage when baseline is known, keep spaced breakdown formatting, and include token estimate only as a secondary note when available: `Suppressed output: ~3528 chars (~67%) (code review context ~3296 chars + DB review context ~100 chars + compile gate output ~132 chars). Token estimate: ~882.`
 - Reviewer and specialist agents must be closed after verdict capture.
 - HARD STOP: do not skip `enter-task-mode`; compile/review/completion evidence is invalid without explicit task-mode entry.
