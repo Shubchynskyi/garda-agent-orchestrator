@@ -412,7 +412,7 @@ async function tryReuseReviewEvidence(options: {
             trustLevel: 'INDEPENDENT_AUDITED',
             reusedExistingReview: true,
             reusedFromReceiptPath: gateHelpers.normalizePath(receiptPath),
-            reusedFromReviewContextSha256: historicalReviewContextSha256,
+            reusedFromReviewContextSha256: expectedContextSha256,
             reusedFromReviewContextReuseSha256: expectedContextReuseSha256,
             reusedFromReviewScopeSha256: expectedReviewScopeSha256,
             reusedFromCodeScopeSha256: expectedCodeScopeSha256
@@ -423,7 +423,7 @@ async function tryReuseReviewEvidence(options: {
             reused_existing_review: true,
             reuse_event_type: 'REVIEW_EVIDENCE_REUSED',
             reused_from_receipt_path: gateHelpers.normalizePath(receiptPath),
-            reused_from_review_context_sha256: historicalReviewContextSha256,
+            reused_from_review_context_sha256: expectedContextSha256,
             reused_from_review_context_reuse_sha256: expectedContextReuseSha256,
             reused_from_review_scope_sha256: expectedReviewScopeSha256,
             reused_from_code_scope_sha256: expectedCodeScopeSha256,

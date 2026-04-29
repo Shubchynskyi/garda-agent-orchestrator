@@ -1167,7 +1167,11 @@ describe('cli/commands/gates – review-reuse suites', () => {
         assert.deepEqual(secondRefreshedReceipt.reviewer_provenance, firstReuseProvenance);
         assert.equal(
             secondRefreshedReceipt.reused_from_review_context_sha256,
-            firstReuseProvenance.review_context_sha256
+            refreshedReceipt.review_context_sha256
+        );
+        assert.equal(
+            secondRefreshedReceipt.reused_from_review_scope_sha256,
+            refreshedReceipt.review_scope_sha256
         );
         const secondEvents = readTaskTimelineEvents(repoRoot, taskId);
         const secondLatestCompileSequence = findLastTimelineEventIndex(secondEvents, (event) => event.event_type === 'COMPILE_GATE_PASSED');
@@ -1181,6 +1185,24 @@ describe('cli/commands/gates – review-reuse suites', () => {
         assert.equal(secondCurrentCycleCodeEvents.filter(({ event }) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 0);
         assert.equal(secondCurrentCycleCodeEvents.filter(({ event }) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
         assert.equal(secondCurrentCycleCodeEvents.filter(({ event }) => event.event_type === 'REVIEW_RECORDED').length, 1);
+
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'build-review-context',
+                '--review-type', 'test',
+                '--depth', '2',
+                '--preflight-path', secondPreflightPath,
+                '--repo-root', repoRoot
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-test-review-context.json`)), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
