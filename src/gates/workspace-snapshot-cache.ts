@@ -184,7 +184,7 @@ function buildPathStateToken(repoRoot: string, relativePath: string): string {
     try {
         const stat = fs.statSync(fullPath);
         const kind = stat.isFile() ? 'file' : (stat.isDirectory() ? 'dir' : 'other');
-        return `${kind}|${stat.size}|${Math.floor(stat.mtimeMs)}`;
+        return `${kind}|${stat.size}|${stat.mtimeMs}`;
     } catch {
         return 'missing';
     }

@@ -142,6 +142,7 @@ describe('gates/workspace-snapshot-cache', () => {
                     deletions_total: 0,
                     changed_lines_total: 1,
                     changed_files_sha256: 'deadbeef',
+                    scope_content_sha256: 'feedface',
                     scope_sha256: 'cafebabe'
                 },
                 timestamp_utc: new Date().toISOString(),
@@ -303,6 +304,23 @@ describe('gates/workspace-snapshot-cache', () => {
             const second = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
             assert.equal(second.cache_hit, false);
             assert.ok(second.changed_files.includes('file.ts'));
+        });
+
+        it('changes scope hash when file content changes without changing line totals', () => {
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+            const first = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
+            assert.equal(first.cache_hit, false);
+
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 3;\n', 'utf8');
+            const future = new Date(Date.now() + 1000);
+            fs.utimesSync(path.join(repoRoot, 'file.ts'), future, future);
+
+            const second = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
+            assert.equal(second.cache_hit, false);
+            assert.equal(second.changed_lines_total, first.changed_lines_total);
+            assert.equal(second.changed_files_sha256, first.changed_files_sha256);
+            assert.notEqual(second.scope_content_sha256, first.scope_content_sha256);
+            assert.notEqual(second.scope_sha256, first.scope_sha256);
         });
 
         it('cached result matches fresh result for same state', () => {

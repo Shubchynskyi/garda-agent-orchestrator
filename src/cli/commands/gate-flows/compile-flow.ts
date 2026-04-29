@@ -511,6 +511,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         reviewCapabilities,
         reviewExecutionPolicyMode: reviewExecutionPolicy.mode
     });
+    (result.metrics as Record<string, unknown>).changed_files_sha256 = workspaceSnapshot.changed_files_sha256;
+    (result.metrics as Record<string, unknown>).scope_content_sha256 = workspaceSnapshot.scope_content_sha256;
+    (result.metrics as Record<string, unknown>).scope_sha256 = workspaceSnapshot.scope_sha256;
 
     const protectedFilesSnapshot = gateHelpers.scanProtectedPathHashes(
         repoRoot,
@@ -992,6 +995,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     output_path: normalizeOptionalPath(outputPath),
                     changed_files_count: result.metrics.changed_files_count,
                     changed_lines_total: result.metrics.changed_lines_total,
+                    scope_sha256: (result.metrics as Record<string, unknown>).scope_sha256,
+                    scope_content_sha256: (result.metrics as Record<string, unknown>).scope_content_sha256,
                     code_changed: codeChanged,
                     required_reviews: result.required_reviews,
                     review_execution_policy: (result as Record<string, unknown>).review_execution_policy ?? null,
@@ -1231,6 +1236,11 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 `Preflight changed_lines_total=${preflightContext.changed_lines_total} differs from current snapshot changed_lines_total=${workspaceSnapshot.changed_lines_total}.`
             );
         }
+        if (preflightContext.scope_sha256 && workspaceSnapshot.scope_sha256 !== preflightContext.scope_sha256) {
+            scopeViolations.push(
+                `Preflight scope_sha256=${preflightContext.scope_sha256} differs from current snapshot scope_sha256=${workspaceSnapshot.scope_sha256}.`
+            );
+        }
         if (!exceptionMessage && scopeViolations.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
             const scopeRecoveryHint = preflightContext.detection_source === 'explicit_changed_files'
@@ -1423,6 +1433,8 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         preflight_changed_files_count: preflightContext ? preflightContext.changed_files_count : null,
         preflight_changed_lines_total: preflightContext ? preflightContext.changed_lines_total : null,
         preflight_changed_files_sha256: preflightContext ? preflightContext.changed_files_sha256 : null,
+        preflight_scope_sha256: preflightContext ? preflightContext.scope_sha256 : null,
+        preflight_scope_content_sha256: preflightContext ? preflightContext.scope_content_sha256 : null,
         task_mode: taskModeEvidence,
         rule_pack: rulePackEvidence,
         post_preflight_sequence: postPreflightSequenceEvidence,
@@ -1433,6 +1445,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         scope_changed_files_count: workspaceSnapshot ? workspaceSnapshot.changed_files_count : 0,
         scope_changed_lines_total: workspaceSnapshot ? workspaceSnapshot.changed_lines_total : 0,
         scope_changed_files_sha256: workspaceSnapshot ? workspaceSnapshot.changed_files_sha256 : null,
+        scope_content_sha256: workspaceSnapshot ? workspaceSnapshot.scope_content_sha256 : null,
         scope_sha256: workspaceSnapshot ? workspaceSnapshot.scope_sha256 : null,
         dirty_workspace_protection: dirtyWorkspaceProtectionDrift,
         protected_manifest: protectedManifestGuard ? {

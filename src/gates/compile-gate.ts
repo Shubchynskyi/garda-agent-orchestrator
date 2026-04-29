@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { stringSha256, normalizePath, joinOrchestratorPath } from './helpers';
+import { stringSha256, fileSha256, normalizePath, joinOrchestratorPath } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 
 /**
@@ -149,6 +149,60 @@ export function extractNewPathFromNumstat(pathSpec: string): string {
     return pathSpec.substring(arrowIndex + 4);
 }
 
+function getStagedBlobFingerprint(repoRoot: string, relativePath: string): string | null {
+    try {
+        const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), 'ls-files', '-s', '--', `:(literal)${relativePath}`], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+        });
+        if (result.status !== 0 || result.timedOut || result.error) {
+            return null;
+        }
+        const firstLine = String(result.stdout || '').split(/\r?\n/).find((line) => line.trim());
+        if (!firstLine) {
+            return null;
+        }
+        const match = /^(\d+)\s+([0-9a-f]{40,64})\s+\d+\t/.exec(firstLine);
+        if (!match || !match[1] || !match[2]) {
+            return null;
+        }
+        return `staged:${match[1]}:${match[2].toLowerCase()}`;
+    } catch {
+        return null;
+    }
+}
+
+function getWorktreeContentFingerprint(repoRoot: string, relativePath: string): string {
+    const normalized = normalizePath(relativePath);
+    if (!normalized) {
+        return 'missing';
+    }
+    const candidate = path.join(repoRoot, normalized);
+    try {
+        const stat = fs.statSync(candidate);
+        if (!stat.isFile()) {
+            return stat.isDirectory() ? 'worktree:dir' : 'worktree:other';
+        }
+        return `worktree:file:${stat.size}:${fileSha256(candidate) || 'UNHASHABLE'}`;
+    } catch {
+        return 'missing';
+    }
+}
+
+function buildScopeContentFingerprint(repoRoot: string, source: string, changedFiles: string[]): string | null {
+    const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(source);
+    const fingerprintEntries = [...new Set(changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))]
+        .sort()
+        .map((relativePath) => {
+            const stagedFingerprint = useStaged
+                ? getStagedBlobFingerprint(repoRoot, relativePath)
+                : null;
+            return `${relativePath}:${stagedFingerprint || getWorktreeContentFingerprint(repoRoot, relativePath)}`;
+        });
+    return stringSha256(fingerprintEntries.join('\n'));
+}
+
 /**
  * Get workspace snapshot for scope validation.
  * Matches Python get_workspace_snapshot.
@@ -220,8 +274,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         }
         const changedLinesTotal = additionsTotal + deletionsTotal;
         const filesFingerprint = stringSha256(normalizedExplicit.join('\n'));
+        const contentFingerprint = buildScopeContentFingerprint(repoRoot, source, normalizedExplicit);
         const scopeFingerprint = stringSha256(
-            `${source}|false|${includeUntracked}|${normalizedExplicit.length}|${changedLinesTotal}|${filesFingerprint}`
+            `${source}|false|${includeUntracked}|${normalizedExplicit.length}|${changedLinesTotal}|${filesFingerprint}|${contentFingerprint}`
         );
 
         return {
@@ -229,7 +284,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
             changed_files: normalizedExplicit, changed_files_count: normalizedExplicit.length,
             additions_total: additionsTotal, deletions_total: deletionsTotal,
             changed_lines_total: changedLinesTotal,
-            changed_files_sha256: filesFingerprint, scope_sha256: scopeFingerprint
+            changed_files_sha256: filesFingerprint,
+            scope_content_sha256: contentFingerprint,
+            scope_sha256: scopeFingerprint
         };
     }
 
@@ -270,8 +327,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     const changedLinesTotal = additionsTotal + deletionsTotal;
     const filesFingerprint = stringSha256(normalizedChanged.join('\n'));
+    const contentFingerprint = buildScopeContentFingerprint(repoRoot, source, normalizedChanged);
     const scopeFingerprint = stringSha256(
-        `${source}|${useStaged}|${includeUntracked}|${normalizedChanged.length}|${changedLinesTotal}|${filesFingerprint}`
+        `${source}|${useStaged}|${includeUntracked}|${normalizedChanged.length}|${changedLinesTotal}|${filesFingerprint}|${contentFingerprint}`
     );
 
     return {
@@ -279,7 +337,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         changed_files: normalizedChanged, changed_files_count: normalizedChanged.length,
         additions_total: additionsTotal, deletions_total: deletionsTotal,
         changed_lines_total: changedLinesTotal,
-        changed_files_sha256: filesFingerprint, scope_sha256: scopeFingerprint
+        changed_files_sha256: filesFingerprint,
+        scope_content_sha256: contentFingerprint,
+        scope_sha256: scopeFingerprint
     };
 }
 
@@ -317,6 +377,7 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
     if (!preflightObject.metrics || typeof preflightObject.metrics !== 'object') {
         throw new Error('Preflight field `metrics` is required.');
     }
+    const metrics = preflightObject.metrics as Record<string, unknown>;
     if (!preflightObject.required_reviews || typeof preflightObject.required_reviews !== 'object') {
         throw new Error('Preflight field `required_reviews` is required.');
     }
@@ -325,13 +386,19 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
         (preflightObject.changed_files || []).map((f: string) => normalizePath(String(f).replace(/\\/g, '/'))).filter(Boolean)
     )].sort();
 
-    const changedLinesTotal = preflightObject.metrics.changed_lines_total;
+    const changedLinesTotal = metrics.changed_lines_total;
     if (typeof changedLinesTotal !== 'number' || changedLinesTotal < 0) {
         throw new Error('Preflight field `metrics.changed_lines_total` is required and must be non-negative.');
     }
 
     const detectionSource = String(preflightObject.detection_source || 'git_auto').trim() || 'git_auto';
     const includeUntracked = detectionSource.toLowerCase() !== 'git_staged_only';
+    const scopeSha256 = typeof metrics.scope_sha256 === 'string'
+        ? metrics.scope_sha256.trim().toLowerCase()
+        : null;
+    const scopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
+        ? metrics.scope_content_sha256.trim().toLowerCase()
+        : null;
 
     return {
         preflight: preflightObject,
@@ -342,6 +409,8 @@ export function getPreflightContext(preflightPath: string, taskId: string) {
         changed_files_count: preflightChangedFiles.length,
         changed_lines_total: changedLinesTotal,
         changed_files_sha256: stringSha256(preflightChangedFiles.join('\n')),
+        scope_sha256: scopeSha256 || null,
+        scope_content_sha256: scopeContentSha256 || null,
         budget_forecast: preflightObject.budget_forecast ?? null
     };
 }

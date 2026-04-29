@@ -397,7 +397,11 @@ async function tryReuseReviewEvidence(options: {
             taskId: options.taskId,
             reviewType: options.reviewType,
             preflightSha256: currentPreflightHash,
-            scopeSha256: String((options.preflightPayload.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
+            scopeSha256: String(
+                (options.preflightPayload.metrics as Record<string, unknown> | undefined)?.scope_sha256
+                || (options.preflightPayload.metrics as Record<string, unknown> | undefined)?.changed_files_sha256
+                || ''
+            ).trim() || null,
             reviewScopeSha256: String(reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || null,
             codeScopeSha256: nonTestReviewScope
                 ? String(codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null

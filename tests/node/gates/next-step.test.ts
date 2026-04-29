@@ -286,7 +286,12 @@ function writePreflight(
         detection_source: snapshot.detection_source,
         mode: 'FULL_PATH',
         scope_category: 'code',
-        metrics: { changed_lines_total: snapshot.changed_lines_total },
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        },
         required_reviews: requiredReviews,
         changed_files: ['src/app.ts'],
         review_execution_policy: {
@@ -957,6 +962,27 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
+    it('refreshes preflight when failed-review rework changes content without changing line counts', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Refresh preflight/);
+        assert.match(result.reason, /scope_sha256=/);
+        assert.match(result.reason, /Stale failed review detected: 'code'/);
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.ok(!result.commands[0].command.includes('compile-gate'));
+    });
+
     it('refreshes review context after a failed upstream review becomes stale behind a new compile cycle', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -1392,7 +1418,12 @@ describe('gates/next-step', () => {
         const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts', 'CHANGELOG.md']);
         preflight.scope_category = 'mixed';
         preflight.changed_files = ['src/app.ts', 'CHANGELOG.md'];
-        preflight.metrics = { changed_lines_total: snapshot.changed_lines_total };
+        preflight.metrics = {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        };
         writeJson(preflightPath, preflight);
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
         seedCompilePass(repoRoot, TASK_ID);

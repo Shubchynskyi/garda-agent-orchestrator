@@ -1496,7 +1496,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         taskId: options.taskId,
         reviewType: options.reviewType,
         preflightSha256,
-        scopeSha256: preflight.metrics?.changed_files_sha256 || null,
+        scopeSha256: preflight.metrics?.scope_sha256 || preflight.metrics?.changed_files_sha256 || null,
         reviewScopeSha256: reviewScopeFingerprint.review_scope_sha256,
         codeScopeSha256: isNonTestReviewScope(options.reviewType)
             ? codeScopeFingerprint.code_scope_sha256

@@ -241,6 +241,11 @@ interface PreflightWorkspaceReadiness {
     reason: string;
 }
 
+interface PreflightWorkspaceReadinessOptions {
+    failedReviewType?: string | null;
+    failedReviewVerdict?: string | null;
+}
+
 interface PreflightCycleReadiness {
     ready: boolean;
     reason: string;
@@ -1252,7 +1257,8 @@ function stringSha256(value: string): string {
 
 function readPreflightWorkspaceReadiness(
     repoRoot: string,
-    preflight: Record<string, unknown>
+    preflight: Record<string, unknown>,
+    options: PreflightWorkspaceReadinessOptions = {}
 ): PreflightWorkspaceReadiness {
     const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
     const expectedChangedLinesTotal = typeof metrics.changed_lines_total === 'number'
@@ -1287,6 +1293,14 @@ function readPreflightWorkspaceReadiness(
             `preflight changed_lines_total=${expectedChangedLinesTotal} differs from current changed_lines_total=${currentScope.changed_lines_total}`
         );
     }
+    const expectedScopeSha256 = typeof metrics.scope_sha256 === 'string'
+        ? metrics.scope_sha256.trim().toLowerCase()
+        : '';
+    if (expectedScopeSha256 && currentScope.scope_sha256 !== expectedScopeSha256) {
+        violations.push(
+            `preflight scope_sha256=${expectedScopeSha256} differs from current scope_sha256=${currentScope.scope_sha256}`
+        );
+    }
 
     if (violations.length === 0) {
         return {
@@ -1294,9 +1308,13 @@ function readPreflightWorkspaceReadiness(
             reason: 'Preflight scope still matches the current workspace.'
         };
     }
+    const failedReviewType = String(options.failedReviewType || '').trim();
+    const failedReviewNote = failedReviewType
+        ? ` Stale failed review detected: '${failedReviewType}' previously recorded '${String(options.failedReviewVerdict || 'FAILED').trim() || 'FAILED'}', but the workspace hash changed after that review.`
+        : '';
     return {
         ready: false,
-        reason: `Preflight scope is stale before compile (${violations.join('; ')}). Refresh classify-change for the current scope first.`
+        reason: `Preflight scope is stale before compile (${violations.join('; ')}).${failedReviewNote} Refresh classify-change for the current scope first.`
     };
 }
 
@@ -2435,8 +2453,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
+    const failedCurrentReviewStateForPreflight = nextReview.reviewType
+        ? reviewStates.find((candidate) => candidate.reviewType === nextReview.reviewType && candidate.failed)
+        : undefined;
     const preflightWorkspaceReadiness = preflight
-        ? readPreflightWorkspaceReadiness(repoRoot, preflight)
+        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
+            failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null
+        })
         : { ready: false, reason: 'No current preflight exists.' };
     if (!preflightWorkspaceReadiness.ready) {
         return buildResult({
