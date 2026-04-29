@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- stopped the performance review path trigger from matching ordinary `Profile` policy filenames while preserving benchmark, profiling, and performance-path triggers
 - made fast-profile code review forcing skip true docs-only scopes unless protected control-plane files changed or `classify-change --force-code-review` is passed explicitly
 - made strict-profile domain reviews evidence-aware so DB/API/performance/infra/dependency reviews are not forced without matching domain surface evidence, while budget forecasts and profile diagnostics show the filtered review set and explicit all-domain overrides report `profile_forced`
 - included task scope, changed files, diff stat, staged/explicit-scope untracked bounded diff content, and markdown-safe diff fences in reviewer prompt artifacts so mandatory reviewers can inspect the implementation instead of receiving only rule text

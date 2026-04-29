@@ -236,7 +236,7 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
                 '\\.(spec|test)\\.(ts|tsx|js|jsx|java|kt|go|py|rb|php)$'
             ],
             performance: [
-                '(Cache|Redis|Elasticsearch|Search|Query|Benchmark|Profil(e|ing))[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$',
+                '(Cache|Redis|Elasticsearch|Search|Query|Benchmark|Profiling)[^/]*\\.(java|kt|ts|js|py|go|cs|rb|php)$',
                 '(^|/)(performance|perf|benchmark)/'
             ]
         },

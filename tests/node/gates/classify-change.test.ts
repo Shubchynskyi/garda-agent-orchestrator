@@ -104,6 +104,105 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.db, true);
         });
 
+        it('does not trigger performance review for ordinary profile policy files', () => {
+            const lowerCaseResult = classifyChange({
+                normalizedFiles: ['src/policy/profile-resolver.ts'],
+                taskIntent: 'Update profile review policy',
+                changedLinesTotal: 20,
+                additionsTotal: 12,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const pascalCaseResult = classifyChange({
+                normalizedFiles: ['src/policy/ProfileResolver.ts', 'src/policy/ProfileReviewPolicy.ts'],
+                taskIntent: 'Update profile review policy',
+                changedLinesTotal: 20,
+                additionsTotal: 12,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+
+            assert.equal(lowerCaseResult.triggers.performance, false);
+            assert.equal(lowerCaseResult.required_reviews.performance, false);
+            assert.equal(pascalCaseResult.triggers.performance, false);
+            assert.equal(pascalCaseResult.required_reviews.performance, false);
+        });
+
+        it('keeps performance review triggers for benchmark and profiling surfaces', () => {
+            const profilingFilenameResult = classifyChange({
+                normalizedFiles: ['src/runtime/RequestProfiling.ts'],
+                taskIntent: 'Update request profiling instrumentation',
+                changedLinesTotal: 20,
+                additionsTotal: 12,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const benchmarkFilenameResult = classifyChange({
+                normalizedFiles: ['src/runtime/LatencyBenchmark.ts'],
+                taskIntent: 'Update search benchmark',
+                changedLinesTotal: 20,
+                additionsTotal: 12,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const performancePathResult = classifyChange({
+                normalizedFiles: ['src/performance/request-latency.ts'],
+                taskIntent: 'Update performance path',
+                changedLinesTotal: 20,
+                additionsTotal: 12,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const perfPathResult = classifyChange({
+                normalizedFiles: ['src/perf/latency-metric.ts'],
+                taskIntent: 'Update perf path',
+                changedLinesTotal: 20,
+                additionsTotal: 12,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const benchmarkPathResult = classifyChange({
+                normalizedFiles: ['src/benchmark/latency-metric.ts'],
+                taskIntent: 'Update performance benchmark paths',
+                changedLinesTotal: 20,
+                additionsTotal: 12,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+
+            assert.equal(profilingFilenameResult.triggers.performance, true);
+            assert.equal(profilingFilenameResult.required_reviews.performance, true);
+            assert.equal(benchmarkFilenameResult.triggers.performance, true);
+            assert.equal(benchmarkFilenameResult.required_reviews.performance, true);
+            assert.equal(performancePathResult.triggers.performance, true);
+            assert.equal(performancePathResult.required_reviews.performance, true);
+            assert.equal(perfPathResult.triggers.performance, true);
+            assert.equal(perfPathResult.required_reviews.performance, true);
+            assert.equal(benchmarkPathResult.triggers.performance, true);
+            assert.equal(benchmarkPathResult.required_reviews.performance, true);
+        });
+
         it('does not trigger db review from misleading migration wording without database evidence', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-no-db-scope-'));
             fs.mkdirSync(path.join(repoRoot, 'src', 'lifecycle'), { recursive: true });
