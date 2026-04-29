@@ -1,9 +1,3 @@
-/**
- * Review-skill evidence evaluator for the completion gate.
- * Validates that required review skills were selected, their references loaded,
- * reviews recorded, and reviewer routing telemetry emitted in correct lifecycle order.
- */
-
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -288,7 +282,6 @@ export function validateReviewSkillEvidence(
         }
     }
 
-    // Verify that each required review has a corresponding review artifact
     for (const key of requiredKeys) {
         const artifact = reviewArtifacts[key];
         if (!artifact) {
@@ -704,7 +697,6 @@ export function validateReviewSkillEvidence(
                 }
             }
 
-            // Triviality check.
             let artifactPath = (artifact as any).path;
             if (!artifactPath && timelinePath) {
                 artifactPath = path.join(path.dirname(timelinePath.replace('task-events', 'reviews')), `${path.basename(timelinePath, '.jsonl')}-${key}.md`);

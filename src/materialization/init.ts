@@ -9,7 +9,13 @@ import {
     type WorkflowConfigReadStatus,
     type WorkflowConfigData
 } from '../core/workflow-config';
-import { ALL_AGENT_ENTRYPOINT_FILES , resolveBundleName} from '../core/constants';
+import {
+    ALL_AGENT_ENTRYPOINT_FILES,
+    DEFAULT_ASSISTANT_BREVITY,
+    DEFAULT_ASSISTANT_LANGUAGE,
+    DEFAULT_SOURCE_OF_TRUTH,
+    resolveBundleName
+} from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
@@ -127,31 +133,14 @@ interface BuildUsageOptions {
     enforceNoAutoCommit: boolean;
 }
 
-/**
- * Runs the init materialization pipeline.
- * Node implementation of live materialization.
- *
- * @param {object} options
- * @param {string} options.targetRoot - Project root
- * @param {string} options.bundleRoot - Orchestrator bundle dir
- * @param {boolean} [options.dryRun=false]
- * @param {string} [options.assistantLanguage='English']
- * @param {string} [options.assistantBrevity='concise']
- * @param {string} [options.sourceOfTruth='Claude']
- * @param {boolean} [options.enforceNoAutoCommit=false]
- * @param {boolean} [options.claudeOrchestratorFullAccess=false]
- * @param {boolean} [options.tokenEconomyEnabled=true]
- * @param {boolean} [options.providerMinimalism=true]
- * @returns {object} Init result metrics
- */
 export function runInit(options: RunInitOptions) {
     const {
         targetRoot,
         bundleRoot,
         dryRun = false,
-        assistantLanguage = 'English',
-        assistantBrevity = 'concise',
-        sourceOfTruth = 'Claude',
+        assistantLanguage = DEFAULT_ASSISTANT_LANGUAGE,
+        assistantBrevity = DEFAULT_ASSISTANT_BREVITY,
+        sourceOfTruth = DEFAULT_SOURCE_OF_TRUTH,
         enforceNoAutoCommit = false,
         claudeOrchestratorFullAccess = false,
         tokenEconomyEnabled = true,
@@ -194,12 +183,12 @@ export function runInit(options: RunInitOptions) {
     let gitignoreEntriesAdded = 0;
 
     // Normalize parameters
-    const lang = (assistantLanguage || 'English').trim() || 'English';
-    let brevity = (assistantBrevity || 'concise').trim().toLowerCase();
+    const lang = (assistantLanguage || DEFAULT_ASSISTANT_LANGUAGE).trim() || DEFAULT_ASSISTANT_LANGUAGE;
+    let brevity = (assistantBrevity || DEFAULT_ASSISTANT_BREVITY).trim().toLowerCase();
     if (!['concise', 'detailed'].includes(brevity)) {
         throw new Error(`Unsupported AssistantBrevity value '${brevity}'. Allowed values: concise, detailed.`);
     }
-    const trimmedSoT = (sourceOfTruth || 'Claude').trim();
+    const trimmedSoT = (sourceOfTruth || DEFAULT_SOURCE_OF_TRUTH).trim();
     const canonicalEntrypoint = getCanonicalEntrypointFile(trimmedSoT);
     const activeEntryFiles = getActiveAgentEntrypointFiles(activeAgentFilesSeed, trimmedSoT);
     const resolvedActiveEntryFiles = activeEntryFiles.length > 0 ? activeEntryFiles : [canonicalEntrypoint];

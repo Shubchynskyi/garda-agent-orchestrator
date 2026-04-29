@@ -78,18 +78,10 @@ interface ListSkillPacksOptions {
     refreshHeadlines?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const DEFAULT_INSTALLED_PACKS_PAYLOAD: Readonly<InstalledSkillPacksPayload> = Object.freeze({
     version: 1,
     installed_packs: []
 });
-
-// ---------------------------------------------------------------------------
-// Path helpers
-// ---------------------------------------------------------------------------
 
 export function getSkillPacksConfigPath(bundleRoot: string): string {
     return path.join(bundleRoot, 'live', 'config', 'skill-packs.json');
@@ -151,10 +143,6 @@ export function syncReviewCapabilities(bundleRoot: string): { configPath: string
     };
 }
 
-// ---------------------------------------------------------------------------
-// Installed packs CRUD
-// ---------------------------------------------------------------------------
-
 function validateInstalledPackIds(value: unknown): string[] {
     if (!Array.isArray(value)) {
         return [];
@@ -196,10 +184,6 @@ export function writeInstalledSkillPacks(bundleRoot: string, installedPackIds: u
     });
     return configPath;
 }
-
-// ---------------------------------------------------------------------------
-// Pack listing
-// ---------------------------------------------------------------------------
 
 export function listSkillPacks(bundleRoot: string, options: ListSkillPacksOptions = {}): SkillPackListing {
     const refreshHeadlines = options.refreshHeadlines !== false;
@@ -253,10 +237,6 @@ export function listSkillPacks(bundleRoot: string, options: ListSkillPacksOption
         customSkillDirectories
     };
 }
-
-// ---------------------------------------------------------------------------
-// Pack add / remove
-// ---------------------------------------------------------------------------
 
 function copyDirectoryRecursive(sourcePath: string, destinationPath: string): void {
     ensureDirectory(destinationPath);
@@ -371,10 +351,6 @@ export function removeSkillPack(bundleRoot: string, packId: string) {
         reviewCapabilities: reviewCapabilities.capabilities
     };
 }
-
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);

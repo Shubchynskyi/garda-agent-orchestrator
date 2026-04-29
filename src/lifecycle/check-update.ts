@@ -657,30 +657,6 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
     }
 }
 
-/**
- * Runs the check-update pipeline.
- * Node implementation of the check-update lifecycle.
- *
- * @param {object} options
- * @param {string} options.targetRoot - Project root directory
- * @param {string} options.bundleRoot - Orchestrator bundle directory (deployed)
- * @param {string} [options.initAnswersPath]
- * @param {string} [options.packageSpec]
- * @param {string} [options.sourcePath]
- * @param {boolean} [options.apply=false]
- * @param {boolean} [options.noPrompt=false]
- * @param {boolean} [options.dryRun=false]
- * @param {boolean} [options.skipVerify=false]
- * @param {boolean} [options.skipManifestValidation=false]
- * @param {boolean} [options.trustOverride=false] - When true, bypass update source trust policy
- * @param {string} [options.runningScriptPath] - Path of the currently running script (for skip during merge)
- * @param {AbortSignal}  [options.signal]         External cancellation signal for npm operations
- * @param {Function}    [options.onProgress]     Progress callback for streamed npm output
- * @param {string}      [options.diagnosticSourceReference] - User-facing source label for diagnostics
- * @param {string}      [options.diagnosticTool] - Tool label for diagnostics
- * @param {Function} [options.updateRunner] - Callback that performs the post-sync update step
- * @returns {Promise<object>} Check-update result
- */
 export async function runCheckUpdate(options: CheckUpdateOptions): Promise<CheckUpdateResult> {
     const {
         targetRoot,

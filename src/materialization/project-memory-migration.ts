@@ -44,9 +44,6 @@ export const MIGRATION_MARKER = '.migrated-from-rules';
  */
 export const MEANINGFUL_DIFF_THRESHOLD = 5;
 
-/**
- * Maps context rule files to their project-memory counterparts.
- */
 export const MIGRATION_RULE_MAP: readonly MigrationMapping[] = Object.freeze([
     { ruleFile: '10-project-context.md', memoryFile: 'context.md', heading: 'Project Context' },
     { ruleFile: '20-architecture.md', memoryFile: 'architecture.md', heading: 'Architecture' },
@@ -60,9 +57,6 @@ export const MIGRATION_RULE_MAP: readonly MigrationMapping[] = Object.freeze([
  */
 export const BOILERPLATE_SECTIONS: ReadonlySet<string> = new Set(['Purpose', 'Project Discovery Snapshot']);
 
-// ────────────────────────────────────────────────────────
-// Public API
-// ────────────────────────────────────────────────────────
 
 /**
  * One-time migration: copies user-authored content from context rule files
@@ -174,9 +168,6 @@ export function migrateContextRulesToProjectMemory(options: MigrationOptions): P
     };
 }
 
-// ────────────────────────────────────────────────────────
-// Detection helpers
-// ────────────────────────────────────────────────────────
 
 /**
  * Returns true when every .md file in the project-memory directory (excluding
@@ -244,9 +235,6 @@ export function getMeaningfulLines(text: string): string[] {
         );
 }
 
-/**
- * Removes an entire H2 section (heading + body) from markdown text.
- */
 function removeSectionByHeading(markdown: string, sectionHeading: string): string {
     const lines = markdown.split(/\r?\n/);
     const result: string[] = [];
@@ -265,9 +253,6 @@ function removeSectionByHeading(markdown: string, sectionHeading: string): strin
     return result.join('\n');
 }
 
-// ────────────────────────────────────────────────────────
-// Content extraction
-// ────────────────────────────────────────────────────────
 
 /**
  * Extracts migrateable content from a context rule file.
@@ -325,13 +310,7 @@ export function extractMigrationContent(ruleContent: string, targetHeading: stri
     return output.join('\n');
 }
 
-// ────────────────────────────────────────────────────────
-// Report helpers
-// ────────────────────────────────────────────────────────
 
-/**
- * Builds init-report lines describing the migration outcome.
- */
 export function buildMigrationReportLines(migrationResult: ProjectMemoryMigrationResult): string[] {
     const lines = ['', '## Project-Memory Migration (T-075)'];
 

@@ -109,7 +109,6 @@ export function hashFileWithCache(
         if (cached) return cached;
     }
 
-    // Cache miss — compute from disk
     try {
         const stat = fs.statSync(fullPath);
         if (!stat.isFile()) return '<error>';

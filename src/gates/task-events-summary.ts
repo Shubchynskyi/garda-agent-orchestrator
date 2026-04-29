@@ -16,9 +16,6 @@ const REVIEW_CONTEXT_LABELS = Object.freeze({
     dependency: 'dependency review context'
 });
 
-/**
- * Parse an ISO 8601 timestamp to a Date, matching Python parse_timestamp.
- */
 export function parseTimestamp(value: unknown): Date {
     if (value == null) return new Date(0);
     const text = String(value).trim();
@@ -33,9 +30,6 @@ export function parseTimestamp(value: unknown): Date {
     }
 }
 
-/**
- * Format a timestamp to ISO 8601 UTC string.
- */
 export function formatTimestamp(value: unknown): string | null {
     if (value == null) return null;
     if (value instanceof Date) {
@@ -359,9 +353,6 @@ export function auditGateCommand(commandText: string, gateLabel: string): Comman
     return result;
 }
 
-/**
- * Extract command audit from event details, matching Python get_command_audit_from_details.
- */
 export function getCommandAuditFromDetails(details: Record<string, unknown> | null | undefined) {
     if (!details || typeof details !== 'object') return null;
 
@@ -1151,10 +1142,6 @@ export interface BuildTaskEventsSummaryOptions {
     reviewsRoot?: string | null;
 }
 
-/**
- * Build task events summary.
- * Produces the canonical task-events summary output shape.
- */
 export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
     const taskId = options.taskId;
     const eventsRoot = options.eventsRoot;
@@ -1282,9 +1269,6 @@ export interface TaskEventsSummaryResult {
     }[];
 }
 
-/**
- * Format task events summary as text.
- */
 export function formatTaskEventsSummaryText(summary: TaskEventsSummaryResult, includeDetails = false): string {
     const lines: string[] = [
         `Task: ${summary.task_id}`,

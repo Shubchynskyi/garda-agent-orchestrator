@@ -76,10 +76,8 @@ export const BASELINE_SKILL_DIRECTORIES = Object.freeze([
     'skill-builder'
 ]);
 
-// ---------------------------------------------------------------------------
 // Shared normalization helpers — used by manifest parsing and callers that
 // need the same lightweight conversions (e.g. suggestion scoring).
-// ---------------------------------------------------------------------------
 
 export function asObjectRecord(value: unknown): JsonObject {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -124,10 +122,6 @@ export function normalizeNonNegativeInteger(value: unknown, fallbackValue: numbe
     return numeric;
 }
 
-// ---------------------------------------------------------------------------
-// Path helpers
-// ---------------------------------------------------------------------------
-
 function getTemplateSkillPacksRoot(bundleRoot: string): string {
     return path.join(bundleRoot, 'template', 'skill-packs');
 }
@@ -143,10 +137,6 @@ function getPackManifestPath(packRoot: string): string {
 function getSkillManifestPath(skillRoot: string): string {
     return path.join(skillRoot, 'skill.json');
 }
-
-// ---------------------------------------------------------------------------
-// Manifest readers
-// ---------------------------------------------------------------------------
 
 function isPlaceholderOptionalSkill(summary: unknown, skillRoot: string): boolean {
     if (OPTIONAL_SKILL_PLACEHOLDER_PATTERN.test(String(summary || ''))) {

@@ -20,10 +20,6 @@ import {
     normalizeInteger
 } from './shared';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 export const TASK_PLAN_SCHEMA_VERSION = 1;
 
 const PLAN_STATUS_VALUES = ['draft', 'approved', 'superseded'] as const;
@@ -31,10 +27,6 @@ export type TaskPlanStatus = (typeof PLAN_STATUS_VALUES)[number];
 
 const RISK_LEVEL_VALUES = ['low', 'medium', 'high'] as const;
 export type TaskPlanRiskLevel = (typeof RISK_LEVEL_VALUES)[number];
-
-// ---------------------------------------------------------------------------
-// Interfaces
-// ---------------------------------------------------------------------------
 
 export interface TaskPlanStep {
     id: string;
@@ -63,10 +55,6 @@ export interface TaskPlan {
     created_at?: string;
     plan_sha256?: string;
 }
-
-// ---------------------------------------------------------------------------
-// JSON Schema (draft-07)
-// ---------------------------------------------------------------------------
 
 export const taskPlanSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
@@ -139,10 +127,6 @@ export const taskPlanSchema: Record<string, unknown> = Object.freeze({
     required: ['schema_version', 'task_id', 'status', 'goal', 'scope_files', 'risk_level', 'steps'],
     additionalProperties: true
 });
-
-// ---------------------------------------------------------------------------
-// Validator
-// ---------------------------------------------------------------------------
 
 function validateStep(input: unknown, index: number): TaskPlanStep {
     const raw = ensurePlainObject(input, `steps[${index}]`);
@@ -261,10 +245,6 @@ export function validateTaskPlan(input: unknown): TaskPlan {
     return plan;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /**
  * Replacer that sorts object keys at every nesting level for deterministic
  * serialization.  Array order is preserved.
@@ -300,16 +280,9 @@ export function serializeTaskPlan(plan: TaskPlan): string {
     return `${JSON.stringify(serialized, null, 2)}\n`;
 }
 
-/**
- * Returns true when the executor has a validated approved plan to follow.
- */
 export function isApprovedPlan(plan: TaskPlan): boolean {
     return plan.status === 'approved';
 }
-
-// ---------------------------------------------------------------------------
-// Plan drift detection
-// ---------------------------------------------------------------------------
 
 export type PlanDriftStatus = 'NO_DRIFT' | 'PLAN_DRIFT' | 'REPLAN_REQUIRED' | 'NO_PLAN';
 

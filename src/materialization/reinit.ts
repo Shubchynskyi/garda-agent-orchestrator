@@ -62,19 +62,6 @@ function asObjectRecord(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
-/**
- * Runs the reinit pipeline.
- * Node implementation of the reinit lifecycle.
- *
- * @param {object} options
- * @param {string} options.targetRoot - Project root
- * @param {string} options.bundleRoot - Orchestrator bundle dir
- * @param {string} [options.initAnswersPath] - Relative or absolute path to init-answers.json
- * @param {object} [options.overrides] - CLI parameter overrides for answers
- * @param {boolean} [options.skipVerify=false]
- * @param {boolean} [options.skipManifestValidation=false]
- * @returns {object} Reinit result
- */
 export function runReinit(options: ReinitOptions) {
     const {
         targetRoot,
@@ -266,9 +253,6 @@ export function runReinit(options: ReinitOptions) {
     });
 }
 
-/**
- * Recollects init answers, applying overrides and preserving existing values.
- */
 export function recollectInitAnswers(opts: RecollectInitAnswersOptions): RecollectedInitAnswers {
     const { existingAnswers, liveVersion, tokenEconomyConfig, overrides = {}, changes = [] } = opts;
 
@@ -391,9 +375,6 @@ export function getOptionalValue(obj: Record<string, unknown> | null | undefined
     return null;
 }
 
-/**
- * Updates the core rule file (00-core.md) with language/brevity values.
- */
 export function updateCoreRuleFile(bundleRoot: string, sourceRoot: string, language: string, brevity: string): boolean {
     const livePath = path.join(bundleRoot, 'live/docs/agent-rules/00-core.md');
     const templatePath = path.join(sourceRoot, 'docs/agent-rules/00-core.md');
@@ -424,9 +405,6 @@ export function updateCoreRuleFile(bundleRoot: string, sourceRoot: string, langu
     return true;
 }
 
-/**
- * Updates the token economy config with the enabled flag.
- */
 export function updateTokenEconomyConfig(
     bundleRoot: string,
     sourceRoot: string,

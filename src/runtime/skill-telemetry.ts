@@ -1,10 +1,5 @@
 import { appendTaskEvent, appendTaskEventAsync } from '../gate-runtime/task-events';
 
-/**
- * Telemetry event types for skill activation and reference loading.
- * Used by the runtime task-event stream to track which skills and
- * references were suggested, selected, or loaded during a task.
- */
 export const SKILL_TELEMETRY_EVENT_TYPES = Object.freeze({
     SKILL_SUGGESTED: 'SKILL_SUGGESTED',
     SKILL_SELECTED: 'SKILL_SELECTED',

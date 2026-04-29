@@ -15,8 +15,10 @@ import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/hel
 import { runVerify } from '../../../../src/validators/verify';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
-import { DEFAULT_BUNDLE_NAME, DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../../../src/core/constants';
+import { DEFAULT_BUNDLE_NAME, resolveInitAnswersRelativePath } from '../../../../src/core/constants';
 import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
+
+const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
 
 function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
@@ -146,7 +148,7 @@ test('--claude-full-access aliases to claudeOrchestratorFullAccess', () => {
 test('getSetupAnswerDefaults returns sensible defaults for empty workspace', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
     try {
-        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {});
+        const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {});
         assert.equal(defaults.assistantLanguage, 'English');
         assert.equal(defaults.assistantBrevity, 'concise');
         assert.equal(defaults.sourceOfTruth, 'Claude');
@@ -163,7 +165,7 @@ test('getSetupAnswerDefaults returns sensible defaults for empty workspace', () 
 test('getSetupAnswerDefaults respects CLI options over defaults', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
     try {
-        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+        const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {
             assistantLanguage: 'Russian',
             assistantBrevity: 'detailed',
             sourceOfTruth: 'Codex',
@@ -204,7 +206,7 @@ test('getSetupAnswerDefaults reads existing init answers file', () => {
     );
 
     try {
-        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {});
+        const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {});
         assert.equal(defaults.assistantLanguage, 'Deutsch');
         assert.equal(defaults.assistantBrevity, 'detailed');
         assert.equal(defaults.sourceOfTruth, 'Gemini');
@@ -236,7 +238,7 @@ test('getSetupAnswerDefaults CLI options override existing init answers', () => 
     );
 
     try {
-        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+        const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {
             sourceOfTruth: 'Claude'
         });
         assert.equal(defaults.assistantLanguage, 'Deutsch');
@@ -250,7 +252,7 @@ test('getSetupAnswerDefaults CLI options override existing init answers', () => 
 test('getSetupAnswerDefaults normalizes numbered active agent file selections', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
     try {
-        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+        const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {
             sourceOfTruth: 'Claude',
             activeAgentFiles: '1, 2, 8'
         });
@@ -279,7 +281,7 @@ test('getSetupAnswerDefaults preserves existing active agent files by default', 
     );
 
     try {
-        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {});
+        const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {});
         assert.equal(defaults.sourceOfTruth, 'Codex');
         assert.equal(defaults.activeAgentFiles, 'CLAUDE.md, AGENTS.md');
     } finally {
@@ -306,7 +308,7 @@ test('getSetupAnswerDefaults reconciles preserved active agent files with an exp
     );
 
     try {
-        const defaults = getSetupAnswerDefaults(tmpDir, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+        const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {
             sourceOfTruth: 'Gemini'
         });
         assert.equal(defaults.sourceOfTruth, 'Gemini');

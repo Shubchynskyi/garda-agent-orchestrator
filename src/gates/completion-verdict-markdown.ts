@@ -1,16 +1,8 @@
-/**
- * Markdown utilities for review artifact parsing.
- * Shared by completion-verdict-findings and completion-verdict-review-skill evaluators.
- */
-
 export const EMPTY_REVIEW_MARKERS = new Set([
     'none', 'n/a', 'na', 'no findings', 'no residual risks',
     'no deferred findings', 'no open findings', 'no outstanding findings'
 ]);
 
-/**
- * Extract lines from a markdown section by heading.
- */
 export function extractMarkdownSectionLines(lines: string[], heading: string): string[] {
     const sectionLines: string[] = [];
     let capture = false;
@@ -27,9 +19,6 @@ export function extractMarkdownSectionLines(lines: string[], heading: string): s
     return sectionLines;
 }
 
-/**
- * Normalize review list text: strip bullets, backticks.
- */
 export function normalizeReviewListText(value: unknown): string {
     if (value == null) return '';
     let text = String(value).trim();
@@ -40,9 +29,6 @@ export function normalizeReviewListText(value: unknown): string {
     return text;
 }
 
-/**
- * Check if a review entry is meaningful (not an empty marker).
- */
 export function isMeaningfulReviewEntry(value: unknown): boolean {
     const text = normalizeReviewListText(value);
     if (!text) return false;
@@ -50,9 +36,6 @@ export function isMeaningfulReviewEntry(value: unknown): boolean {
     return !EMPTY_REVIEW_MARKERS.has(normalized);
 }
 
-/**
- * Get meaningful entries from a markdown section.
- */
 export function getMarkdownMeaningfulEntries(sectionLines: string[]): string[] {
     const entries: string[] = [];
     let currentEntry: string | null = null;
@@ -85,9 +68,6 @@ export function getMarkdownMeaningfulEntries(sectionLines: string[]): string[] {
 
 type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
 
-/**
- * Parse findings by severity from section lines.
- */
 export function getFindingsBySeverity(sectionLines: string[]): Record<SeverityLevel, string[]> {
     const findings: Record<SeverityLevel, string[]> = { critical: [], high: [], medium: [], low: [] };
     let currentSeverity: SeverityLevel | null = null;

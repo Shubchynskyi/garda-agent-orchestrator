@@ -1,8 +1,3 @@
-/**
- * Review artifact findings evaluator for the completion gate.
- * Checks review artifacts for active findings, residual risks, and deferred entry validity.
- */
-
 import { normalizePath } from './helpers';
 import {
     extractMarkdownSectionLines,
@@ -10,16 +5,12 @@ import {
     getFindingsBySeverity
 } from './completion-verdict-markdown';
 
-/**
- * Check if review artifact content is trivial (too short or only boilerplate).
- */
 export function isTrivialReview(content: string): boolean {
     const text = (content || '').trim();
     if (text.length < 100) return true;
     const hasImplementationReference = text.includes('`')
         || /\b[A-Za-z0-9_./-]+\.[A-Za-z0-9]+(?::\d+)?\b/.test(text);
 
-    // Check if findings and risks are all 'none' or 'n/a'
     const lines = text.split('\n');
     const findings = getMarkdownMeaningfulEntries(extractMarkdownSectionLines(lines, 'Findings by Severity'));
     const risks = getMarkdownMeaningfulEntries(extractMarkdownSectionLines(lines, 'Residual Risks'));
@@ -27,7 +18,6 @@ export function isTrivialReview(content: string): boolean {
     // If both sections are empty of meaningful content, it might be trivial,
     // but we only block if total length is very low or no implementation details are mentioned.
     if (findings.length === 0 && risks.length === 0) {
-        // Trivial if very few words
         const wordCount = text.split(/\s+/).length;
         if (wordCount < 30) return true;
         if (!hasImplementationReference && wordCount < 60) return true;
@@ -36,10 +26,6 @@ export function isTrivialReview(content: string): boolean {
     return false;
 }
 
-/**
- * Analyze review artifact for findings evidence.
- * Matches Python get_review_artifact_findings_evidence.
- */
 export function getReviewArtifactFindingsEvidence(artifactPath: string, content: string) {
     const artifactPathNormalized = normalizePath(artifactPath);
     type SeverityLevel = 'critical' | 'high' | 'medium' | 'low';
@@ -69,7 +55,6 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
 
     const lines = (content || '').split('\n');
 
-    // Findings by Severity section
     const findingsLines = extractMarkdownSectionLines(lines, 'Findings by Severity');
     if (!findingsLines.length) {
         result.missing_sections.push('Findings by Severity');
@@ -91,7 +76,6 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         }
     }
 
-    // Residual Risks section
     const residualLines = extractMarkdownSectionLines(lines, 'Residual Risks');
     if (!residualLines.length) {
         result.missing_sections.push('Residual Risks');
@@ -110,7 +94,6 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         }
     }
 
-    // Deferred Findings section
     const deferredLines = extractMarkdownSectionLines(lines, 'Deferred Findings');
     if (deferredLines.length > 0) {
         result.deferred_findings_section_present = true;

@@ -13,9 +13,6 @@ export const SHARED_START_TASK_WORKFLOW_RELATIVE_PATH = '.agents/workflows/start
 
 const ACTIVE_AGENT_FILE_ALIAS_MAP: Record<string, string> = getProviderAliasMap() as Record<string, string>;
 
-/**
- * Resolves a source-of-truth provider name to its canonical entrypoint file.
- */
 export function getCanonicalEntrypointFile(sourceOfTruth: string): string {
     const key = String(sourceOfTruth).trim();
     const match = normalizeProviderId(key) as SourceOfTruthValue | null;
@@ -25,9 +22,6 @@ export function getCanonicalEntrypointFile(sourceOfTruth: string): string {
     return SOURCE_TO_ENTRYPOINT_MAP[match];
 }
 
-/**
- * Normalizes a single agent entrypoint token (alias, number, or path) to a canonical file.
- */
 export function normalizeAgentEntrypointToken(token: string): string | null {
     let trimmed = String(token).trim();
     trimmed = trimmed.replace(/^or\s+/i, '');
@@ -62,10 +56,6 @@ export function normalizeAgentEntrypointToken(token: string): string | null {
     );
 }
 
-/**
- * Resolves active agent entrypoint files from a comma/semicolon-separated value
- * and/or a source-of-truth provider name. Returns ordered canonical array.
- */
 export function getActiveAgentEntrypointFiles(value: unknown, sourceOfTruthValue: unknown): string[] {
     const selected = new Set<string>();
 
@@ -92,9 +82,6 @@ export function getActiveAgentEntrypointFiles(value: unknown, sourceOfTruthValue
     return ordered;
 }
 
-/**
- * Converts an array of active entrypoint files to a comma-separated string.
- */
 export function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles: unknown): string | null {
     if (!activeEntrypointFiles || !Array.isArray(activeEntrypointFiles)) {
         return null;
@@ -119,9 +106,6 @@ export function convertActiveAgentEntrypointFilesToString(activeEntrypointFiles:
     return normalized.length === 0 ? null : normalized.join(', ');
 }
 
-/**
- * Returns provider orchestrator profile definitions (derived from provider registry).
- */
 export function getProviderOrchestratorProfileDefinitions() {
     return getProviderBridgeEntries().map((entry) => ({
         providerId: entry.id,
@@ -212,9 +196,6 @@ export function getManagedGitignoreCleanupEntries(
     return [...selected].sort();
 }
 
-/**
- * Returns GitHub skill bridge profile definitions.
- */
 export function getGitHubSkillBridgeProfileDefinitions() {
     return [
         {

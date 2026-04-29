@@ -133,11 +133,6 @@ export function getLegacyBundleCliCommand(bundleName?: string): string {
     return getBundleCliCommand(bundleName);
 }
 
-/** @deprecated Use {@link resolveInitAnswersRelativePath} which respects configured bundle name. */
-export const DEFAULT_INIT_ANSWERS_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'init-answers.json');
-/** @deprecated Use {@link resolveAgentInitStateRelativePath} which respects configured bundle name. */
-export const DEFAULT_AGENT_INIT_STATE_RELATIVE_PATH = path.join(DEFAULT_BUNDLE_NAME, 'runtime', 'agent-init-state.json');
-
 export function resolveInitAnswersRelativePath(override?: string): string {
     if (override && override.trim()) return override.trim();
     return path.join(resolveBundleName(), 'runtime', 'init-answers.json');
@@ -192,6 +187,10 @@ export const BREVITY_VALUES: readonly string[] = Object.freeze([
     'concise',
     'detailed'
 ]);
+
+export const DEFAULT_ASSISTANT_LANGUAGE = 'English';
+export const DEFAULT_ASSISTANT_BREVITY = BREVITY_VALUES[0];
+export const DEFAULT_SOURCE_OF_TRUTH = SOURCE_OF_TRUTH_VALUES[0];
 
 export const COLLECTED_VIA_VALUES: readonly string[] = Object.freeze([
     'AGENT_INIT_PROMPT.md',

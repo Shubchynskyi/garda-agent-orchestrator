@@ -7,7 +7,9 @@ import * as os from 'node:os';
 import { getSetupAnswerDefaults } from '../../../src/cli/commands/setup';
 import { runAgentInit } from '../../../src/lifecycle/agent-init';
 import { getStatusSnapshot } from '../../../src/validators/status';
-import { DEFAULT_INIT_ANSWERS_RELATIVE_PATH } from '../../../src/core/constants';
+import { resolveInitAnswersRelativePath } from '../../../src/core/constants';
+
+const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
 
 const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
@@ -97,7 +99,7 @@ test('setup/status/agent-init handoff keeps ActiveAgentFiles as a single pending
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-handoff-'));
     const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
     const runtimeRoot = path.join(bundleRoot, 'runtime');
-    const defaults = getSetupAnswerDefaults(workspaceRoot, DEFAULT_INIT_ANSWERS_RELATIVE_PATH, {
+    const defaults = getSetupAnswerDefaults(workspaceRoot, INIT_ANSWERS_RELATIVE_PATH, {
         sourceOfTruth: 'Codex'
     });
 

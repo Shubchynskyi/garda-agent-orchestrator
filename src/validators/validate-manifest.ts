@@ -35,10 +35,6 @@ const WINDOWS_RESERVED_NAMES = new Set([
     'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9'
 ]);
 
-/**
- * Parse list items from MANIFEST.md content.
- * Matches lines like "- path/to/file".
- */
 export function parseManifestItems(content: string): string[] {
     const items: string[] = [];
     const lines = content.split(/\r?\n/);
@@ -71,10 +67,6 @@ export function normalizeManifestEntry(entry: string): string {
         .replace(/\/+$/, '');
 }
 
-/**
- * Validate a single manifest entry for path safety issues.
- * Returns an array of diagnostics (empty if the entry is safe).
- */
 export function validateManifestEntry(entry: string): ManifestEntryDiagnostic[] {
     const diags: ManifestEntryDiagnostic[] = [];
 
@@ -117,9 +109,6 @@ export function validateManifestEntry(entry: string): ManifestEntryDiagnostic[] 
     return diags;
 }
 
-/**
- * Check whether a manifest entry resolves outside the given root.
- */
 export function checkEntryOutsideRoot(entry: string, rootPath: string): ManifestEntryDiagnostic | null {
     const resolved = path.resolve(rootPath, entry);
     if (!isPathInsideRoot(rootPath, resolved)) {

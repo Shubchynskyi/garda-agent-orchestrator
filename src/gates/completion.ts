@@ -61,7 +61,6 @@ import { resolveReviewExecutionPolicyModeFromPreflight } from '../core/review-ex
 
 export { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
 
-// Re-export reporting and formatter helpers from dedicated module
 export {
     quotePowerShellCliValue,
     buildCoherentCycleRestartCommand,
@@ -69,7 +68,6 @@ export {
     formatCompletionGateResult
 } from './completion-reporting';
 
-// Re-export evidence loading and normalization helpers from dedicated module
 export {
     collectOrderedTimelineEvents,
     readJsonArtifact,
@@ -87,7 +85,6 @@ export {
 } from './completion-evidence';
 export type { TimelineEventEntry } from './completion-evidence';
 
-// Re-export verdict evaluation logic from dedicated module
 export {
     STAGE_SEQUENCE_ORDER,
     NO_REVIEW_RECORDED_STAGE_SEQUENCE_ORDER,
@@ -282,7 +279,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         }
     }
 
-    // --- T-003: ordered timeline + stage-sequence enforcement ---
     const timelineErrors: string[] = [];
     const orderedEvents = collectOrderedTimelineEvents(timelinePath, timelineErrors);
     const timelineEventTypes = new Set(orderedEvents.map(e => e.event_type));
@@ -293,7 +289,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         .find((entry) => entry.event_type === 'COMPILE_GATE_PASSED')
         ?.timestamp_utc ?? null;
 
-    // Propagate timeline parse errors
     errors.push(...timelineErrors);
 
     if (!timelineEventTypes.has('TASK_MODE_ENTERED')) {
@@ -329,7 +324,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     );
     errors.push(...zeroDiffEvidence.violations);
 
-    // Validate stage sequence ordering
     const stageSequence = validateStageSequence(orderedEvents, codeChanged, timelinePath, reviewRecordedRequired);
     errors.push(...stageSequence.violations);
 
@@ -457,7 +451,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     );
     errors.push(...reviewSkillEvidence.violations);
 
-    // Merge skill evidence into stage-sequence record
     stageSequence.review_skill_ids = reviewSkillEvidence.skill_ids;
     stageSequence.review_skill_reference_paths = reviewSkillEvidence.reference_paths;
     stageSequence.review_artifact_keys = reviewSkillEvidence.artifact_keys;

@@ -3,9 +3,6 @@ import * as path from 'node:path';
 import type { TaskEventIntegrity } from '../gate-runtime/task-events';
 import { normalizePath } from './helpers';
 
-/**
- * A single parsed event from the task timeline JSONL file.
- */
 export interface TimelineEventEntry {
     event_type: string;
     timestamp_utc: string;
@@ -14,10 +11,6 @@ export interface TimelineEventEntry {
     integrity?: TaskEventIntegrity | null;
 }
 
-/**
- * Read ordered timeline events from a JSONL file.
- * Returns events in file order (integrity-sequence order) with their event types.
- */
 export function collectOrderedTimelineEvents(timelinePath: string, errors: string[]): TimelineEventEntry[] {
     const entries: TimelineEventEntry[] = [];
     const resolvedPath = path.resolve(String(timelinePath || ''));
@@ -75,9 +68,6 @@ export function collectOrderedTimelineEvents(timelinePath: string, errors: strin
     return entries;
 }
 
-/**
- * Read a JSON artifact from disk. Returns null and pushes to errors on failure.
- */
 export function readJsonArtifact(
     artifactPath: string,
     label: string,
@@ -100,9 +90,6 @@ export function readJsonArtifact(
     }
 }
 
-/**
- * Assert that a loaded artifact has PASSED status and PASS outcome.
- */
 export function ensurePassedArtifactStatus(
     artifact: Record<string, unknown> | null,
     label: string,
@@ -119,9 +106,6 @@ export function ensurePassedArtifactStatus(
     }
 }
 
-/**
- * Read an optional string field from a loaded artifact, returning null if absent or empty.
- */
 export function readOptionalArtifactStringField(
     artifact: Record<string, unknown> | null,
     fieldName: string
@@ -137,17 +121,11 @@ export function readOptionalArtifactStringField(
     return trimmed || null;
 }
 
-/**
- * Normalize a timeline event detail value to a trimmed string or null.
- */
 export function normalizeTimelineDetailString(value: unknown): string | null {
     const text = String(value || '').trim();
     return text || null;
 }
 
-/**
- * Extract and normalize the skill_id from a timeline event's details.
- */
 export function getTimelineSkillId(event: TimelineEventEntry): string | null {
     if (!event.details) {
         return null;
@@ -155,9 +133,6 @@ export function getTimelineSkillId(event: TimelineEventEntry): string | null {
     return normalizeTimelineDetailString(event.details.skill_id ?? event.details.skillId)?.toLowerCase() || null;
 }
 
-/**
- * Extract and normalize the reference_path from a timeline event's details.
- */
 export function getTimelineReferencePath(event: TimelineEventEntry): string | null {
     if (!event.details) {
         return null;
@@ -166,9 +141,6 @@ export function getTimelineReferencePath(event: TimelineEventEntry): string | nu
     return raw ? normalizePath(raw).toLowerCase() : null;
 }
 
-/**
- * Check if a timeline event matches any of the candidate review skill IDs.
- */
 export function eventMatchesReviewSkill(event: TimelineEventEntry, candidateSkillIds: string[]): boolean {
     const normalizedCandidates = candidateSkillIds.map(candidate => candidate.toLowerCase());
     const skillId = getTimelineSkillId(event);
@@ -184,9 +156,6 @@ export function eventMatchesReviewSkill(event: TimelineEventEntry, candidateSkil
     return normalizedCandidates.some((candidate) => referencePath.includes(`/live/skills/${candidate.toLowerCase()}/`));
 }
 
-/**
- * Check if a timeline event matches a given stage name.
- */
 export function eventMatchesStage(entry: TimelineEventEntry, stage: string): boolean {
     if (stage === 'REVIEW_GATE_PASSED') {
         return entry.event_type === 'REVIEW_GATE_PASSED' || entry.event_type === 'REVIEW_GATE_PASSED_WITH_OVERRIDE';
@@ -194,9 +163,6 @@ export function eventMatchesStage(entry: TimelineEventEntry, stage: string): boo
     return entry.event_type === stage;
 }
 
-/**
- * Find the latest timeline event matching a predicate (scanning from end).
- */
 export function findLatestTimelineEvent(
     events: readonly TimelineEventEntry[],
     predicate: (entry: TimelineEventEntry) => boolean
@@ -210,9 +176,6 @@ export function findLatestTimelineEvent(
     return null;
 }
 
-/**
- * Find the latest occurrence of a stage event with sequence below an upper bound.
- */
 export function findLatestStageOccurrence(
     events: readonly TimelineEventEntry[],
     stage: string,
@@ -230,9 +193,6 @@ export function findLatestStageOccurrence(
     return null;
 }
 
-/**
- * Find the latest occurrence of a stage event within a bounded sequence range.
- */
 export function findLatestStageOccurrenceInRange(
     events: readonly TimelineEventEntry[],
     stage: string,
@@ -254,9 +214,6 @@ export function findLatestStageOccurrenceInRange(
     return null;
 }
 
-/**
- * Find the latest REVIEW_RECORDED event for a given review key and return its review_context_path.
- */
 export function findLatestRecordedReviewContextPath(
     events: readonly TimelineEventEntry[],
     reviewKey: string

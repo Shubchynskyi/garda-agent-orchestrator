@@ -366,7 +366,6 @@ export function getShellSmokeEvidence(repoRoot: string, taskId: string | null, a
         return result;
     }
 
-    // Timeline cross-verification
     const timelineViolations = verifyShellSmokeTimelineBinding(resolvedTaskId, result.evidence_hash, opts.timelinePath);
     if (timelineViolations.length > 0) {
         result.evidence_status = 'EVIDENCE_TIMELINE_UNBOUND';

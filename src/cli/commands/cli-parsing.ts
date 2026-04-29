@@ -4,6 +4,7 @@ import {
     BOOLEAN_FALSE_VALUES,
     BOOLEAN_TRUE_VALUES,
     BREVITY_VALUES,
+    DEFAULT_SOURCE_OF_TRUTH,
     SOURCE_OF_TRUTH_VALUES
 } from '../../core/constants';
 import {
@@ -171,7 +172,7 @@ export function normalizeSourceOfTruth(value: unknown): string {
     return match;
 }
 
-export function tryNormalizeSourceOfTruth(value: unknown, fallback = 'Claude'): string {
+export function tryNormalizeSourceOfTruth(value: unknown, fallback = DEFAULT_SOURCE_OF_TRUTH): string {
     try {
         return value === undefined || value === null || String(value).trim() === ''
             ? fallback

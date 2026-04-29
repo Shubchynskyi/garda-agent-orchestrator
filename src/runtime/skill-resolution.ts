@@ -98,13 +98,11 @@ type FuzzyAliasMap = Map<string, string[]>;
 const SUGGESTED_SKILL_MIN_SCORE = 75;
 const SUGGESTED_PACK_MIN_SCORE = 75;
 
-// ---------------------------------------------------------------------------
 // Fuzzy alias expansion – deterministic, reviewable synonym groups for
 // abbreviation ↔ full-name matching (T-078).
 // Each inner array is a group of equivalent terms.  Matching is symmetric:
 // if signal says "kubernetes" and text says "k8s" (or vice-versa), the
 // alias layer bridges the gap.  All terms are compared lowercased.
-// ---------------------------------------------------------------------------
 export const FUZZY_ALIAS_GROUPS = Object.freeze([
     ['k8s', 'kubernetes', 'kube'],
     ['pg', 'postgres', 'postgresql', 'pgsql'],
@@ -195,10 +193,6 @@ export function textMatchesFuzzyVariant(text: string, normalizedSignal: string):
     return false;
 }
 
-// ---------------------------------------------------------------------------
-// Signal matching helpers
-// ---------------------------------------------------------------------------
-
 function normalizeSearchText(value: unknown): string {
     return String(value || '').trim().toLowerCase();
 }
@@ -278,10 +272,6 @@ function createEmptySignalMatches(): SignalMatches {
         aliases_or_tags: []
     };
 }
-
-// ---------------------------------------------------------------------------
-// Suggestion scoring
-// ---------------------------------------------------------------------------
 
 function buildSuggestionContext(targetRoot: string, taskText: unknown, changedPaths: unknown): SuggestionContext {
     const discovery = getProjectDiscovery(targetRoot) as ProjectDiscoveryData;
@@ -379,12 +369,10 @@ function scoreSkillSuggestion(
     };
 }
 
-// ---------------------------------------------------------------------------
 // Same-pack dedupe – keeps the top-N suggestion list diverse across packs
 // (T-080).  The strongest skill per pack is always preserved.  Additional
 // same-pack skills survive only when they contribute evidence in a signal
 // category the primary skill does not cover.
-// ---------------------------------------------------------------------------
 export const MATCH_CATEGORIES = Object.freeze([
     'stack_signals', 'task_signals', 'changed_path_signals',
     'project_path_signals', 'aliases_or_tags'
@@ -426,10 +414,6 @@ export function dedupeSkillsByPack(sortedSkills: readonly SkillSuggestion[]): De
 
     return { primary, collapsed };
 }
-
-// ---------------------------------------------------------------------------
-// Pack aggregation
-// ---------------------------------------------------------------------------
 
 function aggregatePackSuggestions(
     skillSuggestions: readonly SkillSuggestion[],
@@ -482,10 +466,6 @@ function aggregatePackSuggestions(
             return left.id.localeCompare(right.id);
         });
 }
-
-// ---------------------------------------------------------------------------
-// Top-level suggestion entry point
-// ---------------------------------------------------------------------------
 
 export function suggestSkills(bundleRoot: string, targetRoot: string, options: SuggestSkillsOptions = {}) {
     const { indexPath, payload } = readSkillsIndex(bundleRoot);

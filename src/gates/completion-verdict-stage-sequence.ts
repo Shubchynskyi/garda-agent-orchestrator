@@ -1,9 +1,3 @@
-/**
- * Stage-sequence evaluator for the completion gate.
- * Validates that required lifecycle events appeared in the canonical order
- * within the current execution cycle.
- */
-
 import { normalizePath } from './helpers';
 import {
     findLatestTimelineEvent,
@@ -12,11 +6,6 @@ import {
 } from './completion-evidence';
 import type { TimelineEventEntry } from './completion-evidence';
 
-/**
- * Canonical stage ordering for code-changing tasks.
- * Each entry is the earliest-allowed position (0-based) in the lifecycle.
- * Completion gate fails when a required stage event appears before its prerequisites.
- */
 export const STAGE_SEQUENCE_ORDER: readonly string[] = Object.freeze([
     'TASK_MODE_ENTERED',
     'HANDSHAKE_DIAGNOSTICS_RECORDED',
@@ -59,11 +48,6 @@ const UPSTREAM_CYCLE_RESTART_EVENTS = new Set([
     'PREFLIGHT_CLASSIFIED'
 ]);
 
-/**
- * Validate that required stage events occurred in the canonical order.
- * Returns the first position of each required stage event in the timeline
- * and reports violations when ordering constraints are broken.
- */
 export function validateStageSequence(
     events: TimelineEventEntry[],
     codeChanged: boolean,

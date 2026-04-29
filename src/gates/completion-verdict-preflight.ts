@@ -1,9 +1,3 @@
-/**
- * Preflight artifact validator for the completion gate.
- * Reads and validates the preflight JSON artifact, resolving the task ID
- * and computing the artifact hash for downstream lifecycle checks.
- */
-
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';

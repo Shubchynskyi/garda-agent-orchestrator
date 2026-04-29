@@ -281,9 +281,6 @@ function restoreEntrypointRuleLinks(content: string): string {
     return restored;
 }
 
-/**
- * Extracts managed block (between start/end markers) from text content.
- */
 export function extractManagedBlockFromContent(
     content: string | null | undefined,
     startMarker: string,
@@ -297,9 +294,6 @@ export function extractManagedBlockFromContent(
     return match ? match[0] : null;
 }
 
-/**
- * Parses the Active Queue table range from a managed block in TASK.md.
- */
 export function getTaskQueueTableRange(managedBlock: string | null | undefined): TaskQueueTableRange | null {
     if (!managedBlock || !managedBlock.trim()) return null;
     const normalized = normalizeLineEndings(managedBlock, '\n');
@@ -338,9 +332,6 @@ export function getTaskQueueTableRange(managedBlock: string | null | undefined):
     return { lines, rowsStartIndex, rowsEndIndex };
 }
 
-/**
- * Extracts task queue rows from a managed block.
- */
 export function getTaskQueueRowsFromManagedBlock(managedBlock: string | null | undefined): string[] {
     const range = getTaskQueueTableRange(managedBlock);
     if (!range) return [];
@@ -353,9 +344,6 @@ export function getTaskQueueRowsFromManagedBlock(managedBlock: string | null | u
     return rows;
 }
 
-/**
- * Replaces task queue rows in a managed block.
- */
 export function setTaskQueueRowsInManagedBlock(managedBlock: string, rows: string[]): string {
     const range = getTaskQueueTableRange(managedBlock);
     if (!range) return managedBlock;
@@ -365,9 +353,6 @@ export function setTaskQueueRowsInManagedBlock(managedBlock: string, rows: strin
     return [...prefix, ...rows, ...suffix].join('\n');
 }
 
-/**
- * Detects whether a managed block uses the legacy `Depth` column header.
- */
 export function hasLegacyDepthColumn(managedBlock: string): boolean {
     return /\|\s*Depth\s*\|/i.test(managedBlock) && !/\|\s*Profile\s*\|/i.test(managedBlock);
 }
@@ -515,20 +500,14 @@ export function buildTaskContentWithExistingQueue(templateContent: string, exist
     return joinTaskManagedBlockAndSuffix(nextBlock, suffix, newline);
 }
 
-/**
- * Builds the canonical entrypoint managed block (for the source-of-truth file).
- */
-export function buildCanonicalManagedBlock(canonicalFile: string, templateClaudeContent: string): string {
-    const baseBlock = extractManagedBlockFromContent(templateClaudeContent, MANAGED_START, MANAGED_END);
+export function buildCanonicalManagedBlock(canonicalFile: string, entrypointTemplateContent: string): string {
+    const baseBlock = extractManagedBlockFromContent(entrypointTemplateContent, MANAGED_START, MANAGED_END);
     if (!baseBlock) {
-        throw new Error('Template CLAUDE.md managed block is missing; cannot build canonical entrypoint.');
+        throw new Error('Entrypoint template managed block is missing; cannot build canonical entrypoint.');
     }
     return restoreEntrypointRuleLinks(baseBlock).replace(/^# CLAUDE\.md$/m, `# ${canonicalFile}`);
 }
 
-/**
- * Builds a redirect managed block for non-canonical entrypoints.
- */
 export function buildRedirectManagedBlock(
     targetFile: string,
     canonicalFile: string,
@@ -576,9 +555,6 @@ export function buildRedirectManagedBlock(
     ].join('\r\n');
 }
 
-/**
- * Builds the commit guard hook script content.
- */
 export function buildCommitGuardManagedBlock() {
     const agentEnvLines = COMMIT_GUARD_AGENT_MARKERS.map((m) => `  "${m}"`).join('\n');
     return `${COMMIT_GUARD_START}
@@ -617,9 +593,6 @@ fi
 ${COMMIT_GUARD_END}`;
 }
 
-/**
- * Builds provider orchestrator agent markdown content.
- */
 export function buildProviderOrchestratorAgentContent(
     providerLabel: string,
     canonicalFile: string,
@@ -807,9 +780,6 @@ Hard stops:
 ${MANAGED_END}`.trim();
 }
 
-/**
- * Builds GitHub skill bridge agent markdown content.
- */
 export function buildGitHubSkillBridgeAgentContent(
     profileTitle: string,
     canonicalFile: string,
@@ -849,9 +819,6 @@ Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`ins
 ${MANAGED_END}`.trim();
 }
 
-/**
- * Merges required entries into Qwen settings JSON, preserving existing structure.
- */
 export function buildQwenSettingsContent(
     existingContent: string | null | undefined,
     requiredEntries: string[] | null | undefined
@@ -914,9 +881,6 @@ export function buildQwenSettingsContent(
     };
 }
 
-/**
- * Merges required permission entries into Claude local settings JSON.
- */
 export function buildClaudeLocalSettingsContent(
     existingContent: string | null | undefined,
     enableOrchestratorAccess: boolean

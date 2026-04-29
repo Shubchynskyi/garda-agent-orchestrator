@@ -32,10 +32,6 @@ export function getLiveVersionPayload(value: unknown): LiveVersionPayload {
         : {};
 }
 
-/**
- * Resolves the init-answers path from a raw (possibly relative) input,
- * validates it is inside the target root, and reads/parses it.
- */
 export function resolveInitAnswersPath(normalizedTarget: string, initAnswersPath: string): string {
     const resolved = path.isAbsolute(initAnswersPath)
         ? initAnswersPath
@@ -50,9 +46,6 @@ export function resolveInitAnswersPath(normalizedTarget: string, initAnswersPath
     return resolved;
 }
 
-/**
- * Reads, validates, and parses the init-answers JSON artifact.
- */
 export function readInitAnswers(initAnswersResolvedPath: string): unknown {
     const raw = readTextFile(initAnswersResolvedPath);
     if (!raw.trim()) {
@@ -65,9 +58,6 @@ export function readInitAnswers(initAnswersResolvedPath: string): unknown {
     }
 }
 
-/**
- * Detects the existing live version by reading `live/version.json`.
- */
 export function detectPreviousVersion(normalizedTarget: string): {
     previousVersion: string;
     previousVersionSource: string;
@@ -99,9 +89,6 @@ export function detectPreviousVersion(normalizedTarget: string): {
     return { previousVersion, previousVersionSource, liveVersionPath };
 }
 
-/**
- * Reads and validates the bundle VERSION file.
- */
 export function readBundleVersion(bundleRoot: string): string {
     const bundleVersionPath = path.join(bundleRoot, 'VERSION');
     if (!pathExists(bundleVersionPath)) {

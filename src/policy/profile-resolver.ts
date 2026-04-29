@@ -464,9 +464,6 @@ export function applyProfileGuardrails(
     };
 }
 
-/**
- * Format profile guardrail result as compact diagnostic text.
- */
 export function formatProfileGuardrailDiagnostics(result: ProfileGuardrailResult): string {
     const lines: string[] = [];
     lines.push('PROFILE_REVIEW_DECISIONS');
@@ -648,9 +645,6 @@ export function resolveEffectivePolicy(
     };
 }
 
-/**
- * Format effective policy as compact human-readable text.
- */
 export function formatEffectivePolicy(policy: EffectivePolicy): string {
     const lines: string[] = [];
     lines.push('EFFECTIVE_POLICY');
@@ -707,9 +701,6 @@ export function formatEffectivePolicy(policy: EffectivePolicy): string {
     return lines.join('\n');
 }
 
-/**
- * Format effective policy as JSON.
- */
 export function formatEffectivePolicyJson(policy: EffectivePolicy): string {
     return JSON.stringify(policy, null, 2);
 }

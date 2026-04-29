@@ -1,5 +1,9 @@
 import * as path from 'node:path';
-import { SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import {
+    DEFAULT_ASSISTANT_LANGUAGE,
+    DEFAULT_SOURCE_OF_TRUTH,
+    SOURCE_OF_TRUTH_VALUES
+} from '../../core/constants';
 import { runCleanupWithLock, runGcWithLock, validateGcCategories } from '../../lifecycle/cleanup';
 import { runUninstall } from '../../lifecycle/uninstall';
 import { runReinit } from '../../materialization/reinit';
@@ -70,9 +74,9 @@ export async function handleReinit(commandArgv: string[], packageJson: PackageJs
     const interactiveReinit = !options.noPrompt;
     const canUseInteractivePrompts = interactiveReinit && supportsInteractivePrompts();
 
-    let assistantLanguage = (options.assistantLanguage !== undefined ? String(options.assistantLanguage) : null) || getInitAnswerValue(existingAnswers, 'AssistantLanguage') || 'English';
+    let assistantLanguage = (options.assistantLanguage !== undefined ? String(options.assistantLanguage) : null) || getInitAnswerValue(existingAnswers, 'AssistantLanguage') || DEFAULT_ASSISTANT_LANGUAGE;
     let assistantBrevity = tryNormalizeAssistantBrevity(options.assistantBrevity ?? getInitAnswerValue(existingAnswers, 'AssistantBrevity'), 'concise');
-    let sourceOfTruth = tryNormalizeSourceOfTruth(options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'), 'Claude');
+    let sourceOfTruth = tryNormalizeSourceOfTruth(options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'), DEFAULT_SOURCE_OF_TRUTH);
     let activeAgentFiles = getInitAnswerValue(existingAnswers, 'ActiveAgentFiles') || '';
     let enforceNoAutoCommit = tryParseBooleanText(options.enforceNoAutoCommit ?? getInitAnswerValue(existingAnswers, 'EnforceNoAutoCommit'), true);
     let claudeOrchestratorFullAccess = tryParseBooleanText(options.claudeOrchestratorFullAccess ?? getInitAnswerValue(existingAnswers, 'ClaudeOrchestratorFullAccess'), false);

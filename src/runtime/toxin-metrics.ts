@@ -528,8 +528,6 @@ export function formatToxinSummaryLines(summary: ToxinStatusSummary): string[] {
     return lines;
 }
 
-// ── Metrics Pruning ──────────────────────────────────────────────────
-
 /**
  * Prune metrics JSONL file to retain at most `maxLines` recent non-empty lines.
  * Uses streaming reads to avoid loading the entire file into memory.

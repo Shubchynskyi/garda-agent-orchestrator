@@ -68,9 +68,6 @@ export function selectRuleSource(ruleFile: string, options: SelectRuleSourceOpti
     return null;
 }
 
-/**
- * Applies project discovery overlay to context rules (10-60).
- */
 export function applyContextDefaults(content: string, ruleFile: string, discoveryOverlay: string | null | undefined): string {
     if (!DISCOVERY_AUGMENTED_RULE_FILES.includes(ruleFile) || !discoveryOverlay) {
         return content;
@@ -86,9 +83,6 @@ export function applyContextDefaults(content: string, ruleFile: string, discover
     return updated + '\r\n\r\n' + discoveryOverlay + '\r\n';
 }
 
-/**
- * Applies assistant language/brevity defaults to 00-core.md.
- */
 export function applyAssistantDefaults(content: string, ruleFile: string, assistantLanguage: string, assistantBrevity: string): string {
     if (ruleFile !== '00-core.md') return content;
 

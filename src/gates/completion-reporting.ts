@@ -3,16 +3,10 @@ import { getBundleCliCommand, getSourceCliCommand, resolveBundleName } from '../
 import { isOrchestratorSourceCheckout } from './helpers';
 import { buildReviewTrustSummaryFromCompatibilityArtifacts } from './review-trust-summary';
 
-/**
- * Escape a string value for use in PowerShell CLI invocations.
- */
 export function quotePowerShellCliValue(value: string): string {
     return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-/**
- * Build the `restart-coherent-cycle` recovery command string for a failed completion gate.
- */
 export function buildCoherentCycleRestartCommand(
     repoRoot: string,
     taskId: string,
@@ -42,9 +36,6 @@ export function buildCoherentCycleRestartCommand(
     return parts.join(' ');
 }
 
-/**
- * Build the `restart-review-cycle` recovery command string for a failed completion gate.
- */
 export function buildReviewCycleRestartCommand(
     repoRoot: string,
     taskId: string,
@@ -74,9 +65,6 @@ export function buildReviewCycleRestartCommand(
     return parts.join(' ');
 }
 
-/**
- * Format the completion gate result object into human-readable diagnostic output.
- */
 export function formatCompletionGateResult(result: Record<string, unknown>): string {
     const lines: string[] = [
         result.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED',

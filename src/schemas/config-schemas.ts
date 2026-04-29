@@ -17,10 +17,6 @@ import {
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
 
-// ---------------------------------------------------------------------------
-// Individual config schemas
-// ---------------------------------------------------------------------------
-
 const REVIEW_CAPABILITY_KEYS = [
     'code', 'db', 'security', 'refactor',
     'api', 'test', 'performance', 'infra', 'dependency'
@@ -362,10 +358,6 @@ export const profilesSchema: Record<string, unknown> = Object.freeze({
     additionalProperties: false
 });
 
-// ---------------------------------------------------------------------------
-// init-answers.json schema
-// ---------------------------------------------------------------------------
-
 const INIT_ANSWERS_BOOLEAN_LIKE = {
     type: 'string',
     description: 'Boolean-like value serialized as a string ("true" or "false").',
@@ -396,10 +388,6 @@ export const initAnswersSchema: Record<string, unknown> = Object.freeze({
     ],
     additionalProperties: false
 });
-
-// ---------------------------------------------------------------------------
-// Root garda.config.json schema
-// ---------------------------------------------------------------------------
 
 export const gardaConfigSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
@@ -437,10 +425,6 @@ export const gardaConfigSchema: Record<string, unknown> = Object.freeze({
     additionalProperties: true
 });
 
-// ---------------------------------------------------------------------------
-// Schema registry
-// ---------------------------------------------------------------------------
-
 export interface ConfigSchemaEntry {
     name: string;
     schema: Record<string, unknown>;
@@ -472,10 +456,6 @@ export function getConfigSchemas(): readonly ConfigSchemaEntry[] {
 export function getConfigSchemaByName(name: string): ConfigSchemaEntry | undefined {
     return CONFIG_SCHEMAS.find((entry) => entry.name === name);
 }
-
-// ---------------------------------------------------------------------------
-// Lightweight schema validation (no external dependency)
-// ---------------------------------------------------------------------------
 
 export interface SchemaValidationError {
     path: string;
@@ -613,10 +593,6 @@ export function validateAgainstSchema(value: unknown, schema: Record<string, unk
     return { valid: errors.length === 0, errors };
 }
 
-// ---------------------------------------------------------------------------
-// Config-directory-level validation
-// ---------------------------------------------------------------------------
-
 export interface ConfigValidationReport {
     passed: boolean;
     rootConfigValid: boolean;
@@ -635,16 +611,6 @@ export interface ConfigFileReport {
     errors: string[];
 }
 
-/**
- * Validate all config files in a live config directory against their JSON
- * Schemas and runtime validators.
- *
- * @param bundleRoot Absolute path to the orchestrator bundle root
- *   (e.g. `<repo>/garda-agent-orchestrator`).
- * @param runtimeValidators Optional map of runtime validator functions keyed
- *   by config name. Defaults to the managed-config validators from
- *   `config-artifacts.ts`.
- */
 export function validateAllConfigs(
     bundleRoot: string,
     runtimeValidators?: Record<string, (input: unknown) => Record<string, unknown>>
@@ -761,10 +727,6 @@ export function validateAllConfigs(
     };
 }
 
-// ---------------------------------------------------------------------------
-// Formatting
-// ---------------------------------------------------------------------------
-
 export function formatValidationReport(report: ConfigValidationReport): string {
     const lines: string[] = [];
     lines.push(report.passed ? 'CONFIG_VALIDATION_PASSED' : 'CONFIG_VALIDATION_FAILED');
@@ -790,10 +752,6 @@ export function formatValidationReportCompact(report: ConfigValidationReport): s
     const passCount = report.configs.filter((c) => c.schemaValid && c.runtimeValid).length;
     return `${report.passed ? 'CONFIG_VALIDATION_PASSED' : 'CONFIG_VALIDATION_FAILED'}: ${passCount}/${report.configs.length} configs valid, root=${report.rootConfigValid ? 'ok' : 'INVALID'}, root_errors=${report.rootErrors.length}`;
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function getManagedValidators(): Record<string, (input: unknown) => Record<string, unknown>> {
     return getManagedConfigValidators() as Record<string, (input: unknown) => Record<string, unknown>>;

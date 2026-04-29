@@ -27,10 +27,6 @@ export interface UpdateReportData {
     announcements?: UpdateAnnouncements;
 }
 
-/**
- * Builds the markdown lines for an update report.
- * Pure function — no I/O.
- */
 export function buildUpdateReportLines(data: UpdateReportData): string[] {
     const { trustContext, stageResult } = data;
     const announcements = data.announcements || {
@@ -109,9 +105,6 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
     return lines;
 }
 
-/**
- * Writes the update report markdown file to disk.
- */
 export function writeUpdateReport(updateReportPath: string, data: UpdateReportData): void {
     fs.mkdirSync(path.dirname(updateReportPath), { recursive: true });
     const reportLines = buildUpdateReportLines(data);
@@ -132,10 +125,6 @@ export interface UpdateResultInput {
     announcements?: UpdateAnnouncements;
 }
 
-/**
- * Maps internal update state into the public return shape.
- * Pure function — no I/O.
- */
 export function buildUpdateResult(input: UpdateResultInput) {
     const { sources, trustContext, stageResult } = input;
     const announcements = input.announcements || {

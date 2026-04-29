@@ -73,19 +73,12 @@ function normalizeExplicitReviewVerdict(
     return explicitVerdict;
 }
 
-/**
- * Parse skip-reviews value into a sorted unique array.
- */
 export function parseSkipReviews(value: unknown): string[] {
     if (!value || !String(value).trim()) return [];
     const parts = String(value).trim().toLowerCase().split(/[,; ]+/).filter(s => s.trim());
     return [...new Set(parts)].sort();
 }
 
-/**
- * Test expected verdict for a review type.
- * Matches Python test_expected_verdict.
- */
 export function testExpectedVerdict(errors: string[], label: string, required: boolean, skippedByOverride: boolean, actualVerdict: string, passVerdict: string): void {
     if (required && !skippedByOverride) {
         if (actualVerdict !== passVerdict) {
@@ -105,10 +98,6 @@ export function testExpectedVerdict(errors: string[], label: string, required: b
     errors.push(`${label} is not required. Expected 'NOT_REQUIRED' or '${passVerdict}', got '${actualVerdict}'.`);
 }
 
-/**
- * Validate preflight for required-reviews-check.
- * Validates preflight payload shape for the Node review gate.
- */
 export function validatePreflightForReview(preflightPath: string, explicitTaskId: string) {
     let preflight;
     try {
@@ -921,10 +910,6 @@ export interface CheckRequiredReviewsOptions {
     allowLegacyReviewContextIdentityFallback?: boolean;
 }
 
-/**
- * Check required reviews validation.
- * Pure-logic core for the required reviews gate.
- */
 export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const validatedPreflight = options.validatedPreflight;
     const skipReviews = options.skipReviews || [];
@@ -1044,8 +1029,6 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         violations: errors
     };
 }
-
-// --- Zero-diff no-op guard for review gate ---
 
 export interface ZeroDiffReviewGuardResult {
     zero_diff_detected: boolean;

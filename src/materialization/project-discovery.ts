@@ -60,11 +60,6 @@ export function getExcludedTopLevelDirs(): Set<string> {
     return new Set([resolveBundleName(), ..._STATIC_EXCLUDED_TOP_LEVEL_DIRS]);
 }
 
-/** @deprecated Use {@link getExcludedTopLevelDirs} which respects configured bundle name. */
-export const EXCLUDED_TOP_LEVEL_DIRS = new Set([
-    resolveBundleName(), ..._STATIC_EXCLUDED_TOP_LEVEL_DIRS
-]);
-
 function readRootPackageJsonSafe(targetRoot: string): Record<string, unknown> | null {
     const packageJsonPath = path.join(targetRoot, 'package.json');
     if (!pathExists(packageJsonPath)) {
@@ -214,14 +209,10 @@ export function resolveSuggestedFullSuiteValidationCommand(
     return null;
 }
 
-/**
- * Scans the project for stack signals, file listings, and directory structure.
- */
 export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
     let relativeFiles: string[] = [];
     let discoverySource = 'filesystem_scan';
 
-    // Try git-based discovery first
     try {
         const gitDir = path.join(targetRoot, '.git');
         if (pathExists(gitDir)) {
@@ -245,12 +236,10 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
         // Fall through to filesystem scan
     }
 
-    // Filesystem fallback
     if (relativeFiles.length === 0) {
         relativeFiles = collectFilesRecursive(targetRoot, targetRoot);
     }
 
-    // Filter excluded paths
     const filteredFiles: string[] = relativeFiles
         .map((f: string) => normalizeRelativePath(f))
         .filter((f: string) => {
@@ -260,7 +249,6 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
         });
     const uniqueFiles: string[] = [...new Set(filteredFiles)].sort();
 
-    // Detect stacks
     const detectedStacks: string[] = [];
     const stackEvidence: StackEvidence[] = [];
     for (const signal of STACK_SIGNALS) {
@@ -274,7 +262,6 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
         }
     }
 
-    // Get top-level directories
     let topLevelDirectories: string[] = [];
     try {
         const entries = fs.readdirSync(targetRoot, { withFileTypes: true });
@@ -286,7 +273,6 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
         // Ignore
     }
 
-    // Suggest commands
     const suggestedCommands: string[] = [];
     if (detectedStacks.includes('Node.js or JavaScript')) {
         suggestedCommands.push('npm run test', 'npm run lint', 'npm run build');
@@ -382,9 +368,6 @@ function collectFilesRecursive(rootPath: string, basePath: string): string[] {
     return results;
 }
 
-/**
- * Builds project discovery markdown lines.
- */
 export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestampIso: string): string[] {
     const tick = '`';
     const lines = [
@@ -470,9 +453,6 @@ export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestam
     return lines;
 }
 
-/**
- * Builds a brief discovery overlay section for context rules.
- */
 export function buildDiscoveryOverlaySection(discovery: ProjectDiscovery): string {
     const stacksText = discovery.detectedStacks.length > 0
         ? discovery.detectedStacks.join(', ')

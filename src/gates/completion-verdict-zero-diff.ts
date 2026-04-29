@@ -1,9 +1,3 @@
-/**
- * Zero-diff guard evaluator for the completion gate.
- * Detects clean-tree preflight and ensures an audited no-op artifact exists
- * before the task can reach DONE.
- */
-
 import { normalizePath } from './helpers';
 import type { NoOpEvidenceResult } from './no-op';
 

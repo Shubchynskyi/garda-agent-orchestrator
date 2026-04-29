@@ -34,9 +34,6 @@ function resolveExistingCliPath(rootPath: string, bundleName?: string): string {
         : path.join(rootPath, PRIMARY_CLI_ENTRYPOINT);
 }
 
-/**
- * Build the required workspace paths for a given bundle name.
- */
 export function getBaseRequiredPaths(bundleName: string): readonly string[] {
     return Object.freeze([
         'TASK.md',
@@ -94,9 +91,6 @@ export function getBaseRequiredPaths(bundleName: string): readonly string[] {
  */
 export const BASE_REQUIRED_PATHS = getBaseRequiredPaths(DEFAULT_BUNDLE_NAME);
 
-/**
- * Standard rule files that must exist in live/docs/agent-rules.
- */
 export const RULE_FILES = Object.freeze([
     '00-core.md',
     '10-project-context.md',
@@ -112,9 +106,6 @@ export const RULE_FILES = Object.freeze([
     '90-skill-catalog.md'
 ]);
 
-/**
- * Project command placeholders that indicate unfilled agent context.
- */
 export const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
     '<install dependencies command>',
     '<local environment bootstrap command>',
@@ -132,20 +123,11 @@ export const PROJECT_COMMAND_PLACEHOLDERS = Object.freeze([
     '<container or artifact packaging command>'
 ]);
 
-/**
- * Template placeholder regex: {{SOME_TOKEN}}.
- */
 export const TEMPLATE_PLACEHOLDER_PATTERN = /{{[A-Z0-9_]+}}/;
 
-/**
- * Managed block markers.
- */
 export const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 export const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
 
-/**
- * Minimal executable files required for a healthy deployed bundle.
- */
 export const CRITICAL_BUNDLE_PATHS = Object.freeze([
     ...CLI_ENTRYPOINT_CANDIDATES,
     'dist/src/index.js',
@@ -155,9 +137,6 @@ export const CRITICAL_BUNDLE_PATHS = Object.freeze([
     'template/config/garda.config.json'
 ]);
 
-/**
- * Runtime/config inventory that must exist together with the executable bundle.
- */
 export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
     'runtime/init-answers.json',
     'live/config/review-capabilities.json',
@@ -197,9 +176,6 @@ export interface SourceBundleParityResult {
     remediation: string | null;
 }
 
-/**
- * Get the canonical entrypoint file for a source-of-truth value.
- */
 export function getCanonicalEntrypoint(sourceOfTruth: string): string | null {
     const key = sourceOfTruth.trim().toUpperCase().replace(/\s+/g, '');
     const match = SOURCE_OF_TRUTH_VALUES.find(
@@ -208,16 +184,10 @@ export function getCanonicalEntrypoint(sourceOfTruth: string): string | null {
     return match ? SOURCE_TO_ENTRYPOINT_MAP[match as keyof typeof SOURCE_TO_ENTRYPOINT_MAP] : null;
 }
 
-/**
- * Get the bundle path within a target root.
- */
 export function getBundlePath(targetRoot: string, bundleName?: string): string {
     return path.join(targetRoot, resolveBundleNameForTarget(targetRoot, bundleName));
 }
 
-/**
- * Build the full list of required paths for a workspace.
- */
 export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[] {
     const activeAgentFiles = options.activeAgentFiles || [];
     const claudeOrchestratorFullAccess = options.claudeOrchestratorFullAccess || false;
@@ -242,9 +212,6 @@ export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[]
     return Array.from(new Set(paths)).sort();
 }
 
-/**
- * Check which required paths are missing.
- */
 export function detectMissingPaths(targetRoot: string, requiredPaths: readonly string[]): string[] {
     const missing: string[] = [];
     for (const requiredPath of requiredPaths) {
@@ -255,16 +222,10 @@ export function detectMissingPaths(targetRoot: string, requiredPaths: readonly s
     return missing;
 }
 
-/**
- * Get the commands rule file path.
- */
 export function getCommandsRulePath(bundlePath: string): string {
     return path.join(bundlePath, 'live', 'docs', 'agent-rules', '40-commands.md');
 }
 
-/**
- * Read a text file, returning null if it doesn't exist.
- */
 export function readUtf8IfExists(filePath: string): string | null {
     try {
         if (!pathExists(filePath)) return null;
@@ -276,9 +237,6 @@ export function readUtf8IfExists(filePath: string): string | null {
     }
 }
 
-/**
- * Return any project-command placeholders still present in commands content.
- */
 export function getMissingProjectCommands(commandsContent: string | null): string[] {
     if (!commandsContent) {
         return [...PROJECT_COMMAND_PLACEHOLDERS];
@@ -289,9 +247,6 @@ export function getMissingProjectCommands(commandsContent: string | null): strin
     });
 }
 
-/**
- * Extract a managed block from file content.
- */
 export function extractManagedBlock(content: string | null): string | null {
     if (!content) return null;
     const startEscaped = MANAGED_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -301,9 +256,6 @@ export function extractManagedBlock(content: string | null): string | null {
     return match ? match[0] : null;
 }
 
-/**
- * Detect rule file violations: empty files and unresolved template placeholders.
- */
 export function detectRuleFileViolations(targetRoot: string): RuleFileViolations {
     const ruleFileViolations: string[] = [];
     const templatePlaceholderViolations: string[] = [];
@@ -327,9 +279,6 @@ export function detectRuleFileViolations(targetRoot: string): RuleFileViolations
     return { ruleFileViolations, templatePlaceholderViolations };
 }
 
-/**
- * Detect parity between source checkout and deployed bundle.
- */
 export function detectSourceBundleParity(targetRoot: string): SourceBundleParityResult {
     const isSourceCheckout = pathExists(path.join(targetRoot, 'src', 'index.ts')) &&
         pathExistsAny(targetRoot, CLI_ENTRYPOINT_CANDIDATES) &&
@@ -395,9 +344,6 @@ export function detectSourceBundleParity(targetRoot: string): SourceBundleParity
     return result;
 }
 
-/**
- * Validate required deployed bundle inventory.
- */
 export function getExpectedBundleInvariantPaths(sourceBundleRoot?: string | null): string[] {
     if (!sourceBundleRoot) {
         return [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS];
@@ -469,9 +415,6 @@ export function validateBundleInvariants(
     return { isValid: violations.length === 0, violations };
 }
 
-/**
- * Validate managed config JSON files exist and parse without error.
- */
 export function detectManagedConfigViolations(targetRoot: string, configRelativePath: string): string[] {
     const violations: string[] = [];
     const configPath = path.join(targetRoot, configRelativePath);
@@ -490,9 +433,6 @@ export function detectManagedConfigViolations(targetRoot: string, configRelative
     return violations;
 }
 
-/**
- * Detect version contract violations between VERSION file and live/version.json.
- */
 export function detectVersionViolations(
     targetRoot: string,
     sourceOfTruth: string,
@@ -556,9 +496,6 @@ export function detectVersionViolations(
     return { violations, bundleVersion };
 }
 
-/**
- * Detect .gitignore violations.
- */
 export function detectGitignoreViolations(targetRoot: string, requiredEntries: readonly string[]): string[] {
     const gitignorePath = path.join(targetRoot, '.gitignore');
     if (!pathExists(gitignorePath)) {

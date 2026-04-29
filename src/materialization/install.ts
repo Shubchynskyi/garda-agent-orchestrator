@@ -104,26 +104,6 @@ function createUniqueInstallBackupRoot(bundleRoot: string): { timestamp: string;
     };
 }
 
-/**
- * Runs the install materialization pipeline.
- * Main entry point for the Node install lifecycle.
- *
- * @param {object} options
- * @param {string} options.targetRoot - Project root directory
- * @param {string} options.bundleRoot - Orchestrator bundle directory
- * @param {boolean} [options.dryRun=false]
- * @param {boolean} [options.preserveExisting=true]
- * @param {boolean} [options.alignExisting=true]
- * @param {boolean} [options.runInit=true]
- * @param {boolean} [options.answerDependentOnly=false]
- * @param {boolean} [options.skipBackups=false]
- * @param {string} options.assistantLanguage
- * @param {string} options.assistantBrevity
- * @param {string} options.sourceOfTruth
- * @param {string} options.initAnswersPath
- * @param {Function} [options.initRunner] - Optional callback to run init
- * @returns {object} Install result metrics
- */
 export function runInstall(options: RunInstallOptions) {
     const {
         targetRoot,
@@ -428,9 +408,9 @@ export function runInstall(options: RunInstallOptions) {
         }
     }
 
-    // Apply canonical entrypoint managed block
-    const templateClaudeContent = readTextFile(path.join(sourceRoot, 'CLAUDE.md'));
-    const canonicalBlock = buildCanonicalManagedBlock(canonicalEntryFile, templateClaudeContent);
+    // Backward-compatible managed-block template; buildCanonicalManagedBlock rewrites it to the selected entrypoint.
+    const managedEntrypointTemplateContent = readTextFile(path.join(sourceRoot, 'CLAUDE.md'));
+    const canonicalBlock = buildCanonicalManagedBlock(canonicalEntryFile, managedEntrypointTemplateContent);
     applyEntrypointManagedBlock(canonicalEntryFile, canonicalBlock);
 
     // Apply redirect entrypoint managed blocks
@@ -797,9 +777,6 @@ export function runInstall(options: RunInstallOptions) {
     });
 }
 
-/**
- * Applies or removes the commit guard pre-commit hook.
- */
 export function applyCommitGuardHook(
     targetRoot: string,
     enabled: boolean,

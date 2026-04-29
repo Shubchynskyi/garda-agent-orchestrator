@@ -41,9 +41,6 @@ export interface OfflinePolicyInput {
 
 const TRUTHY_VALUES = new Set(['1', 'true', 'yes', 'y', 'on']);
 
-/**
- * Return whether offline mode is active and which source activated it.
- */
 export function resolveOfflineActive(offlineFlag: boolean, offlineEnv: string | undefined): { active: boolean; source: 'flag' | 'env' | 'none' } {
     if (offlineFlag) {
         return { active: true, source: 'flag' };
@@ -54,9 +51,6 @@ export function resolveOfflineActive(offlineFlag: boolean, offlineEnv: string | 
     return { active: false, source: 'none' };
 }
 
-/**
- * Return whether a given command name is considered network-sensitive.
- */
 export function isNetworkSensitiveCommand(commandName: string): boolean {
     return NETWORK_SENSITIVE_SET.has(commandName);
 }
@@ -119,10 +113,6 @@ export function evaluateOfflinePolicy(input: OfflinePolicyInput): OfflinePolicyR
     };
 }
 
-/**
- * Assert the offline policy and throw if the command is blocked.
- * Call this from the CLI dispatcher before executing network-sensitive commands.
- */
 export function assertOfflinePolicy(input: OfflinePolicyInput): OfflinePolicyResult {
     const result = evaluateOfflinePolicy(input);
     if (result.blocked) {

@@ -1,6 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import {
+    DEFAULT_ASSISTANT_LANGUAGE,
+    DEFAULT_SOURCE_OF_TRUTH,
+    SOURCE_OF_TRUTH_VALUES
+} from '../../core/constants';
 import { buildSetupStartBannerSentence } from '../../core/orchestrator-start-banner';
 import { pathExists, readTextFile } from '../../core/fs';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
@@ -128,7 +132,7 @@ export function getSetupAnswerDefaults(targetRoot: string, initAnswersPath: stri
     const existingAnswers = readOptionalJsonFile(resolvedInitAnswersPath) || {};
     const sourceOfTruth = tryNormalizeSourceOfTruth(
         options.sourceOfTruth ?? getInitAnswerValue(existingAnswers, 'SourceOfTruth'),
-        'Claude'
+        DEFAULT_SOURCE_OF_TRUTH
     );
     const activeAgentFiles = resolveSetupActiveAgentFiles(
         sourceOfTruth,
@@ -140,7 +144,7 @@ export function getSetupAnswerDefaults(targetRoot: string, initAnswersPath: stri
         assistantLanguage:
             parseOptionalText(options.assistantLanguage)
             || parseOptionalText(getInitAnswerValue(existingAnswers, 'AssistantLanguage'))
-            || 'English',
+            || DEFAULT_ASSISTANT_LANGUAGE,
         assistantBrevity: tryNormalizeAssistantBrevity(
             options.assistantBrevity ?? getInitAnswerValue(existingAnswers, 'AssistantBrevity'),
             'concise'
