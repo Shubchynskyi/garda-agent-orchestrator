@@ -284,7 +284,6 @@ describe('gates/task-events-summary', () => {
             assert.ok(gitCount <= 1);
         });
 
-        // --- Package managers: pip, yarn, pnpm ---
         it('warns about unbounded pip install', () => {
             const result = auditCommandCompactness('pip install requests');
             assert.ok(result.warning_count > 0);
@@ -321,7 +320,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(result.warning_count, 0);
         });
 
-        // --- Build tools: maven, gradle, cargo, dotnet ---
         it('warns about mvn -X (debug mode)', () => {
             const result = auditCommandCompactness('mvn -X clean install');
             assert.ok(result.warning_count > 0);
@@ -385,7 +383,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(result.matched_categories.filter(c => c === 'build').length, 0);
         });
 
-        // --- Network: curl, wget ---
         it('warns about unbounded curl', () => {
             const result = auditCommandCompactness('curl https://example.com/api');
             assert.ok(result.warning_count > 0);
@@ -429,7 +426,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(result.matched_categories.filter(c => c === 'network').length, 0);
         });
 
-        // --- File listing: find, tree, ls -R ---
         it('warns about unbounded find', () => {
             const result = auditCommandCompactness('find /var/log');
             assert.ok(result.warning_count > 0);
@@ -467,7 +463,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(result.matched_categories.filter(c => c === 'file_listing').length, 0);
         });
 
-        // --- System: env, printenv ---
         it('warns about bare env command', () => {
             const result = auditCommandCompactness('env');
             assert.ok(result.warning_count > 0);
@@ -483,7 +478,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(result.matched_categories.filter(c => c === 'system').length, 0);
         });
 
-        // --- Pager: less, more ---
         it('warns about less on a file', () => {
             const result = auditCommandCompactness('less output.log');
             assert.ok(result.warning_count > 0);
@@ -503,7 +497,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(result.matched_categories.filter(c => c === 'pager').length, 0);
         });
 
-        // --- Docker: ps, images ---
         it('warns about unbounded docker ps', () => {
             const result = auditCommandCompactness('docker ps');
             assert.ok(result.warning_count > 0);
@@ -530,7 +523,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(imageWarnings.length, 0);
         });
 
-        // --- Kubernetes: describe, get ---
         it('warns about unbounded kubectl describe', () => {
             const result = auditCommandCompactness('kubectl describe pod my-pod');
             assert.ok(result.warning_count > 0);
@@ -557,7 +549,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(getWarnings.length, 0);
         });
 
-        // --- Terraform ---
         it('warns about terraform plan without compact flags', () => {
             const result = auditCommandCompactness('terraform plan');
             assert.ok(result.warning_count > 0);
@@ -574,7 +565,6 @@ describe('gates/task-events-summary', () => {
             assert.equal(infraWarnings.length, 0);
         });
 
-        // --- Cross-category multi-match tests ---
         it('produces multiple warnings for a command matching multiple categories', () => {
             const result = auditCommandCompactness('git diff HEAD && npm install && cat file.log');
             assert.ok(result.warning_count >= 3);

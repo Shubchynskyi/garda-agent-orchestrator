@@ -29,10 +29,6 @@ function findRepoRoot(startDir: string): string {
     }
 }
 
-// ---------------------------------------------------------------------------
-// BOOTSTRAP_DEFINITIONS
-// ---------------------------------------------------------------------------
-
 test('BOOTSTRAP_DEFINITIONS includes expected flags', () => {
     assert.ok(BOOTSTRAP_DEFINITIONS['--destination']);
     assert.ok(BOOTSTRAP_DEFINITIONS['--target']);
@@ -40,10 +36,6 @@ test('BOOTSTRAP_DEFINITIONS includes expected flags', () => {
     assert.ok(BOOTSTRAP_DEFINITIONS['--repo-url']);
     assert.ok(BOOTSTRAP_DEFINITIONS['--branch']);
 });
-
-// ---------------------------------------------------------------------------
-// buildBootstrapSuccessOutput
-// ---------------------------------------------------------------------------
 
 test('buildBootstrapSuccessOutput includes GARDA_BOOTSTRAP_OK marker', () => {
     const pkg = { version: '1.0.8', name: 'garda-agent-orchestrator' };
@@ -98,21 +90,15 @@ test('buildBootstrapSuccessOutput uses Node CLI for custom bundle paths', () => 
     assert.ok(output.includes('Qwen'));
 });
 
-// ---------------------------------------------------------------------------
-// handleBootstrap integration (with local source)
-// ---------------------------------------------------------------------------
-
 test('handleBootstrap deploys bundle to destination', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-integ-'));
     try {
         const repoRoot = findRepoRoot(__dirname);
         const dest = path.join(tmpDir, DEFAULT_BUNDLE_NAME);
-
-        // Capture console output
         const originalLog = console.log;
         const lines: string[] = [];
-        console.log = function () {
-            lines.push([...arguments].join(' '));
+        console.log = (...items: unknown[]) => {
+            lines.push(items.join(' '));
         };
 
         try {
@@ -127,7 +113,7 @@ test('handleBootstrap deploys bundle to destination', async () => {
         assert.ok(fs.existsSync(path.join(dest, 'bin', 'garda.js')), 'bin/garda.js should exist');
         assert.ok(fs.existsSync(path.join(dest, 'bin', 'garda.js')), 'legacy bin/garda.js should exist');
         assert.ok(!fs.existsSync(path.join(dest, 'scripts')), 'scripts directory should not exist');
-        assert.ok(lines.some(function (l) { return l.includes('GARDA_BOOTSTRAP_OK'); }), 'Should print GARDA_BOOTSTRAP_OK');
+        assert.ok(lines.some((line) => line.includes('GARDA_BOOTSTRAP_OK')), 'Should print GARDA_BOOTSTRAP_OK');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -141,7 +127,7 @@ test('handleBootstrap uses positional as destination fallback', async () => {
 
         const originalLog = console.log;
         const lines: string[] = [];
-        console.log = function () { lines.push([...arguments].join(' ')); };
+        console.log = (...items: unknown[]) => { lines.push(items.join(' ')); };
         try {
             await handleBootstrap([dest], { version: '1.0.8', name: 'garda-agent-orchestrator' }, repoRoot);
         } finally {
@@ -149,7 +135,7 @@ test('handleBootstrap uses positional as destination fallback', async () => {
         }
 
         assert.ok(fs.existsSync(dest), 'Bundle directory should exist');
-        assert.ok(lines.some(function (l) { return l.includes('GARDA_BOOTSTRAP_OK'); }));
+        assert.ok(lines.some((line) => line.includes('GARDA_BOOTSTRAP_OK')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -158,23 +144,23 @@ test('handleBootstrap uses positional as destination fallback', async () => {
 test('handleBootstrap prints help on --help flag', async () => {
     const originalLog = console.log;
     const lines: string[] = [];
-    console.log = function () { lines.push([...arguments].join(' ')); };
+    console.log = (...items: unknown[]) => { lines.push(items.join(' ')); };
     try {
         await handleBootstrap(['--help'], { version: '1.0.8', name: 'garda-agent-orchestrator' }, '/tmp');
     } finally {
         console.log = originalLog;
     }
-    assert.ok(lines.some(function (l) { return l.includes('Garda Agent Orchestrator CLI'); }));
+    assert.ok(lines.some((line) => line.includes('Garda Agent Orchestrator CLI')));
 });
 
 test('handleBootstrap prints version on --version flag', async () => {
     const originalLog = console.log;
     const lines: string[] = [];
-    console.log = function () { lines.push([...arguments].join(' ')); };
+    console.log = (...items: unknown[]) => { lines.push(items.join(' ')); };
     try {
         await handleBootstrap(['--version'], { version: '1.0.8', name: 'garda-agent-orchestrator' }, '/tmp');
     } finally {
         console.log = originalLog;
     }
-    assert.ok(lines.some(function (l) { return l === '1.0.8'; }));
+    assert.ok(lines.some((line) => line === '1.0.8'));
 });

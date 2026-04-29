@@ -14,9 +14,6 @@ import type { TaskPlan, PlanDriftResult } from '../../../src/schemas/task-plan';
 
 import { validateAgainstSchema } from '../../../src/schemas/config-schemas';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function minimalValidPlan(): Record<string, unknown> {
     return {
@@ -55,9 +52,6 @@ function fullValidPlan(): Record<string, unknown> {
     };
 }
 
-// ---------------------------------------------------------------------------
-// JSON Schema (structural)
-// ---------------------------------------------------------------------------
 
 test('taskPlanSchema is a valid JSON Schema object', () => {
     assert.equal(taskPlanSchema.$schema, 'http://json-schema.org/draft-07/schema#');
@@ -90,9 +84,6 @@ test('taskPlanSchema rejects missing required fields', () => {
     assert.ok(result.errors.length >= 7);
 });
 
-// ---------------------------------------------------------------------------
-// Validator (runtime normalisation)
-// ---------------------------------------------------------------------------
 
 test('validateTaskPlan accepts minimal valid plan', () => {
     const plan = validateTaskPlan(minimalValidPlan());
@@ -219,9 +210,6 @@ test('validateTaskPlan preserves plan_sha256 when present', () => {
     assert.equal(plan.plan_sha256, 'abc123');
 });
 
-// ---------------------------------------------------------------------------
-// Digest and serialization
-// ---------------------------------------------------------------------------
 
 test('computeTaskPlanDigest returns a 64-char hex string', () => {
     const plan = validateTaskPlan(minimalValidPlan());
@@ -297,9 +285,6 @@ test('serializeTaskPlan JSON can be round-tripped through validateTaskPlan', () 
     assert.ok(roundTripped.plan_sha256);
 });
 
-// ---------------------------------------------------------------------------
-// isApprovedPlan helper
-// ---------------------------------------------------------------------------
 
 test('isApprovedPlan returns true for approved status', () => {
     const plan = validateTaskPlan(fullValidPlan());
@@ -316,17 +301,11 @@ test('isApprovedPlan returns false for superseded status', () => {
     assert.equal(isApprovedPlan(plan), false);
 });
 
-// ---------------------------------------------------------------------------
-// TASK_PLAN_SCHEMA_VERSION constant
-// ---------------------------------------------------------------------------
 
 test('TASK_PLAN_SCHEMA_VERSION is 1', () => {
     assert.equal(TASK_PLAN_SCHEMA_VERSION, 1);
 });
 
-// ---------------------------------------------------------------------------
-// detectPlanDrift
-// ---------------------------------------------------------------------------
 
 function approvedPlan(scopeFiles: string[]): TaskPlan {
     return validateTaskPlan({

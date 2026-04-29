@@ -43,9 +43,6 @@ import {
     formatProviderComplianceDetail
 } from '../../../src/validators/provider-compliance';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 const ALL_PROVIDERS = SOURCE_OF_TRUTH_VALUES as readonly string[];
 const BRIDGE_PROFILES = getProviderOrchestratorProfileDefinitions();
@@ -73,9 +70,6 @@ const MANDATORY_GATE_NAMES = [
     'completion-gate'
 ];
 
-// ---------------------------------------------------------------------------
-// Workspace scaffolding helpers
-// ---------------------------------------------------------------------------
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-provider-exec-'));

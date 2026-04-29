@@ -15,9 +15,6 @@ function mkTmpDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'gao-lifecycle-lock-'));
 }
 
-// ---------------------------------------------------------------------------
-// getLifecycleOperationLockPath
-// ---------------------------------------------------------------------------
 
 test('getLifecycleOperationLockPath returns path inside Garda runtime', () => {
     const lockPath = getLifecycleOperationLockPath('/some/project');
@@ -26,9 +23,6 @@ test('getLifecycleOperationLockPath returns path inside Garda runtime', () => {
     assert.ok(lockPath.endsWith('.lifecycle-operation.lock'));
 });
 
-// ---------------------------------------------------------------------------
-// withLifecycleOperationLock (synchronous)
-// ---------------------------------------------------------------------------
 
 test('withLifecycleOperationLock acquires and releases lock', () => {
     const tmp = mkTmpDir();
@@ -312,9 +306,6 @@ test('withLifecycleOperationLock writes correct owner metadata', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// withLifecycleOperationLockAsync
-// ---------------------------------------------------------------------------
 
 test('withLifecycleOperationLockAsync acquires and releases lock', async () => {
     const tmp = mkTmpDir();
@@ -839,9 +830,6 @@ test('withLifecycleOperationLockAsync reclaims aged foreign-host lock when share
     }
 });
 
-// ---------------------------------------------------------------------------
-// Grace-period recovery for SIGKILL-orphaned locks
-// ---------------------------------------------------------------------------
 
 test('withLifecycleOperationLock reclaims SIGKILL-orphaned lock with missing metadata after grace period', () => {
     const tmp = mkTmpDir();
@@ -979,9 +967,6 @@ test('withLifecycleOperationLockAsync does not poison queue on acquisition failu
     }
 });
 
-// ---------------------------------------------------------------------------
-// Metadata-write-failure cleanup
-// ---------------------------------------------------------------------------
 
 test('withLifecycleOperationLock cleans up lock directory when metadata write fails', () => {
     const tmp = mkTmpDir();
@@ -1146,9 +1131,6 @@ test('withLifecycleOperationLock does not remove replacement lock when old relea
     }
 });
 
-// ---------------------------------------------------------------------------
-// Lifecycle lock telemetry (getLastLifecycleLockTelemetry)
-// ---------------------------------------------------------------------------
 
 test('getLastLifecycleLockTelemetry returns telemetry after sync lock', () => {
     const tmp = mkTmpDir();

@@ -14,9 +14,7 @@ import {
     serializeInitAnswers
 } from '../../../src/schemas/init-answers';
 
-// ---------------------------------------------------------------------------
 // getManagedGitignoreEntries — provider minimalism scoping
-// ---------------------------------------------------------------------------
 
 describe('getManagedGitignoreEntries with activeEntryFiles (provider minimalism)', () => {
     it('includes only the canonical provider when scoped to a single active file', () => {
@@ -82,9 +80,7 @@ describe('getManagedGitignoreCleanupEntries with activeEntryFiles', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
 // buildGitignoreEntries — providerMinimalism flag
-// ---------------------------------------------------------------------------
 
 describe('buildGitignoreEntries with providerMinimalism', () => {
     const allProfiles = getProviderOrchestratorProfileDefinitions();
@@ -127,9 +123,7 @@ describe('buildGitignoreEntries with providerMinimalism', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
 // validateInitAnswers — ProviderMinimalism field
-// ---------------------------------------------------------------------------
 
 describe('validateInitAnswers ProviderMinimalism', () => {
     const baseAnswers = {
@@ -158,9 +152,7 @@ describe('validateInitAnswers ProviderMinimalism', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
 // serializeInitAnswers — ProviderMinimalism round-trip
-// ---------------------------------------------------------------------------
 
 describe('serializeInitAnswers ProviderMinimalism', () => {
     const baseAnswers = {

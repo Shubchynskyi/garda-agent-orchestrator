@@ -32,9 +32,6 @@ import {
     type ProfileSkills
 } from '../../../src/policy/profile-resolver';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeTempBundle(configs: {
     profiles?: Record<string, unknown>;
@@ -121,9 +118,6 @@ function cleanUp(bundleRoot: string): void {
     fs.rmSync(bundleRoot, { recursive: true, force: true });
 }
 
-// ---------------------------------------------------------------------------
-// resolveConfigPaths
-// ---------------------------------------------------------------------------
 
 test('resolveConfigPaths returns correct paths', () => {
     const paths = resolveConfigPaths('/fake/bundle');
@@ -134,9 +128,6 @@ test('resolveConfigPaths returns correct paths', () => {
     assert.ok(paths.paths.endsWith(path.join('live', 'config', 'paths.json')));
 });
 
-// ---------------------------------------------------------------------------
-// loadProfilesData
-// ---------------------------------------------------------------------------
 
 test('loadProfilesData throws for missing file', () => {
     assert.throws(() => loadProfilesData('/nonexistent/profiles.json'), /not found/);
@@ -154,9 +145,6 @@ test('loadProfilesData loads valid profiles', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// loadReviewCapabilities
-// ---------------------------------------------------------------------------
 
 test('loadReviewCapabilities returns defaults for missing file', () => {
     const caps = loadReviewCapabilities('/nonexistent/review-capabilities.json');
@@ -179,9 +167,6 @@ test('loadReviewCapabilities reads config values', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// loadTokenEconomyConfig
-// ---------------------------------------------------------------------------
 
 test('loadTokenEconomyConfig returns defaults for missing file', () => {
     const config = loadTokenEconomyConfig('/nonexistent/token-economy.json');
@@ -206,9 +191,6 @@ test('loadTokenEconomyConfig reads config values', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// loadSkillPacksConfig
-// ---------------------------------------------------------------------------
 
 test('loadSkillPacksConfig returns defaults for missing file', () => {
     const config = loadSkillPacksConfig('/nonexistent/skill-packs.json');
@@ -225,9 +207,6 @@ test('loadSkillPacksConfig reads installed packs', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// getProfileEntry / getProfileSource
-// ---------------------------------------------------------------------------
 
 test('getProfileEntry returns built-in profile', () => {
     const bundleRoot = makeTempBundle({});
@@ -272,9 +251,6 @@ test('getProfileSource distinguishes built_in and user', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// mergeReviewPolicy
-// ---------------------------------------------------------------------------
 
 test('mergeReviewPolicy: "auto" defers to capabilities', () => {
     const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: 'auto' };
@@ -336,9 +312,6 @@ test('mergeReviewPolicy: safety floor does not fire when all floor keys already 
     assert.equal(floorsApplied.length, 0);
 });
 
-// ---------------------------------------------------------------------------
-// mergeTokenEconomy
-// ---------------------------------------------------------------------------
 
 test('mergeTokenEconomy: profile overrides boolean flags, config keeps numeric', () => {
     const profileTE: ProfileTokenEconomy = { enabled: false, strip_examples: false, strip_code_blocks: true, scoped_diffs: false, compact_reviewer_output: true };
@@ -352,9 +325,6 @@ test('mergeTokenEconomy: profile overrides boolean flags, config keeps numeric',
     assert.equal(merged.fail_tail_lines, 75);
 });
 
-// ---------------------------------------------------------------------------
-// mergeSkills
-// ---------------------------------------------------------------------------
 
 test('mergeSkills: profile controls flags, config controls packs', () => {
     const profileSkills: ProfileSkills = { auto_suggest: false };
@@ -364,9 +334,6 @@ test('mergeSkills: profile controls flags, config controls packs', () => {
     assert.deepEqual(installed_packs, ['docs-process']);
 });
 
-// ---------------------------------------------------------------------------
-// loadPathsConfig
-// ---------------------------------------------------------------------------
 
 test('loadPathsConfig returns defaults for missing file', () => {
     const config = loadPathsConfig('/nonexistent/paths.json');
@@ -416,9 +383,6 @@ test('loadPathsConfig filters non-string array elements', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// resolveEffectivePolicy (integration)
-// ---------------------------------------------------------------------------
 
 test('resolveEffectivePolicy: balanced profile with defaults', () => {
     const bundleRoot = makeTempBundle({});
@@ -737,9 +701,6 @@ test('resolveEffectivePolicy: resolution_sources populated', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// Config files are not modified
-// ---------------------------------------------------------------------------
 
 test('resolveEffectivePolicy: config files are not modified after resolution', () => {
     const bundleRoot = makeTempBundle({});
@@ -765,9 +726,6 @@ test('resolveEffectivePolicy: config files are not modified after resolution', (
     }
 });
 
-// ---------------------------------------------------------------------------
-// formatEffectivePolicy / formatEffectivePolicyJson
-// ---------------------------------------------------------------------------
 
 test('formatEffectivePolicy produces readable text', () => {
     const bundleRoot = makeTempBundle({});
@@ -868,9 +826,6 @@ test('formatEffectivePolicy: includes Paths section', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// Edge cases
-// ---------------------------------------------------------------------------
 
 test('resolveEffectivePolicy: isCodeChangingTask defaults to true', () => {
     const profiles = {
@@ -919,9 +874,6 @@ test('mergeReviewPolicy: extra profile keys not in capabilities are included', (
     assert.equal(merged.custom_review, true);
 });
 
-// ---------------------------------------------------------------------------
-// Expanded safety floors (T-059)
-// ---------------------------------------------------------------------------
 
 test('mergeReviewPolicy: code-changing task enforces code+security+db+refactor safety floors', () => {
     const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
@@ -965,9 +917,6 @@ test('mergeReviewPolicy: code-changing task does not override already-true value
     assert.equal(floorsApplied.length, 0, 'no floors needed when profile already enables them');
 });
 
-// ---------------------------------------------------------------------------
-// applyProfileGuardrails
-// ---------------------------------------------------------------------------
 
 test('applyProfileGuardrails: code scope triggers guardrails', () => {
     const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
@@ -1091,9 +1040,6 @@ test('applyProfileGuardrails: auto profile values show as capability_default', (
     assert.ok(capDefaults.length >= 4, 'auto values should show as capability_default');
 });
 
-// ---------------------------------------------------------------------------
-// formatProfileGuardrailDiagnostics
-// ---------------------------------------------------------------------------
 
 test('formatProfileGuardrailDiagnostics: includes all diagnostic fields', () => {
     const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
@@ -1124,9 +1070,6 @@ test('formatProfileGuardrailDiagnostics: shows lightened decisions for docs-only
     assert.ok(!text.includes('SafetyFloors:'), 'no safety floors for docs-only');
 });
 
-// ---------------------------------------------------------------------------
-// resolveEffectivePolicy with scopeCategory
-// ---------------------------------------------------------------------------
 
 test('resolveEffectivePolicy: scopeCategory docs-only allows profile to disable code review', () => {
     const bundleRoot = makeTempBundle({

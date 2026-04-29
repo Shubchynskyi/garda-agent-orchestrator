@@ -245,7 +245,7 @@ function collectReviewArtifacts(
                     items.push({ path: filePath, category: 'reviews', reason: 'age', sizeBytes: stat.size });
                 }
             } catch {
-                // Skip unreadable
+                // Skip unreadable files.
             }
         }
     }
@@ -329,7 +329,7 @@ function collectTaskEventFiles(
             }
         }
     } catch {
-        // best-effort orphan scan
+        // Best-effort orphan scan.
     }
 
     return items;
@@ -358,7 +358,7 @@ export function collectIsolationSandbox(runtimeDir: string, maxAgeDays: number, 
                 items.push({ path: entryPath, category: 'isolation-sandbox', reason: 'age', sizeBytes });
             }
         } catch {
-            // Skip unreadable entries
+            // Skip unreadable entries.
         }
     }
 
@@ -386,7 +386,7 @@ export function collectStaleLifecycleLock(runtimeDir: string): CleanupItem[] {
             const sizeBytes = stat.isDirectory() ? dirSizeBytes(stalePath) : stat.size;
             items.push({ path: stalePath, category: 'stale-locks', reason: 'orphaned', sizeBytes });
         } catch {
-            // Skip unreadable
+            // Skip unreadable files.
         }
     }
 

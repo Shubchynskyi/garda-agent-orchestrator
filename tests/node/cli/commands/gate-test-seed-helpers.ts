@@ -37,9 +37,6 @@ import {
     getOrchestratorRoot
 } from './gate-test-repo-bootstrap';
 
-// ---------------------------------------------------------------------------
-// Provider routing constants
-// ---------------------------------------------------------------------------
 
 export const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
     Claude: 'CLAUDE.md',
@@ -67,9 +64,6 @@ function resolveAttestedTaskModeRoute(provider: string): string | null {
     return PROVIDER_BRIDGE_BY_SOURCE[normalizedProvider] || PROVIDER_ENTRYPOINT_BY_SOURCE[normalizedProvider] || null;
 }
 
-// ---------------------------------------------------------------------------
-// Config seeding
-// ---------------------------------------------------------------------------
 
 export function writeReviewCapabilitiesConfig(
     repoRoot: string,
@@ -165,9 +159,6 @@ export function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void
     }
 }
 
-// ---------------------------------------------------------------------------
-// Task-mode routing helpers
-// ---------------------------------------------------------------------------
 
 export function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
     if (String(options.routedTo || '').trim()) {
@@ -224,9 +215,6 @@ export function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeComm
     return runEnterTaskModeCommand(resolvedOptions);
 }
 
-// ---------------------------------------------------------------------------
-// Reviewer routing fixture
-// ---------------------------------------------------------------------------
 
 export function createReviewerRoutingFixture(
     sourceOfTruth: string,
@@ -258,9 +246,6 @@ export function createReviewerRoutingFixture(
     };
 }
 
-// ---------------------------------------------------------------------------
-// Artifact writers
-// ---------------------------------------------------------------------------
 
 export function writePreflight(
     repoRoot: string,
@@ -747,9 +732,6 @@ export function writeShellSmokeArtifact(repoRoot: string, taskId: string, provid
     }, null, 2), 'utf8');
 }
 
-// ---------------------------------------------------------------------------
-// Gate lifecycle helpers
-// ---------------------------------------------------------------------------
 
 export function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = '') {
     return runLoadRulePackCommand({
@@ -894,9 +876,6 @@ export function runExplicitPreflight(
     return preflightPath;
 }
 
-// ---------------------------------------------------------------------------
-// Timeline and task-queue helpers
-// ---------------------------------------------------------------------------
 
 export function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {
     const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);

@@ -83,10 +83,6 @@ async function captureConsoleAsync(fn: () => Promise<unknown>): Promise<{ lines:
     }
 }
 
-// ---------------------------------------------------------------------------
-// list
-// ---------------------------------------------------------------------------
-
 test('profile list shows all profiles with active marker', () => {
     const bundleRoot = createTempBundleWithProfiles();
     const { lines } = captureConsole(() => handleProfile(['list', '--bundle-root', bundleRoot], PACKAGE_JSON));
@@ -119,10 +115,6 @@ test('profile list --json returns valid JSON', () => {
     assert.ok(parsed.built_in_profiles.includes('balanced'));
 });
 
-// ---------------------------------------------------------------------------
-// current
-// ---------------------------------------------------------------------------
-
 test('profile current shows active profile details', () => {
     const bundleRoot = createTempBundleWithProfiles();
     const { lines } = captureConsole(() => handleProfile(['current', '--bundle-root', bundleRoot], PACKAGE_JSON));
@@ -140,10 +132,6 @@ test('profile current --json returns valid JSON', () => {
     assert.equal(parsed.is_built_in, true);
     assert.equal(parsed.entry.depth, 2);
 });
-
-// ---------------------------------------------------------------------------
-// use
-// ---------------------------------------------------------------------------
 
 test('profile use switches the active profile', () => {
     const bundleRoot = createTempBundleWithProfiles();
@@ -171,10 +159,6 @@ test('profile use with same profile shows NO_CHANGE', () => {
     const output = lines.join('\n');
     assert.ok(output.includes('NO_CHANGE'));
 });
-
-// ---------------------------------------------------------------------------
-// create
-// ---------------------------------------------------------------------------
 
 test('profile create adds a user profile', () => {
     const bundleRoot = createTempBundleWithProfiles();
@@ -243,13 +227,13 @@ test('profile create without a name starts full interactive prompts when TTY is 
         promptSingleSelect: cliHelpers.promptSingleSelect
     };
 
-    cliHelpers.supportsInteractivePrompts = function () { return true; };
-    cliHelpers.promptTextInput = async function (title: string) {
+    cliHelpers.supportsInteractivePrompts = () => true;
+    cliHelpers.promptTextInput = async (title: string) => {
         if (title === 'Enter profile name') return 'guided-profile';
         if (title === 'Enter profile description (defaults from profile \'strict\')') return 'Interactive guided profile';
         throw new Error(`Unexpected promptTextInput title: ${title}`);
     };
-    cliHelpers.promptSingleSelect = async function (config: { title: string }) {
+    cliHelpers.promptSingleSelect = async (config: { title: string }) => {
         switch (config.title) {
             case 'Choose base profile for new profile settings': return 'strict';
             case 'Select profile depth (from profile \'strict\')': return '2';
@@ -310,7 +294,7 @@ test('profile create without a name rejects when interactive prompts are unavail
     const cliHelpersPath = require.resolve('../../../../src/cli/commands/cli-helpers');
     const cliHelpers = require(cliHelpersPath);
     const originalSupportsInteractivePrompts = cliHelpers.supportsInteractivePrompts;
-    cliHelpers.supportsInteractivePrompts = function () { return false; };
+    cliHelpers.supportsInteractivePrompts = () => false;
     try {
         await assert.rejects(
             async () => {
@@ -332,10 +316,6 @@ test('profile create rejects --json in interactive mode', async () => {
         /--json is not supported with interactive profile creation/
     );
 });
-
-// ---------------------------------------------------------------------------
-// delete
-// ---------------------------------------------------------------------------
 
 test('profile delete removes a user profile', () => {
     const bundleRoot = createTempBundleWithProfiles();
@@ -383,10 +363,6 @@ test('profile delete reassigns active profile to first built-in when deleting th
     assert.ok(data.active_profile in data.built_in_profiles, 'Active profile should fall back to a built-in');
 });
 
-// ---------------------------------------------------------------------------
-// validate
-// ---------------------------------------------------------------------------
-
 test('profile validate passes for valid profiles', () => {
     const bundleRoot = createTempBundleWithProfiles();
     const { result } = captureConsole(() => handleProfile(['validate', '--bundle-root', bundleRoot], PACKAGE_JSON));
@@ -402,10 +378,6 @@ test('profile validate --json returns valid JSON', () => {
     assert.equal(parsed.issue_count, 0);
 });
 
-// ---------------------------------------------------------------------------
-// unknown subcommand
-// ---------------------------------------------------------------------------
-
 test('profile with unknown subcommand throws', () => {
     const bundleRoot = createTempBundleWithProfiles();
     assert.throws(
@@ -414,10 +386,6 @@ test('profile with unknown subcommand throws', () => {
     );
 });
 
-// ---------------------------------------------------------------------------
-// missing profiles.json
-// ---------------------------------------------------------------------------
-
 test('profile list throws when profiles.json is missing', () => {
     const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-'));
     assert.throws(
@@ -425,10 +393,6 @@ test('profile list throws when profiles.json is missing', () => {
         /Profiles config not found/
     );
 });
-
-// ---------------------------------------------------------------------------
-// output builder unit tests
-// ---------------------------------------------------------------------------
 
 test('buildProfileListOutput formats text correctly', () => {
     const data = {
@@ -487,10 +451,6 @@ test('buildProfileValidateOutput shows PASS/FAIL', () => {
     assert.ok(buildProfileValidateOutput(data, [], '/config', false).includes('PASS'));
     assert.ok(buildProfileValidateOutput(data, ['bad'], '/config', false).includes('FAIL'));
 });
-
-// ---------------------------------------------------------------------------
-// profile name validation
-// ---------------------------------------------------------------------------
 
 test('profile create accepts valid kebab-case names', () => {
     const bundleRoot = createTempBundleWithProfiles();
@@ -559,10 +519,6 @@ test('profile delete rejects prototype-chain names like toString', () => {
     );
 });
 
-// ---------------------------------------------------------------------------
-// JSON output for use/create/delete
-// ---------------------------------------------------------------------------
-
 test('profile use --json returns valid JSON', () => {
     const bundleRoot = createTempBundleWithProfiles();
     const { lines } = captureConsole(() => handleProfile(['use', 'fast', '--bundle-root', bundleRoot, '--json'], PACKAGE_JSON));
@@ -598,10 +554,6 @@ test('profile delete --json returns valid JSON', () => {
     assert.equal(parsed.action, 'delete');
     assert.equal(parsed.profile, 'del-json');
 });
-
-// ---------------------------------------------------------------------------
-// validate with broken config
-// ---------------------------------------------------------------------------
 
 test('profile validate reports FAIL for malformed profiles.json', () => {
     const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-profile-'));

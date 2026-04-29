@@ -93,9 +93,6 @@ function cleanupTempBundleRoot(tmpDir: string): void {
     fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
-// ---------------------------------------------------------------------------
-// Schema registry
-// ---------------------------------------------------------------------------
 
 test('getConfigSchemas returns entries for all ten managed configs', () => {
     const schemas = getConfigSchemas();
@@ -124,9 +121,6 @@ test('getConfigSchemaByName returns undefined for unknown name', () => {
     assert.equal(getConfigSchemaByName('nonexistent'), undefined);
 });
 
-// ---------------------------------------------------------------------------
-// Schema objects are well-formed
-// ---------------------------------------------------------------------------
 
 test('all schema objects have $schema, $id, title, and type', () => {
     for (const schema of [
@@ -148,9 +142,6 @@ test('all schema objects have $schema, $id, title, and type', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// Template config files validate against their schemas
-// ---------------------------------------------------------------------------
 
 test('template review-capabilities.json validates against schema', () => {
     const data = readTemplateConfig('review-capabilities.json');
@@ -238,9 +229,6 @@ test('template garda.config.json validates against root schema', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
-// ---------------------------------------------------------------------------
-// validateAgainstSchema rejects invalid data
-// ---------------------------------------------------------------------------
 
 test('validateAgainstSchema catches missing required properties', () => {
     const result = validateAgainstSchema({}, reviewCapabilitiesSchema);
@@ -311,9 +299,6 @@ test('validateAgainstSchema validates triggers minProperties in paths', () => {
     assert.ok(result.errors.some((e) => e.message.includes('minimum')));
 });
 
-// ---------------------------------------------------------------------------
-// Full config directory validation (if live config present)
-// ---------------------------------------------------------------------------
 
 test('validateAllConfigs validates the live config directory when present', () => {
     const bundleRoot = path.join(process.cwd(), 'garda-agent-orchestrator');
@@ -559,9 +544,6 @@ test('validateAllConfigs rejects unknown nested workflow-config review_execution
     }
 });
 
-// ---------------------------------------------------------------------------
-// Report formatting
-// ---------------------------------------------------------------------------
 
 test('formatValidationReport includes PASSED/FAILED header', () => {
     const report = {
@@ -616,9 +598,6 @@ test('formatValidationReport includes root and config errors', () => {
     assert.ok(text.includes('/test/garda.config.json'));
 });
 
-// ---------------------------------------------------------------------------
-// CLI / script integration
-// ---------------------------------------------------------------------------
 
 test('gate validate-config succeeds against a valid bundle root', async () => {
     const { tmpDir, bundleRoot } = makeTempBundleRoot();

@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { stringSha256, fileSha256 } from '../../../src/gate-runtime/hash';
 import { toStringArray, countTextChars, matchAnyRegex } from '../../../src/gate-runtime/text-utils';
 
-// --- stringSha256 ---
 
 test('stringSha256 returns null for null/undefined', () => {
     assert.equal(stringSha256(null as unknown as string), null);
@@ -26,7 +25,6 @@ test('stringSha256 returns lowercase hex', () => {
     assert.match(hash!, /^[0-9a-f]{64}$/);
 });
 
-// --- fileSha256 ---
 
 test('fileSha256 returns null for null/missing path', () => {
     assert.equal(fileSha256(null as unknown as string), null);
@@ -34,7 +32,6 @@ test('fileSha256 returns null for null/missing path', () => {
     assert.equal(fileSha256('/nonexistent/path/file.txt'), null);
 });
 
-// --- toStringArray ---
 
 test('toStringArray returns empty array for null/undefined', () => {
     assert.deepEqual(toStringArray(null), []);
@@ -62,7 +59,6 @@ test('toStringArray converts numbers to strings', () => {
     assert.deepEqual(toStringArray(42), ['42']);
 });
 
-// --- countTextChars ---
 
 test('countTextChars returns 0 for empty input', () => {
     assert.equal(countTextChars([]), 0);
@@ -78,7 +74,6 @@ test('countTextChars single line has no newline', () => {
     assert.equal(countTextChars(['hello']), 5);
 });
 
-// --- matchAnyRegex ---
 
 test('matchAnyRegex returns true on match', () => {
     assert.equal(matchAnyRegex('src/main.py', ['src/.*\\.py$']), true);

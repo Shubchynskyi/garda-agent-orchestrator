@@ -172,7 +172,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
 
     const currentVersion = readVersionOrFallback(path.join(deployedBundleRoot, 'VERSION'));
 
-    // Resolve and validate init answers
     const initAnswersResolvedPath = path.isAbsolute(initAnswersPath)
         ? initAnswersPath
         : path.resolve(normalizedTarget, initAnswersPath);
@@ -209,8 +208,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     let materializationStatus = 'NOT_RUN';
     let restoreStatus = 'NOT_RUN';
 
-    // --- Step 1: Resolve source for the target version ---
-
     const matchingSnapshot = findSnapshotByVersion(normalizedTarget, targetVersion);
     let resolvedSourceType = 'unknown';
     let resolvedSourceReference = '';
@@ -233,7 +230,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
         sourceRoot = path.join(matchingSnapshot, resolveBundleName());
         sourceVersion = readVersionOrFallback(path.join(sourceRoot, 'VERSION'));
     } else {
-        // Acquire from npm
         let effectivePackageSpec = packageSpec || null;
         if (!effectivePackageSpec) {
             const deployedPkgPath = path.join(deployedBundleRoot, 'package.json');
@@ -261,8 +257,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
         sourceVersion = readVersionOrFallback(path.join(sourceRoot, 'VERSION'));
     }
 
-    // --- Step 2: Validate source version ---
-
     if (sourceVersion === 'unknown') {
         sourceCleanup();
         throw new Error(
@@ -286,7 +280,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     const previewAffectedItems: string[] = [];
 
     try {
-        // --- Step 3: Create safety snapshot ---
         if (!dryRun) {
             fs.mkdirSync(path.dirname(safetySnapshotPath), { recursive: true });
             const rollbackItems = getUpdateRollbackItems(normalizedTarget, initAnswersResolvedPath);
@@ -303,7 +296,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
             }
         }
 
-        // --- Step 4: Sync bundle items from source ---
         if (!dryRun) {
             const syncPreexistingMap: Record<string, boolean> = {};
             for (const item of BUNDLE_SYNC_ITEMS) {
@@ -352,7 +344,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
             syncStatus = 'SKIPPED_DRY_RUN';
         }
 
-        // --- Step 5: Run install + materialization lifecycle ---
         if (!dryRun) {
             writeUpdateSentinel(deployedBundleRoot, {
                 startedAt: new Date().toISOString(),
@@ -361,7 +352,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
                 toVersion: targetVersion
             });
 
-            // Install step
             if (installRunner) {
                 installRunner({
                     targetRoot: normalizedTarget,
@@ -386,7 +376,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
             }
             installStatus = 'PASS';
 
-            // Materialization step
             if (materializationRunner) {
                 materializationRunner({
                     targetRoot: normalizedTarget,
@@ -475,7 +464,6 @@ export async function runRollbackToVersion(options: RunRollbackToVersionOptions)
     sourceCleanup();
     const updatedVersion = readVersionOrFallback(path.join(deployedBundleRoot, 'VERSION'));
 
-    // --- Step 6: Generate report ---
     if (!dryRun) {
         fs.mkdirSync(path.dirname(rollbackReportPath), { recursive: true });
         const reportLines = [

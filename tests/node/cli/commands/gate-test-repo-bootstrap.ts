@@ -11,9 +11,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 
-// ---------------------------------------------------------------------------
-// Path helpers
-// ---------------------------------------------------------------------------
 
 export function getReviewsRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
@@ -23,9 +20,6 @@ export function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
 }
 
-// ---------------------------------------------------------------------------
-// Rule-file seeding (needed by createTempRepo)
-// ---------------------------------------------------------------------------
 
 export function seedRuleFiles(repoRoot: string): void {
     const rulesRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules');
@@ -45,9 +39,6 @@ export function seedRuleFiles(repoRoot: string): void {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Temp-repo builders
-// ---------------------------------------------------------------------------
 
 export function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
@@ -114,9 +105,6 @@ export function createDependentValidationFixture(): {
     };
 }
 
-// ---------------------------------------------------------------------------
-// Node-foundation manifest writer
-// ---------------------------------------------------------------------------
 
 export function writeNodeFoundationManifest(manifestPath: string): void {
     fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
@@ -126,9 +114,6 @@ export function writeNodeFoundationManifest(manifestPath: string): void {
     }, null, 2) + '\n', 'utf8');
 }
 
-// ---------------------------------------------------------------------------
-// Git helpers
-// ---------------------------------------------------------------------------
 
 export function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
     const result = childProcess.spawnSync('git', args, {
@@ -155,9 +140,6 @@ export function initializeGitRepo(repoRoot: string): void {
     runGit(repoRoot, ['commit', '-m', 'test: baseline']);
 }
 
-// ---------------------------------------------------------------------------
-// Misc fixture utilities
-// ---------------------------------------------------------------------------
 
 export function ageFixturePath(filePath: string, ageMs: number): void {
     const agedDate = new Date(Date.now() - ageMs);

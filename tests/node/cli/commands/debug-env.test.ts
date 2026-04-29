@@ -13,10 +13,6 @@ import {
 
 import { DEFAULT_BUNDLE_NAME } from '../../../../src/core/constants';
 
-// ---------------------------------------------------------------------------
-// collectDebugEnvSnapshot
-// ---------------------------------------------------------------------------
-
 test('collectDebugEnvSnapshot returns expected shape for empty target root', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'debug-env-test-'));
     try {
@@ -71,7 +67,6 @@ test('collectDebugEnvSnapshot redacts hostname', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'debug-env-test-'));
     try {
         const snapshot = collectDebugEnvSnapshot(tmpDir, '1.0.0');
-        // Hostname should be redacted to <host-XXXXXXXX> pattern or null
         if (snapshot.hostname !== null) {
             assert.match(snapshot.hostname, /^<host-[a-f0-9]{8}>$/);
         }
@@ -82,7 +77,6 @@ test('collectDebugEnvSnapshot redacts hostname', () => {
 
 test('collectDebugEnvSnapshot filters env to triage keys only', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'debug-env-test-'));
-    // Inject a non-allowlisted env var to prove it is excluded
     const savedValue = process.env.DEBUG_ENV_TEST_SENTINEL;
     process.env.DEBUG_ENV_TEST_SENTINEL = 'should_not_appear';
     try {
@@ -105,10 +99,6 @@ test('collectDebugEnvSnapshot filters env to triage keys only', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// formatDebugEnvText
-// ---------------------------------------------------------------------------
 
 test('formatDebugEnvText starts with GARDA_DEBUG_ENV marker', () => {
     const snapshot: DebugEnvSnapshot = {
@@ -200,10 +190,6 @@ test('formatDebugEnvText shows placeholder when no env keys set', () => {
     const output = formatDebugEnvText(snapshot);
     assert.ok(output.includes('(none of the triage keys are set)'));
 });
-
-// ---------------------------------------------------------------------------
-// formatDebugEnvJson
-// ---------------------------------------------------------------------------
 
 test('formatDebugEnvJson returns valid JSON', () => {
     const snapshot: DebugEnvSnapshot = {

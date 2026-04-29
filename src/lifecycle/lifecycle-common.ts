@@ -263,7 +263,7 @@ export function copyDirectoryContentMerge(
             const entries = fs.readdirSync(dir);
             if (entries.length === 0) fs.rmdirSync(dir);
         } catch {
-            // best-effort empty-directory cleanup
+            // Best-effort empty-directory cleanup.
         }
     }
 }

@@ -11,9 +11,6 @@ import {
     _resetCachedValues
 } from '../../../src/core/redaction';
 
-// ---------------------------------------------------------------------------
-// redactHostname
-// ---------------------------------------------------------------------------
 
 test('redactHostname returns null for null input', () => {
     assert.equal(redactHostname(null), null);
@@ -55,9 +52,6 @@ test('redactHostname trims whitespace before hashing', () => {
     assert.equal(a, b);
 });
 
-// ---------------------------------------------------------------------------
-// redactPath
-// ---------------------------------------------------------------------------
 
 test('redactPath returns empty string for empty input', () => {
     assert.equal(redactPath(''), '');
@@ -96,9 +90,6 @@ test('redactPath handles non-matching path unchanged', () => {
     assert.ok(typeof result === 'string');
 });
 
-// ---------------------------------------------------------------------------
-// redactEnvObject
-// ---------------------------------------------------------------------------
 
 test('redactEnvObject redacts keys matching secret patterns', () => {
     const env = {
@@ -137,9 +128,6 @@ test('redactEnvObject handles empty object', () => {
     assert.deepEqual(result, {});
 });
 
-// ---------------------------------------------------------------------------
-// redactDiagnosticText
-// ---------------------------------------------------------------------------
 
 test('redactDiagnosticText replaces current hostname', () => {
     const hostname = os.hostname();
@@ -177,9 +165,6 @@ test('redactDiagnosticText handles null/empty input gracefully', () => {
     assert.equal(redactDiagnosticText(null as unknown as string), null);
 });
 
-// ---------------------------------------------------------------------------
-// createRedactionContext
-// ---------------------------------------------------------------------------
 
 test('createRedactionContext provides scoped redaction methods', () => {
     const repoRoot = '/workspace/project';
@@ -203,9 +188,6 @@ test('createRedactionContext without repo root still works', () => {
     assert.match(hostname!, /^<host-[0-9a-f]{8}>$/);
 });
 
-// ---------------------------------------------------------------------------
-// Integration: redaction is consistent across module functions
-// ---------------------------------------------------------------------------
 
 test('redactHostname token matches what redactDiagnosticText produces', () => {
     const hostname = 'integration-test-host';

@@ -620,7 +620,6 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.timeline_start_banner = timelineMetadata.start_banner;
     applyLegacyTaskModeIdentityBackfill(repoRoot, result);
 
-    // Extract optional plan metadata
     const rawPlan = artifactObject.plan;
     if (rawPlan && typeof rawPlan === 'object' && !Array.isArray(rawPlan)) {
         const planObj = rawPlan as Record<string, unknown>;
@@ -635,7 +634,6 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         ? artifactObject.planned_changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
 
-    // Extract optional profile metadata
     result.task_profile = String(artifactObject.task_profile || '').trim() || null;
     result.profile_selection_source = String(artifactObject.profile_selection_source || '').trim() || null;
     result.active_profile = String(artifactObject.active_profile || '').trim() || null;

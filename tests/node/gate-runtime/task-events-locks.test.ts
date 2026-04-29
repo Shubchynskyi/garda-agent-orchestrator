@@ -14,9 +14,6 @@ import {
 } from '../../../src/gate-runtime/task-events';
 import { holdTaskEventLockInChildProcess } from './task-events-test-helpers';
 
-// ---------------------------------------------------------------------------
-// Orphaned lock recovery
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent removes orphaned task lock when owner pid is no longer alive', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-orphan-lock-'));
@@ -54,9 +51,6 @@ test('appendTaskEvent removes orphaned task lock when owner pid is no longer ali
     }
 });
 
-// ---------------------------------------------------------------------------
-// Foreign-host lock behaviour
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent does not reclaim aged foreign-host lock without explicit override', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-foreign-lock-'));
@@ -149,9 +143,6 @@ test('appendTaskEvent reclaims aged foreign-host lock when explicit override is 
     }
 });
 
-// ---------------------------------------------------------------------------
-// Lock timeout diagnostics
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent timeout warning includes lock owner diagnostics', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-live-lock-'));
@@ -258,9 +249,6 @@ test('appendMandatoryTaskEvent throws with detailed error when lock acquisition 
     }
 });
 
-// ---------------------------------------------------------------------------
-// scanTaskEventLocks
-// ---------------------------------------------------------------------------
 
 test('scanTaskEventLocks reports active and stale task-event locks only', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-scan-locks-'));
@@ -295,9 +283,6 @@ test('scanTaskEventLocks reports active and stale task-event locks only', () => 
     }
 });
 
-// ---------------------------------------------------------------------------
-// cleanupStaleTaskEventLocks
-// ---------------------------------------------------------------------------
 
 test('cleanupStaleTaskEventLocks removes only stale locks and supports dry-run', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-cleanup-locks-'));
@@ -333,9 +318,6 @@ test('cleanupStaleTaskEventLocks removes only stale locks and supports dry-run',
     }
 });
 
-// ---------------------------------------------------------------------------
-// Lock telemetry
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent includes lock_telemetry in result', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-lock-telemetry-'));
@@ -398,9 +380,6 @@ test('appendTaskEvent timeout includes retry count in diagnostic', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// Atomics.wait avoidance
-// ---------------------------------------------------------------------------
 
 test('task-events module avoids Atomics.wait and uses async timer-based waiting', () => {
     const facadePath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'task-events.ts');
@@ -429,9 +408,6 @@ test('task-events module avoids Atomics.wait and uses async timer-based waiting'
     );
 });
 
-// ---------------------------------------------------------------------------
-// Sync fail-fast and bounded waiting
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent sync path fails fast on self-owned active lock without waiting', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-retry-cap-'));
@@ -508,9 +484,6 @@ test('appendTaskEvent sync path waits through short-lived external contention', 
     }
 });
 
-// ---------------------------------------------------------------------------
-// Async contention telemetry
-// ---------------------------------------------------------------------------
 
 test('appendTaskEventAsync reports non-zero telemetry after contended lock acquisition', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-contention-telemetry-'));
@@ -548,9 +521,6 @@ test('appendTaskEventAsync reports non-zero telemetry after contended lock acqui
     }
 });
 
-// ---------------------------------------------------------------------------
-// Async foreign-host lock behaviour
-// ---------------------------------------------------------------------------
 
 test('appendTaskEventAsync does not reclaim aged foreign-host lock without explicit override', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-async-foreign-lock-'));
@@ -643,9 +613,6 @@ test('appendTaskEventAsync reclaims aged foreign-host lock when explicit overrid
     }
 });
 
-// ---------------------------------------------------------------------------
-// Aggregate (all-tasks) lock contention
-// ---------------------------------------------------------------------------
 
 test('appendTaskEventAsync waits for aggregate lock and records contention telemetry when .all-tasks.lock is held', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-aggregate-contention-'));

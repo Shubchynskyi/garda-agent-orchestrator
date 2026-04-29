@@ -55,9 +55,6 @@ function seedMatchingSourceCheckoutParity(tmpDir: string, bundlePath: string) {
     fs.utimesSync(path.join(bundlePath, 'bin', 'garda.js'), now, now);
 }
 
-// ---------------------------------------------------------------------------
-// runDoctor: bundle detection and manifest validation
-// ---------------------------------------------------------------------------
 
 test('runDoctor throws for missing bundle', () => {
     const ws = createDoctorWorkspace({ skipManifest: true });
@@ -123,9 +120,6 @@ test('runDoctor detects manifest duplicates', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// runDoctor: task-event lock health
-// ---------------------------------------------------------------------------
 
 test('runDoctor reports stale task-event locks and supports dry-run cleanup output', () => {
     const ws = createDoctorWorkspace();
@@ -244,9 +238,6 @@ test('runDoctor reports the shared stale reviews-index lock in review-artifact d
     }
 });
 
-// ---------------------------------------------------------------------------
-// runDoctor: provider compliance
-// ---------------------------------------------------------------------------
 
 test('runDoctor includes provider compliance result when activeAgentFiles provided', () => {
     const ws = createDoctorWorkspace();
@@ -315,9 +306,6 @@ test('runDoctor fails when active entrypoint has compliance drift', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// runDoctor: nested bundle duplication
-// ---------------------------------------------------------------------------
 
 test('runDoctor detects nested bundle duplication in real workspace', () => {
     const ws = createDoctorWorkspace();
@@ -342,9 +330,6 @@ test('runDoctor detects nested bundle duplication in real workspace', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// runDoctor: protected-manifest evidence
-// ---------------------------------------------------------------------------
 
 test('runDoctor surfaces protected-manifest MATCH when trusted manifest is current', () => {
     const ws = createDoctorWorkspace();
@@ -463,9 +448,6 @@ test('runDoctor surfaces protected-manifest INVALID and fails overall', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// runDoctor: partial-state integration
-// ---------------------------------------------------------------------------
 
 test('runDoctor fails when update sentinel is present', () => {
     const { writeUpdateSentinel } = require('../../../src/lifecycle/common');
@@ -496,9 +478,6 @@ test('runDoctor fails when update sentinel is present', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// runDoctor: full evidence integration
-// ---------------------------------------------------------------------------
 
 test('runDoctor includes all four new evidence fields', () => {
     const ws = createDoctorWorkspace({ manifestContent: '- bin/garda.js\n' });
@@ -525,9 +504,6 @@ test('runDoctor includes all four new evidence fields', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// runDoctor: profile health integration
-// ---------------------------------------------------------------------------
 
 test('runDoctor includes profile health evidence when profiles.json exists', () => {
     const ws = createDoctorWorkspace({ manifestContent: '- bin/garda.js\n- package.json\n' });

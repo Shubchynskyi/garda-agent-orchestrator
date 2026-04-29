@@ -20,7 +20,6 @@ import {
     formatGroupedLines
 } from '../../../src/gate-runtime/output-filters';
 
-// --- resolveFilterInt ---
 
 test('resolveFilterInt resolves plain integer', () => {
     assert.equal(resolveFilterInt(42, null, 'test'), 42);
@@ -49,7 +48,6 @@ test('resolveFilterInt enforces minimum', () => {
     assert.throws(() => resolveFilterInt(-1, null, 'test', 0), /must resolve to integer >= 0/);
 });
 
-// --- resolveFilterStr ---
 
 test('resolveFilterStr resolves plain string', () => {
     assert.equal(resolveFilterStr('hello', null, 'test'), 'hello');
@@ -67,7 +65,6 @@ test('resolveFilterStr allows empty when option set', () => {
     assert.equal(resolveFilterStr(null as unknown, null, 'test', { allowEmpty: true }), '');
 });
 
-// --- selectHeadLines / selectTailLines ---
 
 test('selectHeadLines returns first N lines', () => {
     assert.deepEqual(selectHeadLines(['a', 'b', 'c', 'd'], 2), ['a', 'b']);
@@ -85,7 +82,6 @@ test('selectTailLines returns empty for count 0', () => {
     assert.deepEqual(selectTailLines(['a', 'b'], 0), []);
 });
 
-// --- selectMatchingLines ---
 
 test('selectMatchingLines filters by regex', () => {
     const lines = ['error: foo', 'info: bar', 'error: baz'];
@@ -97,7 +93,6 @@ test('selectMatchingLines respects limit', () => {
     assert.deepEqual(selectMatchingLines(lines, ['^error'], { limit: 2 }), ['error: 1', 'error: 2']);
 });
 
-// --- applyOutputFilterOperation ---
 
 test('strip_ansi removes ANSI escape sequences', () => {
     const lines = ['\x1B[31merror\x1B[0m: something', 'clean line'];
@@ -197,7 +192,6 @@ test('missing type throws', () => {
     );
 });
 
-// --- applyPassthroughCeiling ---
 
 test('applyPassthroughCeiling passes through when under limit', () => {
     const lines = Array.from({ length: 10 }, (_, i) => `line ${i}`);
@@ -220,7 +214,6 @@ test('applyPassthroughCeiling respects config override', () => {
     assert.match(result[0], /strategy=head/);
 });
 
-// --- getCompileFailureStrategyConfig ---
 
 test('getCompileFailureStrategyConfig returns known strategies', () => {
     for (const name of ['maven', 'gradle', 'node', 'cargo', 'dotnet', 'go']) {
@@ -236,7 +229,6 @@ test('getCompileFailureStrategyConfig returns generic for unknown', () => {
     assert.equal(config.display_name, 'generic-compile');
 });
 
-// --- applyOutputFilterProfile ---
 
 test('applyOutputFilterProfile returns passthrough for empty profile name', () => {
     const result = applyOutputFilterProfile(['a', 'b'], null as unknown as string, '');
@@ -290,7 +282,6 @@ test('applyOutputFilterProfile returns fallback for missing profile', () => {
     }
 });
 
-// --- resolveBudgetTier ---
 
 test('resolveBudgetTier returns no match when budgetTokens is null', () => {
     const result = resolveBudgetTier(null, null);
@@ -371,7 +362,6 @@ test('resolveBudgetTier falls through to catch-all tier', () => {
     assert.equal(result.tier_label, 'catchall');
 });
 
-// --- Budget-adaptive applyOutputFilterProfile ---
 
 test('applyOutputFilterProfile applies budget tier overrides (tight)', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-budget-'));
@@ -590,7 +580,6 @@ test('applyOutputFilterProfile budget overrides passthrough ceiling', () => {
     }
 });
 
-// --- normalizeErrorSignature ---
 
 test('normalizeErrorSignature strips file path prefix', () => {
     assert.equal(
@@ -622,7 +611,6 @@ test('normalizeErrorSignature returns trimmed input for non-path lines', () => {
     assert.equal(normalizeErrorSignature('  BUILD FAILURE  '), 'BUILD FAILURE');
 });
 
-// --- groupMatchingLines ---
 
 test('groupMatchingLines groups duplicate errors', () => {
     const lines = [
@@ -669,7 +657,6 @@ test('groupMatchingLines preserves first representative per group', () => {
     assert.equal(result.groups[0].count, 2);
 });
 
-// --- formatGroupedLines ---
 
 test('formatGroupedLines emits count prefix for duplicated groups', () => {
     const result = formatGroupedLines({
@@ -711,7 +698,6 @@ test('formatGroupedLines omits footer when all groups shown', () => {
     assert.match(result[0], /^\[2×\]/);
 });
 
-// --- Grouped parser integration ---
 
 test('compile failure parser groups duplicate node errors', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-group-'));
@@ -875,7 +861,6 @@ test('applyOutputFilterProfile grouping is null for profile without parser', () 
     }
 });
 
-// --- Edge cases from review findings ---
 
 test('groupMatchingLines with maxGroups=0 returns all groups', () => {
     const lines = ['error: A', 'error: B', 'error: C'];

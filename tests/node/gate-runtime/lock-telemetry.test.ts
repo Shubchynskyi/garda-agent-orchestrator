@@ -22,9 +22,6 @@ function mkTmpDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'gao-locktel-'));
 }
 
-// ---------------------------------------------------------------------------
-// classifyLockContention
-// ---------------------------------------------------------------------------
 
 test('classifyLockContention returns none for zero retries and low elapsed', () => {
     assert.equal(classifyLockContention(0, 0), 'none');
@@ -63,9 +60,6 @@ test('classifyLockContention handles boundary between low and moderate', () => {
     assert.equal(classifyLockContention(5, 600), 'moderate');
 });
 
-// ---------------------------------------------------------------------------
-// AcquireLockTelemetry fields on acquireFilesystemLock
-// ---------------------------------------------------------------------------
 
 test('acquireFilesystemLock returns telemetry with contention level none on fresh lock', () => {
     const tmp = mkTmpDir();
@@ -121,9 +115,6 @@ test('acquireFilesystemLock reports stale recovery for missing metadata after gr
     }
 });
 
-// ---------------------------------------------------------------------------
-// AcquireLockTelemetry fields on acquireFilesystemLockAsync
-// ---------------------------------------------------------------------------
 
 test('acquireFilesystemLockAsync returns telemetry with contention level none on fresh lock', async () => {
     const tmp = mkTmpDir();
@@ -159,9 +150,6 @@ test('acquireFilesystemLockAsync reports stale recovery for dead process lock', 
     }
 });
 
-// ---------------------------------------------------------------------------
-// buildLockWaitDiagnostics
-// ---------------------------------------------------------------------------
 
 test('buildLockWaitDiagnostics returns no contention for clean telemetry', () => {
     const diagnostics = buildLockWaitDiagnostics({

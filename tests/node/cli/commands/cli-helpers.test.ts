@@ -45,10 +45,6 @@ import {
     tryParseBooleanText
 } from '../../../../src/cli/commands/cli-helpers';
 
-// ---------------------------------------------------------------------------
-// parseOptions
-// ---------------------------------------------------------------------------
-
 test('parseOptions parses string flags', () => {
     const defs = {
         '--target-root': { key: 'targetRoot', type: 'string' },
@@ -121,10 +117,6 @@ test('parseOptions throws when string flag missing value', () => {
         /requires a value/
     );
 });
-
-// ---------------------------------------------------------------------------
-// parseOptions: boolean space-separated value consumption
-// ---------------------------------------------------------------------------
 
 test('parseOptions consumes space-separated false for boolean flags', () => {
     const defs = {
@@ -207,10 +199,6 @@ test('parseOptions rejects positional after boolean flag when non-boolean text f
     );
 });
 
-// ---------------------------------------------------------------------------
-// isBooleanText
-// ---------------------------------------------------------------------------
-
 test('isBooleanText recognizes canonical true/false literals', () => {
     for (const val of ['true', 'false', 'yes', 'no', 'y', 'n', '1', '0', 'on', 'off', 'да', 'нет']) {
         assert.equal(isBooleanText(val), true, `expected isBooleanText('${val}') to be true`);
@@ -228,10 +216,6 @@ test('isBooleanText rejects non-boolean text', () => {
     assert.equal(isBooleanText(''), false);
     assert.equal(isBooleanText('hello'), false);
 });
-
-// ---------------------------------------------------------------------------
-// Boolean parsing
-// ---------------------------------------------------------------------------
 
 test('parseBooleanText handles true values', () => {
     assert.equal(parseBooleanText(true, 'test'), true);
@@ -270,10 +254,6 @@ test('tryParseBooleanText returns fallback for invalid', () => {
     assert.equal(tryParseBooleanText('maybe', true), true);
 });
 
-// ---------------------------------------------------------------------------
-// Source-of-truth normalization
-// ---------------------------------------------------------------------------
-
 test('normalizeSourceOfTruth normalizes case-insensitive values', () => {
     assert.equal(normalizeSourceOfTruth('claude'), 'Claude');
     assert.equal(normalizeSourceOfTruth('CODEX'), 'Codex');
@@ -297,10 +277,6 @@ test('tryNormalizeSourceOfTruth returns fallback for invalid', () => {
     assert.equal(tryNormalizeSourceOfTruth('Invalid', 'Codex'), 'Codex');
 });
 
-// ---------------------------------------------------------------------------
-// Brevity normalization
-// ---------------------------------------------------------------------------
-
 test('normalizeAssistantBrevity normalizes valid values', () => {
     assert.equal(normalizeAssistantBrevity('concise'), 'concise');
     assert.equal(normalizeAssistantBrevity('Detailed'), 'detailed');
@@ -314,10 +290,6 @@ test('tryNormalizeAssistantBrevity returns fallback for empty/invalid', () => {
     assert.equal(tryNormalizeAssistantBrevity(null), 'concise');
     assert.equal(tryNormalizeAssistantBrevity('invalid', 'detailed'), 'detailed');
 });
-
-// ---------------------------------------------------------------------------
-// Agent entrypoint normalization
-// ---------------------------------------------------------------------------
 
 test('normalizeAgentEntrypointToken maps shorthand names', () => {
     assert.equal(normalizeAgentEntrypointToken('claude'), 'CLAUDE.md');
@@ -389,10 +361,6 @@ test('normalizeActiveAgentFiles returns null for empty input and unknown source'
     assert.equal(normalizeActiveAgentFiles(null, 'Unknown'), null);
 });
 
-// ---------------------------------------------------------------------------
-// Misc helpers
-// ---------------------------------------------------------------------------
-
 test('normalizeLogicalKey strips separators and lowercases', () => {
     assert.equal(normalizeLogicalKey('Assistant_Language'), 'assistantlanguage');
     assert.equal(normalizeLogicalKey('enforce-no-auto-commit'), 'enforcenoautocommit');
@@ -441,10 +409,6 @@ test('normalizePathValue resolves to absolute', () => {
     assert.ok(path.isAbsolute(result));
 });
 
-// ---------------------------------------------------------------------------
-// File operations
-// ---------------------------------------------------------------------------
-
 test('shouldSkipPath detects skipped entries', () => {
     assert.equal(shouldSkipPath('/some/path/__pycache__'), true);
     assert.equal(shouldSkipPath('/some/path/.pytest_cache'), true);
@@ -456,7 +420,6 @@ test('shouldSkipPath detects skipped entries', () => {
 
 test('removePathIfExists is no-op for missing path', () => {
     removePathIfExists(path.join(os.tmpdir(), 'nonexistent-' + Date.now()));
-    // Should not throw
 });
 
 test('copyPath copies file correctly', () => {
@@ -554,10 +517,6 @@ test('ensureSourceItemExists returns path for existing asset', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// deployFreshBundle
-// ---------------------------------------------------------------------------
-
 function writeCompiledRuntimeFixture(sourceRoot: string): void {
     const runtimeRoot = path.join(sourceRoot, 'dist', 'src');
     fs.mkdirSync(path.join(runtimeRoot, 'cli'), { recursive: true });
@@ -652,10 +611,6 @@ test('deployFreshBundle throws when compiled runtime output is missing', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// syncBundleItems
-// ---------------------------------------------------------------------------
-
 test('syncBundleItems replaces existing items', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-test-'));
     try {
@@ -664,7 +619,6 @@ test('syncBundleItems replaces existing items', () => {
         writeDeploySourceFixture(sourceRoot);
         fs.mkdirSync(destPath, { recursive: true });
         fs.writeFileSync(path.join(sourceRoot, 'VERSION'), 'new-VERSION', 'utf8');
-        // Pre-populate with old data
         fs.writeFileSync(path.join(destPath, 'VERSION'), 'old', 'utf8');
 
         syncBundleItems(sourceRoot, destPath);
@@ -674,10 +628,6 @@ test('syncBundleItems replaces existing items', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// resolvePathInsideRoot
-// ---------------------------------------------------------------------------
 
 test('resolvePathInsideRoot resolves relative path', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-test-'));
@@ -709,10 +659,6 @@ test('resolvePathInsideRoot throws for empty path', () => {
     );
 });
 
-// ---------------------------------------------------------------------------
-// ensureDirectoryExists
-// ---------------------------------------------------------------------------
-
 test('ensureDirectoryExists throws for missing directory', () => {
     assert.throws(
         () => ensureDirectoryExists(path.join(os.tmpdir(), 'nonexistent-' + Date.now()), 'TestDir'),
@@ -724,15 +670,10 @@ test('ensureDirectoryExists passes for real directory', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ensure-test-'));
     try {
         ensureDirectoryExists(tmpDir, 'TestDir');
-        // Should not throw
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// getBundlePath / getAgentInitPromptPath
-// ---------------------------------------------------------------------------
 
 test('getBundlePath joins with default bundle name', () => {
     const result = getBundlePath('/workspace');
@@ -743,10 +684,6 @@ test('getAgentInitPromptPath points to AGENT_INIT_PROMPT.md', () => {
     const result = getAgentInitPromptPath('/workspace/garda-agent-orchestrator');
     assert.ok(result.endsWith('AGENT_INIT_PROMPT.md'));
 });
-
-// ---------------------------------------------------------------------------
-// readOptionalJsonFile
-// ---------------------------------------------------------------------------
 
 test('readOptionalJsonFile returns null for missing file', () => {
     assert.equal(readOptionalJsonFile(path.join(os.tmpdir(), 'missing-' + Date.now() + '.json')), null);
@@ -786,10 +723,6 @@ test('readOptionalJsonFile returns null for empty file', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// readBundleVersion
-// ---------------------------------------------------------------------------
-
 test('readBundleVersion reads VERSION file', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'version-test-'));
     try {
@@ -809,10 +742,6 @@ test('readBundleVersion falls back to package.json', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// Banner / help builders
-// ---------------------------------------------------------------------------
 
 test('buildBannerText includes version and title', () => {
     const pkg = { name: 'test', version: '1.0.8' };
@@ -873,7 +802,7 @@ test('buildHelpText includes all command descriptions', () => {
 });
 
 test('COMMAND_SUMMARY has expected commands', () => {
-    const names = COMMAND_SUMMARY.map(function (c) { return c[0]; });
+    const names = COMMAND_SUMMARY.map((command) => command[0]);
     assert.ok(names.includes('setup'));
     assert.ok(names.includes('agent-init'));
     assert.ok(names.includes('next-step'));
@@ -885,17 +814,13 @@ test('COMMAND_SUMMARY has expected commands', () => {
     assert.ok(names.includes('review-capabilities'));
     assert.ok(names.includes('workflow'));
     assert.ok(names.includes('gate'));
-    assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'skills'; })![1], 'List, suggest, and manage optional skill packs');
+    assert.equal(COMMAND_SUMMARY.find((command) => command[0] === 'skills')![1], 'List, suggest, and manage optional skill packs');
     assert.equal(
-        COMMAND_SUMMARY.find(function (c) { return c[0] === 'review-capabilities'; })![1],
+        COMMAND_SUMMARY.find((command) => command[0] === 'review-capabilities')![1],
         'Show, enable, and disable repo-local optional review capabilities'
     );
-    assert.equal(COMMAND_SUMMARY.find(function (c) { return c[0] === 'workflow'; })![1], 'Show and set repo-local workflow config');
+    assert.equal(COMMAND_SUMMARY.find((command) => command[0] === 'workflow')![1], 'Show and set repo-local workflow config');
 });
-
-// ---------------------------------------------------------------------------
-// extractGlobalFlags
-// ---------------------------------------------------------------------------
 
 test('extractGlobalFlags extracts --no-color and returns rest', () => {
     const result = extractGlobalFlags(['--no-color', 'status', '--json']);
@@ -953,10 +878,6 @@ test('extractGlobalFlags handles --offline at end of argv', () => {
     assert.deepEqual(result.rest, ['check-update']);
 });
 
-// ---------------------------------------------------------------------------
-// applyNoColorFlag
-// ---------------------------------------------------------------------------
-
 test('applyNoColorFlag sets NO_COLOR when true', () => {
     const saved = process.env.NO_COLOR;
     try {
@@ -978,10 +899,6 @@ test('applyNoColorFlag does not set NO_COLOR when false', () => {
         if (saved === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = saved; }
     }
 });
-
-// ---------------------------------------------------------------------------
-// supportsColor respects NO_COLOR and FORCE_COLOR
-// ---------------------------------------------------------------------------
 
 test('supportsColor returns false when NO_COLOR is set', () => {
     const savedNoColor = process.env.NO_COLOR;
@@ -1035,10 +952,6 @@ test('supportsColor: NO_COLOR takes precedence over FORCE_COLOR', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// buildHelpText includes --no-color
-// ---------------------------------------------------------------------------
-
 test('buildHelpText includes --no-color in global options', () => {
     const text = buildHelpText({ name: 'test', version: '1.0.0' });
     assert.ok(text.includes('--no-color'));
@@ -1051,10 +964,6 @@ test('buildHelpText documents aggregate retention override', () => {
     assert.ok(text.includes('aggregate task-event lines'));
 });
 
-// ---------------------------------------------------------------------------
-// Integration: --no-color flag → NO_COLOR env → supportsColor() chain
-// ---------------------------------------------------------------------------
-
 test('runCliMain with --no-color sets NO_COLOR and disables supportsColor', async () => {
     const { runCliMain } = await import('../../../../src/cli/main');
     const savedNoColor = process.env.NO_COLOR;
@@ -1062,7 +971,6 @@ test('runCliMain with --no-color sets NO_COLOR and disables supportsColor', asyn
     try {
         delete process.env.NO_COLOR;
         delete process.env.FORCE_COLOR;
-        // 'help' is a safe command that won't fail in test environments
         await runCliMain(['--no-color', 'help']);
         assert.equal(process.env.NO_COLOR, '1', '--no-color flag should set NO_COLOR=1');
         assert.equal(supportsColor(), false, 'supportsColor should return false after --no-color');

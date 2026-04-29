@@ -14,9 +14,6 @@ import {
     type RiskTriggers
 } from '../../../src/gate-runtime/budget-preflight';
 
-// ---------------------------------------------------------------------------
-// resolveDepthEscalation
-// ---------------------------------------------------------------------------
 
 test('resolveDepthEscalation returns no escalation when depths match', () => {
     const result = resolveDepthEscalation({
@@ -125,9 +122,6 @@ test('resolveDepthEscalation explicit_escalation when no specific trigger matche
     assert.ok(result.escalation_triggers.includes('explicit_escalation'));
 });
 
-// ---------------------------------------------------------------------------
-// buildBudgetForecast
-// ---------------------------------------------------------------------------
 
 test('buildBudgetForecast produces non-zero estimates for code review', () => {
     const forecast = buildBudgetForecast({
@@ -252,9 +246,6 @@ test('buildBudgetForecast null taskId', () => {
     assert.equal(forecast.task_id, null);
 });
 
-// ---------------------------------------------------------------------------
-// buildBudgetComparison
-// ---------------------------------------------------------------------------
 
 test('buildBudgetComparison with forecast and actuals', () => {
     const forecast: BudgetForecast = {
@@ -324,9 +315,6 @@ test('buildBudgetComparison with zero actuals', () => {
     assert.ok(comparison.summary_line.includes('escalated'));
 });
 
-// ---------------------------------------------------------------------------
-// formatBudgetForecastText
-// ---------------------------------------------------------------------------
 
 test('formatBudgetForecastText includes key fields', () => {
     const forecast = buildBudgetForecast({
@@ -383,9 +371,6 @@ test('formatBudgetForecastText no reviews', () => {
     assert.ok(text.includes('Required reviews: none'));
 });
 
-// ---------------------------------------------------------------------------
-// computeEffectiveDepth
-// ---------------------------------------------------------------------------
 
 const NO_TRIGGERS: RiskTriggers = {
     db: false, security: false, refactor: false, api: false,
@@ -449,9 +434,6 @@ test('computeEffectiveDepth performance promotes via medium risk rule to 2 at mo
     assert.equal(computeEffectiveDepth(1, 'FAST_PATH', { ...NO_TRIGGERS, performance: true }), 1);
 });
 
-// ---------------------------------------------------------------------------
-// resolveCompressionProfile
-// ---------------------------------------------------------------------------
 
 test('resolveCompressionProfile low risk keeps base config', () => {
     const profile = resolveCompressionProfile(NO_TRIGGERS, 2);
@@ -530,9 +512,6 @@ test('resolveCompressionProfile scoped_diffs preserved at all risk levels', () =
     assert.equal(resolveCompressionProfile(NO_TRIGGERS, 1).scoped_diffs, true);
 });
 
-// ---------------------------------------------------------------------------
-// resolveRiskAwareDepth (integration)
-// ---------------------------------------------------------------------------
 
 test('resolveRiskAwareDepth combines depth promotion and compression for security trigger', () => {
     const result = resolveRiskAwareDepth(1, 'FULL_PATH', { ...NO_TRIGGERS, security: true });
@@ -585,9 +564,6 @@ test('resolveRiskAwareDepth infra trigger promotes to depth 3 with high risk com
     assert.equal(result.compression.risk_level, 'high');
 });
 
-// ---------------------------------------------------------------------------
-// Integration: risk-aware depth matches classify-change trigger contract
-// ---------------------------------------------------------------------------
 
 test('resolveRiskAwareDepth with triggers matching classify-change security output', () => {
     // Simulates the trigger map that gates.ts builds from classifyChange result
@@ -643,9 +619,7 @@ test('resolveRiskAwareDepth budget forecast uses promoted effective depth', () =
     assert.equal(forecast.token_economy_active_for_depth, false);
 });
 
-// ---------------------------------------------------------------------------
 // Integration: classifyChange triggers → RiskTriggers mapping contract
-// ---------------------------------------------------------------------------
 
 import { classifyChange, getDefaultClassificationConfig } from '../../../src/gates/classify-change';
 

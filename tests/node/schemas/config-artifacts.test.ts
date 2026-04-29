@@ -54,9 +54,6 @@ test('validateOutputFiltersConfig accepts context-driven parser controls from th
     );
 });
 
-// ---------------------------------------------------------------------------
-// Profiles config validator
-// ---------------------------------------------------------------------------
 
 test('validateProfilesConfig validates template profiles.json', () => {
     const normalized = validateProfilesConfig(readTemplateConfig('profiles'));
@@ -244,9 +241,6 @@ test('validateProfilesConfig rejects unknown skills keys', () => {
     }, /not a recognized skills key/);
 });
 
-// ---------------------------------------------------------------------------
-// validateReviewArtifactStorageConfig
-// ---------------------------------------------------------------------------
 
 test('validateReviewArtifactStorageConfig normalizes valid config', () => {
     const input = {

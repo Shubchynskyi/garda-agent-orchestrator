@@ -8,9 +8,7 @@ import {
 import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
 import { buildFakeDoctorResult, DEFAULT_NEW_EVIDENCE } from './doctor-workspace-builder';
 
-// ---------------------------------------------------------------------------
 // formatDoctorResult: verify + manifest output
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult includes verify and manifest output', () => {
     const fakeResult = buildFakeDoctorResult();
@@ -28,9 +26,6 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
     assert.ok(output.includes('Next: Execute task T-001'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResult: timeline completeness warnings
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult includes timeline completeness warnings', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -88,9 +83,6 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
     assert.ok(output.includes('Doctor: FAIL'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResult: nested bundle duplication
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult shows nested bundle duplication warning', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -106,9 +98,6 @@ test('formatDoctorResult shows nested bundle duplication warning', () => {
     assert.ok(output.includes('garda-agent-orchestrator/garda-agent-orchestrator'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResult: protected manifest section
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult includes protected manifest section in clean output', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -158,9 +147,6 @@ test('formatDoctorResult treats source-checkout protected-manifest drift as info
     assert.ok(output.includes('Doctor: PASSED'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResult: runtime compatibility
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult includes runtime compatibility section', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -204,9 +190,6 @@ test('formatDoctorResult includes runtime compatibility section', () => {
     assert.ok(output.includes('Doctor: FAIL'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResult: rollback snapshots
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult includes rollback snapshot section when snapshots exist', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -257,9 +240,6 @@ test('formatDoctorResult includes rollback snapshot section when snapshots exist
     assert.ok(output.includes('Doctor: FAIL'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResult: partial-state section
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult shows partial-state section when sentinel detected', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -303,9 +283,6 @@ test('formatDoctorResult shows partial-state section when sentinel detected', ()
     assert.ok(output.includes('Doctor: FAIL'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResult: profile health
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResult shows profile health section for healthy profile', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -346,9 +323,6 @@ test('formatDoctorResult shows NOT_CONFIGURED when profiles config absent', () =
     assert.ok(output.includes('Status: NOT_CONFIGURED'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResultCompact: profile suffix
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResultCompact includes profile suffix for healthy profile', () => {
     const fakeResult = buildFakeDoctorResult({
@@ -367,9 +341,6 @@ test('formatDoctorResultCompact includes profile suffix for healthy profile', ()
     assert.ok(output.includes('profile=strict'));
 });
 
-// ---------------------------------------------------------------------------
-// formatDoctorResultCompact
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResultCompact emits single line on success', () => {
     const fakeResult = buildFakeDoctorResult();

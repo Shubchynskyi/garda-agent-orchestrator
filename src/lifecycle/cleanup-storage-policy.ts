@@ -148,7 +148,7 @@ export function applyStoragePolicy(
                     continue;
                 }
             } catch {
-                // Skip unreadable
+                // Skip unreadable files.
             }
         }
 
@@ -159,7 +159,7 @@ export function applyStoragePolicy(
         try {
             invalidateReviewsIndex(reviewsDir);
         } catch {
-            // best-effort
+            // Best-effort index invalidation.
         }
     }
 

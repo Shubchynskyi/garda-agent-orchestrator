@@ -87,9 +87,6 @@ describe('boundary validation', () => {
         }
     });
 
-    // -----------------------------------------------------------------------
-    // Exported boundary helper coverage
-    // -----------------------------------------------------------------------
 
     it('ensureWithinRoot rejects paths outside root', () => {
         const dir = mkTmpDir();
@@ -157,9 +154,6 @@ describe('boundary validation', () => {
         }
     });
 
-    // -----------------------------------------------------------------------
-    // resolveRollbackSnapshotPath ownership boundary
-    // -----------------------------------------------------------------------
 
     it('resolveRollbackSnapshotPath rejects absolute path outside target', () => {
         const dir = mkTmpDir();
@@ -202,9 +196,6 @@ describe('boundary validation', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// resolveRealPath unit tests
-// ---------------------------------------------------------------------------
 
 describe('resolveRealPath', () => {
     it('returns realpath for an existing path', () => {
@@ -230,9 +221,6 @@ describe('resolveRealPath', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Symlink / junction escape detection
-// ---------------------------------------------------------------------------
 
 function canCreateSymlinks(): boolean {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-symtest-'));

@@ -38,7 +38,7 @@ test('handleSkills suggest prints deterministic recommendation output', () => {
         fs.writeFileSync(path.join(workspaceRoot, 'package.json'), '{"name":"web-app","dependencies":{"react":"18.0.0"}}', 'utf8');
         fs.writeFileSync(path.join(workspaceRoot, 'src', 'components', 'App.tsx'), 'export function App() { return null; }\n', 'utf8');
 
-        console.log = function (...items: unknown[]) {
+        console.log = (...items: unknown[]) => {
             lines.push(items.join(' '));
         };
 
@@ -81,7 +81,7 @@ test('handleSkills list surfaces the compact headlines artifact path', () => {
         fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
         writeSkillsIndex(bundleRoot);
 
-        console.log = function (...items: unknown[]) {
+        console.log = (...items: unknown[]) => {
             lines.push(items.join(' '));
         };
 

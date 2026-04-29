@@ -80,10 +80,6 @@ function writeTaskResetFixture(targetRoot: string, taskStatus = 'IN_PROGRESS'): 
     fs.writeFileSync(path.join(bundleDir, 'VERSION'), '1.0.0\n', 'utf8');
 }
 
-// ---------------------------------------------------------------------------
-// Bootstrap failures still produce GARDA_BOOTSTRAP_FAILED
-// ---------------------------------------------------------------------------
-
 test('bootstrap with invalid flag produces GARDA_BOOTSTRAP_FAILED with EXIT_USAGE_ERROR', () => {
     const { exitCode, stderr } = runCli(['bootstrap', '--no-such-flag']);
     assert.equal(exitCode, EXIT_USAGE_ERROR);
@@ -187,10 +183,6 @@ test('task reset alias reopen confirm routes through guarded task-reset gate', (
     }
 });
 
-// ---------------------------------------------------------------------------
-// Non-bootstrap failures produce GARDA_CLI_FAILED
-// ---------------------------------------------------------------------------
-
 test('verify with invalid flag produces GARDA_CLI_FAILED with EXIT_USAGE_ERROR', () => {
     const { exitCode, stderr } = runCli(['verify', '--no-such-flag']);
     assert.equal(exitCode, EXIT_USAGE_ERROR);
@@ -256,10 +248,6 @@ test('skills with invalid flag produces GARDA_CLI_FAILED with EXIT_USAGE_ERROR',
     assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
 });
 
-// ---------------------------------------------------------------------------
-// Error message is still printed alongside the marker
-// ---------------------------------------------------------------------------
-
 test('failure marker is followed by human-readable error message', () => {
     const { stderr } = runCli(['gate', 'nonexistent-gate']);
     const lines = stderr.split(/\r?\n/).filter(Boolean);
@@ -267,10 +255,6 @@ test('failure marker is followed by human-readable error message', () => {
     assert.equal(lines[0], 'GARDA_CLI_FAILED');
     assert.ok(lines[1].length > 0, 'Expected a human-readable error message after the marker');
 });
-
-// ---------------------------------------------------------------------------
-// Exit codes are non-zero and distinct for each failure class
-// ---------------------------------------------------------------------------
 
 test('all failure exit codes are non-zero', () => {
     assert.ok(EXIT_GENERAL_FAILURE > 0);

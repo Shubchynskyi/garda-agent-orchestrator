@@ -78,7 +78,6 @@ export function runReinit(options: ReinitOptions) {
         throw new Error(`Template directory not found: ${sourceRoot}`);
     }
 
-    // Validate target root
     const normalizedTarget = path.resolve(targetRoot);
     const normalizedBundle = path.resolve(bundleRoot);
     if (normalizedTarget.toLowerCase() === normalizedBundle.toLowerCase()) {
@@ -88,168 +87,155 @@ export function runReinit(options: ReinitOptions) {
     }
 
     return withLifecycleOperationLock(normalizedTarget, 'reinit', () => {
-    // Resolve init answers path
-    const resolvedInitPath = path.isAbsolute(initAnswersPath)
-        ? initAnswersPath
-        : path.resolve(targetRoot, initAnswersPath);
+        const resolvedInitPath = path.isAbsolute(initAnswersPath)
+            ? initAnswersPath
+            : path.resolve(targetRoot, initAnswersPath);
 
-    // Read bundle version from the deployed runtime.
-    const bundleVersionPath = path.join(bundleRoot, 'VERSION');
-    if (!pathExists(bundleVersionPath)) {
-        throw new Error(`Bundle version file not found: ${bundleVersionPath}`);
-    }
-    const bundleVersion = readTextFile(bundleVersionPath).trim();
+        // Read bundle version from the deployed runtime.
+        const bundleVersionPath = path.join(bundleRoot, 'VERSION');
+        if (!pathExists(bundleVersionPath)) {
+            throw new Error(`Bundle version file not found: ${bundleVersionPath}`);
+        }
+        const bundleVersion = readTextFile(bundleVersionPath).trim();
 
-    const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);
-    const previousAgentInitState = previousAgentInitStateResult.state;
+        const previousAgentInitStateResult = readAgentInitStateSafe(normalizedTarget);
+        const previousAgentInitState = previousAgentInitStateResult.state;
 
-    // Load existing answers if present
-    let existingAnswers: Record<string, unknown> | null = null;
-    if (pathExists(resolvedInitPath)) {
+        let existingAnswers: Record<string, unknown> | null = null;
+        if (pathExists(resolvedInitPath)) {
+            try {
+                existingAnswers = asObjectRecord(readJsonFile(resolvedInitPath));
+            } catch {
+                existingAnswers = null;
+            }
+        }
+
+        const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
+        let existingLiveVersion: Record<string, unknown> | null = null;
+        if (pathExists(liveVersionPath)) {
+            try {
+                existingLiveVersion = asObjectRecord(readJsonFile(liveVersionPath));
+            } catch {
+                existingLiveVersion = null;
+            }
+        }
+
+        const tokenEconomyConfigPath = path.join(bundleRoot, 'live', 'config', 'token-economy.json');
+        let existingTokenEconomyConfig: Record<string, unknown> | null = null;
+        if (pathExists(tokenEconomyConfigPath)) {
+            try {
+                existingTokenEconomyConfig = asObjectRecord(readJsonFile(tokenEconomyConfigPath));
+            } catch {
+                existingTokenEconomyConfig = null;
+            }
+        }
+
+        const changes: ReinitChange[] = [];
+        const initAnswers = recollectInitAnswers({
+            existingAnswers,
+            liveVersion: existingLiveVersion,
+            tokenEconomyConfig: existingTokenEconomyConfig,
+            overrides,
+            changes
+        });
+
+        const validated = validateInitAnswers(initAnswers);
+        const resolvedLanguage = validated.AssistantLanguage;
+        const resolvedBrevity = validated.AssistantBrevity;
+        const resolvedSourceOfTruth = validated.SourceOfTruth;
+        const resolvedEnforceNoAutoCommit = validated.EnforceNoAutoCommit;
+        const resolvedClaudeOrchestratorFullAccess = validated.ClaudeOrchestratorFullAccess;
+        const resolvedTokenEconomyEnabled = validated.TokenEconomyEnabled;
+        const resolvedProviderMinimalism = validated.ProviderMinimalism;
+        const resolvedActiveFiles = validated.ActiveAgentFiles || [];
+        const resolvedActiveAgentFilesStr = convertActiveAgentEntrypointFilesToString(resolvedActiveFiles);
+
+        const serializedAnswers = serializeInitAnswers({
+            ...initAnswers,
+            ActiveAgentFiles: resolvedActiveFiles
+        });
+
+        if (resolvedEnforceNoAutoCommit) {
+            const gitDir = path.join(targetRoot, '.git');
+            if (!pathExists(gitDir)) {
+                throw new Error(
+                    `EnforceNoAutoCommit=true but .git directory is missing at '${gitDir}'. Initialize git or rerun reinit with EnforceNoAutoCommit=false.`
+                );
+            }
+        }
+
+        ensureDirectory(path.dirname(resolvedInitPath));
+        writeJsonFile(resolvedInitPath, serializedAnswers);
+
+        const coreRuleUpdated = updateCoreRuleFile(bundleRoot, sourceRoot, resolvedLanguage, resolvedBrevity);
+
+        const tokenEconomyUpdated = updateTokenEconomyConfig(bundleRoot, sourceRoot, resolvedTokenEconomyEnabled);
+
+        runInstall({
+            targetRoot,
+            bundleRoot,
+            preserveExisting: true,
+            alignExisting: true,
+            runInit: false,
+            answerDependentOnly: true,
+            skipBackups: true,
+            assistantLanguage: resolvedLanguage,
+            assistantBrevity: resolvedBrevity,
+            sourceOfTruth: resolvedSourceOfTruth,
+            initAnswersPath: resolvedInitPath
+        });
+
+        const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
+            AssistantLanguage: resolvedLanguage,
+            SourceOfTruth: resolvedSourceOfTruth,
+            ActiveAgentFiles: resolvedActiveFiles
+        });
+        writeAgentInitState(normalizedTarget, buildRefreshAgentInitState({
+            previousState: previousAgentInitState,
+            preserveExistingCheckpoints,
+            assistantLanguage: resolvedLanguage,
+            sourceOfTruth: resolvedSourceOfTruth,
+            orchestratorVersion: bundleVersion,
+            activeAgentFiles: resolvedActiveFiles,
+            autoConfirmPrompts: true,
+            autoAcceptRules: true
+        }));
+
+        // Best-effort stale task-event lock cleanup so reinit recovers provider state without reinstall.
         try {
-            existingAnswers = asObjectRecord(readJsonFile(resolvedInitPath));
+            cleanupStaleTaskEventLocks(path.join(normalizedTarget, resolveBundleName()), { dryRun: false });
         } catch {
-            existingAnswers = null;
+            // Ignore lock cleanup failures here; reinit still updates the workspace state and bundle surface.
         }
-    }
 
-    // Load existing live/version.json for inference
-    const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
-    let existingLiveVersion: Record<string, unknown> | null = null;
-    if (pathExists(liveVersionPath)) {
-        try {
-            existingLiveVersion = asObjectRecord(readJsonFile(liveVersionPath));
-        } catch {
-            existingLiveVersion = null;
+        const canonicalEntrypoint = getCanonicalEntrypointFile(resolvedSourceOfTruth);
+
+        const invariantResult = validateBundleInvariants(path.join(normalizedTarget, resolveBundleName()), expectedInvariantPaths);
+        if (!invariantResult.isValid) {
+            throw new Error(`Bundle invariant violation after reinit: ${invariantResult.violations.join('; ')}`);
         }
-    }
+        writeProtectedControlPlaneManifest(normalizedTarget);
 
-    // Load existing token-economy config
-    const tokenEconomyConfigPath = path.join(bundleRoot, 'live', 'config', 'token-economy.json');
-    let existingTokenEconomyConfig: Record<string, unknown> | null = null;
-    if (pathExists(tokenEconomyConfigPath)) {
-        try {
-            existingTokenEconomyConfig = asObjectRecord(readJsonFile(tokenEconomyConfigPath));
-        } catch {
-            existingTokenEconomyConfig = null;
-        }
-    }
-
-    // Recollect init answers (apply overrides, preserve existing, use defaults)
-    const changes: ReinitChange[] = [];
-    const initAnswers = recollectInitAnswers({
-        existingAnswers,
-        liveVersion: existingLiveVersion,
-        tokenEconomyConfig: existingTokenEconomyConfig,
-        overrides,
-        changes
-    });
-
-    // Validate final answers
-    const validated = validateInitAnswers(initAnswers);
-    const resolvedLanguage = validated.AssistantLanguage;
-    const resolvedBrevity = validated.AssistantBrevity;
-    const resolvedSourceOfTruth = validated.SourceOfTruth;
-    const resolvedEnforceNoAutoCommit = validated.EnforceNoAutoCommit;
-    const resolvedClaudeOrchestratorFullAccess = validated.ClaudeOrchestratorFullAccess;
-    const resolvedTokenEconomyEnabled = validated.TokenEconomyEnabled;
-    const resolvedProviderMinimalism = validated.ProviderMinimalism;
-    const resolvedActiveFiles = validated.ActiveAgentFiles || [];
-    const resolvedActiveAgentFilesStr = convertActiveAgentEntrypointFilesToString(resolvedActiveFiles);
-
-    // Prepare serializable answers
-    const serializedAnswers = serializeInitAnswers({
-        ...initAnswers,
-        ActiveAgentFiles: resolvedActiveFiles
-    });
-
-    // Validate git dir if enforceNoAutoCommit
-    if (resolvedEnforceNoAutoCommit) {
-        const gitDir = path.join(targetRoot, '.git');
-        if (!pathExists(gitDir)) {
-            throw new Error(
-                `EnforceNoAutoCommit=true but .git directory is missing at '${gitDir}'. Initialize git or rerun reinit with EnforceNoAutoCommit=false.`
-            );
-        }
-    }
-
-    // Write init answers
-    ensureDirectory(path.dirname(resolvedInitPath));
-    writeJsonFile(resolvedInitPath, serializedAnswers);
-
-    // Update core rule file
-    const coreRuleUpdated = updateCoreRuleFile(bundleRoot, sourceRoot, resolvedLanguage, resolvedBrevity);
-
-    // Update token economy config
-    const tokenEconomyUpdated = updateTokenEconomyConfig(bundleRoot, sourceRoot, resolvedTokenEconomyEnabled);
-
-    // Run answer-dependent install pass
-    runInstall({
-        targetRoot,
-        bundleRoot,
-        preserveExisting: true,
-        alignExisting: true,
-        runInit: false,
-        answerDependentOnly: true,
-        skipBackups: true,
-        assistantLanguage: resolvedLanguage,
-        assistantBrevity: resolvedBrevity,
-        sourceOfTruth: resolvedSourceOfTruth,
-        initAnswersPath: resolvedInitPath
-    });
-
-    const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {        
-        AssistantLanguage: resolvedLanguage,
-        SourceOfTruth: resolvedSourceOfTruth,
-        ActiveAgentFiles: resolvedActiveFiles
-    });
-    writeAgentInitState(normalizedTarget, buildRefreshAgentInitState({
-        previousState: previousAgentInitState,
-        preserveExistingCheckpoints,
-        assistantLanguage: resolvedLanguage,
-        sourceOfTruth: resolvedSourceOfTruth,
-        orchestratorVersion: bundleVersion,
-        activeAgentFiles: resolvedActiveFiles,
-        autoConfirmPrompts: true,
-        autoAcceptRules: true
-    }));
-
-    // Best-effort stale task-event lock cleanup so reinit recovers provider state without reinstall.
-    try {
-        cleanupStaleTaskEventLocks(path.join(normalizedTarget, resolveBundleName()), { dryRun: false });
-    } catch {
-        // Ignore lock cleanup failures here; reinit still updates the workspace state and bundle surface.
-    }
-
-    const canonicalEntrypoint = getCanonicalEntrypointFile(resolvedSourceOfTruth);
-
-    // Bundle invariant check (enforce consistency).
-    const invariantResult = validateBundleInvariants(path.join(normalizedTarget, resolveBundleName()), expectedInvariantPaths);
-    if (!invariantResult.isValid) {
-        throw new Error(`Bundle invariant violation after reinit: ${invariantResult.violations.join('; ')}`);
-    }
-    writeProtectedControlPlaneManifest(normalizedTarget);
-
-    return {
-        targetRoot: normalizedTarget,
-        initAnswersPath: resolvedInitPath,
-        interactivePrompting: false,
-        changes,
-        assistantLanguage: resolvedLanguage,
-        assistantBrevity: resolvedBrevity,
-        sourceOfTruth: resolvedSourceOfTruth,
-        canonicalEntrypoint,
-        activeAgentFiles: resolvedActiveAgentFilesStr || 'n/a',
-        enforceNoAutoCommit: resolvedEnforceNoAutoCommit,
-        claudeOrchestratorFullAccess: resolvedClaudeOrchestratorFullAccess,
-        tokenEconomyEnabled: resolvedTokenEconomyEnabled,
-        providerMinimalism: resolvedProviderMinimalism,
-        coreRuleUpdated,
-        tokenEconomyConfigUpdated: tokenEconomyUpdated.updated,
-        tokenEconomyConfigPath: tokenEconomyUpdated.path,
-        verifyStatus: skipVerify ? 'SKIPPED' : 'NOT_RUN',
-        manifestValidationStatus: skipManifestValidation ? 'SKIPPED' : 'NOT_RUN'
-    };
+        return {
+            targetRoot: normalizedTarget,
+            initAnswersPath: resolvedInitPath,
+            interactivePrompting: false,
+            changes,
+            assistantLanguage: resolvedLanguage,
+            assistantBrevity: resolvedBrevity,
+            sourceOfTruth: resolvedSourceOfTruth,
+            canonicalEntrypoint,
+            activeAgentFiles: resolvedActiveAgentFilesStr || 'n/a',
+            enforceNoAutoCommit: resolvedEnforceNoAutoCommit,
+            claudeOrchestratorFullAccess: resolvedClaudeOrchestratorFullAccess,
+            tokenEconomyEnabled: resolvedTokenEconomyEnabled,
+            providerMinimalism: resolvedProviderMinimalism,
+            coreRuleUpdated,
+            tokenEconomyConfigUpdated: tokenEconomyUpdated.updated,
+            tokenEconomyConfigPath: tokenEconomyUpdated.path,
+            verifyStatus: skipVerify ? 'SKIPPED' : 'NOT_RUN',
+            manifestValidationStatus: skipManifestValidation ? 'SKIPPED' : 'NOT_RUN'
+        };
     });
 }
 
@@ -262,14 +248,12 @@ export function recollectInitAnswers(opts: RecollectInitAnswersOptions): Recolle
     for (const def of schema) {
         const key = def.key;
 
-        // Check override
         if (overrides[key] !== undefined && overrides[key] !== null && String(overrides[key]).trim()) {
             result[key] = String(overrides[key]).trim();
             changes.push({ key, action: 'overridden', value: result[key], source: 'cli_parameter', note: '' });
             continue;
         }
 
-        // Check existing
         const existingVal = getOptionalValue(existingAnswers, key);
         if (existingVal) {
             result[key] = existingVal;
@@ -277,7 +261,6 @@ export function recollectInitAnswers(opts: RecollectInitAnswersOptions): Recolle
             continue;
         }
 
-        // Try infer from live version
         if (def.inferFrom) {
             for (const inference of def.inferFrom) {
                 const source = inference.source === 'version.json' ? liveVersion
@@ -294,12 +277,10 @@ export function recollectInitAnswers(opts: RecollectInitAnswersOptions): Recolle
             if (result[key] !== undefined) continue;
         }
 
-        // Use default
         result[key] = def.defaultValue;
         changes.push({ key, action: 'recommended_default', value: result[key], source: 'schema_default', note: '' });
     }
 
-    // Ensure CollectedVia
     if (!result.CollectedVia) {
         result.CollectedVia = 'CLI_NONINTERACTIVE';
     }

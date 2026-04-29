@@ -20,9 +20,6 @@ import {
 } from '../../../src/lifecycle/rollback';
 import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
 
-// ---------------------------------------------------------------------------
-// checkRuntimeMismatch
-// ---------------------------------------------------------------------------
 
 test('checkRuntimeMismatch passes for current Node.js version', () => {
     const result = checkRuntimeMismatch();
@@ -40,9 +37,6 @@ test('checkRuntimeMismatch evidence includes expected fields', () => {
     assert.ok(Array.isArray(result.violations));
 });
 
-// ---------------------------------------------------------------------------
-// checkPermissions
-// ---------------------------------------------------------------------------
 
 test('checkPermissions passes for accessible workspace', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-perm-'));
@@ -77,9 +71,6 @@ test('checkPermissions reports when critical paths do not exist', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// checkPartialState
-// ---------------------------------------------------------------------------
 
 test('checkPartialState passes for clean workspace', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-partial-clean-'));
@@ -164,9 +155,6 @@ test('checkPartialState detects stale lifecycle operation lock', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// checkRollbackHealth
-// ---------------------------------------------------------------------------
 
 test('checkRollbackHealth passes for empty rollback directory', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rollback-empty-'));
@@ -263,9 +251,6 @@ test('checkRollbackHealth fails for snapshot with invalid records structure', ()
     }
 });
 
-// ---------------------------------------------------------------------------
-// checkProfileHealth
-// ---------------------------------------------------------------------------
 
 test('checkProfileHealth returns NOT_CONFIGURED when profiles.json is absent', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-profile-'));

@@ -17,10 +17,6 @@ import {
 
 import { DEFAULT_BUNDLE_NAME } from '../../../../src/core/constants';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function makeTmpDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-stats-test-'));
 }
@@ -39,10 +35,6 @@ function writeEvent(eventsRoot: string, taskId: string, event: Record<string, un
     fs.appendFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
 }
 
-// ---------------------------------------------------------------------------
-// buildTaskStats — empty
-// ---------------------------------------------------------------------------
-
 test('buildTaskStats returns zeros for a task with no events', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -60,10 +52,6 @@ test('buildTaskStats returns zeros for a task with no events', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// buildTaskStats — with events
-// ---------------------------------------------------------------------------
 
 test('buildTaskStats computes wall clock and gate counts from events', () => {
     const tmpDir = makeTmpDir();
@@ -120,10 +108,6 @@ test('buildTaskStats computes wall clock and gate counts from events', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// buildTaskStats — with preflight data
-// ---------------------------------------------------------------------------
-
 test('buildTaskStats reads path_mode and required_reviews from preflight', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -154,10 +138,6 @@ test('buildTaskStats reads path_mode and required_reviews from preflight', () =>
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// buildTaskStats — token economy from event details
-// ---------------------------------------------------------------------------
 
 test('buildTaskStats extracts token savings from event output_telemetry', () => {
     const tmpDir = makeTmpDir();
@@ -608,16 +588,10 @@ test('buildTaskStats ignores stale review-context artifacts until the current cy
     }
 });
 
-// ---------------------------------------------------------------------------
-// buildAggregateStats
-// ---------------------------------------------------------------------------
-
 test('buildAggregateStats aggregates across multiple tasks', () => {
     const tmpDir = makeTmpDir();
     try {
         const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
-
-        // Task 1
         writeEvent(eventsRoot, 'T-001', {
             event_type: 'TASK_MODE_ENTERED',
             outcome: 'PASS',
@@ -633,8 +607,6 @@ test('buildAggregateStats aggregates across multiple tasks', () => {
             outcome: 'PASS',
             timestamp_utc: '2026-04-05T10:05:00Z'
         });
-
-        // Task 2
         writeEvent(eventsRoot, 'T-002', {
             event_type: 'REVIEW_PHASE_STARTED',
             outcome: 'PASS',
@@ -676,10 +648,6 @@ test('buildAggregateStats returns empty results for no task files', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// formatTaskStatsText
-// ---------------------------------------------------------------------------
 
 test('formatTaskStatsText produces readable output', () => {
     const stats: TaskStatsResult = {
@@ -740,10 +708,6 @@ test('formatTaskStatsText produces readable output', () => {
     assert.ok(text.includes('~500'));
 });
 
-// ---------------------------------------------------------------------------
-// formatTaskStatsJson
-// ---------------------------------------------------------------------------
-
 test('formatTaskStatsJson produces valid JSON', () => {
     const stats: TaskStatsResult = {
         task_id: 'T-001',
@@ -778,10 +742,6 @@ test('formatTaskStatsJson produces valid JSON', () => {
     const parsed = JSON.parse(json);
     assert.equal(parsed.task_id, 'T-001');
 });
-
-// ---------------------------------------------------------------------------
-// formatAggregateStatsText
-// ---------------------------------------------------------------------------
 
 test('formatAggregateStatsText includes header and per-task lines', () => {
     const agg: AggregateStatsResult = {
@@ -1000,10 +960,6 @@ test('formatAggregateStatsText marks partial char coverage for mixed aggregate h
     assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, token estimate ~33'));
 });
 
-// ---------------------------------------------------------------------------
-// formatAggregateStatsJson
-// ---------------------------------------------------------------------------
-
 test('formatAggregateStatsJson produces valid JSON', () => {
     const agg: AggregateStatsResult = {
         tasks_analyzed: 0,
@@ -1024,10 +980,6 @@ test('formatAggregateStatsJson produces valid JSON', () => {
     assert.equal(parsed.tasks_analyzed, 0);
 });
 
-// ---------------------------------------------------------------------------
-// Token economy — review context from artifact
-// ---------------------------------------------------------------------------
-
 test('buildTaskStats picks up review-context savings from review artifacts', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -1037,8 +989,6 @@ test('buildTaskStats picks up review-context savings from review artifacts', () 
             outcome: 'PASS',
             timestamp_utc: '2026-04-05T15:00:00Z'
         });
-
-        // Write a review-context artifact with savings
         fs.writeFileSync(
             path.join(reviewsRoot, 'T-400-code-review-context.json'),
             JSON.stringify({
@@ -1062,10 +1012,6 @@ test('buildTaskStats picks up review-context savings from review artifacts', () 
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// Wall clock formatting edge cases
-// ---------------------------------------------------------------------------
 
 test('formatTaskStatsText handles null wall_clock_seconds', () => {
     const stats: TaskStatsResult = {
@@ -1136,10 +1082,6 @@ test('formatTaskStatsText formats hours correctly', () => {
     assert.ok(text.includes('1h 1m 1s'));
 });
 
-// ---------------------------------------------------------------------------
-// Budget forecast and depth escalation from preflight
-// ---------------------------------------------------------------------------
-
 test('buildTaskStats reads budget_forecast and depth_escalation from preflight', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -1149,8 +1091,6 @@ test('buildTaskStats reads budget_forecast and depth_escalation from preflight',
             outcome: 'PASS',
             timestamp_utc: '2026-04-06T10:00:00Z'
         });
-
-        // Write preflight with budget_forecast and depth_escalation
         fs.writeFileSync(
             path.join(reviewsRoot, 'T-700-preflight.json'),
             JSON.stringify({
@@ -1206,8 +1146,6 @@ test('buildTaskStats falls back to task-mode artifact for depth when preflight h
             outcome: 'PASS',
             timestamp_utc: '2026-04-06T11:00:00Z'
         });
-
-        // Write preflight without budget_forecast
         fs.writeFileSync(
             path.join(reviewsRoot, 'T-701-preflight.json'),
             JSON.stringify({
@@ -1218,8 +1156,6 @@ test('buildTaskStats falls back to task-mode artifact for depth when preflight h
             }),
             'utf8'
         );
-
-        // Write task-mode artifact with depth info
         fs.writeFileSync(
             path.join(reviewsRoot, 'T-701-task-mode.json'),
             JSON.stringify({

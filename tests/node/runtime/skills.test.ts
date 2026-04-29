@@ -811,9 +811,6 @@ test('validateSkillPacks reports missing baseline skill files and README', () =>
     }
 });
 
-// ---------------------------------------------------------------------------
-// Fuzzy alias expansion (T-078)
-// ---------------------------------------------------------------------------
 
 test('FUZZY_ALIAS_GROUPS is frozen and every group has at least two entries', () => {
     assert.ok(Object.isFrozen(FUZZY_ALIAS_GROUPS));
@@ -965,9 +962,6 @@ test('fuzzy aliases are deterministic across repeated runs', () => {
     assert.deepEqual(variants1, variants2);
 });
 
-// ---------------------------------------------------------------------------
-// T-080: Same-pack skill dedupe helpers
-// ---------------------------------------------------------------------------
 
 function makeSuggestion(id: string, pack: string, score: number, matches?: Partial<SignalMatches>) {
     return {

@@ -28,7 +28,6 @@ const CLI_PATH = path.join(REPO_ROOT, 'bin', 'garda.js');
 test('CLI blocks task execution commands when bundle is stale', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-fail-fast-'));
     try {
-        // Setup a stale source checkout layout
         fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
@@ -43,12 +42,8 @@ test('CLI blocks task execution commands when bundle is stale', () => {
 
         fs.writeFileSync(rootLauncher, 'new', 'utf8');
         fs.writeFileSync(bundleLauncher, 'old', 'utf8');
-
-        // Make bundle older
         const oldTime = new Date(Date.now() - 10000);
         fs.utimesSync(bundleLauncher, oldTime, oldTime);
-
-        // Run CLI with cwd = tmpDir
         const result = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'gate', '--help'],
@@ -68,8 +63,6 @@ test('CLI blocks task execution commands when bundle is stale', () => {
             combined.includes('older than source launcher'),
             'Expected CLI to specify the launcher age violation'
         );
-
-        // Non-task commands should still work (e.g. status)
         const statusResult = childProcess.spawnSync(
             process.execPath,
             [CLI_PATH, 'status'],

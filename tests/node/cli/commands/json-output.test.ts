@@ -10,10 +10,6 @@ import {
     formatDoctorResultJson
 } from '../../../../src/validators/doctor';
 
-// ---------------------------------------------------------------------------
-// Shared fixture helpers
-// ---------------------------------------------------------------------------
-
 function makeReadyStatusSnapshot(): Record<string, unknown> {
     return {
         targetRoot: '/tmp/test',
@@ -149,10 +145,6 @@ function makePassingDoctorResult(): Record<string, unknown> {
     };
 }
 
-// ---------------------------------------------------------------------------
-// formatStatusSnapshotJson
-// ---------------------------------------------------------------------------
-
 test('formatStatusSnapshotJson returns valid JSON for ready snapshot', () => {
     const snapshot = makeReadyStatusSnapshot();
     const output = formatStatusSnapshotJson(snapshot as any);
@@ -187,10 +179,6 @@ test('formatStatusSnapshotJson preserves nested structures', () => {
     assert.equal(parsed.parityResult.isSourceCheckout, false);
     assert.ok(Array.isArray(parsed.missingProjectCommands));
 });
-
-// ---------------------------------------------------------------------------
-// formatDoctorResultJson
-// ---------------------------------------------------------------------------
 
 test('formatDoctorResultJson returns valid JSON for passing result', () => {
     const result = makePassingDoctorResult();
@@ -236,10 +224,6 @@ test('formatDoctorResultJson preserves manifest evidence', () => {
     assert.equal(parsed.manifestResult.passed, true);
     assert.equal(parsed.manifestResult.entriesChecked, 5);
 });
-
-// ---------------------------------------------------------------------------
-// CLI handler integration: --json flag wiring via spawnSync
-// ---------------------------------------------------------------------------
 
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -377,7 +361,6 @@ test('doctor --json emits valid JSON to stdout', () => {
     const fixture = createDeployedWorkspaceFixture();
     try {
         const result = runCliJson(['doctor', '--target-root', fixture.workspaceRoot, '--json']);
-        // doctor exits 4 (EXIT_VALIDATION_FAILURE) when issues are found, which is expected on a minimal fixture
         assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed: ${result.stderr}`);
         const parsed = JSON.parse(result.stdout);
         assert.equal(typeof parsed.passed, 'boolean');
@@ -392,7 +375,6 @@ test('doctor --json output does not include banner text', () => {
     const fixture = createDeployedWorkspaceFixture();
     try {
         const result = runCliJson(['doctor', '--target-root', fixture.workspaceRoot, '--json']);
-        // doctor exits 4 (EXIT_VALIDATION_FAILURE) when issues are found, which is expected on a minimal fixture
         assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed: ${result.stderr}`);
         assert.ok(!result.stdout.includes('Workspace doctor'), 'JSON mode must suppress banner');
         const trimmed = result.stdout.trim();

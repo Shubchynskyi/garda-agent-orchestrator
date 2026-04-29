@@ -87,9 +87,6 @@ async function holdLockInChildProcess(lockPath: string, holdMs: number): Promise
     };
 }
 
-// ---------------------------------------------------------------------------
-// acquireFilesystemLock / releaseFilesystemLock
-// ---------------------------------------------------------------------------
 
 test('acquireFilesystemLock creates lock directory with owner metadata', () => {
     const tmp = mkTmpDir();
@@ -440,9 +437,6 @@ test('acquireFilesystemLock does not reclaim lock without metadata within grace 
     }
 });
 
-// ---------------------------------------------------------------------------
-// acquireFilesystemLockAsync
-// ---------------------------------------------------------------------------
 
 test('acquireFilesystemLockAsync creates lock and releases correctly', async () => {
     const tmp = mkTmpDir();
@@ -716,9 +710,6 @@ test('acquireFilesystemLockAsync explicit false override wins over env-based rec
     }
 });
 
-// ---------------------------------------------------------------------------
-// releaseFilesystemLock edge cases
-// ---------------------------------------------------------------------------
 
 test('releaseFilesystemLock is safe with null handle', () => {
     assert.doesNotThrow(() => releaseFilesystemLock(null));
@@ -834,9 +825,6 @@ test('releaseFilesystemLock does not remove replacement lock after stale reclaim
     }
 });
 
-// ---------------------------------------------------------------------------
-// scanTaskEventLocks
-// ---------------------------------------------------------------------------
 
 test('scanTaskEventLocks reports empty when no locks exist', () => {
     const tmp = mkTmpDir();
@@ -997,9 +985,6 @@ test('scanTaskEventLocks classifies aggregate lock correctly', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// cleanupStaleTaskEventLocks
-// ---------------------------------------------------------------------------
 
 test('cleanupStaleTaskEventLocks removes stale locks on non-dry-run', () => {
     const tmp = mkTmpDir();
@@ -1190,9 +1175,6 @@ test('cleanupStaleTaskEventLocks explicit false override wins over env-based rec
     }
 });
 
-// ---------------------------------------------------------------------------
-// TOCTOU-safe stale lock recovery (rename-based)
-// ---------------------------------------------------------------------------
 
 test('acquireFilesystemLock stale recovery does not leave .stale- temp directories', () => {
     const tmp = mkTmpDir();
@@ -1289,9 +1271,6 @@ test('cleanupStaleTaskEventLocks does not remove a lock recreated after stale cl
     }
 });
 
-// ---------------------------------------------------------------------------
-// Metadata-write-failure cleanup
-// ---------------------------------------------------------------------------
 
 test('acquireFilesystemLock cleans up lock directory when metadata write fails', () => {
     const tmp = mkTmpDir();

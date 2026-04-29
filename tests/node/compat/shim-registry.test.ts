@@ -6,10 +6,6 @@ import {
     getAllShimmedGateNames
 } from '../../../src/compat/shim-registry';
 
-// ---------------------------------------------------------------------------
-// GATE_COMMANDS – structural checks
-// ---------------------------------------------------------------------------
-
 test('GATE_COMMANDS is a frozen array', () => {
     assert.equal(Object.isFrozen(GATE_COMMANDS), true);
     assert.ok(Array.isArray(GATE_COMMANDS));
@@ -38,10 +34,6 @@ test('GATE_COMMANDS has no duplicates', () => {
     const unique = new Set(GATE_COMMANDS);
     assert.equal(unique.size, GATE_COMMANDS.length);
 });
-
-// ---------------------------------------------------------------------------
-// getAllShimmedGateNames – behaviour
-// ---------------------------------------------------------------------------
 
 test('getAllShimmedGateNames returns an array equal to GATE_COMMANDS', () => {
     assert.deepEqual(getAllShimmedGateNames(), [...GATE_COMMANDS]);

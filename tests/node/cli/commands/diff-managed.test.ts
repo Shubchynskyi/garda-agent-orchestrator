@@ -18,10 +18,6 @@ import {
     COMMIT_GUARD_END
 } from '../../../../src/materialization/content-builders';
 
-// ---------------------------------------------------------------------------
-// resolveMarkers
-// ---------------------------------------------------------------------------
-
 test('resolveMarkers returns HTML comment markers for markdown files', () => {
     const markers = resolveMarkers('CLAUDE.md');
     assert.equal(markers.startMarker, MANAGED_START);
@@ -46,10 +42,6 @@ test('resolveMarkers returns HTML comment markers for gitignore', () => {
     assert.equal(markers.endMarker, MANAGED_END);
 });
 
-// ---------------------------------------------------------------------------
-// collectManagedDiff — empty directory
-// ---------------------------------------------------------------------------
-
 test('collectManagedDiff returns zero managed for an empty directory', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-managed-empty-'));
     try {
@@ -68,10 +60,6 @@ test('collectManagedDiff returns zero managed for an empty directory', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// collectManagedDiff — file with managed block
-// ---------------------------------------------------------------------------
-
 test('collectManagedDiff detects managed block in TASK.md', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-managed-task-'));
     try {
@@ -86,7 +74,7 @@ test('collectManagedDiff detects managed block in TASK.md', () => {
         fs.writeFileSync(path.join(tmpDir, 'TASK.md'), taskContent, 'utf8');
 
         const result = collectManagedDiff(tmpDir);
-        const taskEntry = result.entries.find(function (e) { return e.relativePath === 'TASK.md'; });
+        const taskEntry = result.entries.find((entry) => entry.relativePath === 'TASK.md');
         assert.ok(taskEntry, 'TASK.md entry should exist');
         assert.equal(taskEntry.exists, true);
         assert.equal(taskEntry.hasManagedBlock, true);
@@ -97,10 +85,6 @@ test('collectManagedDiff detects managed block in TASK.md', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// collectManagedDiff — file with mixed content
-// ---------------------------------------------------------------------------
 
 test('collectManagedDiff detects user content outside managed block', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-managed-mixed-'));
@@ -119,7 +103,7 @@ test('collectManagedDiff detects user content outside managed block', () => {
         fs.writeFileSync(path.join(tmpDir, 'CLAUDE.md'), content, 'utf8');
 
         const result = collectManagedDiff(tmpDir);
-        const entry = result.entries.find(function (e) { return e.relativePath === 'CLAUDE.md'; });
+        const entry = result.entries.find((item) => item.relativePath === 'CLAUDE.md');
         assert.ok(entry, 'CLAUDE.md entry should exist');
         assert.equal(entry.exists, true);
         assert.equal(entry.hasManagedBlock, true);
@@ -134,17 +118,13 @@ test('collectManagedDiff detects user content outside managed block', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// collectManagedDiff — file without managed markers
-// ---------------------------------------------------------------------------
-
 test('collectManagedDiff handles file without managed markers', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-managed-plain-'));
     try {
         fs.writeFileSync(path.join(tmpDir, 'CLAUDE.md'), '# Just user content\nNo managed block.\n', 'utf8');
 
         const result = collectManagedDiff(tmpDir);
-        const entry = result.entries.find(function (e) { return e.relativePath === 'CLAUDE.md'; });
+        const entry = result.entries.find((item) => item.relativePath === 'CLAUDE.md');
         assert.ok(entry, 'CLAUDE.md entry should exist');
         assert.equal(entry.exists, true);
         assert.equal(entry.hasManagedBlock, false);
@@ -156,10 +136,6 @@ test('collectManagedDiff handles file without managed markers', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
-
-// ---------------------------------------------------------------------------
-// formatDiffManagedText
-// ---------------------------------------------------------------------------
 
 test('formatDiffManagedText produces expected header', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-managed-fmt-'));
@@ -188,10 +164,6 @@ test('formatDiffManagedText shows managed/user-only status per file', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// formatDiffManagedJson
-// ---------------------------------------------------------------------------
-
 test('formatDiffManagedJson produces valid JSON', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-managed-json-'));
     try {
@@ -215,7 +187,7 @@ test('formatDiffManagedJson includes region metadata', () => {
 
         const result = collectManagedDiff(tmpDir);
         const parsed = JSON.parse(formatDiffManagedJson(result));
-        const claudeEntry = parsed.entries.find(function (e: { relative_path: string }) { return e.relative_path === 'CLAUDE.md'; });
+        const claudeEntry = parsed.entries.find((entry: { relative_path: string }) => entry.relative_path === 'CLAUDE.md');
         assert.ok(claudeEntry, 'CLAUDE.md entry should exist');
         assert.equal(claudeEntry.has_managed_block, true);
         assert.ok(Array.isArray(claudeEntry.regions));

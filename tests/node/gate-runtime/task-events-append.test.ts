@@ -22,9 +22,6 @@ import {
 } from '../../../src/gate-runtime/timeline-summary';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
-// ---------------------------------------------------------------------------
-// assertValidTaskId
-// ---------------------------------------------------------------------------
 
 test('assertValidTaskId accepts valid IDs', () => {
     assert.equal(assertValidTaskId('T-001'), 'T-001');
@@ -46,9 +43,6 @@ test('assertValidTaskId rejects too-long IDs', () => {
     assert.throws(() => assertValidTaskId('a'.repeat(129)), /128 characters or fewer/);
 });
 
-// ---------------------------------------------------------------------------
-// normalizeIntegrityValue
-// ---------------------------------------------------------------------------
 
 test('normalizeIntegrityValue sorts object keys', () => {
     const result = normalizeIntegrityValue({ b: 2, a: 1 }) as Record<string, unknown>;
@@ -100,9 +94,7 @@ test('normalizeIntegrityValue forward-slashes paths inside nested objects and ar
     assert.equal((result.list as unknown[])[1], 'already/fine');
 });
 
-// ---------------------------------------------------------------------------
 // buildEventIntegrityHash — cross-platform regression
-// ---------------------------------------------------------------------------
 
 test('buildEventIntegrityHash produces identical hash for Windows and Unix paths', () => {
     const unixEvent = {
@@ -130,9 +122,6 @@ test('buildEventIntegrityHash produces identical hash for Windows and Unix paths
     assert.equal(unixHash, windowsHash, 'Windows and Unix path variants must produce the same integrity hash');
 });
 
-// ---------------------------------------------------------------------------
-// buildEventIntegrityHash
-// ---------------------------------------------------------------------------
 
 test('buildEventIntegrityHash produces a 64-char lowercase hex string', () => {
     const event = {
@@ -218,9 +207,6 @@ test('buildEventIntegrityHash cross-validates with Python canonical form', () =>
     assert.equal(hash, expected);
 });
 
-// ---------------------------------------------------------------------------
-// inspectTaskEventFile
-// ---------------------------------------------------------------------------
 
 test('inspectTaskEventFile returns MISSING for non-existent file', () => {
     const result = inspectTaskEventFile('/nonexistent/file.jsonl', 'T-001');
@@ -371,9 +357,7 @@ test('inspectTaskEventFile handles PASS_WITH_LEGACY_PREFIX', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
 // appendTaskEvent — basic chain and null guard
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent creates chain with correct integrity', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-'));
@@ -548,9 +532,7 @@ test('appendMandatoryTaskEvent keeps canonical commit when timeline summary refr
     }
 });
 
-// ---------------------------------------------------------------------------
 // appendTaskEvent — summary updates
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent summary updates auto-detect code_changed from preflight when reviews are not required', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-summary-code-changed-'));
@@ -774,9 +756,6 @@ test('appendTaskEvent summary uses PREFLIGHT_CLASSIFIED code_changed hint when p
     }
 });
 
-// ---------------------------------------------------------------------------
-// readTaskEventAppendState
-// ---------------------------------------------------------------------------
 
 test('readTaskEventAppendState returns empty state for missing file', () => {
     const state = readTaskEventAppendState('/nonexistent/file.jsonl', 'T-001');
@@ -819,9 +798,6 @@ test('readTaskEventAppendState streaming fallback counts parse errors', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// forEachJsonlLine
-// ---------------------------------------------------------------------------
 
 test('forEachJsonlLine iterates non-empty lines with correct line numbers', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-jsonl-iter-'));
@@ -927,9 +903,6 @@ test('forEachJsonlLine handles large files with many lines', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// UTF-8 chunk-boundary safety
-// ---------------------------------------------------------------------------
 
 test('forEachJsonlLine preserves multi-byte UTF-8 at chunk boundary', () => {
     // Ж (U+0416) is 2 bytes in UTF-8: 0xD0 0x96
@@ -1128,9 +1101,6 @@ test('readLastNonEmptyLine (via readTaskEventAppendStateFast) handles Cyrillic a
     }
 });
 
-// ---------------------------------------------------------------------------
-// Module dependency constraints
-// ---------------------------------------------------------------------------
 
 test('task-event modules keep helper-only shared dependencies', () => {
     const taskEventsRoot = path.resolve(process.cwd(), 'src/gate-runtime');

@@ -11,10 +11,6 @@ import {
 
 import { DEFAULT_BUNDLE_NAME } from '../../../../src/core/constants';
 
-// ---------------------------------------------------------------------------
-// buildOverviewOutput
-// ---------------------------------------------------------------------------
-
 test('buildOverviewOutput includes GARDA_OVERVIEW marker', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'overview-test-'));
     try {

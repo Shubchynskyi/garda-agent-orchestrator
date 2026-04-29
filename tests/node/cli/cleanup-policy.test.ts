@@ -212,12 +212,12 @@ test('cleanup policy edit uses interactive prompts to update the policy', async 
         promptSingleSelect: cliHelpers.promptSingleSelect
     };
 
-    cliHelpers.supportsInteractivePrompts = function () { return true; };
-    cliHelpers.promptTextInput = async function (title: string) {
+    cliHelpers.supportsInteractivePrompts = () => true;
+    cliHelpers.promptTextInput = async (title: string) => {
         if (title === 'Compress artifacts after N days') return '30';
         throw new Error(`Unexpected promptTextInput title: ${title}`);
     };
-    cliHelpers.promptSingleSelect = async function (config: { title: string }) {
+    cliHelpers.promptSingleSelect = async (config: { title: string }) => {
         switch (config.title) {
             case 'Retention mode': return 'summary';
             case 'Preserve gate receipts': return 'true';

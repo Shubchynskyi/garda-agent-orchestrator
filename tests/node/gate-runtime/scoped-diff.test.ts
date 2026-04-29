@@ -13,7 +13,6 @@ import {
     DiffFileBlock
 } from '../../../src/gate-runtime/scoped-diff';
 
-// --- buildScopedDiffMetadata ---
 
 test('buildScopedDiffMetadata returns scoped diff when matches exist', () => {
     const result = buildScopedDiffMetadata({
@@ -109,7 +108,6 @@ test('buildScopedDiffMetadata counts lines correctly', () => {
     assert.equal(result.output_diff_line_count, 4);
 });
 
-// --- convertToGitPathspecs ---
 
 test('convertToGitPathspecs returns empty for empty input', () => {
     assert.deepEqual(convertToGitPathspecs([], '/repo', '/repo'), []);
@@ -141,7 +139,6 @@ test('convertToGitPathspecs normalizes backslashes', () => {
     assert.deepEqual(result, ['src/a.ts']);
 });
 
-// --- parseUnifiedDiff ---
 
 test('parseUnifiedDiff returns empty for empty input', () => {
     assert.deepEqual(parseUnifiedDiff(''), []);
@@ -229,7 +226,6 @@ test('parseUnifiedDiff normalizes CRLF input without retaining stray carriage re
     assert.equal(blocks[0].hunks[0].lines.some((line) => line.includes('\r')), false);
 });
 
-// --- extractFilePathFromDiffLine ---
 
 test('extractFilePathFromDiffLine extracts b-side path', () => {
     assert.equal(extractFilePathFromDiffLine('diff --git a/src/auth.ts b/src/auth.ts'), 'src/auth.ts');
@@ -255,7 +251,6 @@ test('extractFilePathFromDiffLine handles renames via lastIndexOf fallback', () 
     );
 });
 
-// --- filterHunksInBlock ---
 
 test('filterHunksInBlock keeps hunks whose changed lines match triggers', () => {
     const block: DiffFileBlock = {
@@ -327,7 +322,6 @@ test('filterHunksInBlock matches on deletion lines', () => {
     assert.equal(result.block.hunks.length, 1);
 });
 
-// --- reassembleDiff ---
 
 test('reassembleDiff reconstructs diff text from blocks', () => {
     const blocks: DiffFileBlock[] = [{
@@ -353,7 +347,6 @@ test('reassembleDiff returns empty for blocks with no hunks', () => {
     assert.equal(reassembleDiff(blocks), '');
 });
 
-// --- filterDiffByHunks ---
 
 test('filterDiffByHunks filters irrelevant hunks from multi-hunk diff', () => {
     const diff = [

@@ -85,10 +85,6 @@ async function captureConsoleLogs(callback: () => Promise<void>): Promise<string
     }
 }
 
-// ---------------------------------------------------------------------------
-// SETUP_DEFINITIONS
-// ---------------------------------------------------------------------------
-
 test('SETUP_DEFINITIONS includes all expected flags', () => {
     assert.ok(SETUP_DEFINITIONS['--target-root']);
     assert.ok(SETUP_DEFINITIONS['--init-answers-path']);
@@ -140,10 +136,6 @@ test('--claude-full-access aliases to claudeOrchestratorFullAccess', () => {
     const { options } = parseOptions(['--claude-full-access', 'yes'], SETUP_DEFINITIONS);
     assert.equal(options.claudeOrchestratorFullAccess, 'yes');
 });
-
-// ---------------------------------------------------------------------------
-// getSetupAnswerDefaults
-// ---------------------------------------------------------------------------
 
 test('getSetupAnswerDefaults returns sensible defaults for empty workspace', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-defaults-'));
@@ -673,10 +665,6 @@ test('handleSetup preserves legacy workflow-config omission for review_execution
     }
 });
 
-// ---------------------------------------------------------------------------
-// buildSetupHandoffText
-// ---------------------------------------------------------------------------
-
 test('buildSetupHandoffText includes agent initialization section', () => {
     const snapshot = {
         bundlePath: '/workspace/garda-agent-orchestrator',
@@ -781,10 +769,6 @@ test('buildSetupHandoffText omits active agent files when null', () => {
     assert.ok(!text.includes('Active agent files'));
     assert.ok(text.includes('Agent Initialization'));
 });
-
-// ---------------------------------------------------------------------------
-// buildSetupStepsText
-// ---------------------------------------------------------------------------
 
 test('buildSetupStepsText includes step markers for interactive', () => {
     const text = buildSetupStepsText('/workspace', true, true);

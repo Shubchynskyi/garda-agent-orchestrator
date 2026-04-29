@@ -15,9 +15,6 @@ import {runEnterTaskModeCommand} from '../../../src/cli/commands/gates';
 import {serializeTaskPlan, validateTaskPlan} from '../../../src/schemas/task-plan';
 import {formatCompletionGateResult} from '../../../src/gates/completion';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const ownedScratchRoots = new Set<string>();
 
@@ -119,9 +116,7 @@ function runEnterTaskModeWithDefaultRouting(options: Parameters<typeof runEnterT
     });
 }
 
-// ---------------------------------------------------------------------------
 // buildTaskModeArtifact — plan threading
-// ---------------------------------------------------------------------------
 
 test('buildTaskModeArtifact includes plan metadata when provided', () => {
     const artifact = buildTaskModeArtifact({
@@ -205,9 +200,7 @@ test('buildTaskModeArtifact preserves blocked reviewer-subagent launch metadata 
     assert.match(String(artifact.reviewer_subagent_launch_reason || ''), /Codex/i);
 });
 
-// ---------------------------------------------------------------------------
 // getTaskModeEvidence — plan round-trip
-// ---------------------------------------------------------------------------
 
 test('getTaskModeEvidence reads plan metadata from artifact', () => {
     const tmpDir = makeTempDir();
@@ -719,9 +712,6 @@ test('getTaskModeEvidence treats routed_to as telemetry when execution_provider_
     }
 });
 
-// ---------------------------------------------------------------------------
-// Partial plan field combinations
-// ---------------------------------------------------------------------------
 
 test('buildTaskModeArtifact returns null plan when only plan_path is set', () => {
     const artifact = buildTaskModeArtifact({
@@ -759,9 +749,6 @@ test('buildTaskModeArtifact returns null plan when plan_summary is missing', () 
     assert.equal(artifact.plan, null);
 });
 
-// ---------------------------------------------------------------------------
-// CLI validation: runEnterTaskModeCommand plan-path scenarios
-// ---------------------------------------------------------------------------
 
 test('runEnterTaskModeCommand without --plan-path produces plan: null', () => {
     const tmpDir = makeTempDir();
@@ -954,9 +941,6 @@ test('runEnterTaskModeCommand rejects plan with sha256 mismatch', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// Completion gate plan evidence formatting
-// ---------------------------------------------------------------------------
 
 test('formatCompletionGateResult shows PlanGuided: true when plan present', () => {
     const result = {
@@ -988,9 +972,6 @@ test('formatCompletionGateResult shows PlanGuided: false when no plan', () => {
     assert.ok(!output.includes('PlanPath:'));
 });
 
-// ---------------------------------------------------------------------------
-// Plan-guided vs freeform detection
-// ---------------------------------------------------------------------------
 
 test('plan-guided detection: artifact plan presence implies plan-guided execution', () => {
     const artifact = buildTaskModeArtifact({
@@ -1016,9 +997,6 @@ test('freeform detection: artifact without plan implies freeform execution', () 
     assert.equal(artifact.plan, null, 'plan should be null for freeform mode');
 });
 
-// ---------------------------------------------------------------------------
-// T-055: Profile metadata in task-mode artifact
-// ---------------------------------------------------------------------------
 
 test('buildTaskModeArtifact includes activeProfile and profileSource when provided', () => {
     const artifact = buildTaskModeArtifact({

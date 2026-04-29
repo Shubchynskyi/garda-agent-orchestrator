@@ -17,9 +17,6 @@ import {
     runConcurrentPruneWorker
 } from './task-events-test-helpers';
 
-// ---------------------------------------------------------------------------
-// Multi-process concurrent append (real child-process coverage)
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent preserves integrity under concurrent process writes', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-concurrent-'));
@@ -62,9 +59,6 @@ test('appendTaskEvent preserves integrity under concurrent process writes', asyn
     }
 });
 
-// ---------------------------------------------------------------------------
-// Pruning triggered by append
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent triggers locked prune when aggregate log exceeds size threshold', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-locked-prune-'));
@@ -118,9 +112,6 @@ test('appendTaskEvent triggers locked prune when aggregate log exceeds size thre
     }
 });
 
-// ---------------------------------------------------------------------------
-// Multi-process concurrent prune (real child-process coverage)
-// ---------------------------------------------------------------------------
 
 test('appendTaskEventAsync preserves concurrent aggregate entries when each append triggers locked pruning', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-concurrent-prune-'));
@@ -260,9 +251,7 @@ test('appendTaskEventAsync preserves concurrent aggregate entries while pruneAgg
     }
 });
 
-// ---------------------------------------------------------------------------
 // pruneAggregateLog — unit tests
-// ---------------------------------------------------------------------------
 
 test('pruneAggregateLog returns no-op for missing file', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-prune-missing-'));
@@ -388,9 +377,6 @@ test('pruneAggregateLog handles file with only newlines gracefully', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// pruneAggregateLogLocked
-// ---------------------------------------------------------------------------
 
 test('pruneAggregateLogLocked prunes under filesystem lock', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-prune-locked-'));
@@ -435,9 +421,6 @@ test('pruneAggregateLogLocked no-op when file is within limit', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// Append-triggered aggregate retention
-// ---------------------------------------------------------------------------
 
 test('appendTaskEvent prunes aggregate when aggregateMaxLines exceeded', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-append-prune-'));
@@ -551,9 +534,7 @@ test('appendTaskEventAsync prunes aggregate when aggregateMaxLines exceeded', as
     }
 });
 
-// ---------------------------------------------------------------------------
 // pruneAggregateLog — JSON integrity on retained lines
-// ---------------------------------------------------------------------------
 
 test('pruneAggregateLog preserves valid JSON on each retained line', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-prune-json-'));

@@ -631,9 +631,6 @@ describe('runUninstall', () => {
         }
     });
 
-    // -----------------------------------------------------------------------
-    // T-091: Preserve LF line endings when cleaning commit guard hook
-    // -----------------------------------------------------------------------
 
     it('preserves LF line endings in hook after managed block removal', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
@@ -673,9 +670,6 @@ describe('runUninstall', () => {
         }
     });
 
-    // -----------------------------------------------------------------------
-    // T-069: Journal / transaction-like uninstall tests
-    // -----------------------------------------------------------------------
 
     it('reports rollbackStatus as NOT_TRIGGERED on success', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
@@ -945,9 +939,6 @@ describe('runUninstall', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Uninstall ownership boundary hardening (T-013)
-// ---------------------------------------------------------------------------
 
 describe('uninstall ownership boundaries (T-013)', () => {
     const repoRoot = findRepoRoot();
@@ -994,9 +985,6 @@ describe('uninstall ownership boundaries (T-013)', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Uninstall dry-run preview enrichment (T-013)
-// ---------------------------------------------------------------------------
 
 describe('uninstall dry-run preview (T-013)', () => {
     const repoRoot = findRepoRoot();

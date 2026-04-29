@@ -11,7 +11,6 @@ import {
     formatVisibleSavingsLine
 } from '../../../src/gate-runtime/token-telemetry';
 
-// --- Constants ---
 
 test('DEFAULT_TOKEN_ESTIMATOR is hybrid_text_v1', () => {
     assert.equal(DEFAULT_TOKEN_ESTIMATOR, 'hybrid_text_v1');
@@ -21,7 +20,6 @@ test('LEGACY_TOKEN_ESTIMATOR is chars_per_4', () => {
     assert.equal(LEGACY_TOKEN_ESTIMATOR, 'chars_per_4');
 });
 
-// --- estimateTokenCountFromChars ---
 
 test('estimateTokenCountFromChars returns 0 for zero chars', () => {
     assert.equal(estimateTokenCountFromChars(0), 0);
@@ -43,7 +41,6 @@ test('estimateTokenCountFromChars chars_per_4_5 divides by 4.5', () => {
     assert.equal(estimateTokenCountFromChars(10, { estimator: 'chars_per_4_5' }), 3); // ceil(10/4.5) = 3
 });
 
-// --- estimateTokenCount ---
 
 test('estimateTokenCount returns 0 for empty input', () => {
     assert.equal(estimateTokenCount([]), 0);
@@ -70,7 +67,6 @@ test('estimateTokenCount handles string input', () => {
     assert.ok(result > 0);
 });
 
-// --- coerceIntLike ---
 
 test('coerceIntLike returns null for null/undefined/boolean', () => {
     assert.equal(coerceIntLike(null), null);
@@ -103,7 +99,6 @@ test('coerceIntLike returns null for non-numeric string', () => {
     assert.equal(coerceIntLike(''), null);
 });
 
-// --- buildOutputTelemetry ---
 
 test('buildOutputTelemetry returns correct shape for identical input/output', () => {
     const raw = ['line 1', 'line 2'];
@@ -137,7 +132,6 @@ test('buildOutputTelemetry shows savings when output is smaller', () => {
     assert.equal(result.parser_mode, 'FULL');
 });
 
-// --- formatVisibleSavingsLine ---
 
 test('formatVisibleSavingsLine returns null for non-object', () => {
     assert.equal(formatVisibleSavingsLine(null), null);

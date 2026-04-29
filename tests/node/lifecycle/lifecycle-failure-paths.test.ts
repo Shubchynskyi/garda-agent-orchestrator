@@ -30,9 +30,6 @@ import {
 } from '../../../src/lifecycle/common';
 import { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } from '../../../src/materialization/content-builders';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function findRepoRoot() {
     let dir = __dirname;

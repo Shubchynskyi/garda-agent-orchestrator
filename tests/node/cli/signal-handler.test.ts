@@ -17,10 +17,6 @@ afterEach(() => {
     uninstallSignalHandlers();
 });
 
-// ---------------------------------------------------------------------------
-// registerCleanup / unregisterCleanup
-// ---------------------------------------------------------------------------
-
 describe('registerCleanup / unregisterCleanup', () => {
     it('registerCleanup returns a dispose function', () => {
         installSignalHandlers();
@@ -34,7 +30,6 @@ describe('registerCleanup / unregisterCleanup', () => {
         const fn = () => {};
         registerCleanup(fn);
         unregisterCleanup(fn);
-        // No error means success – callback is removed.
     });
 
     it('dispose function returned by registerCleanup unregisters the callback', () => {
@@ -42,15 +37,9 @@ describe('registerCleanup / unregisterCleanup', () => {
         let called = false;
         const dispose = registerCleanup(() => { called = true; });
         dispose();
-        // After dispose, the callback should not be in the set.
-        // We verify indirectly: if we uninstall + reinstall, callback should not run.
         assert.equal(called, false);
     });
 });
-
-// ---------------------------------------------------------------------------
-// getShutdownSignal
-// ---------------------------------------------------------------------------
 
 describe('getShutdownSignal', () => {
     it('returns null before installSignalHandlers is called', () => {
@@ -71,10 +60,6 @@ describe('getShutdownSignal', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// installSignalHandlers idempotence
-// ---------------------------------------------------------------------------
-
 describe('installSignalHandlers', () => {
     it('is idempotent – calling twice does not throw', () => {
         installSignalHandlers();
@@ -83,10 +68,6 @@ describe('installSignalHandlers', () => {
         assert.ok(signal);
     });
 });
-
-// ---------------------------------------------------------------------------
-// registerTempRoot
-// ---------------------------------------------------------------------------
 
 describe('registerTempRoot', () => {
     it('returns a dispose function', () => {
@@ -105,15 +86,11 @@ describe('registerTempRoot', () => {
         installSignalHandlers();
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-signal-test-'));
         const dispose = registerTempRoot(tempDir);
-        // Pre-remove the directory
         fs.rmSync(tempDir, { recursive: true, force: true });
-        // Dispose should not throw even though directory is gone
         assert.doesNotThrow(() => dispose());
     });
 
     it('works without installSignalHandlers (cleanup only on explicit call)', () => {
-        // registerTempRoot should still track the callback even when
-        // signal handlers are not yet installed – it just won't fire on signal.
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-signal-test-'));
         try {
             const dispose = registerTempRoot(tempDir);
@@ -125,17 +102,12 @@ describe('registerTempRoot', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// uninstallSignalHandlers reset
-// ---------------------------------------------------------------------------
-
 describe('uninstallSignalHandlers', () => {
     it('clears all registered cleanup callbacks', () => {
         installSignalHandlers();
         registerCleanup(() => {});
         registerCleanup(() => {});
         uninstallSignalHandlers();
-        // After uninstall, getShutdownSignal returns null indicating full reset.
         assert.equal(getShutdownSignal(), null);
     });
 

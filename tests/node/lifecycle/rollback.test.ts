@@ -99,9 +99,6 @@ function injectBundleUpdate(bundleRoot: string, updateMarker: string, nextVersio
     fs.writeFileSync(templateClaudePath, updatedTemplate, 'utf8');
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot-based rollback (existing behavior)
-// ---------------------------------------------------------------------------
 
 describe('runRollback (snapshot mode)', () => {
     const repoRoot = findRepoRoot();
@@ -250,9 +247,6 @@ describe('runRollback (snapshot mode)', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Version-based rollback
-// ---------------------------------------------------------------------------
 
 describe('runRollback (version mode)', () => {
     const repoRoot = findRepoRoot();
@@ -603,9 +597,6 @@ describe('runRollback (version mode)', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// findSnapshotByVersion helper
-// ---------------------------------------------------------------------------
 
 describe('findSnapshotByVersion', () => {
     it('returns null when no snapshots exist', () => {
@@ -682,9 +673,6 @@ describe('findSnapshotByVersion', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Ownership boundary hardening (T-013)
-// ---------------------------------------------------------------------------
 
 describe('rollback ownership boundaries (T-013)', () => {
     it('rejects snapshot path that escapes target root via absolute path', async () => {
@@ -748,9 +736,6 @@ describe('rollback ownership boundaries (T-013)', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Dry-run preview enrichment (T-013)
-// ---------------------------------------------------------------------------
 
 describe('rollback dry-run preview (T-013)', () => {
     const repoRoot = findRepoRoot();

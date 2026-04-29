@@ -63,9 +63,6 @@ test('validateInitAnswers rejects unsupported source-of-truth values', () => {
     );
 });
 
-// ---------------------------------------------------------------------------
-// initAnswersSchema: structure
-// ---------------------------------------------------------------------------
 
 test('initAnswersSchema has standard JSON Schema draft-07 metadata', () => {
     assert.equal(initAnswersSchema.$schema, 'http://json-schema.org/draft-07/schema#');
@@ -91,9 +88,6 @@ test('initAnswersSchema disallows additional properties', () => {
     assert.equal(initAnswersSchema.additionalProperties, false);
 });
 
-// ---------------------------------------------------------------------------
-// initAnswersSchema: valid documents
-// ---------------------------------------------------------------------------
 
 test('serialized init-answers validates against initAnswersSchema', () => {
     const serialized = serializeInitAnswers({
@@ -143,9 +137,6 @@ test('all SourceOfTruth enum values pass schema validation', () => {
     }
 });
 
-// ---------------------------------------------------------------------------
-// initAnswersSchema: invalid documents
-// ---------------------------------------------------------------------------
 
 test('initAnswersSchema rejects missing required properties', () => {
     const result = validateAgainstSchema({}, initAnswersSchema as Record<string, unknown>);

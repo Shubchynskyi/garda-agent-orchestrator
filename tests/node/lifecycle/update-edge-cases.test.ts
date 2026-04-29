@@ -31,9 +31,6 @@ import {
     withLifecycleOperationLock
 } from '../../../src/lifecycle/common';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function findRepoRoot() {
     let dir = __dirname;

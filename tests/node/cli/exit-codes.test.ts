@@ -15,10 +15,6 @@ import {
     exitCodeLabel
 } from '../../../src/cli/exit-codes';
 
-// ---------------------------------------------------------------------------
-// Constant stability – automation depends on these never changing
-// ---------------------------------------------------------------------------
-
 test('exit code constants are stable', () => {
     assert.equal(EXIT_SUCCESS, 0);
     assert.equal(EXIT_GENERAL_FAILURE, 1);
@@ -46,10 +42,6 @@ test('all exit codes are distinct', () => {
     const unique = new Set(codes);
     assert.equal(unique.size, codes.length, 'All exit codes must be unique');
 });
-
-// ---------------------------------------------------------------------------
-// classifyErrorExitCode
-// ---------------------------------------------------------------------------
 
 test('classifies unknown command as USAGE_ERROR', () => {
     assert.equal(
@@ -190,10 +182,6 @@ test('classifies null/undefined as GENERAL_FAILURE', () => {
 test('classifies non-Error throwable as GENERAL_FAILURE', () => {
     assert.equal(classifyErrorExitCode('plain string error'), EXIT_GENERAL_FAILURE);
 });
-
-// ---------------------------------------------------------------------------
-// exitCodeLabel
-// ---------------------------------------------------------------------------
 
 test('exitCodeLabel returns human label for known codes', () => {
     assert.equal(exitCodeLabel(EXIT_SUCCESS), 'SUCCESS');

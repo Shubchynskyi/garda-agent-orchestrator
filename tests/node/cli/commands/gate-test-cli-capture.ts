@@ -13,9 +13,6 @@ import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
 
-// ---------------------------------------------------------------------------
-// Capture / assertion helpers
-// ---------------------------------------------------------------------------
 
 export async function captureExpectedAsyncError(callback: () => Promise<void>): Promise<Error> {
     try {

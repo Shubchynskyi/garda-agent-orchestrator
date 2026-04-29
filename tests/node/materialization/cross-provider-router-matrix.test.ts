@@ -24,9 +24,6 @@ import {
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../../../src/gate-runtime/reviewer-session-contract';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';

@@ -72,7 +72,7 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
         try {
             invalidateReviewsIndex(path.join(runtimeDir, 'reviews'));
         } catch {
-            // best-effort
+            // Best-effort cleanup.
         }
     }
 
@@ -80,7 +80,7 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
         try {
             pruneTimelineSummaryEntries(path.join(runtimeDir, 'task-events'));
         } catch {
-            // best-effort
+            // Best-effort cleanup.
         }
     }
 
@@ -89,7 +89,7 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
         try {
             aggregateRetention = pruneAggregateLogLocked(path.join(runtimeDir, 'task-events'), policy.maxAggregateLines, {}, activeTaskIds);
         } catch {
-            // best-effort
+            // Best-effort cleanup.
         }
     }
 
@@ -174,7 +174,7 @@ export function runGc(options: GcOptions): GcResult {
         try {
             invalidateReviewsIndex(path.join(runtimeDir, 'reviews'));
         } catch {
-            // best-effort
+            // Best-effort cleanup.
         }
     }
 
@@ -182,7 +182,7 @@ export function runGc(options: GcOptions): GcResult {
         try {
             pruneTimelineSummaryEntries(path.join(runtimeDir, 'task-events'));
         } catch {
-            // best-effort
+            // Best-effort cleanup.
         }
     }
 
@@ -203,7 +203,7 @@ export function runGc(options: GcOptions): GcResult {
                 removed.push(...effectiveTaskEventLocks);
             }
         } catch {
-            // best-effort
+            // Best-effort cleanup.
         }
     }
 
@@ -225,7 +225,7 @@ export function runGc(options: GcOptions): GcResult {
                 aggregateRetention = pruneAggregateLogLocked(path.join(runtimeDir, 'task-events'), policy.maxAggregateLines, {}, activeTaskIds);
             }
         } catch {
-            // best-effort
+            // Best-effort cleanup.
         }
     }
 

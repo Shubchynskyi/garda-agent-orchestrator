@@ -944,14 +944,12 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
         );
     }
 
-    // Validate compile gate
     if (compileGateEvidence) {
         if (compileGateEvidence.status !== 'PASSED') {
             errors.push(`Compile gate did not pass. Status: '${compileGateEvidence.status || 'UNKNOWN'}'.`);
         }
     }
 
-    // Validate each review type
     const reviewChecks: Record<string, unknown> = {};
     for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
         const required = !!requiredReviews[reviewKey];
@@ -1037,10 +1035,6 @@ export interface ZeroDiffReviewGuardResult {
     violations: string[];
 }
 
-/**
- * Detect whether a preflight artifact represents a zero-diff (clean tree) classification.
- * Reads the preflight's zero_diff_guard block or falls back to metrics/changed_files.
- */
 export function detectZeroDiffFromPreflight(preflight: Record<string, unknown> | null): boolean {
     if (!preflight) return false;
 

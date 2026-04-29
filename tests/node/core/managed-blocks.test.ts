@@ -147,9 +147,6 @@ test('upsertManagedBlock with markers containing regex-special characters', () =
     assert.equal(result, `header\n${start}\nnew\n${end}\nfooter\n`);
 });
 
-// ---------------------------------------------------------------------------
-// findManagedSpan (public export)
-// ---------------------------------------------------------------------------
 
 test('findManagedSpan returns span indices for present markers', () => {
     const text = 'before\n<!-- managed-start -->\ncontent\n<!-- managed-end -->\nafter\n';
@@ -171,9 +168,6 @@ test('findManagedSpan with peripheral newlines extends span', () => {
     assert.ok(span.end > text.indexOf(END_MARKER) + END_MARKER.length, 'span should extend after end marker');
 });
 
-// ---------------------------------------------------------------------------
-// extractManagedContent
-// ---------------------------------------------------------------------------
 
 test('extractManagedContent returns managed block text', () => {
     const text = 'before\n<!-- managed-start -->\ncontent\n<!-- managed-end -->\nafter\n';
@@ -189,9 +183,6 @@ test('extractManagedContent returns null when no markers', () => {
     assert.equal(result, null);
 });
 
-// ---------------------------------------------------------------------------
-// extractUserContent
-// ---------------------------------------------------------------------------
 
 test('extractUserContent returns text outside managed block', () => {
     const text = 'before\n<!-- managed-start -->\ncontent\n<!-- managed-end -->\nafter\n';
@@ -207,9 +198,6 @@ test('extractUserContent returns entire text when no markers', () => {
     assert.equal(extractUserContent(text, START_MARKER, END_MARKER), text);
 });
 
-// ---------------------------------------------------------------------------
-// classifyOwnership
-// ---------------------------------------------------------------------------
 
 test('classifyOwnership returns single user region when no markers', () => {
     const regions = classifyOwnership('all user', START_MARKER, END_MARKER);

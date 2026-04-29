@@ -19,7 +19,6 @@ import {
 } from '../../../src/gate-runtime/review-context';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
-// --- compactMarkdownContent ---
 
 test('compactMarkdownContent returns empty for null', () => {
     const result = compactMarkdownContent(null);
@@ -111,7 +110,6 @@ test('compactMarkdownContent counts correctly', () => {
     assert.equal(result.original_char_count, input.replace(/\r\n/g, '\n').length);
 });
 
-// --- context-aware stripCodeBlocks ---
 
 test('compactMarkdownContent strips code block preceded by "e.g." phrase', () => {
     const input = 'Use a short name, e.g.\n\n```bash\nfoo --bar\n```\n\nNext section.\n';
@@ -188,7 +186,6 @@ test('compactMarkdownContent strips code block preceded by "like so"', () => {
     assert.equal(result.removed_code_blocks, 1);
 });
 
-// --- getCompactReviewBudget ---
 
 test('getCompactReviewBudget returns default for null', () => {
     const budget = getCompactReviewBudget(null);
@@ -221,7 +218,6 @@ test('getCompactReviewBudget handles string input', () => {
     assert.equal(budget.fail_tail_lines, 75);
 });
 
-// --- auditReviewArtifactCompaction ---
 
 test('auditReviewArtifactCompaction not expected when not active', () => {
     const result = auditReviewArtifactCompaction({
@@ -251,7 +247,6 @@ test('auditReviewArtifactCompaction warns on budget exceed', () => {
     assert.ok(result.warnings.some((w: string) => w.includes('exceeds compact line budget')));
 });
 
-// --- buildReviewContextSections ---
 
 test('buildReviewContextSections builds artifact from mock files', () => {
     const files: Record<string, string> = {

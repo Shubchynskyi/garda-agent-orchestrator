@@ -570,9 +570,6 @@ describe('gates/classify-change', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// classifyScopeCategory (T-059)
-// ---------------------------------------------------------------------------
 
 describe('classifyScopeCategory', () => {
     const codeLikeRegexes = ['\\.(ts|tsx|js|jsx|java|py|go)$'];

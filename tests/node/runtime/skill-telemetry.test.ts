@@ -16,7 +16,6 @@ import {
 
 import { inspectTaskEventFile } from '../../../src/gate-runtime/task-events';
 
-// ---- Constants & schema stability ----
 
 test('SKILL_TELEMETRY_EVENT_TYPES exposes exactly three event types', () => {
     const keys = Object.keys(SKILL_TELEMETRY_EVENT_TYPES).sort();
@@ -34,7 +33,6 @@ test('SKILL_TELEMETRY_ACTOR is skill-telemetry', () => {
     assert.equal(SKILL_TELEMETRY_ACTOR, 'skill-telemetry');
 });
 
-// ---- buildSkillTelemetryDetails schema ----
 
 test('buildSkillTelemetryDetails always includes core keys', () => {
     const details = buildSkillTelemetryDetails({});
@@ -70,7 +68,6 @@ test('buildSkillTelemetryDetails includes score 0 when explicitly set', () => {
     assert.equal(details.score, 0);
 });
 
-// ---- emitSkillTelemetryEvent ----
 
 test('emitSkillTelemetryEvent returns null for missing bundleRoot', () => {
     const result = emitSkillTelemetryEvent(null, 'T-TEL', 'SKILL_SUGGESTED', 'msg', {});
@@ -148,7 +145,6 @@ test('emitSkillTelemetryEvent chains multiple events correctly', () => {
     }
 });
 
-// ---- Typed emit helpers ----
 
 test('emitSkillSuggestedEvent writes correct event shape', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skill-telemetry-'));
@@ -241,7 +237,6 @@ test('emitSkillReferenceLoadedEvent defaults trigger_reason to bridge_route', ()
     }
 });
 
-// ---- All events land in all-tasks.jsonl aggregate ----
 
 test('skill telemetry events are appended to all-tasks.jsonl', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skill-telemetry-'));
