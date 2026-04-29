@@ -6,6 +6,8 @@
 - Validate backward compatibility for config, events, and DTO mappings.
 
 ## Structural Quality
+- Validate the refactor is justified by current task complexity, duplication, or boundary pressure.
+- Treat speculative abstraction, unused extension points, or broad rewrites without current task evidence as findings.
 - Validate SRP and separation of concerns improved or preserved.
 - Validate complexity or coupling did not increase on hot paths.
 - Validate duplicated logic was reduced without hidden side effects.
@@ -27,6 +29,7 @@
 ## Refactor Rule IDs
 - `REF-BEHAVIOR-PRESERVATION`
 - `REF-CONTRACT-COMPATIBILITY`
+- `REF-SIMPLICITY`
 - `REF-COMPLEXITY-NONREGRESSION`
 - `REF-COUPLING-REDUCTION`
 - `REF-NO-UNUSED-IMPORTS`

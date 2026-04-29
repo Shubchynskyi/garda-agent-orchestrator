@@ -13,6 +13,7 @@ They are not optional recommendations.
 - `SOLID-ISP`
 - `SOLID-DIP`
 - `QG-COMPLEXITY`
+- `QG-SIMPLICITY`
 - `QG-PARAMETERS`
 - `QG-DUPLICATION`
 - `QG-NULL-SAFETY`
@@ -90,6 +91,7 @@ Review checks:
 - Constructors of domain services should accept interfaces for external dependencies.
 
 ## Additional Quality Gates
+- Prefer the smallest correct change that satisfies the task and existing architecture. Speculative abstraction, one-off configurability, future-proofing, or broad rewrites without current-task evidence are review findings.
 - Cyclomatic complexity target is `<= 10` per method. Values `> 15` require refactor or explicit exception.
 - Maximum parameters for public methods is `5`; use request objects for larger inputs.
 - Duplicate business logic across modules is not allowed.
@@ -133,5 +135,4 @@ Any exception to these rules must be documented in a review artifact (PR descrip
 - Automated checks should be used where available (for example: Checkstyle and CI workflows).
 - Rules without automation must be enforced through explicit reviewer checklist items in independent review, each with auditable evidence.
 - Non-automated rule review must include coverage declaration: `applicable_rule_ids`, `not_applicable_rule_ids`, and reason for each skipped rule id.
-
 

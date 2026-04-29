@@ -4,6 +4,11 @@
 - Confirm reviewed diff matches requested task scope.
 - Confirm no accidental unrelated behavior changes.
 
+## Simplicity
+- Confirm the implementation is the smallest correct change for the task.
+- Treat speculative abstraction, unused configurability, or future-proofing without current task evidence as findings.
+- Do not require a broader rewrite when a narrow fix preserves existing contracts and safety checks.
+
 ## Correctness
 - Validate happy path behavior.
 - Validate edge cases and boundary conditions.
@@ -46,6 +51,7 @@
 - `SOLID-OCP`
 - `SOLID-DIP`
 - `QG-COMPLEXITY`
+- `QG-SIMPLICITY`
 - `QG-TRANSACTIONS`
 - `QG-INPUT-VALIDATION`
 - `QG-NO-UNUSED-IMPORTS`
