@@ -767,6 +767,68 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(payload.required_reviews.security, false);
         assert.equal(payload.budget_forecast.token_economy_active_for_depth, true);
 
+        seedTaskQueue(repoRoot, 'T-930-fast-docs-only', 'TODO', 'fast');
+        runEnterTaskMode({
+            repoRoot,
+            taskId: 'T-930-fast-docs-only',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Avoid reviewer launch for fast docs-only edits'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, 'T-930-fast-docs-only').exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-930-fast-docs-only');
+        runShellSmokeForTask(repoRoot, 'T-930-fast-docs-only');
+
+        const docsOnlyResult = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['docs/usage.md'],
+            taskId: 'T-930-fast-docs-only',
+            taskIntent: 'Avoid reviewer launch for fast docs-only edits',
+            outputPath: path.join(repoRoot, 'preflight-fast-docs-only.json'),
+            emitMetrics: false
+        });
+
+        const docsOnlyPayload = JSON.parse(docsOnlyResult.outputText);
+        assert.equal(docsOnlyPayload.scope_category, 'docs-only');
+        assert.equal(docsOnlyPayload.profile_selection.effective_profile, 'fast');
+        assert.equal(docsOnlyPayload.required_reviews.code, false);
+        assert.equal(
+            docsOnlyPayload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'code')?.decision,
+            'lightened_by_profile'
+        );
+        assert.equal(docsOnlyPayload.budget_forecast.required_reviews.includes('code'), false);
+
+        seedTaskQueue(repoRoot, 'T-930-fast-docs-force-code', 'TODO', 'fast');
+        runEnterTaskMode({
+            repoRoot,
+            taskId: 'T-930-fast-docs-force-code',
+            requestedDepth: 1,
+            effectiveDepth: 1,
+            taskSummary: 'Force code review for a fast docs-only edit'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, 'T-930-fast-docs-force-code').exitCode, 0);
+        runHandshakeForTask(repoRoot, 'T-930-fast-docs-force-code');
+        runShellSmokeForTask(repoRoot, 'T-930-fast-docs-force-code');
+
+        const forcedCodeResult = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['docs/usage.md'],
+            taskId: 'T-930-fast-docs-force-code',
+            taskIntent: 'Force code review for a fast docs-only edit',
+            forceCodeReview: true,
+            outputPath: path.join(repoRoot, 'preflight-fast-docs-force-code.json'),
+            emitMetrics: false
+        });
+
+        const forcedCodePayload = JSON.parse(forcedCodeResult.outputText);
+        assert.equal(forcedCodePayload.scope_category, 'docs-only');
+        assert.equal(forcedCodePayload.required_reviews.code, true);
+        assert.equal(
+            forcedCodePayload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'code')?.decision,
+            'profile_forced'
+        );
+        assert.equal(forcedCodePayload.budget_forecast.required_reviews.includes('code'), true);
+
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 

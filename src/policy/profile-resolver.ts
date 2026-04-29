@@ -113,6 +113,10 @@ export interface ResolveOptions {
     domainSurface?: Record<string, boolean>;
     /** Explicit escape hatch for operators that intentionally want every domain review. */
     forceAllDomainReviews?: boolean;
+    /** Explicit task/preflight request to keep code review enabled. */
+    forceCodeReview?: boolean;
+    /** Whether current scope touches protected orchestrator control-plane files. */
+    protectedControlPlaneChanged?: boolean;
 }
 
 /**
@@ -161,6 +165,22 @@ export interface ProfileGuardrailResult {
 export interface ProfileGuardrailOptions {
     domainSurface?: Record<string, boolean>;
     forceAllDomainReviews?: boolean;
+    forceCodeReview?: boolean;
+    protectedControlPlaneChanged?: boolean;
+}
+
+function shouldLightenExplicitFastCodeReview(
+    reviewType: string,
+    profileName: string,
+    profileValue: boolean | 'auto' | undefined,
+    scopeCategory: string,
+    options: ProfileGuardrailOptions
+): boolean {
+    return reviewType === 'code'
+        && profileName === 'fast'
+        && profileValue === true
+        && scopeCategory === 'docs-only'
+        && options.protectedControlPlaneChanged !== true;
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -365,7 +385,15 @@ export function applyProfileGuardrails(
             && hasDomainSurfaceEvidence
         );
         const domainSurfaceMissing = needsDomainSurface && !domainSurfacePresent;
-        const effectiveValue = domainSurfaceMissing ? false : mergedWantsReview;
+        const scopeLightenedExplicitReview = shouldLightenExplicitFastCodeReview(
+            key,
+            profileName,
+            profileValue,
+            scopeCategory,
+            options
+        );
+        const codeReviewExplicitlyForced = key === 'code' && options.forceCodeReview === true;
+        const effectiveValue = codeReviewExplicitlyForced || (domainSurfaceMissing || scopeLightenedExplicitReview ? false : mergedWantsReview);
         const forcedDomainWithoutSurface = isDomainReview
             && mergedWantsReview
             && options.forceAllDomainReviews === true
@@ -378,9 +406,15 @@ export function applyProfileGuardrails(
 
         const wasFloored = floorsApplied.some((f) => f.startsWith(`${key}:`));
 
-        if (domainSurfaceMissing) {
+        if (codeReviewExplicitlyForced) {
+            decision = 'profile_forced';
+            reason = `${key} review explicitly forced by task preflight override`;
+        } else if (domainSurfaceMissing) {
             decision = 'not_applicable_no_domain_surface';
             reason = `${key} review requested by profile '${profileName}', but no ${key} trigger or project surface evidence was found`;
+        } else if (scopeLightenedExplicitReview) {
+            decision = 'lightened_by_profile';
+            reason = `${key} review lightened by profile '${profileName}' for true ${scopeCategory} scope`;
         } else if (forcedDomainWithoutSurface) {
             decision = 'profile_forced';
             reason = `${key} review explicitly forced by profile '${profileName}' even though no ${key} domain surface evidence was found`;
@@ -580,7 +614,9 @@ export function resolveEffectivePolicy(
             profileName,
             {
                 domainSurface: options.domainSurface,
-                forceAllDomainReviews: options.forceAllDomainReviews
+                forceAllDomainReviews: options.forceAllDomainReviews,
+                forceCodeReview: options.forceCodeReview,
+                protectedControlPlaneChanged: options.protectedControlPlaneChanged
             }
         );
         for (const decision of guardrailDiagnostics.decisions) {

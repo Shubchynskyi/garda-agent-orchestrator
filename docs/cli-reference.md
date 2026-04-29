@@ -458,6 +458,7 @@ Use `garda next-step "T-001"` as the task-loop command before and after gates; i
 Task-start identity and preflight notes:
 - `enter-task-mode` and related runtime identity checks normalize explicit provider aliases such as `github-copilot-cli` to the canonical provider id `GitHubCopilot`; artifacts record the canonical id.
 - When `classify-change` receives `--task-id` but no `--output-path`, it writes the canonical task preflight artifact at `garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`. Non-task ad hoc classification can still run without writing an artifact.
+- `classify-change --force-code-review` keeps code review mandatory even when the active fast profile would otherwise lighten a true docs-only scope. Protected control-plane scopes still keep code review mandatory without the flag.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
 

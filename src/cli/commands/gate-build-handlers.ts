@@ -56,6 +56,7 @@ export async function handleClassifyChange(gateArgv: string[]): Promise<void> {
         '--fast-path-max-changed-lines': { key: 'fastPathMaxChangedLines', type: 'string' },
         '--performance-heuristic-min-lines': { key: 'performanceHeuristicMinLines', type: 'string' },
         '--force-all-domain-reviews': { key: 'forceAllDomainReviews', type: 'boolean' },
+        '--force-code-review': { key: 'forceCodeReview', type: 'boolean' },
         '--output-path': { key: 'outputPath', type: 'string' },
         '--metrics-path': { key: 'metricsPath', type: 'string' },
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' }

@@ -997,6 +997,56 @@ test('applyProfileGuardrails: docs-only scope allows lightening', () => {
     assert.ok(lightened.length >= 4, 'docs-only scope should lighten code/security/db/refactor');
 });
 
+test('applyProfileGuardrails: fast docs-only scope lightens explicit code review', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'docs-only', 'fast');
+    const codeDecision = result.decisions.find(d => d.review_type === 'code');
+    assert.equal(codeDecision?.effective_value, false);
+    assert.equal(codeDecision?.decision, 'lightened_by_profile');
+    assert.match(String(codeDecision?.reason || ''), /true docs-only scope/);
+});
+
+test('applyProfileGuardrails: fast docs-only keeps code review for protected control-plane scope', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(
+        profile,
+        caps,
+        'docs-only',
+        'fast',
+        { protectedControlPlaneChanged: true }
+    );
+    const codeDecision = result.decisions.find(d => d.review_type === 'code');
+    assert.equal(codeDecision?.effective_value, true);
+    assert.equal(codeDecision?.decision, 'profile_forced');
+});
+
+test('applyProfileGuardrails: fast docs-only keeps code review when explicitly forced', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(
+        profile,
+        caps,
+        'docs-only',
+        'fast',
+        { forceCodeReview: true }
+    );
+    const codeDecision = result.decisions.find(d => d.review_type === 'code');
+    assert.equal(codeDecision?.effective_value, true);
+    assert.equal(codeDecision?.decision, 'profile_forced');
+    assert.match(String(codeDecision?.reason || ''), /explicitly forced/);
+});
+
 test('applyProfileGuardrails: config-only scope allows lightening', () => {
     const profile: ProfileReviewPolicy = { code: false, db: false, security: false, refactor: false };
     const caps: ReviewCapabilities = {

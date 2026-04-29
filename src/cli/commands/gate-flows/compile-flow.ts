@@ -152,6 +152,7 @@ export interface ClassifyChangeCommandOptions {
     taskModePath?: string;
     rulePackPath?: string;
     forceAllDomainReviews?: unknown;
+    forceCodeReview?: unknown;
     outputPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -587,7 +588,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     typeof result.scope_category === 'string' ? result.scope_category : null,
                     {
                         domainSurface: buildDomainReviewSurface(result.triggers as Record<string, unknown>),
-                        forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false)
+                        forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false),
+                        forceCodeReview: parseBooleanOption(options.forceCodeReview, false),
+                        protectedControlPlaneChanged: (result.triggers as Record<string, unknown>).protected_control_plane_changed === true
                     }
                 );
                 effectiveTaskPolicy = resolvedProfile.effective_policy;

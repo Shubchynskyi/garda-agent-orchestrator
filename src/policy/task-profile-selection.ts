@@ -26,6 +26,8 @@ export interface ResolvedTaskProfileSelection {
 export interface TaskProfileSelectionOptions {
     domainSurface?: Record<string, boolean>;
     forceAllDomainReviews?: boolean;
+    forceCodeReview?: boolean;
+    protectedControlPlaneChanged?: boolean;
 }
 
 export function normalizeTaskProfileValue(value: unknown): string | null {
@@ -49,7 +51,9 @@ export function resolveTaskProfileSelection(
         ...(usesTaskQueueProfile ? { profileOverride: normalizedTaskProfile } : {}),
         ...(scopeCategory ? { scopeCategory } : {}),
         ...(options.domainSurface ? { domainSurface: options.domainSurface } : {}),
-        ...(options.forceAllDomainReviews === true ? { forceAllDomainReviews: true } : {})
+        ...(options.forceAllDomainReviews === true ? { forceAllDomainReviews: true } : {}),
+        ...(options.forceCodeReview === true ? { forceCodeReview: true } : {}),
+        ...(options.protectedControlPlaneChanged === true ? { protectedControlPlaneChanged: true } : {})
     });
 
     return {
