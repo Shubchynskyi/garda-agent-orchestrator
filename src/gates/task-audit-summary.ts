@@ -25,6 +25,7 @@ import {
 } from '../core/review-execution-policy';
 import { getStatusSnapshot } from '../validators/status';
 import {
+    buildUnavailableRequiredReviewTrustSummary,
     type BlockerEntry,
     type EvidenceArtifact,
     type FinalCloseoutArtifactPaths,
@@ -38,6 +39,7 @@ import {
     parseOptionalNumber,
     readDocImpactSummary,
     readReviewTrustSummary,
+    readReviewTrustSummaryFromReviewGate,
     readOptionalSkillsSummary,
     readReviewVerdicts,
     readTaskQueueMetadata,
@@ -1011,7 +1013,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             return [reviewType, null];
         })
     );
-    const reviewTrustSummary = readReviewTrustSummary(
+    const receiptReviewTrustSummary = readReviewTrustSummary(
         requiredReviews,
         reviewsRoot,
         safeTaskId,
@@ -1019,6 +1021,18 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         preflightSha256,
         reviewContextPaths
     );
+    const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
+        reviewGate,
+        requiredReviews,
+        safeTaskId,
+        scopeCategory,
+        preflightSha256
+    );
+    const hasRequiredReviews = Object.values(requiredReviews).some((value) => value === true);
+    const reviewTrustSummary = reviewGateTrustSummary
+        ?? (hasRequiredReviews
+            ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
+            : receiptReviewTrustSummary);
     const optionalSkillsPath = path.join(reviewsRoot, `${safeTaskId}-optional-skill-selection.json`);
     const bundleRoot = path.dirname(path.dirname(reviewsRoot));
     const taskEventsTimelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, safeTaskId, taskEventFile);

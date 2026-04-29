@@ -51,7 +51,11 @@ import {
     buildReviewCycleRestartCommand
 } from './completion-reporting';
 // readReviewTrustSummary is intentionally imported for re-export
-import { readReviewTrustSummary } from './task-audit-summary-collectors';
+import {
+    buildUnavailableRequiredReviewTrustSummary,
+    readReviewTrustSummary,
+    readReviewTrustSummaryFromReviewGate
+} from './task-audit-summary-collectors';
 import {
     loadFullSuiteValidationConfig,
     type FullSuiteValidationCycleBinding,
@@ -483,7 +487,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
             findLatestRecordedReviewContextPath(orderedEvents, reviewKey)
         ])
     );
-    const reviewTrustSummary = readReviewTrustSummary(
+    const receiptReviewTrustSummary = readReviewTrustSummary(
         requiredReviews,
         reviewsRoot,
         resolvedTaskId || '',
@@ -491,6 +495,20 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         validatedPreflight.preflight_hash,
         reviewContextPaths
     );
+    const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
+        reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)
+            ? reviewEvidence as Record<string, unknown>
+            : null,
+        requiredReviews,
+        resolvedTaskId || '',
+        scopeCategory,
+        validatedPreflight.preflight_hash
+    );
+    const hasRequiredReviews = Object.values(requiredReviews).some((value) => value === true);
+    const reviewTrustSummary = reviewGateTrustSummary
+        ?? (hasRequiredReviews
+            ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
+            : receiptReviewTrustSummary);
 
     // Plan metadata from task-mode evidence (informational, never blocks)
     const planEvidence = {

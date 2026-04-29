@@ -183,6 +183,121 @@ export function readReviewVerdicts(
     return reviewVerdicts;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeTrustToken(value: unknown): string {
+    return String(value || '').trim().toUpperCase();
+}
+
+function reviewGateMatchesCurrentCycle(
+    reviewGate: Record<string, unknown>,
+    taskId: string,
+    preflightSha256?: string | null
+): boolean {
+    if (String(reviewGate.task_id || '').trim() !== taskId) {
+        return false;
+    }
+    if (
+        normalizeTrustToken(reviewGate.status) !== 'PASSED'
+        || normalizeTrustToken(reviewGate.outcome) !== 'PASS'
+    ) {
+        return false;
+    }
+
+    const expectedPreflightSha256 = String(preflightSha256 || '').trim().toLowerCase();
+    if (!expectedPreflightSha256) {
+        return true;
+    }
+
+    return String(reviewGate.preflight_hash_sha256 || '').trim().toLowerCase() === expectedPreflightSha256;
+}
+
+function reviewGateCheckIsIndependent(check: Record<string, unknown>): boolean {
+    const routingPolicy = isPlainRecord(check.reviewer_routing_policy)
+        ? check.reviewer_routing_policy
+        : null;
+    const reviewerIdentity = String(check.reviewer_identity || '').trim();
+
+    return check.required === true
+        && check.skipped_by_override !== true
+        && check.receipt_valid === true
+        && normalizeTrustToken(check.trust_level) === 'INDEPENDENT_AUDITED'
+        && String(check.reviewer_execution_mode || '').trim() === 'delegated_subagent'
+        && reviewerIdentity.startsWith('agent:')
+        && !String(check.reviewer_fallback_reason || '').trim()
+        && !!routingPolicy
+        && (
+            routingPolicy.delegation_required === true
+            && String(routingPolicy.expected_execution_mode || '').trim() === 'delegated_subagent'
+            && routingPolicy.fallback_allowed === false
+            && routingPolicy.fallback_reason_required === false
+        );
+}
+
+export function readReviewTrustSummaryFromReviewGate(
+    reviewGate: Record<string, unknown> | null,
+    requiredReviews: Record<string, boolean>,
+    taskId: string,
+    scopeCategory: string | null,
+    preflightSha256?: string | null
+): FinalCloseoutReviewTrustSummary | null {
+    const requiredReviewTypes = Object.keys(requiredReviews)
+        .filter((reviewType) => requiredReviews[reviewType] === true)
+        .sort();
+    if (requiredReviewTypes.length === 0 || !reviewGateMatchesCurrentCycle(reviewGate || {}, taskId, preflightSha256)) {
+        return null;
+    }
+
+    const reviewGateRequiredReviews = isPlainRecord(reviewGate?.required_reviews)
+        ? reviewGate.required_reviews
+        : null;
+    const reviewChecks = isPlainRecord(reviewGate?.review_checks)
+        ? reviewGate.review_checks
+        : null;
+    if (!reviewGateRequiredReviews || !reviewChecks) {
+        return null;
+    }
+
+    const executionModes = new Set<string>();
+    for (const reviewType of requiredReviewTypes) {
+        if (reviewGateRequiredReviews[reviewType] !== true) {
+            return null;
+        }
+        const check = isPlainRecord(reviewChecks[reviewType])
+            ? reviewChecks[reviewType] as Record<string, unknown>
+            : null;
+        if (!check || !reviewGateCheckIsIndependent(check)) {
+            return null;
+        }
+        executionModes.add('DELEGATED_SUBAGENT');
+    }
+
+    const scopeLabel = String(scopeCategory || '').trim() ? `${String(scopeCategory).trim()} task` : 'task';
+    const formattedModes = [...executionModes].sort().join(', ') || 'unknown execution mode';
+    return {
+        status: 'INDEPENDENT_AUDITED',
+        trust_levels: ['INDEPENDENT_AUDITED'],
+        execution_modes: [...executionModes].sort(),
+        independent_review_attested: true,
+        completion_policy: 'INDEPENDENT_REVIEW_ATTESTED',
+        visible_summary_line:
+            `Review trust: INDEPENDENT_AUDITED via ${formattedModes}; ` +
+            'independent reviewer launch attested.',
+        policy_summary_line:
+            `Review policy: independent reviewer launch attestation satisfies mandatory review for this ${scopeLabel}.`
+    };
+}
+
+export function buildUnavailableRequiredReviewTrustSummary(
+    requiredReviews: Record<string, boolean>,
+    scopeCategory: string | null
+): FinalCloseoutReviewTrustSummary | null {
+    const requiredReviewCount = Object.values(requiredReviews).filter((value) => value === true).length;
+    return buildReviewTrustSummary([], scopeCategory, requiredReviewCount);
+}
+
 export function readReviewTrustSummary(
     requiredReviews: Record<string, boolean>,
     reviewsRoot: string,

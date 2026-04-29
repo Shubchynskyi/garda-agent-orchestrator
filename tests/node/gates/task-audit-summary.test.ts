@@ -13,7 +13,10 @@ import {
     synchronizeFinalCloseoutArtifacts,
     type TaskAuditSummaryResult
 } from '../../../src/gates/task-audit-summary';
-import { readReviewTrustSummary } from '../../../src/gates/task-audit-summary-collectors';
+import {
+    readReviewTrustSummary,
+    readReviewTrustSummaryFromReviewGate
+} from '../../../src/gates/task-audit-summary-collectors';
 import {
     inspectCompletionGateFinalizationLock,
     scanCompletionGateFinalizationLocks,
@@ -96,6 +99,73 @@ function writeWorkflowConfig(
         }, null, 2),
         'utf8'
     );
+}
+
+function writePassedLifecycle(eventsDir: string, taskId: string): void {
+    const now = Date.parse('2026-04-29T00:00:00.000Z');
+    [
+        'TASK_MODE_ENTERED',
+        'RULE_PACK_LOADED',
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        'PREFLIGHT_CLASSIFIED',
+        'COMPILE_GATE_PASSED',
+        'REVIEW_PHASE_STARTED',
+        'REVIEW_GATE_PASSED',
+        'DOC_IMPACT_ASSESSED',
+        'COMPLETION_GATE_PASSED'
+    ].forEach((eventType, index) => {
+        writeEvent(eventsDir, taskId, {
+            timestamp_utc: new Date(now + index * 1000).toISOString(),
+            task_id: taskId,
+            event_type: eventType,
+            outcome: 'PASS',
+            actor: 'gate',
+            message: `${eventType} passed.`
+        });
+    });
+}
+
+function makeIndependentReviewGateCheck(passToken: string, reviewerIdentity: string): Record<string, unknown> {
+    return {
+        required: true,
+        skipped_by_override: false,
+        verdict: passToken,
+        pass_token: passToken,
+        receipt_valid: true,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: reviewerIdentity,
+        reviewer_fallback_reason: null,
+        trust_level: 'INDEPENDENT_AUDITED',
+        reviewer_routing_policy: {
+            delegation_required: true,
+            expected_execution_mode: 'delegated_subagent',
+            fallback_allowed: false,
+            fallback_reason_required: false
+        }
+    };
+}
+
+function makeReviewerInvocationProvenance(
+    taskId: string,
+    reviewType: string,
+    reviewerIdentity: string,
+    reviewContextSha256: string
+): Record<string, unknown> {
+    return {
+        schema_version: 1,
+        attestation_type: 'reviewer_invocation_attestation',
+        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        task_sequence: 10,
+        prev_event_sha256: null,
+        event_sha256: 'c'.repeat(64),
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: reviewContextSha256,
+        routing_event_sha256: 'd'.repeat(64)
+    };
 }
 
 describe('gates/task-audit-summary', () => {
@@ -1220,6 +1290,228 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.review_trust?.status, 'UNAVAILABLE');
             assert.match(result.final_closeout.review_trust?.visible_summary_line || '', /incomplete or invalid/i);
             assert.match(formatTaskAuditSummaryText(result), /Review trust: unavailable/i);
+        });
+
+        it('reads independent delegated trust from a current passed review gate', () => {
+            const preflightSha256 = 'a'.repeat(64);
+            const reviewGate = {
+                task_id: TASK_ID,
+                status: 'PASSED',
+                outcome: 'PASS',
+                preflight_hash_sha256: preflightSha256,
+                required_reviews: { code: true },
+                review_checks: {
+                    code: makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:code-reviewer')
+                }
+            };
+
+            const summary = readReviewTrustSummaryFromReviewGate(
+                reviewGate,
+                { code: true },
+                TASK_ID,
+                'code',
+                preflightSha256
+            );
+            const staleSummary = readReviewTrustSummaryFromReviewGate(
+                reviewGate,
+                { code: true },
+                TASK_ID,
+                'code',
+                'b'.repeat(64)
+            );
+            const missingRoutingPolicySummary = readReviewTrustSummaryFromReviewGate(
+                {
+                    ...reviewGate,
+                    review_checks: {
+                        code: {
+                            ...makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:code-reviewer'),
+                            reviewer_routing_policy: undefined
+                        }
+                    }
+                },
+                { code: true },
+                TASK_ID,
+                'code',
+                preflightSha256
+            );
+
+            assert.equal(summary?.status, 'INDEPENDENT_AUDITED');
+            assert.equal(summary?.completion_policy, 'INDEPENDENT_REVIEW_ATTESTED');
+            assert.equal(staleSummary, null);
+            assert.equal(missingRoutingPolicySummary, null);
+        });
+
+        it('uses current review-gate trust for reused independent code review plus fresh test review', () => {
+            writeWorkflowConfig(tmpDir, false);
+            writePassedLifecycle(eventsDir, TASK_ID);
+            writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
+                requested_depth: 2,
+                effective_depth: 2,
+                active_profile: 'balanced'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                mode: 'FULL_PATH',
+                changed_files: ['tests/node/cli/commands/gates-review-reuse.test.ts'],
+                metrics: { changed_lines_total: 32 },
+                required_reviews: { code: true, test: true }
+            });
+            const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+            const codeReviewContent = '# Code Review\nREVIEW PASSED';
+            const testReviewContent = '# Test Review\nTEST REVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', codeReviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-test.md', testReviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: preflightSha256,
+                review_context_sha256: '1'.repeat(64),
+                review_artifact_sha256: createHash('sha256').update(codeReviewContent, 'utf8').digest('hex'),
+                reused_existing_review: true,
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:historical-code-reviewer',
+                reviewer_fallback_reason: null,
+                trust_level: 'INDEPENDENT_AUDITED'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-test-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'test',
+                preflight_sha256: preflightSha256,
+                review_context_sha256: '2'.repeat(64),
+                review_artifact_sha256: createHash('sha256').update(testReviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:fresh-test-reviewer',
+                reviewer_fallback_reason: null,
+                trust_level: 'INDEPENDENT_AUDITED'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', {
+                task_id: TASK_ID,
+                status: 'PASSED',
+                outcome: 'PASS',
+                preflight_hash_sha256: preflightSha256,
+                required_reviews: { code: true, test: true },
+                verdicts: {
+                    code: 'REVIEW PASSED',
+                    test: 'TEST REVIEW PASSED'
+                },
+                review_checks: {
+                    code: makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:historical-code-reviewer'),
+                    test: makeIndependentReviewGateCheck('TEST REVIEW PASSED', 'agent:fresh-test-reviewer')
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.status, 'READY');
+            assert.equal(result.final_closeout.review_trust?.status, 'INDEPENDENT_AUDITED');
+            assert.match(formatTaskAuditSummaryText(result), /Review trust: INDEPENDENT_AUDITED via DELEGATED_SUBAGENT/i);
+        });
+
+        it('does not fall back to receipt-derived independent trust when current review gate is incomplete', () => {
+            writeWorkflowConfig(tmpDir, false);
+            writePassedLifecycle(eventsDir, TASK_ID);
+            writePreflight(reviewsDir, TASK_ID, {
+                mode: 'FULL_PATH',
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 16 },
+                required_reviews: { code: true }
+            });
+            const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+            const reviewContent = '# Code Review\nREVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'delegated_subagent',
+                    reviewer_session_id: 'agent:code-reviewer',
+                    fallback_reason: null,
+                    capability_level: 'delegation_required',
+                    delegation_required: true,
+                    expected_execution_mode: 'delegated_subagent',
+                    fallback_allowed: false,
+                    fallback_reason_required: false
+                }
+            });
+            const reviewContextSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`));
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: preflightSha256,
+                review_context_sha256: reviewContextSha256,
+                review_artifact_sha256: createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: 'agent:code-reviewer',
+                reviewer_fallback_reason: null,
+                reviewer_provenance: makeReviewerInvocationProvenance(
+                    TASK_ID,
+                    'code',
+                    'agent:code-reviewer',
+                    reviewContextSha256
+                ),
+                trust_level: 'INDEPENDENT_AUDITED'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', {
+                task_id: TASK_ID,
+                status: 'PASSED',
+                outcome: 'PASS',
+                preflight_hash_sha256: preflightSha256,
+                required_reviews: { code: true },
+                verdicts: { code: 'REVIEW PASSED' },
+                review_checks: {
+                    code: {
+                        ...makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:code-reviewer'),
+                        reviewer_routing_policy: undefined
+                    }
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.status, 'READY');
+            assert.equal(result.final_closeout.review_trust?.status, 'UNAVAILABLE');
+            assert.match(result.final_closeout.review_trust?.visible_summary_line || '', /incomplete or invalid/i);
+        });
+
+        it('does not promote asserted-local review gate checks to independent trust', () => {
+            const summary = readReviewTrustSummaryFromReviewGate(
+                {
+                    task_id: TASK_ID,
+                    status: 'PASSED',
+                    outcome: 'PASS',
+                    preflight_hash_sha256: 'a'.repeat(64),
+                    required_reviews: { code: true },
+                    review_checks: {
+                        code: {
+                            required: true,
+                            skipped_by_override: false,
+                            receipt_valid: true,
+                            reviewer_execution_mode: 'same_agent_fallback',
+                            reviewer_identity: `self:${TASK_ID}`,
+                            reviewer_fallback_reason: 'provider limitation',
+                            trust_level: 'LOCAL_ASSERTED'
+                        }
+                    }
+                },
+                { code: true },
+                TASK_ID,
+                'code',
+                'a'.repeat(64)
+            );
+
+            assert.equal(summary, null);
         });
 
         it('degrades review trust summary when required review trust evidence is incomplete or invalid', () => {
