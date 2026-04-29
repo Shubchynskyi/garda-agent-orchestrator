@@ -337,7 +337,7 @@ function rollbackAggregateTaskEntriesUnsafe(options: AggregateRollbackOptions): 
         try {
             fs.unlinkSync(tmpPath);
         } catch {
-            // already renamed or missing
+            // Already renamed or missing.
         }
     }
 }

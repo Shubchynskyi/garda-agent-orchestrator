@@ -1,6 +1,6 @@
 import * as gateHelpers from '../../../gates/helpers';
 
-// Re-exports from focused helper modules for backward compatibility
+// Keep this barrel while older imports migrate to the focused helper modules.
 export { readTaskQueueStatus, syncTaskQueueStatus, syncTaskQueueStatusDetailed, type TaskQueueStatusSyncResult } from './task-queue-sync';
 export { readRoutingDecision } from './routing-decision';
 export { resolveBudgetTokensFromForecast, resolveOutputFiltersPath } from './output-budget-filter';
