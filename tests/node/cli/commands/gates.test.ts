@@ -2664,6 +2664,23 @@ describe('cli/commands/gates', () => {
         assert.ok(launchArtifact.prepared_launch_event_sha256.length > 0);
         assert.equal(typeof launchArtifact.launch_tool, 'string');
         assert.ok(String(launchArtifact.launch_tool).length > 0);
+        assert.equal(
+            launchArtifact.local_trust_boundary,
+            'Local reviewer launch artifacts are convenience metadata for a real delegated reviewer launch; they are not non-forgeable proof without provider-owned recording.'
+        );
+        assert.equal(launchArtifact.after_launch_required_updates.evidence_type, 'delegated_reviewer_launch');
+        assert.equal(launchArtifact.after_launch_required_updates.attestation_state, 'launched');
+        assert.equal(launchArtifact.after_launch_required_updates.provider_invocation_id_or_controller_invocation_id, '<actual delegated reviewer invocation id>');
+        assert.deepEqual(launchArtifact.preserve_prepared_fields, [
+            'review_context_sha256',
+            'routing_event_sha256',
+            'reviewer_prompt_sha256',
+            'launch_binding_sha256',
+            'prepared_launch_event_sha256',
+            'prepared_launch_event_task_sequence'
+        ]);
+        assert.ok(String(launchArtifact.record_invocation_command).includes('gate record-review-invocation'));
+        assert.ok(String(launchArtifact.record_invocation_command).includes(`--reviewer-identity "${fixture.reviewerIdentity}"`));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
         const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
@@ -2676,6 +2693,10 @@ describe('cli/commands/gates', () => {
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('PreparedLaunchEventSha256:')));
         assert.ok(capturedLogs.some((line) => line.includes('AttestationState: prepared')));
+        assert.ok(capturedLogs.some((line) => line.includes('TrustBoundary: Local reviewer launch artifacts are convenience metadata')));
+        assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
+        assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2787,6 +2808,10 @@ describe('cli/commands/gates', () => {
 
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.ok(capturedErrors.some((line) => line.includes('prepared reviewer launch metadata cannot satisfy REVIEWER_INVOCATION_ATTESTED')));
+        assert.ok(capturedErrors.some((line) => line.includes('Completion hint:')));
+        assert.ok(capturedErrors.some((line) => line.includes("evidence_type='delegated_reviewer_launch'")));
+        assert.ok(capturedErrors.some((line) => line.includes('provider_invocation_id or controller_invocation_id=<actual delegated reviewer invocation id>')));
+        assert.ok(capturedErrors.some((line) => line.includes('not non-forgeable proof')));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
 
@@ -2972,6 +2997,8 @@ describe('cli/commands/gates', () => {
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.ok(capturedErrors.some((line) => line.includes('provider_invocation_id or controller_invocation_id is required')));
         assert.ok(capturedErrors.some((line) => line.includes('launched_at_utc is required')));
+        assert.ok(capturedErrors.some((line) => line.includes('Completion hint:')));
+        assert.ok(capturedErrors.some((line) => line.includes('fresh_context=true, isolated_context=true, or fork_context=false')));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
 

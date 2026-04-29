@@ -101,6 +101,18 @@ interface ReviewerLaunchArtifactValidationResult {
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
 const PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE = 'garda_prepare_reviewer_launch';
+const LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY = (
+    'Local reviewer launch artifacts are convenience metadata for a real delegated reviewer launch; ' +
+    'they are not non-forgeable proof without provider-owned recording.'
+);
+const REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS = Object.freeze([
+    "evidence_type='delegated_reviewer_launch'",
+    "attestation_state='launched'",
+    'attestation_source=<provider/controller source, not garda_prepare_reviewer_launch/manual/mock>',
+    'provider_invocation_id or controller_invocation_id=<actual delegated reviewer invocation id>',
+    'launched_at_utc=<ISO-8601 launch timestamp>',
+    'fresh_context=true, isolated_context=true, or fork_context=false'
+]);
 
 function stringSha256(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -124,6 +136,49 @@ function buildReviewerLaunchBindingSha256(options: {
         `routing_event_sha256=${options.routingEventSha256}`,
         `reviewer_prompt_sha256=${options.reviewerPromptSha256 || ''}`
     ].join('\n'));
+}
+
+function quoteReviewerLaunchCommandValue(value: string): string {
+    return `"${value.replace(/\\/g, '/').replace(/"/g, '\\"')}"`;
+}
+
+function toRepoRelativeCommandPath(repoRoot: string, artifactPath: string): string {
+    const relativePath = path.relative(repoRoot, artifactPath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        return normalizePath(artifactPath);
+    }
+    return normalizePath(relativePath);
+}
+
+function buildRecordReviewInvocationCommand(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextPath: string;
+    reviewerLaunchArtifactPath: string;
+}): string {
+    const commandParts = [
+        'node bin/garda.js gate record-review-invocation',
+        '--task-id', quoteReviewerLaunchCommandValue(options.taskId),
+        '--review-type', quoteReviewerLaunchCommandValue(options.reviewType),
+        '--review-context-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewContextPath)),
+        '--reviewer-execution-mode', quoteReviewerLaunchCommandValue(options.reviewerExecutionMode),
+        '--reviewer-identity', quoteReviewerLaunchCommandValue(options.reviewerIdentity),
+        '--reviewer-launch-artifact-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewerLaunchArtifactPath)),
+        '--repo-root', quoteReviewerLaunchCommandValue('.')
+    ];
+    return commandParts.join(' ');
+}
+
+function buildReviewerLaunchCompletionHint(): string {
+    return [
+        'Completion hint:',
+        '- Start from the prepared reviewer-launch artifact; do not search for or recompute its hashes.',
+        `- Required completed-launch updates: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}.`,
+        `- Trust boundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`
+    ].join('\n');
 }
 
 function resolveCanonicalReviewPaths(
@@ -1289,7 +1344,9 @@ function validateReviewerLaunchArtifact(options: {
     if (violations.length > 0) {
         throw new Error(
             'Reviewer launch artifact is not eligible for invocation attestation:\n' +
-            violations.map((violation) => `- ${violation}`).join('\n')
+            violations.map((violation) => `- ${violation}`).join('\n') +
+            '\n\n' +
+            buildReviewerLaunchCompletionHint()
         );
     }
 
@@ -1843,6 +1900,15 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256
     });
+    const recordInvocationCommand = buildRecordReviewInvocationCommand({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewContextPath: contextPath,
+        reviewerLaunchArtifactPath: launchArtifactPath
+    });
     const preparedArtifact = {
         schema_version: 1,
         evidence_type: PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
@@ -1863,13 +1929,34 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         launch_instruction: providerLaunch.launchInstruction,
         fresh_context_required: true,
         isolated_context_required: true,
+        local_trust_boundary: LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY,
+        after_launch_required_updates: {
+            evidence_type: COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
+            attestation_state: 'launched',
+            attestation_source: '<provider/controller source, not garda_prepare_reviewer_launch/manual/mock>',
+            launch_tool: providerLaunch.launchTool,
+            provider_invocation_id_or_controller_invocation_id: '<actual delegated reviewer invocation id>',
+            launched_at_utc: '<ISO-8601 launch timestamp>',
+            fresh_context: true,
+            isolated_context: true,
+            fork_context: false
+        },
+        preserve_prepared_fields: [
+            'review_context_sha256',
+            'routing_event_sha256',
+            'reviewer_prompt_sha256',
+            'launch_binding_sha256',
+            'prepared_launch_event_sha256',
+            'prepared_launch_event_task_sequence'
+        ],
+        record_invocation_command: recordInvocationCommand,
         attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
         generated_by: 'garda prepare-reviewer-launch',
         generated_at_utc: new Date().toISOString(),
         next_action: (
-            'Launch a fresh delegated reviewer with the reviewer_prompt_path. ' +
-            'Prepared metadata is not invocation proof. After launch, record-review-invocation requires ' +
-            'completed launch metadata from the actual delegated reviewer launch.'
+            'Launch a fresh delegated reviewer with the reviewer_prompt_path, then update only the ' +
+            'after_launch_required_updates fields while preserving the prepared hashes. ' +
+            'Run record_invocation_command after the real launch is recorded in this artifact.'
         )
     };
     writeReviewArtifactJson(launchArtifactPath, preparedArtifact);
@@ -1930,7 +2017,11 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log('AttestationState: prepared');
     console.log(`LaunchTool: ${providerLaunch.launchTool}`);
     console.log(`LaunchInstruction: ${providerLaunch.launchInstruction}`);
-    console.log('NextAction: launch the delegated reviewer, then record completed launch metadata with record-review-invocation.');
+    console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
+    console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
+    console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
+    console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
+    console.log('NextAction: launch the delegated reviewer, update after_launch_required_updates, then run RecordInvocationCommand.');
 }
 
 export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<void> {
