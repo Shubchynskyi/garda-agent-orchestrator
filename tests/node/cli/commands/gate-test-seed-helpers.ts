@@ -17,6 +17,7 @@ import {
     runLoadRulePackCommand
 } from '../../../../src/cli/commands/gates';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
+import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash
@@ -344,13 +345,9 @@ export function writeCompilePassEvidence(repoRoot: string, taskId: string, prefl
     const changedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
-    const changedLinesTotal = Number.parseInt(String((preflight.metrics as Record<string, unknown> | undefined)?.changed_lines_total || 0), 10) || 0;
     const detectionSource = String(preflight.detection_source || 'explicit_changed_files').trim() || 'explicit_changed_files';
     const includeUntracked = preflight.include_untracked !== false;
-    const changedFilesSha256 = crypto.createHash('sha256').update(changedFiles.join('\n')).digest('hex');
-    const scopeSha256 = crypto.createHash('sha256')
-        .update(`${detectionSource}|false|${includeUntracked}|${changedFiles.length}|${changedLinesTotal}|${changedFilesSha256}`)
-        .digest('hex');
+    const workspaceSnapshot = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, changedFiles);
     const preflightHashSha256 = crypto.createHash('sha256').update(preflightText).digest('hex');
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-compile-gate.json`), JSON.stringify({
         task_id: taskId,
@@ -361,11 +358,11 @@ export function writeCompilePassEvidence(repoRoot: string, taskId: string, prefl
         preflight_hash_sha256: preflightHashSha256,
         scope_detection_source: detectionSource,
         scope_include_untracked: includeUntracked,
-        scope_changed_files: changedFiles,
-        scope_changed_files_count: changedFiles.length,
-        scope_changed_lines_total: changedLinesTotal,
-        scope_changed_files_sha256: changedFilesSha256,
-        scope_sha256: scopeSha256
+        scope_changed_files: workspaceSnapshot.changed_files,
+        scope_changed_files_count: workspaceSnapshot.changed_files_count,
+        scope_changed_lines_total: workspaceSnapshot.changed_lines_total,
+        scope_changed_files_sha256: workspaceSnapshot.changed_files_sha256,
+        scope_sha256: workspaceSnapshot.scope_sha256
     }, null, 2), 'utf8');
     appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', {
         preflight_path: preflightPath.replace(/\\/g, '/'),

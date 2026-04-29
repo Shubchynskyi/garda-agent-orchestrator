@@ -45,8 +45,9 @@ export function extractTaskResetTaskIdHint(argv: string[]): string {
 
 export function buildTaskResetGuardedCommandHelp(taskId: string = TASK_RESET_PLACEHOLDER): string {
     return [
-        `  ${PRIMARY_CLI_NAME} gate task-reset --task-id "${taskId}" --dry-run --repo-root "."`,
-        `  ${PRIMARY_CLI_NAME} gate task-reset --task-id "${taskId}" --confirm --repo-root "."`
+        `  ${PRIMARY_CLI_NAME} gate task-reset --task-id "${taskId}" --reopen --dry-run --repo-root "."`,
+        `  ${PRIMARY_CLI_NAME} gate task-reset --task-id "${taskId}" --reopen --confirm --repo-root "."`,
+        `  ${PRIMARY_CLI_NAME} gate task-reset --task-id "${taskId}" --discard --confirm --repo-root "."`
     ].join('\n');
 }
 

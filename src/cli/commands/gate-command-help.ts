@@ -32,11 +32,15 @@ const BOOLEAN_GATE_OPTIONS = new Set([
     '--behavior-changed',
     '--changelog-updated',
     '--compact',
+    '--confirm',
+    '--discard',
+    '--dry-run',
     '--emit-metrics',
     '--hunk-level',
     '--include-details',
     '--include-untracked',
     '--orchestrator-work',
+    '--reopen',
     '--review-output-stdin',
     '--sensitive-reviewed',
     '--sensitive-scope-reviewed',
@@ -367,10 +371,12 @@ function buildLifecycleGateHelpEntries(
         },
         'task-reset': {
             ...createGateHelpEntry(
-                'Clear all task runtime artifacts and mark the task DONE by explicit operator request. Requires --dry-run or --confirm guard.',
+                'Clear task runtime artifacts and explicitly choose whether the task returns to TODO for rerun or ends as DONE terminal discard. Requires --dry-run or --confirm guard.',
                 [
-                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --dry-run --repo-root "."`,
-                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --confirm --repo-root "."`
+                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --reopen --dry-run --repo-root "."`,
+                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --reopen --confirm --repo-root "."`,
+                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --discard --confirm --repo-root "."`,
+                    `${cliPrefix} gate task-reset --task-id "${TASK_ID_PLACEHOLDER}" --to-status "TODO" --confirm --repo-root "."`
                 ],
                 true
             )

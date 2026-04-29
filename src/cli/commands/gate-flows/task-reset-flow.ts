@@ -11,8 +11,11 @@ import { readTaskQueueStatus, syncTaskQueueStatusDetailed } from './task-queue-s
 export type TaskResetOutcome =
     | 'RESET_COMPLETE'
     | 'ALREADY_RESET'
+    | 'TARGET_STATUS_REQUIRED'
     | 'CONFIRMATION_REQUIRED'
     | 'DRY_RUN';
+
+export type TaskResetTargetStatus = 'TODO' | 'DONE';
 
 export interface TaskResetArtifact {
     path: string;
@@ -38,6 +41,7 @@ export interface TaskResetCommandResult {
     outcome: TaskResetOutcome;
     taskId: string;
     previousStatus: string | null;
+    targetStatus: TaskResetTargetStatus | null;
     dryRun: boolean;
     artifacts: TaskResetArtifact[];
     aggregateLinesRemoved: number;
@@ -51,6 +55,9 @@ export interface RunTaskResetOptions {
     taskId?: unknown;
     dryRun?: boolean;
     confirm?: boolean;
+    toStatus?: unknown;
+    reopen?: boolean;
+    discard?: boolean;
     repoRoot?: string;
     eventsRoot?: string;
     reviewsRoot?: string;
@@ -163,6 +170,42 @@ function resolveReviewsRoot(repoRoot: string, reviewsRootOption: string | undefi
         : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
 }
 
+function normalizeTargetStatus(value: unknown): TaskResetTargetStatus | null {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (!normalized) {
+        return null;
+    }
+    if (normalized === 'TODO' || normalized === 'DONE') {
+        return normalized;
+    }
+    throw new Error(`Invalid task-reset target status '${String(value)}'. Expected TODO or DONE.`);
+}
+
+function resolveTaskResetTargetStatus(options: RunTaskResetOptions): TaskResetTargetStatus | null {
+    const candidates: Array<{ source: string; status: TaskResetTargetStatus }> = [];
+    if (options.reopen === true) {
+        candidates.push({ source: '--reopen', status: 'TODO' });
+    }
+    if (options.discard === true) {
+        candidates.push({ source: '--discard', status: 'DONE' });
+    }
+    if (options.toStatus !== undefined) {
+        const status = normalizeTargetStatus(options.toStatus);
+        if (status) {
+            candidates.push({ source: '--to-status', status });
+        }
+    }
+
+    const uniqueStatuses = [...new Set(candidates.map((candidate) => candidate.status))];
+    if (uniqueStatuses.length > 1) {
+        throw new Error(
+            `Conflicting task-reset target status flags: ${candidates.map((candidate) => candidate.source).join(', ')}. ` +
+            'Use exactly one of --reopen, --discard, or --to-status TODO|DONE.'
+        );
+    }
+    return uniqueStatuses[0] ?? null;
+}
+
 export function resolveTaskResetScope(options: {
     taskId: string;
     repoRoot: string;
@@ -230,6 +273,7 @@ function buildOutputLines(
     outcome: TaskResetOutcome,
     taskId: string,
     previousStatus: string | null,
+    targetStatus: TaskResetTargetStatus | null,
     dryRun: boolean,
     artifacts: TaskResetArtifact[],
     aggregateLinesRemoved: number,
@@ -242,14 +286,20 @@ function buildOutputLines(
     if (previousStatus) {
         lines.push(`PreviousStatus: ${previousStatus}`);
     }
+    if (targetStatus) {
+        lines.push(`TargetStatus: ${targetStatus}`);
+    }
     if (dryRun) {
         lines.push('Mode: DRY_RUN');
+    }
+    if (outcome === 'TARGET_STATUS_REQUIRED') {
+        lines.push('Action: Choose reset-for-rerun with --reopen/--to-status TODO, or terminal discard with --discard/--to-status DONE.');
     }
     if (outcome === 'CONFIRMATION_REQUIRED') {
         lines.push('Action: Pass --confirm to execute the reset or --dry-run to preview.');
     }
     if (outcome === 'ALREADY_RESET') {
-        lines.push('Note: Task already DONE with no remaining artifacts.');
+        lines.push(`Note: Task already ${targetStatus ?? 'at target status'} with no remaining artifacts.`);
     }
     if (artifacts.length > 0) {
         lines.push(`ArtifactsFound: ${artifacts.length}`);
@@ -288,16 +338,39 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
 
     const dryRun = Boolean(options.dryRun);
     const confirm = Boolean(options.confirm);
+    const targetStatus = resolveTaskResetTargetStatus(options);
 
-    if (scope.previousStatus === 'DONE' && !scope.hasAnyArtifacts) {
+    if (!targetStatus) {
+        const outputLines = buildOutputLines(
+            'TARGET_STATUS_REQUIRED', taskId, scope.previousStatus,
+            null, dryRun, scope.artifacts, scope.aggregateLineCount,
+            null, null
+        );
+        return {
+            outcome: 'TARGET_STATUS_REQUIRED',
+            taskId,
+            previousStatus: scope.previousStatus,
+            targetStatus: null,
+            dryRun,
+            artifacts: scope.artifacts,
+            aggregateLinesRemoved: 0,
+            resetReportPath: null,
+            statusSyncOutcome: null,
+            outputLines,
+            exitCode: 1
+        };
+    }
+
+    if (scope.previousStatus === targetStatus && !scope.hasAnyArtifacts) {
         const outputLines = buildOutputLines(
             'ALREADY_RESET', taskId, scope.previousStatus,
-            false, [], 0, null, null
+            targetStatus, false, [], 0, null, null
         );
         return {
             outcome: 'ALREADY_RESET',
             taskId,
             previousStatus: scope.previousStatus,
+            targetStatus,
             dryRun: false,
             artifacts: [],
             aggregateLinesRemoved: 0,
@@ -313,6 +386,7 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
             'TASK_RESET_CONFIRMATION_REQUIRED',
             `TaskId: ${taskId}`,
             `PreviousStatus: ${scope.previousStatus ?? 'unknown'}`,
+            `TargetStatus: ${targetStatus}`,
             `ArtifactsFound: ${scope.artifacts.length}`,
             `AggregateLogLines: ${scope.aggregateLineCount}`,
             'Action: Pass --confirm to execute the reset or --dry-run to preview.'
@@ -321,6 +395,7 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
             outcome: 'CONFIRMATION_REQUIRED',
             taskId,
             previousStatus: scope.previousStatus,
+            targetStatus,
             dryRun: false,
             artifacts: scope.artifacts,
             aggregateLinesRemoved: 0,
@@ -334,13 +409,14 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
     if (dryRun) {
         const outputLines = buildOutputLines(
             'DRY_RUN', taskId, scope.previousStatus,
-            true, scope.artifacts, scope.aggregateLineCount,
+            targetStatus, true, scope.artifacts, scope.aggregateLineCount,
             null, null
         );
         return {
             outcome: 'DRY_RUN',
             taskId,
             previousStatus: scope.previousStatus,
+            targetStatus,
             dryRun: true,
             artifacts: scope.artifacts,
             aggregateLinesRemoved: scope.aggregateLineCount,
@@ -358,6 +434,7 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
         event_source: 'task-reset',
         task_id: taskId,
         previous_status: scope.previousStatus,
+        target_status: targetStatus,
         removed_artifacts: scope.artifacts.map((a) => gateHelpers.normalizePath(a.path)),
         aggregate_lines_removed: scope.aggregateLineCount,
         reset_by: 'operator'
@@ -398,18 +475,18 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
         // Non-fatal: timeline reconciliation failure does not block reset
     }
 
-    // Mark task DONE in TASK.md
-    const syncResult = syncTaskQueueStatusDetailed(repoRoot, taskId, 'DONE');
+    const syncResult = syncTaskQueueStatusDetailed(repoRoot, taskId, targetStatus);
 
     const outputLines = buildOutputLines(
         'RESET_COMPLETE', taskId, scope.previousStatus,
-        false, scope.artifacts, aggregateLinesRemoved,
+        targetStatus, false, scope.artifacts, aggregateLinesRemoved,
         resetReportPath, syncResult.outcome
     );
     return {
         outcome: 'RESET_COMPLETE',
         taskId,
         previousStatus: scope.previousStatus,
+        targetStatus,
         dryRun: false,
         artifacts: scope.artifacts,
         aggregateLinesRemoved,

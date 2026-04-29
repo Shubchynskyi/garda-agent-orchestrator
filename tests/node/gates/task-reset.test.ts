@@ -243,10 +243,24 @@ describe('runTaskResetCommand — ALREADY_RESET', () => {
     it('returns ALREADY_RESET when task is DONE with no artifacts', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ taskStatus: 'DONE' });
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'ALREADY_RESET');
+            assert.equal(result.targetStatus, 'DONE');
             assert.equal(result.exitCode, 0);
             assert.ok(result.outputLines.some((l) => l.includes('ALREADY_RESET')));
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('returns ALREADY_RESET when task is TODO with no artifacts and reopen is requested', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ taskStatus: 'TODO' });
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, reopen: true });
+            assert.equal(result.outcome, 'ALREADY_RESET');
+            assert.equal(result.targetStatus, 'TODO');
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.some((l) => l.includes('TargetStatus: TODO')));
         } finally {
             cleanup(repoRoot);
         }
@@ -258,7 +272,7 @@ describe('runTaskResetCommand — ALREADY_RESET', () => {
             hasEventsFile: true
         });
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');
         } finally {
             cleanup(repoRoot);
@@ -267,15 +281,55 @@ describe('runTaskResetCommand — ALREADY_RESET', () => {
 });
 
 // ---------------------------------------------------------------------------
-// runTaskResetCommand — CONFIRMATION_REQUIRED
+// runTaskResetCommand — target status and confirmation guards
 // ---------------------------------------------------------------------------
 
 describe('runTaskResetCommand — CONFIRMATION_REQUIRED', () => {
+    it('returns TARGET_STATUS_REQUIRED when --confirm is ambiguous', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasEventsFile: true });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            assert.equal(result.outcome, 'TARGET_STATUS_REQUIRED');
+            assert.equal(result.exitCode, 1);
+            assert.equal(result.targetStatus, null);
+            assert.ok(result.outputLines.some((l) => l.includes('--reopen')));
+            assert.ok(fs.existsSync(eventsFile), 'ambiguous confirm must not delete files');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('throws when target status flags conflict', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasEventsFile: true });
+        try {
+            assert.throws(
+                () => runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, reopen: true, discard: true }),
+                /Conflicting task-reset target status flags/
+            );
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('throws when --to-status is not TODO or DONE', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasEventsFile: true });
+        try {
+            assert.throws(
+                () => runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, toStatus: 'IN_PROGRESS' }),
+                /Invalid task-reset target status/
+            );
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
     it('returns CONFIRMATION_REQUIRED when neither --dry-run nor --confirm is given', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasEventsFile: true });
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, reopen: true });
             assert.equal(result.outcome, 'CONFIRMATION_REQUIRED');
+            assert.equal(result.targetStatus, 'TODO');
             assert.equal(result.exitCode, 0);
             assert.ok(result.outputLines.some((l) => l.includes('--confirm')));
         } finally {
@@ -290,7 +344,7 @@ describe('runTaskResetCommand — CONFIRMATION_REQUIRED', () => {
         });
         const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
         try {
-            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot });
+            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, reopen: true });
             assert.ok(fs.existsSync(eventsFile), 'events file should NOT be deleted in confirmation-required mode');
         } finally {
             cleanup(repoRoot);
@@ -311,10 +365,12 @@ describe('runTaskResetCommand — DRY_RUN', () => {
         });
         const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, dryRun: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, dryRun: true, reopen: true });
             assert.equal(result.outcome, 'DRY_RUN');
             assert.equal(result.exitCode, 0);
             assert.ok(result.dryRun);
+            assert.equal(result.targetStatus, 'TODO');
+            assert.ok(result.outputLines.some((l) => l.includes('TargetStatus: TODO')));
             assert.ok(result.artifacts.length > 0);
             assert.ok(result.aggregateLinesRemoved > 0);
             // No files deleted
@@ -328,7 +384,7 @@ describe('runTaskResetCommand — DRY_RUN', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasEventsFile: true });
         const resetReportPath = path.join(reviewsRoot, `${taskId}-reset-report.json`);
         try {
-            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, dryRun: true });
+            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, dryRun: true, discard: true });
             assert.ok(!fs.existsSync(resetReportPath), 'reset report should NOT be written in dry-run');
         } finally {
             cleanup(repoRoot);
@@ -345,8 +401,9 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasEventsFile: true });
         const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.equal(result.targetStatus, 'DONE');
             assert.equal(result.exitCode, 0);
             assert.ok(!fs.existsSync(eventsFile), 'events file should be deleted');
         } finally {
@@ -358,7 +415,7 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasReviewArtifact: true });
         const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');
             assert.ok(!fs.existsSync(preflightPath), 'preflight artifact should be deleted');
         } finally {
@@ -370,7 +427,7 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasAggregateLines: true });
         const aggregatePath = path.join(eventsRoot, 'all-tasks.jsonl');
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');
             assert.ok(result.aggregateLinesRemoved > 0);
             const remaining = fs.readFileSync(aggregatePath, 'utf8');
@@ -385,7 +442,7 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasReviewTempDir: true });
         const reviewTempDir = path.join(repoRoot, '.review-temp', taskId);
         try {
-            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.ok(!fs.existsSync(reviewTempDir), 'review temp dir should be deleted');
         } finally {
             cleanup(repoRoot);
@@ -396,13 +453,15 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasEventsFile: true });
         const resetReportPath = path.join(reviewsRoot, `${taskId}-reset-report.json`);
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');
             assert.ok(fs.existsSync(resetReportPath), 'audit breadcrumb should be written');
             const report = JSON.parse(fs.readFileSync(resetReportPath, 'utf8')) as Record<string, unknown>;
             assert.equal(report.task_id, taskId);
             assert.equal(report.event_source, 'task-reset');
             assert.equal(report.reset_by, 'operator');
+            assert.equal(report.previous_status, 'IN_PROGRESS');
+            assert.equal(report.target_status, 'DONE');
             assert.ok(typeof report.timestamp_utc === 'string');
         } finally {
             cleanup(repoRoot);
@@ -413,21 +472,22 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasReviewArtifact: true });
         const resetReportPath = path.join(reviewsRoot, `${taskId}-reset-report.json`);
         try {
-            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.ok(fs.existsSync(resetReportPath), 'reset report (breadcrumb) must survive deletion phase');
         } finally {
             cleanup(repoRoot);
         }
     });
 
-    it('updates TASK.md status to DONE', () => {
+    it('terminal discard updates TASK.md status to DONE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
             taskStatus: 'IN_PROGRESS',
             hasEventsFile: true
         });
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.equal(result.targetStatus, 'DONE');
             assert.ok(result.statusSyncOutcome === 'updated' || result.statusSyncOutcome === 'already_synced');
             const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
             assert.ok(taskMd.includes('DONE'), 'TASK.md should have DONE status');
@@ -436,10 +496,30 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         }
     });
 
+    it('reset-for-rerun updates TASK.md status to TODO', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            taskStatus: 'IN_REVIEW',
+            hasEventsFile: true,
+            hasReviewArtifact: true
+        });
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, reopen: true });
+            assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.equal(result.previousStatus, 'IN_REVIEW');
+            assert.equal(result.targetStatus, 'TODO');
+            const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+            assert.ok(taskMd.includes('TODO'), 'TASK.md should have TODO status');
+            const report = JSON.parse(fs.readFileSync(String(result.resetReportPath), 'utf8')) as Record<string, unknown>;
+            assert.equal(report.target_status, 'TODO');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
     it('is idempotent when no artifacts exist (no files to delete)', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ taskStatus: 'IN_PROGRESS' });
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');
             assert.equal(result.artifacts.length, 0);
             assert.equal(result.aggregateLinesRemoved, 0);
@@ -452,7 +532,7 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasAggregateLines: true });
         const aggregatePath = path.join(eventsRoot, 'all-tasks.jsonl');
         try {
-            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             const remaining = fs.readFileSync(aggregatePath, 'utf8');
             const lines = remaining.split('\n').filter((l) => l.trim());
             assert.equal(lines.length, 1, 'only T-999 line should remain');
@@ -468,7 +548,7 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
             hasEventsFile: true
         });
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.previousStatus, 'IN_REVIEW');
         } finally {
             cleanup(repoRoot);
@@ -483,7 +563,8 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
                 repoRoot,
                 eventsRoot,
                 reviewsRoot,
-                confirm: true
+                confirm: true,
+                discard: true
             });
             assert.equal(result.taskId, 'T-001');
             assert.equal(result.outcome, 'RESET_COMPLETE');
@@ -512,9 +593,10 @@ describe('runTaskResetCommand — full artifact cleanup', () => {
         const reviewTempDir = path.join(repoRoot, '.review-temp', taskId);
 
         try {
-            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
 
             assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.equal(result.targetStatus, 'DONE');
             assert.ok(!fs.existsSync(eventsFile), 'events file gone');
             assert.ok(!fs.existsSync(preflightPath), 'preflight artifact gone');
             assert.ok(!fs.existsSync(reviewTempDir), 'review temp dir gone');
