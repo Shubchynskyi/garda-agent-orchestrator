@@ -14,6 +14,7 @@ import {
 } from './task-events-summary';
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
 import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
+import { getClassificationConfig, isDocumentationLikePath, isRuntimeCodeLikePath } from './classify-change';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
 import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
@@ -447,6 +448,54 @@ function readPreflightSummary(reviewsRoot: string, taskId: string): PreflightSum
     };
 }
 
+function buildAuditedChangedFiles(
+    repoRoot: string,
+    preflightChangedFiles: string[],
+    docsSummary: FinalCloseoutDocsSummary
+): { changedFiles: string[]; violations: string[] } {
+    const changedFiles: string[] = [];
+    const seen = new Set<string>();
+    const preflightPathSet = new Set(preflightChangedFiles.map((entry) => toPosix(String(entry || '').trim())).filter(Boolean));
+    const classificationConfig = getClassificationConfig(repoRoot);
+    const violations: string[] = [];
+    const appendPath = (value: unknown): void => {
+        const normalized = toPosix(String(value || '').trim());
+        if (!normalized || seen.has(normalized)) {
+            return;
+        }
+        seen.add(normalized);
+        changedFiles.push(normalized);
+    };
+
+    for (const changedFile of preflightChangedFiles) {
+        appendPath(changedFile);
+    }
+    if (docsSummary.decision === 'DOCS_UPDATED') {
+        for (const docsUpdatedPath of docsSummary.docs_updated) {
+            const normalized = toPosix(String(docsUpdatedPath || '').trim());
+            if (!normalized || preflightPathSet.has(normalized)) {
+                appendPath(normalized);
+                continue;
+            }
+            const isAcceptedDocPath = isDocumentationLikePath(normalized)
+                && !isRuntimeCodeLikePath(
+                    normalized,
+                    classificationConfig.code_like_regexes,
+                    classificationConfig.runtime_roots
+                );
+            if (isAcceptedDocPath) {
+                appendPath(normalized);
+                continue;
+            }
+            violations.push(
+                `Doc impact docs_updated contains non-documentation path '${normalized}' that is not in preflight changed_files. ` +
+                'Refresh preflight for implementation drift or remove the path from docs_updated.'
+            );
+        }
+    }
+    return { changedFiles, violations };
+}
+
 function readProfileReviewDecisions(
     taskMode: Record<string, unknown> | null,
     preflight: Record<string, unknown> | null,
@@ -797,14 +846,18 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     };
 
     const preflightSummary = readPreflightSummary(reviewsRoot, safeTaskId);
-    const changedFiles = preflightSummary.changedFiles;
-    const changedFilesCount = preflightSummary.changedFilesCount;
-    const changedLinesTotal = preflightSummary.changedLinesTotal;
     const requiredReviews = preflightSummary.requiredReviews;
     const scopeCategory = preflightSummary.scopeCategory;
     const pathMode = preflightSummary.pathMode;
     const preflightPath = preflightSummary.path;
     const preflight = preflightSummary.raw;
+    const docImpactPath = path.join(reviewsRoot, `${safeTaskId}-doc-impact.json`);
+    const docImpact = safeReadJson(docImpactPath);
+    const docsSummary = readDocImpactSummary(docImpact);
+    const auditedChangedFiles = buildAuditedChangedFiles(repoRoot, preflightSummary.changedFiles, docsSummary);
+    const changedFiles = auditedChangedFiles.changedFiles;
+    const changedFilesCount = changedFiles.length;
+    const changedLinesTotal = preflightSummary.changedLinesTotal;
     const timelineReviewExecutionPolicyMode = preflight
         ? null
         : readReviewExecutionPolicyModeFromCurrentCycleTimeline(events, currentCycle, repoRoot);
@@ -815,6 +868,10 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
     const profileReviewDecisions = readProfileReviewDecisions(taskMode, preflight, scopeCategory);
+    blockers.push(...auditedChangedFiles.violations.map((reason) => ({
+        gate: 'doc-impact-gate',
+        reason
+    })));
     blockers.push(...collectRequiredReviewBlockers(requiredReviews, safeTaskId, reviewsRoot, events, currentCycle));
     const tokenEconomy = buildTokenEconomySummary(safeTaskId, events, repoRoot, reviewsRoot);
     const evidence = collectEvidenceArtifacts(reviewsRoot, safeTaskId, taskEventFile);
@@ -962,9 +1019,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         preflightSha256,
         reviewContextPaths
     );
-    const docImpactPath = path.join(reviewsRoot, `${safeTaskId}-doc-impact.json`);
-    const docImpact = safeReadJson(docImpactPath);
-    const docsSummary = readDocImpactSummary(docImpact);
     const optionalSkillsPath = path.join(reviewsRoot, `${safeTaskId}-optional-skill-selection.json`);
     const bundleRoot = path.dirname(path.dirname(reviewsRoot));
     const taskEventsTimelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, safeTaskId, taskEventFile);

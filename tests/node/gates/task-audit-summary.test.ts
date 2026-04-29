@@ -364,6 +364,106 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
         });
 
+        it('includes doc-impact docs_updated paths in final changed-files summaries', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/doc-impact.ts'],
+                metrics: { changed_lines_total: 7 },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'DOCS_UPDATED',
+                behavior_changed: true,
+                changelog_updated: true,
+                docs_updated: [
+                    'docs/cli-reference.md',
+                    'CHANGELOG.md',
+                    'src/gates/doc-impact.ts'
+                ]
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const rendered = formatTaskAuditSummaryText(result);
+
+            assert.deepEqual(result.changed_files, [
+                'src/gates/doc-impact.ts',
+                'docs/cli-reference.md',
+                'CHANGELOG.md'
+            ]);
+            assert.equal(result.changed_files_count, 3);
+            assert.equal(result.final_closeout.implementation_summary.changed_files_count, 3);
+            assert.deepEqual(result.final_closeout.docs.docs_updated, [
+                'docs/cli-reference.md',
+                'CHANGELOG.md',
+                'src/gates/doc-impact.ts'
+            ]);
+            assert.ok(rendered.includes('ChangedFiles: 3 (7 lines)'));
+            assert.ok(rendered.includes('  - docs/cli-reference.md'));
+            assert.ok(rendered.includes('  - CHANGELOG.md'));
+        });
+
+        it('blocks final changed-files summaries when docs_updated declares new non-doc paths', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/doc-impact.ts'],
+                metrics: { changed_lines_total: 7 },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'DOCS_UPDATED',
+                behavior_changed: true,
+                changelog_updated: true,
+                docs_updated: [
+                    'docs/cli-reference.md',
+                    'src/new-runtime.ts'
+                ]
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'BLOCKED');
+            assert.equal(result.final_report_contract.status, 'NOT_READY');
+            assert.deepEqual(result.changed_files, [
+                'src/gates/doc-impact.ts',
+                'docs/cli-reference.md'
+            ]);
+            assert.equal(result.changed_files.includes('src/new-runtime.ts'), false);
+            assert.ok(result.blockers.some((blocker) =>
+                blocker.gate === 'doc-impact-gate'
+                && blocker.reason.includes("docs_updated contains non-documentation path 'src/new-runtime.ts'")
+            ));
+        });
+
         it('treats downstream gate passes as stale after a newer compile cycle begins', () => {
             const compileOne = '2026-01-01T00:00:01.000Z';
             const reviewPhase = '2026-01-01T00:00:02.000Z';
