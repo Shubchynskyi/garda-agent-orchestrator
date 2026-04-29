@@ -684,6 +684,75 @@ export function formatAcceptedReviewVerdictTokens(tokens: ReviewVerdictTokenSet)
         `accepted FAIL tokens: ${formatReviewVerdictTokenList(tokens.failTokens)}.`;
 }
 
+function normalizeReviewVerdictCandidateLine(line: string): string {
+    let normalized = line.trim();
+    normalized = normalized.replace(/^[-*+]\s+/, '');
+    if (/^`.+`$/.test(normalized)) {
+        normalized = normalized.slice(1, -1).trim();
+    }
+    return normalized;
+}
+
+function matchReviewVerdictCandidateLine(
+    line: string,
+    tokenSet: ReviewVerdictTokenSet
+): ReviewVerdictTokenMatch | null {
+    if (tokenSet.canonicalFailToken) {
+        for (const failToken of tokenSet.failTokens) {
+            if (line === failToken) {
+                return {
+                    canonicalToken: tokenSet.canonicalFailToken,
+                    matchedToken: failToken,
+                    outcome: 'fail'
+                };
+            }
+        }
+    }
+    if (tokenSet.canonicalPassToken) {
+        for (const passToken of tokenSet.passTokens) {
+            if (line === passToken) {
+                return {
+                    canonicalToken: tokenSet.canonicalPassToken,
+                    matchedToken: passToken,
+                    outcome: 'pass'
+                };
+            }
+        }
+    }
+    return null;
+}
+
+export function extractReviewVerdictSectionTokenMatch(
+    content: unknown,
+    tokenSet: ReviewVerdictTokenSet
+): ReviewVerdictTokenMatch | null {
+    const reviewText = String(content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (!reviewText.trim()) {
+        return null;
+    }
+
+    const candidateLines = reviewText
+        .split('\n')
+        .map((line) => normalizeReviewVerdictCandidateLine(line))
+        .filter((line) => line.length > 0);
+    const verdictHeadingIndex = candidateLines.findIndex((line) => /^##+\s+verdict$/i.test(line));
+    if (verdictHeadingIndex < 0) {
+        return null;
+    }
+
+    for (let index = verdictHeadingIndex + 1; index < candidateLines.length; index += 1) {
+        const line = candidateLines[index];
+        const match = matchReviewVerdictCandidateLine(line, tokenSet);
+        if (match) {
+            return match;
+        }
+        if (/^##+\s+/.test(line)) {
+            break;
+        }
+    }
+    return null;
+}
+
 export function extractReviewVerdictTokenMatch(
     content: unknown,
     tokenSet: ReviewVerdictTokenSet
@@ -693,49 +762,15 @@ export function extractReviewVerdictTokenMatch(
         return null;
     }
 
-    const normalizeCandidateLine = (line: string): string => {
-        let normalized = line.trim();
-        normalized = normalized.replace(/^[-*+]\s+/, '');
-        if (/^`.+`$/.test(normalized)) {
-            normalized = normalized.slice(1, -1).trim();
-        }
-        return normalized;
-    };
-    const matchCandidateLine = (line: string): ReviewVerdictTokenMatch | null => {
-        if (tokenSet.canonicalFailToken) {
-            for (const failToken of tokenSet.failTokens) {
-                if (line === failToken) {
-                    return {
-                        canonicalToken: tokenSet.canonicalFailToken,
-                        matchedToken: failToken,
-                        outcome: 'fail'
-                    };
-                }
-            }
-        }
-        if (tokenSet.canonicalPassToken) {
-            for (const passToken of tokenSet.passTokens) {
-                if (line === passToken) {
-                    return {
-                        canonicalToken: tokenSet.canonicalPassToken,
-                        matchedToken: passToken,
-                        outcome: 'pass'
-                    };
-                }
-            }
-        }
-        return null;
-    };
-
     const candidateLines = reviewText
         .split('\n')
-        .map((line) => normalizeCandidateLine(line))
+        .map((line) => normalizeReviewVerdictCandidateLine(line))
         .filter((line) => line.length > 0);
     const verdictHeadingIndex = candidateLines.findIndex((line) => /^##+\s+verdict$/i.test(line));
     if (verdictHeadingIndex >= 0) {
         for (let index = verdictHeadingIndex + 1; index < candidateLines.length; index += 1) {
             const line = candidateLines[index];
-            const match = matchCandidateLine(line);
+            const match = matchReviewVerdictCandidateLine(line, tokenSet);
             if (match) {
                 return match;
             }
@@ -746,7 +781,7 @@ export function extractReviewVerdictTokenMatch(
     }
 
     for (const line of candidateLines) {
-        const match = matchCandidateLine(line);
+        const match = matchReviewVerdictCandidateLine(line, tokenSet);
         if (match) {
             return match;
         }

@@ -13,7 +13,7 @@ import {
 import {
     buildReviewReceipt,
     buildReviewVerdictTokenSet,
-    extractReviewVerdictTokenMatch,
+    extractReviewVerdictSectionTokenMatch,
     normalizeReviewerExecutionMode,
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt,
@@ -187,7 +187,7 @@ function getReviewPassVerdict(reviewType: string): string {
 }
 
 function artifactHasPassVerdict(reviewType: string, artifactText: string): boolean {
-    const tokenMatch = extractReviewVerdictTokenMatch(
+    const tokenMatch = extractReviewVerdictSectionTokenMatch(
         artifactText,
         buildReviewVerdictTokenSet(reviewType, getReviewPassVerdict(reviewType))
     );

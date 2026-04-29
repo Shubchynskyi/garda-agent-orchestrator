@@ -2222,6 +2222,100 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('does not reuse review artifacts with a malformed verdict section and stray pass token', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-no-malformed-verdict-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Do not reuse malformed verdict review evidence'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const malformedArtifact = fs.readFileSync(artifactPath, 'utf8')
+            .replace('## Verdict\nREVIEW PASSED', '## Verdict\nNeeds follow-up before reuse.\n\n## Notes\nREVIEW PASSED');
+        fs.writeFileSync(artifactPath, malformedArtifact, 'utf8');
+        const artifactHash = require('node:crypto').createHash('sha256').update(malformedArtifact).digest('hex');
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        receipt.review_artifact_sha256 = artifactHash;
+        fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+        const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+        const timeline = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .map((line) => {
+                if (!line.trim()) {
+                    return line;
+                }
+                const event = JSON.parse(line) as Record<string, unknown>;
+                const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                    ? event.details as Record<string, unknown>
+                    : null;
+                if (
+                    event.event_type === 'REVIEW_RECORDED'
+                    && details
+                    && String(details.review_type || '').toLowerCase() === 'code'
+                ) {
+                    details.review_artifact_sha256 = artifactHash;
+                }
+                return JSON.stringify(event);
+            })
+            .join('\n');
+        fs.writeFileSync(timelinePath, timeline.endsWith('\n') ? timeline : `${timeline}\n`, 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const result = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+
+        assert.equal(result.reusedReviewEvidence, false);
+        assert.equal(result.reusedReceiptPath, null);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('does not treat doc-named runtime code paths as docs-only reuse deltas', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-doc-named-runtime-code-no-reuse';
