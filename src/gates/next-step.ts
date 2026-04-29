@@ -44,7 +44,8 @@ import {
 import {
     fileSha256,
     normalizePath,
-    resolvePathInsideRepo
+    resolvePathInsideRepo,
+    testPathPrefix
 } from './helpers';
 import {
     resolveBundleNameForTarget
@@ -246,6 +247,7 @@ interface PreflightWorkspaceReadiness {
 interface PreflightWorkspaceReadinessOptions {
     failedReviewType?: string | null;
     failedReviewVerdict?: string | null;
+    docImpactPath?: string | null;
 }
 
 interface PreflightCycleReadiness {
@@ -1307,6 +1309,105 @@ function getUnchangedProtectedDirtyWorkspaceFiles(
     return unchanged;
 }
 
+function getDocImpactDeclaredDocsUpdated(docImpactPath: string | null | undefined): string[] {
+    if (!docImpactPath) {
+        return [];
+    }
+    const docImpact = safeReadJson(docImpactPath);
+    if (!docImpact || String(docImpact.decision || '').trim().toUpperCase() !== 'DOCS_UPDATED') {
+        return [];
+    }
+    return Array.isArray(docImpact.docs_updated)
+        ? [...new Set(docImpact.docs_updated.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+}
+
+function isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource: string): boolean {
+    const normalized = String(detectionSource || '').trim().toLowerCase();
+    return normalized === 'git_auto' || normalized === 'explicit_changed_files';
+}
+
+function buildPostReviewDocsOnlyReadiness(
+    repoRoot: string,
+    preflight: Record<string, unknown>,
+    options: PreflightWorkspaceReadinessOptions,
+    currentChangedFiles: string[],
+    preflightChangedFiles: string[],
+    expectedChangedLinesTotal: number,
+    includeUntracked: boolean,
+    detectionSource: string,
+    expectedChangedFilesSha256: string
+): PreflightWorkspaceReadiness | null {
+    if (!isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource)) {
+        return null;
+    }
+    const declaredDocsUpdated = getDocImpactDeclaredDocsUpdated(options.docImpactPath);
+    if (declaredDocsUpdated.length === 0) {
+        return null;
+    }
+
+    const classificationConfig = getClassificationConfig(repoRoot);
+    const nonDocumentationPaths = declaredDocsUpdated.filter((filePath) => (
+        !isDocumentationLikePath(filePath)
+        || isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
+    ));
+    const protectedControlPlaneDocs = declaredDocsUpdated.filter((filePath) => (
+        testPathPrefix(filePath, classificationConfig.protected_control_plane_roots)
+    ));
+    if (nonDocumentationPaths.length > 0 || protectedControlPlaneDocs.length > 0) {
+        return null;
+    }
+
+    const preflightSet = new Set(preflightChangedFiles);
+    const allowedFiles = new Set([...preflightChangedFiles, ...declaredDocsUpdated]);
+    const currentFiles = [...new Set(currentChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+    const undeclaredCurrentFiles = currentFiles.filter((entry) => !allowedFiles.has(entry));
+    const missingPreflightFiles = preflightChangedFiles.filter((entry) => !currentFiles.includes(entry));
+    const declaredCurrentDocs = currentFiles.filter((entry) => !preflightSet.has(entry) && declaredDocsUpdated.includes(entry));
+    if (undeclaredCurrentFiles.length > 0 || missingPreflightFiles.length > 0 || declaredCurrentDocs.length === 0) {
+        return null;
+    }
+
+    const currentReviewScope = getWorkspaceSnapshotCached(
+        repoRoot,
+        'explicit_changed_files',
+        includeUntracked,
+        preflightChangedFiles,
+        { noCache: true, readOnly: true }
+    );
+    const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
+    const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
+        ? metrics.scope_content_sha256.trim().toLowerCase()
+        : '';
+    const reviewScopeViolations: string[] = [];
+    if (currentReviewScope.changed_files_sha256 !== expectedChangedFilesSha256) {
+        reviewScopeViolations.push('preflight changed_files differ from the current non-doc workspace snapshot');
+    }
+    if (currentReviewScope.changed_lines_total !== expectedChangedLinesTotal) {
+        reviewScopeViolations.push(
+            `preflight changed_lines_total=${expectedChangedLinesTotal} differs from current non-doc changed_lines_total=${currentReviewScope.changed_lines_total}`
+        );
+    }
+    if (
+        expectedScopeContentSha256
+        && currentReviewScope.scope_content_sha256 !== expectedScopeContentSha256
+    ) {
+        reviewScopeViolations.push(
+            `preflight scope_content_sha256=${expectedScopeContentSha256} differs from current non-doc scope_content_sha256=${currentReviewScope.scope_content_sha256}`
+        );
+    }
+    if (reviewScopeViolations.length > 0) {
+        return null;
+    }
+
+    return {
+        ready: true,
+        reason:
+            'Preflight implementation scope still matches the current workspace after accepting declared doc-impact docs-only updates: ' +
+            `${describePathList(declaredCurrentDocs)}.`
+    };
+}
+
 function readPreflightWorkspaceReadiness(
     repoRoot: string,
     preflight: Record<string, unknown>,
@@ -1365,6 +1466,20 @@ function readPreflightWorkspaceReadiness(
                 !unchangedProtectedFiles.has(normalizePath(entry))
             ));
             currentChangedFiles = currentGitChangedFiles;
+            const postReviewDocsReadiness = buildPostReviewDocsOnlyReadiness(
+                repoRoot,
+                preflight,
+                options,
+                currentGitChangedFiles,
+                changedFiles,
+                expectedChangedLinesTotal,
+                includeUntracked,
+                detectionSource,
+                expectedChangedFilesSha256
+            );
+            if (postReviewDocsReadiness) {
+                return postReviewDocsReadiness;
+            }
             const currentFileSetHash = stringSha256(currentGitChangedFiles.join('\n'));
             if (currentFileSetHash !== expectedChangedFilesSha256) {
                 const expectedSet = new Set(changedFiles);
@@ -1381,6 +1496,21 @@ function readPreflightWorkspaceReadiness(
                 );
             }
         }
+    }
+
+    const postReviewDocsReadiness = buildPostReviewDocsOnlyReadiness(
+        repoRoot,
+        preflight,
+        options,
+        currentScope.changed_files,
+        changedFiles,
+        expectedChangedLinesTotal,
+        includeUntracked,
+        detectionSource,
+        expectedChangedFilesSha256
+    );
+    if (postReviewDocsReadiness) {
+        return postReviewDocsReadiness;
     }
 
     if (violations.length === 0) {
@@ -2542,7 +2672,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const preflightWorkspaceReadiness = preflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
-            failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null
+            failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
+            docImpactPath: path.join(reviewsRoot, `${taskId}-doc-impact.json`)
         })
         : { ready: false, reason: 'No current preflight exists.' };
     if (!preflightWorkspaceReadiness.ready) {

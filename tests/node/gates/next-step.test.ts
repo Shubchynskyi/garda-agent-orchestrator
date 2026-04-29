@@ -1427,6 +1427,67 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Preflight scope is stale before compile'));
     });
 
+    it('routes to completion when doc-impact accepted declared post-review docs and changelog updates', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI reference\n\nUpdated doc-impact flow.\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\n- Document doc-impact follow-up scope.\n', 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            preflight_path: preflightPath,
+            docs_updated: ['docs/cli-reference.md', 'CHANGELOG.md'],
+            behavior_changed: false,
+            changelog_updated: true
+        });
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'completion-gate');
+        assert.ok(result.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('routes back to preflight when post-review drift includes an undeclared source file', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI reference\n\nUpdated doc-impact flow.\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra.ts'), 'export const undeclared = true;\n', 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            preflight_path: preflightPath,
+            docs_updated: ['docs/cli-reference.md'],
+            behavior_changed: false,
+            changelog_updated: false
+        });
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('stale preflight file set'));
+        assert.ok(result.reason.includes('src/extra.ts'));
+    });
+
     it('routes to doc-impact after required reviews pass', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
