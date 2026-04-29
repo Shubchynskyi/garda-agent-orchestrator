@@ -412,7 +412,7 @@ export async function handleSetup(
             fs.writeFileSync(resolvedInitAnswersPath, JSON.stringify(serialized, null, 2), 'utf8');
         }
 
-        runInstall({
+        const installResult = runInstall({
             targetRoot,
             bundleRoot: effectiveBundlePath,
             assistantLanguage,
@@ -421,12 +421,12 @@ export async function handleSetup(
             initAnswersPath: resolvedInitAnswersPath,
             dryRun: options.dryRun,
             initRunner: function (initOptions: Omit<Parameters<typeof runInit>[0], 'bundleRoot'>) {
-                runInit(Object.assign({
+                return runInit(Object.assign({
                     bundleRoot: effectiveBundlePath,
                     preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeSetup
                 }, initOptions));
             }
-        });
+        }) as Record<string, unknown>;
 
         if (!options.dryRun) {
             runContractMigrations({ rootPath: targetRoot });
@@ -485,6 +485,9 @@ export async function handleSetup(
         console.log(`Setup: ${manifestStatus === 'FAIL' ? 'FAIL' : 'PASSED'}`);
         console.log(`Verify: ${verifyStatus}`);
         console.log(`ManifestValidation: ${manifestStatus}`);
+        if (typeof installResult.workflowConfigMergeStatus === 'string') {
+            console.log(`WorkflowConfigMerge: ${installResult.workflowConfigMergeStatus}`);
+        }
         console.log('');
         printBanner(
             packageJson,

@@ -62,7 +62,7 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
             initAnswersPath: answers.resolvedPath,
             dryRun: options.dryRun === true,
             initRunner(initOptions) {
-                runInit({
+                return runInit({
                     ...initOptions,
                     bundleRoot: effectiveBundlePath,
                     preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeInstall
@@ -73,6 +73,7 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
             'targetRoot', 'sourceOfTruth', 'canonicalEntrypoint',
             'assistantLanguage', 'assistantBrevity',
             'filesDeployed', 'initInvoked', 'liveVersionWritten',
+            'workflowConfigMergeStatus',
             'dryRun'
         ]);
         });

@@ -46,8 +46,8 @@ interface RunUpdateOptions {
     dryRun?: boolean;
     skipVerify?: boolean;
     skipManifestValidation?: boolean;
-    installRunner?: ((options: InstallRunnerOptions) => void) | null;
-    materializationRunner?: ((options: MaterializationRunnerOptions) => void) | null;
+    installRunner?: ((options: InstallRunnerOptions) => Record<string, unknown> | void) | null;
+    materializationRunner?: ((options: MaterializationRunnerOptions) => Record<string, unknown> | void) | null;
     verifyRunner?: ((options: VerifyRunnerOptions) => unknown) | null;
     manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
     contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;

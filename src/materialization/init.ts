@@ -3,7 +3,12 @@ import * as path from 'node:path';
 import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
 import { cloneJsonValue, isPlainObject, mergeConfig } from '../core/config-merge';
 import { readJsonFile } from '../core/json';
-import { mergeWorkflowConfigWithTemplate, type WorkflowConfigData } from '../core/workflow-config';
+import {
+    mergeWorkflowConfigWithTemplate,
+    readWorkflowConfigForMerge,
+    type WorkflowConfigReadStatus,
+    type WorkflowConfigData
+} from '../core/workflow-config';
 import { ALL_AGENT_ENTRYPOINT_FILES , resolveBundleName} from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
@@ -72,6 +77,30 @@ interface SourceInventory {
 
 type ProjectDiscovery = ReturnType<typeof getProjectDiscovery>;
 type ReviewCapabilitiesSyncResult = ReturnType<typeof syncReviewCapabilities>;
+
+function getFullSuiteEnabledDiagnostic(config: Record<string, unknown>): string {
+    const fullSuiteSection = isPlainObject(config.full_suite_validation)
+        ? config.full_suite_validation
+        : null;
+    return typeof fullSuiteSection?.enabled === 'boolean'
+        ? String(fullSuiteSection.enabled)
+        : 'invalid';
+}
+
+function buildWorkflowConfigMergeStatus(
+    targetRoot: string,
+    workflowConfigPath: string,
+    readStatus: WorkflowConfigReadStatus,
+    materializedConfig: Record<string, unknown>
+): string {
+    const relativePath = path.relative(targetRoot, workflowConfigPath).replace(/\\/g, '/');
+    const enabledDiagnostic = getFullSuiteEnabledDiagnostic(materializedConfig);
+    const suffix = `path=${relativePath} full_suite_validation.enabled=${enabledDiagnostic}`;
+    if (readStatus === 'present') {
+        return `existing_values_preserved_and_missing_keys_filled ${suffix}`;
+    }
+    return `live_config_${readStatus}_template_applied ${suffix}`;
+}
 
 interface BuildInitReportOptions {
     timestampIso: string;
@@ -310,6 +339,7 @@ export function runInit(options: RunInitOptions) {
         try {
             const templateConfig = cloneJsonValue(readJsonFile(templateConfigPath) as Record<string, unknown>);
             let existingConfig: Record<string, unknown> | null = null;
+            let workflowConfigReadStatus: WorkflowConfigReadStatus = 'missing';
             const treatWorkflowConfigAsMissingBeforeRun = (
                 configName === 'workflow-config'
                 && preserveLegacyWorkflowConfigOmission
@@ -318,7 +348,16 @@ export function runInit(options: RunInitOptions) {
                 ? false
                 : pathExists(destConfigPath);
 
-            if (hadExistingConfig) {
+            if (configName === 'workflow-config') {
+                if (treatWorkflowConfigAsMissingBeforeRun || !workflowConfigExistedBeforeRun) {
+                    workflowConfigReadStatus = 'missing';
+                    existingConfig = null;
+                } else {
+                    const readResult = readWorkflowConfigForMerge(destConfigPath);
+                    workflowConfigReadStatus = readResult.status;
+                    existingConfig = readResult.config;
+                }
+            } else if (hadExistingConfig) {
                 try {
                     const parsedExistingConfig = readJsonFile(destConfigPath);
                     existingConfig = isPlainObject(parsedExistingConfig)
@@ -349,13 +388,15 @@ export function runInit(options: RunInitOptions) {
                 fs.writeFileSync(destConfigPath, json, 'utf8');
             }
 
-            configMergeStatuses[configName] = replaceWithCanonicalTemplate
-                ? (hadExistingConfig
-                    ? 'canonical_template_reapplied_existing_values_replaced'
-                    : 'canonical_template_applied')
-                : (existingConfig
-                    ? 'existing_values_preserved_and_missing_keys_filled'
-                    : 'no_existing_live_config_template_applied');
+            configMergeStatuses[configName] = configName === 'workflow-config'
+                ? buildWorkflowConfigMergeStatus(targetRoot, destConfigPath, workflowConfigReadStatus, materializedConfig)
+                : replaceWithCanonicalTemplate
+                    ? (hadExistingConfig
+                        ? 'canonical_template_reapplied_existing_values_replaced'
+                        : 'canonical_template_applied')
+                    : (existingConfig
+                        ? 'existing_values_preserved_and_missing_keys_filled'
+                        : 'no_existing_live_config_template_applied');
         } catch (err) {
             configMergeStatuses[configName] = 'merge_failed_template_applied';
         }
@@ -456,6 +497,7 @@ export function runInit(options: RunInitOptions) {
         isolationModeConfigMergeStatus: configMergeStatuses['isolation-mode'] || 'n/a',
         profilesConfigMergeStatus: configMergeStatuses['profiles'] || 'n/a',
         reviewArtifactStorageConfigMergeStatus: configMergeStatuses['review-artifact-storage'] || 'n/a',
+        workflowConfigMergeStatus: configMergeStatuses['workflow-config'] || 'n/a',
         gardaConfigMergeStatus: configMergeStatuses['garda.config'] || 'n/a',
         reviewCapabilitiesSync,
         skillsIndexPath,
@@ -616,6 +658,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Profiles config merge status: ${configMergeStatuses['profiles'] || 'n/a'}`,
         '- Review artifact storage config sync policy: preserve existing live values, fill missing keys from template.',
         `- Review artifact storage config merge status: ${configMergeStatuses['review-artifact-storage'] || 'n/a'}`,
+        '- Workflow config sync policy: preserve existing live values, fill missing keys from template; if the live file is missing, malformed, or non-object, apply template defaults and report the effective full-suite setting.',
+        `- Workflow config merge status: ${configMergeStatuses['workflow-config'] || 'n/a'}`,
         '- Root config manifest sync policy: rewrite the canonical root manifest from template on every init/update.',
         `- Root config manifest merge status: ${configMergeStatuses['garda.config'] || 'n/a'}`,
         `- Assistant response language: ${lang}`,

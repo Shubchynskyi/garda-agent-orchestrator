@@ -573,6 +573,10 @@ describe('runUpdate', () => {
             });
 
             assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(
+                result.workflowConfigMergeStatus,
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true'
+            );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
             assert.deepEqual(workflowConfig.full_suite_validation, {
@@ -620,6 +624,10 @@ describe('runUpdate', () => {
             });
 
             assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(
+                result.workflowConfigMergeStatus,
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true'
+            );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
             assert.deepEqual(workflowConfig.full_suite_validation, {
@@ -651,6 +659,10 @@ describe('runUpdate', () => {
             });
 
             assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(
+                result.workflowConfigMergeStatus,
+                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'
+            );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
             assert.deepEqual(workflowConfig.full_suite_validation, {

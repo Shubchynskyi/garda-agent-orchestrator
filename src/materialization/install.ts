@@ -64,7 +64,7 @@ interface RunInstallOptions {
         providerMinimalism: boolean;
         activeAgentFilesSeed: string | null;
         preserveLegacyReviewExecutionPolicyOmission: boolean;
-    }) => void;
+    }) => Record<string, unknown> | void;
 }
 
 type BackupFileCallback = (destPath: string, relativePath: string) => void;
@@ -244,6 +244,7 @@ export function runInstall(options: RunInstallOptions) {
     let aligned = 0;
     let forcedOverwrites = 0;
     let initInvoked = false;
+    let initResult: Record<string, unknown> | null = null;
     const backedUpSet = new Set<string>();
 
     // Pre-existing file tracking
@@ -708,7 +709,7 @@ export function runInstall(options: RunInstallOptions) {
 
     // Run init if requested
     if (runInit && !dryRun && initRunner) {
-        initRunner({
+        const maybeInitResult = initRunner({
             targetRoot,
             assistantLanguage: trimmedLanguage,
             assistantBrevity: trimmedBrevity,
@@ -720,6 +721,9 @@ export function runInstall(options: RunInstallOptions) {
             activeAgentFilesSeed: activeEntryFilesSeed,
             preserveLegacyReviewExecutionPolicyOmission
         });
+        initResult = maybeInitResult && typeof maybeInitResult === 'object' && !Array.isArray(maybeInitResult)
+            ? maybeInitResult
+            : null;
         initInvoked = true;
     }
 
@@ -785,6 +789,9 @@ export function runInstall(options: RunInstallOptions) {
         preCommitHookUpdated: commitGuardHookUpdated,
         liveVersionWritten,
         protectedControlPlaneManifestWritten,
+        workflowConfigMergeStatus: typeof initResult?.workflowConfigMergeStatus === 'string'
+            ? initResult.workflowConfigMergeStatus
+            : null,
         backupRoot: dryRun ? null : backupRoot
     };
     });

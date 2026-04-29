@@ -67,6 +67,7 @@ function makeTempBundleFixture(): { workspaceRoot: string; bundleUpdateModulePat
             '    return {',
             "        previousVersion: '1.0.0',",
             "        updatedVersion: '1.1.0',",
+            "        workflowConfigMergeStatus: 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false',",
             "        rollbackSnapshotPath: 'garda-agent-orchestrator/runtime/update-rollbacks/update-1',",
             "        rollbackStatus: 'NOT_TRIGGERED',",
             "        updateReportPath: 'garda-agent-orchestrator/runtime/update-reports/update-1.md'",
@@ -185,6 +186,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                 return {
                     previousVersion: 'stale-version',
                     updatedVersion: '0.0.1',
+                    workflowConfigMergeStatus: 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false',
                     rollbackSnapshotPath: 'stale-snapshot',
                     rollbackStatus: 'STALE',
                     updateReportPath: 'stale-report'
@@ -238,6 +240,10 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.match(plainTextLines[2], /\u001b\[2mThe available update was applied to this workspace\.\u001b\[0m/);
             assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
             assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
+            assert.equal(
+                plainTextLines.includes('WorkflowConfigMergeStatus: live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'),
+                true
+            );
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('- 1.1.0: Major registry note'), true);
             assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
@@ -267,6 +273,10 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             const parsed = JSON.parse(jsonLines.join('\n'));
             assert.equal(parsed.previousVersion, '1.0.0');
             assert.equal(parsed.updatedVersion, '1.1.0');
+            assert.equal(
+                parsed.workflowConfigMergeStatus,
+                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'
+            );
             assert.equal(parsed.updateMessages[0].title, 'Major registry note');
             assert.equal(parsed.releaseNotes[0].version, '1.1.0');
         } finally {
@@ -347,9 +357,28 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
             assert.equal(plainTextLines.includes('UpdateApplied: True'), true);
             assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
             assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
+            assert.equal(
+                plainTextLines.includes('WorkflowConfigMergeStatus: live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'),
+                true
+            );
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
             assert.equal(require.cache[fixture.bundleUpdateModulePath], undefined);
+
+            const jsonLines = await captureConsoleLogs(async () => {
+                await reloaded.module.handleCheckUpdate([
+                    '--target-root', fixture.workspaceRoot,
+                    '--apply',
+                    '--no-prompt',
+                    '--trust-override',
+                    '--json'
+                ], packageJson);
+            });
+            const parsed = JSON.parse(jsonLines.join('\n'));
+            assert.equal(
+                parsed.workflowConfigMergeStatus,
+                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'
+            );
         } finally {
             reloaded.restore();
             restoreCachedModule(fixture.bundleUpdateModulePath, originalBundleModule);

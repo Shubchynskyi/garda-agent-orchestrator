@@ -7,6 +7,7 @@ function makeStageResult(overrides: Record<string, unknown> = {}) {
     return {
         installStatus: 'PASS',
         materializationStatus: 'PASS',
+        workflowConfigMergeStatus: 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true',
         contractMigrationStatus: 'SKIPPED_NO_RUNNER',
         contractMigrationCount: 0,
         contractMigrationFiles: [] as string[],
@@ -77,6 +78,7 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('BundleVersion: 2.0.0'));
         assert.ok(text.includes('Install: PASS'));
         assert.ok(text.includes('Materialization: PASS'));
+        assert.ok(text.includes('WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true'));
         assert.ok(text.includes('AppliedCount: 0'));
         assert.ok(text.includes('AppliedFiles: none'));
     });
@@ -151,6 +153,7 @@ describe('buildUpdateResult', () => {
         assert.equal(result.trustOverrideUsed, true);
         assert.equal(result.installStatus, 'PASS');
         assert.equal(result.manifestValidationStatus, 'PASS');
+        assert.equal(result.workflowConfigMergeStatus, 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true');
         assert.equal(result.updateReportPath, 'report-path');
     });
 

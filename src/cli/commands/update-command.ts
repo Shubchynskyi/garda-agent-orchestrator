@@ -156,7 +156,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
-            'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
+            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
         printUpdateAnnouncementSections(mergedUpdateResult);
     }
@@ -233,7 +233,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
             'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
-            'previousVersion', 'updatedVersion', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
+            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
         printUpdateAnnouncementSections(mergedUpdateGitResult);
     }
@@ -310,6 +310,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
+            'workflowConfigMergeStatus',
             'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
         printUpdateAnnouncementSections(mergedCheckResult);

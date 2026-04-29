@@ -67,8 +67,8 @@ interface RollbackRecord {
 }
 
 export interface UpdatePipelineRunners {
-    installRunner?: ((options: InstallRunnerOptions) => void) | null;
-    materializationRunner?: ((options: MaterializationRunnerOptions) => void) | null;
+    installRunner?: ((options: InstallRunnerOptions) => Record<string, unknown> | void) | null;
+    materializationRunner?: ((options: MaterializationRunnerOptions) => Record<string, unknown> | void) | null;
     verifyRunner?: ((options: VerifyRunnerOptions) => unknown) | null;
     manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
     contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;
@@ -77,6 +77,7 @@ export interface UpdatePipelineRunners {
 export interface UpdatePipelineStageResult {
     installStatus: string;
     materializationStatus: string;
+    workflowConfigMergeStatus: string | null;
     contractMigrationStatus: string;
     contractMigrationCount: number;
     contractMigrationFiles: string[];
@@ -88,6 +89,16 @@ export interface UpdatePipelineStageResult {
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function getWorkflowConfigMergeStatus(result: unknown): string | null {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return null;
+    }
+    const status = (result as Record<string, unknown>).workflowConfigMergeStatus;
+    return typeof status === 'string' && status.trim()
+        ? status
+        : null;
 }
 
 /**
@@ -133,6 +144,7 @@ export function executeUpdatePipelineStages(options: {
 
     let installStatus = 'NOT_RUN';
     let materializationStatus = 'NOT_RUN';
+    let workflowConfigMergeStatus: string | null = null;
     let contractMigrationStatus = 'NOT_RUN';
     let verifyStatus = 'NOT_RUN';
     let manifestStatus = 'NOT_RUN';
@@ -181,7 +193,7 @@ export function executeUpdatePipelineStages(options: {
         } else {
             currentStage = 'MATERIALIZATION';
             if (materializationRunner) {
-                materializationRunner({
+                const materializationResult = materializationRunner({
                     targetRoot: normalizedTarget,
                     bundleRoot,
                     assistantLanguage: sources.assistantLanguage,
@@ -195,8 +207,9 @@ export function executeUpdatePipelineStages(options: {
                     preserveLegacyReviewExecutionPolicyOmission: true,
                     lifecycleLockAlreadyHeld
                 });
+                workflowConfigMergeStatus = getWorkflowConfigMergeStatus(materializationResult);
             } else {
-                runInit({
+                const initResult = runInit({
                     targetRoot: normalizedTarget,
                     bundleRoot,
                     dryRun: false,
@@ -211,6 +224,7 @@ export function executeUpdatePipelineStages(options: {
                     preserveLegacyReviewExecutionPolicyOmission: true,
                     lifecycleLockAlreadyHeld
                 });
+                workflowConfigMergeStatus = getWorkflowConfigMergeStatus(initResult);
             }
             materializationStatus = 'PASS';
 
@@ -344,6 +358,7 @@ export function executeUpdatePipelineStages(options: {
     return {
         installStatus,
         materializationStatus,
+        workflowConfigMergeStatus,
         contractMigrationStatus,
         contractMigrationCount,
         contractMigrationFiles,

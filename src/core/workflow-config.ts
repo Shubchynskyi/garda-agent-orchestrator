@@ -28,6 +28,13 @@ export interface WorkflowConfigMergeOptions {
     preserveLegacyReviewExecutionPolicyOmission?: boolean;
 }
 
+export type WorkflowConfigReadStatus = 'present' | 'missing' | 'invalid_json' | 'non_object';
+
+export interface WorkflowConfigReadResult {
+    status: WorkflowConfigReadStatus;
+    config: Record<string, unknown> | null;
+}
+
 function hasOwnCaseInsensitiveKey(record: Record<string, unknown>, expectedKey: string): boolean {
     return Object.keys(record).some((candidate) => candidate.toLowerCase() === expectedKey.toLowerCase());
 }
@@ -94,22 +101,29 @@ export function mergeWorkflowConfigWithTemplate(
     return nextConfig;
 }
 
+export function readWorkflowConfigForMerge(workflowConfigPath: string): WorkflowConfigReadResult {
+    if (!pathExists(workflowConfigPath)) {
+        return { status: 'missing', config: null };
+    }
+
+    try {
+        const parsed = readJsonFile(workflowConfigPath);
+        if (!isPlainObject(parsed)) {
+            return { status: 'non_object', config: null };
+        }
+        return { status: 'present', config: parsed };
+    } catch {
+        return { status: 'invalid_json', config: null };
+    }
+}
+
 export function syncWorkflowConfigWithTemplate(
     bundleRoot: string,
     options: WorkflowConfigMergeOptions = {}
 ): Record<string, unknown> {
     const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
     const templateConfig = readWorkflowConfigTemplate(bundleRoot);
-    let existingConfig: Record<string, unknown> | null = null;
-
-    if (pathExists(workflowConfigPath)) {
-        try {
-            const parsed = readJsonFile(workflowConfigPath);
-            existingConfig = isPlainObject(parsed) ? parsed : null;
-        } catch {
-            existingConfig = null;
-        }
-    }
+    const existingConfig = readWorkflowConfigForMerge(workflowConfigPath).config;
 
     const nextConfig = mergeWorkflowConfigWithTemplate(templateConfig, existingConfig, options);
     writeJsonFile(workflowConfigPath, nextConfig);

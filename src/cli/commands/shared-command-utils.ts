@@ -18,6 +18,7 @@ export type ParsedOptionsRecord = Record<string, ParsedOptionValue>;
 export interface UpdateLifecycleResult extends Record<string, unknown> {
     previousVersion?: unknown;
     updatedVersion?: unknown;
+    workflowConfigMergeStatus?: unknown;
     rollbackSnapshotPath?: unknown;
     rollbackStatus?: unknown;
     updateReportPath?: unknown;
@@ -394,6 +395,7 @@ export function mergeUpdateLifecycleOutput(
         ...baseResult,
         previousVersion: lifecycleResult.previousVersion,
         updatedVersion: lifecycleResult.updatedVersion,
+        workflowConfigMergeStatus: lifecycleResult.workflowConfigMergeStatus,
         rollbackSnapshotPath: lifecycleResult.rollbackSnapshotPath,
         rollbackStatus: lifecycleResult.rollbackStatus,
         updateReportPath: lifecycleResult.updateReportPath,
