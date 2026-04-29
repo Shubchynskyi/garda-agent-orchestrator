@@ -1129,6 +1129,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-invocation');
         assert.ok(result.reason.includes('launch metadata'));
+        assert.ok(result.reason.includes('Launch the delegated reviewer with the prepared prompt'));
         assert.ok(result.reason.includes('completed launch metadata'));
         assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
         assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
@@ -1180,6 +1181,8 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-invocation');
         assert.ok(result.reason.includes('launch metadata'));
+        assert.ok(result.reason.includes('already contains completed launch evidence'));
+        assert.ok(!result.reason.includes('Launch the delegated reviewer with the prepared prompt'));
         assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
         assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
     });
