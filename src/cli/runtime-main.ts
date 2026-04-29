@@ -10,6 +10,10 @@ import {
     getPackageRoot,
     ValidationFailureError
 } from './commands/shared-command-utils';
+import {
+    buildTaskResetNearMissError,
+    resolveTaskResetAlias
+} from './commands/task-reset-alias';
 import { installSignalHandlers } from './signal-handler';
 import {
     classifyErrorExitCode,
@@ -45,12 +49,23 @@ export async function runCliRuntimeMain(
         return;
     }
 
-    const commandName = getCommandName(effectiveArgv);
+    const taskResetAlias = resolveTaskResetAlias(effectiveArgv);
+    const commandName = taskResetAlias ? 'gate' : getCommandName(effectiveArgv);
     resolvedCommand = commandName;
 
-    const commandArgv = commandName === 'bootstrap' && effectiveArgv[0] !== 'bootstrap'
-        ? effectiveArgv
-        : effectiveArgv.slice(1);
+    const commandArgv = taskResetAlias
+        ? ['task-reset', ...taskResetAlias.commandArgv]
+        : commandName === 'bootstrap' && effectiveArgv[0] !== 'bootstrap'
+            ? effectiveArgv
+            : effectiveArgv.slice(1);
+
+    if (!taskResetAlias) {
+        const taskResetNearMissError = buildTaskResetNearMissError(effectiveArgv);
+        if (taskResetNearMissError) {
+            resolvedCommand = 'gate';
+            throw new Error(taskResetNearMissError);
+        }
+    }
 
     await dispatchCliCommand({
         commandName,

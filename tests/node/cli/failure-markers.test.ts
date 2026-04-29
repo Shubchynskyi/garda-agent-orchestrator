@@ -40,14 +40,14 @@ const REPO_ROOT = findRepoRoot(__dirname);
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'garda.js');
 const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
 
-function runCli(args: string[]) {
+function runCli(args: string[], cwd = NEUTRAL_CWD) {
     const result = childProcess.spawnSync(
         process.execPath,
         [CLI_PATH, ...args],
-        { cwd: NEUTRAL_CWD, windowsHide: true, encoding: 'utf8', timeout: 30000 }
+        { cwd, windowsHide: true, encoding: 'utf8', timeout: 30000 }
     );
     const combined = (result.stdout || '') + (result.stderr || '');
-    return { exitCode: result.status, output: combined, stderr: result.stderr || '' };
+    return { exitCode: result.status, output: combined, stderr: result.stderr || '', stdout: result.stdout || '' };
 }
 
 function writeValidInitAnswersFixture(targetRoot: string): void {
@@ -61,6 +61,23 @@ function writeValidInitAnswersFixture(targetRoot: string): void {
         ClaudeOrchestratorFullAccess: 'false',
         TokenEconomyEnabled: 'true'
     }), 'utf8');
+}
+
+function writeTaskResetFixture(targetRoot: string, taskStatus = 'IN_PROGRESS'): void {
+    fs.writeFileSync(
+        path.join(targetRoot, 'TASK.md'),
+        [
+            '| Task ID | Status | Description | Notes |',
+            '|---------|--------|-------------|-------|',
+            `| T-001 | ${taskStatus} | Test reset task | - |`
+        ].join('\n') + '\n',
+        'utf8'
+    );
+    const bundleDir = path.join(targetRoot, 'garda-agent-orchestrator');
+    fs.mkdirSync(path.join(bundleDir, 'runtime', 'task-events'), { recursive: true });
+    fs.mkdirSync(path.join(bundleDir, 'runtime', 'reviews'), { recursive: true });
+    fs.writeFileSync(path.join(bundleDir, 'MANIFEST.md'), '# MANIFEST\n', 'utf8');
+    fs.writeFileSync(path.join(bundleDir, 'VERSION'), '1.0.0\n', 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +94,81 @@ test('implicit bootstrap (unrecognised first arg) produces GARDA_BOOTSTRAP_FAILE
     const { exitCode, stderr } = runCli(['--no-such-flag']);
     assert.equal(exitCode, EXIT_USAGE_ERROR);
     assert.ok(stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Expected GARDA_BOOTSTRAP_FAILED in stderr');
+});
+
+test('task-reset alias without task id fails as CLI usage and does not bootstrap', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-alias-'));
+    try {
+        const { exitCode, stderr } = runCli(['task-reset'], tmpDir);
+        assert.equal(exitCode, EXIT_USAGE_ERROR);
+        assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
+        assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
+        assert.ok(stderr.includes('garda gate task-reset --task-id "<task-id>" --dry-run --repo-root "."'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'task-reset')), 'task-reset alias must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('task reset alias without task id fails as CLI usage and does not bootstrap', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-alias-'));
+    try {
+        const { exitCode, stderr } = runCli(['task', 'reset'], tmpDir);
+        assert.equal(exitCode, EXIT_USAGE_ERROR);
+        assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
+        assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
+        assert.ok(stderr.includes('garda gate task-reset --task-id "<task-id>" --confirm --repo-root "."'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'task')), 'task reset alias must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('taskreset near-miss fails before implicit bootstrap', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-near-miss-'));
+    try {
+        const { exitCode, stderr } = runCli(['taskreset', '--task-id', 'T-001'], tmpDir);
+        assert.equal(exitCode, EXIT_USAGE_ERROR);
+        assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
+        assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
+        assert.ok(stderr.includes('Unsupported command: taskreset'));
+        assert.ok(stderr.includes('garda gate task-reset --task-id "T-001" --dry-run --repo-root "."'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'taskreset')), 'near-miss must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('task-reset alias dry-run routes through guarded task-reset gate', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-dry-run-'));
+    try {
+        writeTaskResetFixture(tmpDir);
+        const { exitCode, output } = runCli(['task-reset', '--task-id', 'T-001', '--dry-run', '--repo-root', tmpDir], tmpDir);
+        assert.equal(exitCode, 0);
+        assert.ok(output.includes('DRY_RUN'));
+        assert.ok(!output.includes('GARDA_CLI_FAILED'));
+        const taskMd = fs.readFileSync(path.join(tmpDir, 'TASK.md'), 'utf8');
+        assert.ok(taskMd.includes('| T-001 | IN_PROGRESS |'), 'dry-run must not update task status');
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'task-reset')), 'dry-run alias must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('task reset alias confirm routes through guarded task-reset gate', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-confirm-'));
+    try {
+        writeTaskResetFixture(tmpDir);
+        const { exitCode, output } = runCli(['task', 'reset', 'T-001', '--confirm', '--repo-root', tmpDir], tmpDir);
+        assert.equal(exitCode, 0);
+        assert.ok(output.includes('RESET_COMPLETE'));
+        assert.ok(!output.includes('GARDA_CLI_FAILED'));
+        const taskMd = fs.readFileSync(path.join(tmpDir, 'TASK.md'), 'utf8');
+        assert.ok(taskMd.includes('| T-001 | DONE |'), 'confirm alias should use the canonical guarded reset flow');
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'task')), 'confirm alias must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/com
 import { runFullSuiteValidationCommand } from './gate-flows/full-suite-validation-flow';
 import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task-summary-flow';
 import { runTaskResetCommand } from './gate-flows/task-reset-flow';
+import { buildTaskResetMissingTaskIdMessage } from './task-reset-alias';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 
 export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
@@ -420,6 +421,9 @@ export async function handleTaskReset(gateArgv: string[]): Promise<void> {
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
     const { options } = parseOptions(gateArgv, defs);
+    if (!options.taskId) {
+        throw new Error(buildTaskResetMissingTaskIdMessage());
+    }
     const result = runTaskResetCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
