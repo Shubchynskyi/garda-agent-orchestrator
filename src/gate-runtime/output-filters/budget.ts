@@ -104,7 +104,6 @@ export function applyBudgetProfileOverrides(
 
     const result = { ...profile };
 
-    // Override operations
     if (Array.isArray(result.operations)) {
         result.operations = (result.operations as Record<string, unknown>[]).map((op) => {
             const opClone = { ...op };
@@ -116,7 +115,6 @@ export function applyBudgetProfileOverrides(
         });
     }
 
-    // Override parser parameters
     if (result.parser && typeof result.parser === 'object') {
         const parserClone = { ...(result.parser as Record<string, unknown>) };
         if (parserClone.max_matches !== undefined && typeof parserClone.max_matches === 'number') {

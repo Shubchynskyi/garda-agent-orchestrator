@@ -138,7 +138,6 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         }
     }
 
-    // Apply hunk-level filtering when enabled
     let hunkFilterResult = null;
     if (hunkLevel && outputDiffText && outputDiffText.trim()) {
         const filterResult = filterDiffByHunks(outputDiffText, triggerRegexes, {

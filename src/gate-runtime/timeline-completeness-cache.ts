@@ -164,7 +164,6 @@ export function validateTimelineCompletenessWithCache(
         // Timeline may not exist; validateTimelineCompleteness handles that
     }
 
-    // Cache miss or stale — perform full re-read
     const result = validateTimelineCompleteness(timelinePath, taskId, options);
 
     // Persist cache only when allowed, the timeline was actually readable,

@@ -389,7 +389,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         );
     }
 
-    // 1. Canonical entrypoint
     if (canonicalEntrypoint) {
         if (canonicalEntrypointExists) {
             diagnostics.push({
@@ -413,7 +412,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         });
     }
 
-    // 2. Provider bridge
     if (providerBridge) {
         if (providerBridgeExists) {
             diagnostics.push({
@@ -443,7 +441,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         });
     }
 
-    // 3. Start-task router
     const startTaskRouterPath = SHARED_START_TASK_WORKFLOW_RELATIVE_PATH;
     const startTaskRouterFullPath = path.resolve(repoRoot, startTaskRouterPath);
     const startTaskRouterExists = fs.existsSync(startTaskRouterFullPath) && fs.statSync(startTaskRouterFullPath).isFile();
@@ -463,7 +460,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         violations.push(`Shared start-task router '${startTaskRouterPath}' is missing from workspace.`);
     }
 
-    // 4. Execution context
     const executionContext = isSourceCheckout ? 'source-checkout' : 'materialized-bundle';
     diagnostics.push({
         check: 'execution_context',
@@ -471,7 +467,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         detail: `Execution context: ${executionContext}.`
     });
 
-    // 5. CLI path
     const cliPath = options.cliPath
         ? String(options.cliPath).trim()
         : resolveCliPath(repoRoot, isSourceCheckout);
@@ -494,7 +489,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         );
     }
 
-    // 6. Effective cwd
     const effectiveCwd = options.effectiveCwd
         ? String(options.effectiveCwd).trim()
         : toPosix(repoRoot);
@@ -504,7 +498,6 @@ export function buildHandshakeDiagnostics(options: BuildHandshakeDiagnosticsOpti
         detail: `Effective cwd: ${effectiveCwd}.`
     });
 
-    // 7. Provider family
     if (executionProvider) {
         diagnostics.push({
             check: 'provider_family',
@@ -681,7 +674,6 @@ export function getHandshakeEvidence(repoRoot: string, taskId: string | null, ar
         return result;
     }
 
-    // Timeline cross-verification: artifact hash must be bound to a timeline event
     const timelineViolations = verifyHandshakeTimelineBinding(resolvedTaskId, result.evidence_hash, opts.timelinePath);
     if (timelineViolations.length > 0) {
         result.evidence_status = 'EVIDENCE_TIMELINE_UNBOUND';

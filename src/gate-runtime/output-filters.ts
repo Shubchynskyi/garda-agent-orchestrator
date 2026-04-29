@@ -158,7 +158,6 @@ export function applyOutputFilterProfile(
         return passthrough;
     }
 
-    // Resolve budget tier and apply overrides to context and profile
     const budgetResolution = resolveBudgetTier(config, budgetTokens);
     const effectiveContext = budgetResolution.matched
         ? applyBudgetContextOverrides(context, budgetResolution, config)

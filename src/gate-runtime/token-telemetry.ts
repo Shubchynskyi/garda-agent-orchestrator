@@ -131,8 +131,6 @@ export function coerceIntLike(value: unknown): number | null {
     return null;
 }
 
-
-
 interface FormatVisibleSavingsOptions {
     label?: string;
     minimumSavedTokens?: number;

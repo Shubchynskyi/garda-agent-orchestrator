@@ -90,15 +90,12 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     const resolvedTaskId = validated.resolved_task_id;
     const errors = [...validated.errors];
 
-    // Detect sensitive triggers
     const sensitiveTriggersFired = [];
     const preflightObj = validated.preflight || {};
     const triggersObj = preflightObj.triggers || {};
     for (const triggerName of ['api', 'security', 'infra', 'dependency', 'db']) {
         if (triggersObj[triggerName]) sensitiveTriggersFired.push(triggerName);
     }
-
-    // Validation rules
 
     // Reject unknown decision values (fail-closed).
     if (!VALID_DOC_IMPACT_DECISIONS.includes(decision)) {

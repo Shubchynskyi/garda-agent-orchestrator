@@ -92,8 +92,6 @@ export function buildScopedDiffMetadata(options: ScopedDiffOptions): Record<stri
     };
 }
 
-// --- Hunk-level diff parsing and filtering ---
-
 export interface DiffHunk {
     header: string;
     lines: string[];
@@ -242,7 +240,6 @@ export function filterHunksInBlock(
         };
     }
 
-    // File path not matched: keep only hunks whose content matches triggers
     const matchedHunks: DiffHunk[] = [];
     for (const hunk of block.hunks) {
         if (hunkMatchesTriggers(hunk, triggerRegexes, matchOpts)) {

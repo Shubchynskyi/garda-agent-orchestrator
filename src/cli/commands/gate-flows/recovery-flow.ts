@@ -230,8 +230,6 @@ function getEffectiveDepthFromPreflight(
     return previousTaskMode.effective_depth || previousTaskMode.requested_depth || 2;
 }
 
-
-
 function formatReviewTypeList(reviewTypes: readonly string[]): string {
     return reviewTypes.length > 0 ? reviewTypes.join(', ') : 'none';
 }

@@ -436,7 +436,6 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         gitDiff
     });
 
-    // Build the rule context artifact using gate-runtime
     const ruleContextArtifactPath = outputPath.replace(/\.json$/, '.md');
     const readFileCallback = (rulePath: string): string => {
         if (options.ruleFileContentCache?.has(rulePath)) {

@@ -2,8 +2,6 @@ import { CompileStrategyConfig, ParserResult } from './types';
 import { addUniqueLines, resolveFilterInt, resolveFilterStr, selectHeadLines, selectTailLines } from './utils';
 import { formatGroupedLines, groupMatchingLines } from './error-grouping';
 
-// --- Compile failure strategy configs ---
-
 const COMPILE_STRATEGY_CONFIGS = {
     maven: {
         display_name: 'maven',
