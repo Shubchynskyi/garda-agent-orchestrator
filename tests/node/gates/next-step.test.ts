@@ -4,9 +4,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 import { formatNextStepText, resolveNextStep } from '../../../src/gates/next-step';
 import { getWorkspaceSnapshot } from '../../../src/gates/compile-gate';
+import { getWorkspaceSnapshotCached } from '../../../src/gates/workspace-snapshot-cache';
 import { buildRulePackArtifact } from '../../../src/gates/rule-pack';
 import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
 import { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from '../../../src/gates/task-audit-summary';
@@ -113,6 +115,15 @@ function makeTempRepo(): string {
         'utf8'
     );
     return repoRoot;
+}
+
+function initGitRepo(repoRoot: string): void {
+    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n', 'utf8');
+    execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'garda-test@example.invalid'], { cwd: repoRoot, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.name', 'Garda Test'], { cwd: repoRoot, stdio: 'ignore' });
+    execFileSync('git', ['add', '.'], { cwd: repoRoot, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repoRoot, stdio: 'ignore' });
 }
 
 function reviewsRoot(repoRoot: string): string {
@@ -878,6 +889,37 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Preflight scope is stale before compile'));
         assert.ok(result.commands[0].command.includes('gate classify-change'));
         assert.ok(result.commands[0].command.includes('--changed-file "src/app.ts"'));
+    });
+
+    it('refreshes explicit preflight before full-suite when the current git snapshot has a new file', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra.ts'), 'export const extra = 3;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('stale preflight file set [src/app.ts] differs from current git snapshot [src/app.ts, src/extra.ts]'));
+        assert.ok(result.reason.includes('missing from preflight: [src/extra.ts]'));
+        assert.ok(!result.commands[0].command.includes('full-suite-validation'));
+        assert.ok(result.commands[0].command.includes('--changed-file "src/app.ts"'));
+        assert.ok(result.commands[0].command.includes('--changed-file "src/extra.ts"'));
     });
 
     it('routes protected control-plane preflight to an orchestrator-work restart command', () => {

@@ -53,7 +53,8 @@ import {
     REVIEW_CONTRACTS
 } from './required-reviews-check';
 import {
-    getWorkspaceSnapshotCached
+    getWorkspaceSnapshotCached,
+    type WorkspaceSnapshot
 } from './workspace-snapshot-cache';
 import {
     selectRulePackFiles
@@ -239,6 +240,7 @@ interface CompileReadiness {
 interface PreflightWorkspaceReadiness {
     ready: boolean;
     reason: string;
+    currentChangedFiles?: string[];
 }
 
 interface PreflightWorkspaceReadinessOptions {
@@ -1233,7 +1235,8 @@ function readCompileReadiness(
         repoRoot,
         detectionSource,
         evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked,
-        changedFiles
+        changedFiles,
+        { noCache: true, readOnly: true }
     );
     if (
         currentScope.scope_sha256 !== scopeSha256
@@ -1255,6 +1258,55 @@ function stringSha256(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+function describePathList(paths: readonly string[], limit = 8): string {
+    const normalized = [...new Set(paths.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+    if (normalized.length === 0) {
+        return '[]';
+    }
+    const visible = normalized.slice(0, limit);
+    const suffix = normalized.length > visible.length ? `, ... +${normalized.length - visible.length} more` : '';
+    return `[${visible.join(', ')}${suffix}]`;
+}
+
+function readCurrentGitWorkspaceSnapshot(
+    repoRoot: string,
+    includeUntracked: boolean
+): (WorkspaceSnapshot & { cache_hit: boolean }) | null {
+    try {
+        return getWorkspaceSnapshotCached(repoRoot, 'git_auto', includeUntracked, [], {
+            noCache: true,
+            readOnly: true
+        });
+    } catch {
+        return null;
+    }
+}
+
+function getUnchangedProtectedDirtyWorkspaceFiles(
+    repoRoot: string,
+    preflight: Record<string, unknown>
+): Set<string> {
+    const triggers = getPreflightTriggers(preflight);
+    const protectedFiles = Array.isArray(triggers.dirty_workspace_protected_files)
+        ? [...new Set(triggers.dirty_workspace_protected_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+    const protectedHashes = isPlainRecord(triggers.dirty_workspace_protected_file_hashes)
+        ? triggers.dirty_workspace_protected_file_hashes
+        : {};
+    const unchanged = new Set<string>();
+    for (const protectedFile of protectedFiles) {
+        const expectedHash = String(protectedHashes[protectedFile] || '').trim().toLowerCase();
+        if (!expectedHash) {
+            continue;
+        }
+        const currentHash = fileSha256(path.join(repoRoot, protectedFile));
+        if (currentHash && currentHash === expectedHash) {
+            unchanged.add(protectedFile);
+        }
+    }
+    return unchanged;
+}
+
 function readPreflightWorkspaceReadiness(
     repoRoot: string,
     preflight: Record<string, unknown>,
@@ -1272,6 +1324,10 @@ function readPreflightWorkspaceReadiness(
     }
 
     const detectionSource = String(preflight.detection_source || 'git_auto').trim() || 'git_auto';
+    const normalizedDetectionSource = detectionSource.toLowerCase();
+    const includeUntracked = normalizedDetectionSource === 'git_staged_only'
+        ? false
+        : (typeof preflight.include_untracked === 'boolean' ? preflight.include_untracked : true);
     const changedFiles = Array.isArray(preflight.changed_files)
         ? [...new Set(preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
         : [];
@@ -1279,10 +1335,9 @@ function readPreflightWorkspaceReadiness(
     const currentScope = getWorkspaceSnapshotCached(
         repoRoot,
         detectionSource,
-        detectionSource.toLowerCase() === 'git_staged_only'
-            ? false
-            : (typeof preflight.include_untracked === 'boolean' ? preflight.include_untracked : true),
-        changedFiles
+        includeUntracked,
+        changedFiles,
+        { noCache: true, readOnly: true }
     );
     const violations: string[] = [];
     if (currentScope.changed_files_sha256 !== expectedChangedFilesSha256) {
@@ -1301,11 +1356,38 @@ function readPreflightWorkspaceReadiness(
             `preflight scope_sha256=${expectedScopeSha256} differs from current scope_sha256=${currentScope.scope_sha256}`
         );
     }
+    let currentChangedFiles: string[] | undefined;
+    if (normalizedDetectionSource === 'explicit_changed_files') {
+        const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
+        if (currentGitSnapshot) {
+            const unchangedProtectedFiles = getUnchangedProtectedDirtyWorkspaceFiles(repoRoot, preflight);
+            const currentGitChangedFiles = currentGitSnapshot.changed_files.filter((entry) => (
+                !unchangedProtectedFiles.has(normalizePath(entry))
+            ));
+            currentChangedFiles = currentGitChangedFiles;
+            const currentFileSetHash = stringSha256(currentGitChangedFiles.join('\n'));
+            if (currentFileSetHash !== expectedChangedFilesSha256) {
+                const expectedSet = new Set(changedFiles);
+                const currentSet = new Set(currentGitChangedFiles);
+                const missingFromPreflight = currentGitChangedFiles.filter((entry) => !expectedSet.has(entry));
+                const noLongerCurrent = changedFiles.filter((entry) => !currentSet.has(entry));
+                const ignoredProtectedNote = unchangedProtectedFiles.size > 0
+                    ? `; ignored unchanged dirty-baseline files: ${describePathList([...unchangedProtectedFiles])}`
+                    : '';
+                violations.push(
+                    `stale preflight file set ${describePathList(changedFiles)} differs from current git snapshot ${describePathList(currentGitChangedFiles)}` +
+                    `; missing from preflight: ${describePathList(missingFromPreflight)}` +
+                    `; no longer current: ${describePathList(noLongerCurrent)}${ignoredProtectedNote}`
+                );
+            }
+        }
+    }
 
     if (violations.length === 0) {
         return {
             ready: true,
-            reason: 'Preflight scope still matches the current workspace.'
+            reason: 'Preflight scope still matches the current workspace.',
+            currentChangedFiles
         };
     }
     const failedReviewType = String(options.failedReviewType || '').trim();
@@ -1314,7 +1396,8 @@ function readPreflightWorkspaceReadiness(
         : '';
     return {
         ready: false,
-        reason: `Preflight scope is stale before compile (${violations.join('; ')}).${failedReviewNote} Refresh classify-change for the current scope first.`
+        reason: `Preflight scope is stale before compile (${violations.join('; ')}).${failedReviewNote} Refresh classify-change for the current scope first.`,
+        currentChangedFiles
     };
 }
 
@@ -2478,7 +2561,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         taskMode,
                         preflightCommandPath,
                         includePlannedScope: false,
-                        changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+                        changedFiles: preflightWorkspaceReadiness.currentChangedFiles
+                            ?? getPreflightRefreshChangedFiles(taskMode, preflight)
                     })
                 )
             ]
