@@ -5,6 +5,11 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as childProcess from 'node:child_process';
 import { EXIT_PRECONDITION_FAILURE } from '../../../src/cli/exit-codes';
+import { dispatchCliCommand } from '../../../src/cli/commands/command-dispatch';
+import {
+    BUNDLE_RUNTIME_INVENTORY_PATHS,
+    CRITICAL_BUNDLE_PATHS
+} from '../../../src/validators/workspace-layout';
 
 function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
@@ -24,6 +29,114 @@ function findRepoRoot(startDir: string): string {
 
 const REPO_ROOT = findRepoRoot(__dirname);
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'garda.js');
+const TEST_PACKAGE_JSON = { name: 'garda-agent-orchestrator-test', version: '1.0.0' };
+
+function writeFixtureFile(root: string, relativePath: string, content: string): void {
+    const filePath = path.join(root, relativePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function seedMatchingSourceCheckoutBundle(root: string): void {
+    writeFixtureFile(root, 'package.json', '{}\n');
+    writeFixtureFile(root, 'VERSION', '1.0.0\n');
+    writeFixtureFile(root, 'src/index.ts', 'export {};\n');
+    writeFixtureFile(root, 'bin/garda.js', '#!/usr/bin/env node\n');
+    for (const relativePath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+        const content = relativePath === 'VERSION'
+            ? '1.0.0\n'
+            : relativePath.endsWith('.js')
+                ? 'module.exports = {};\n'
+                : relativePath.endsWith('.md')
+                    ? '# fixture\n'
+                    : '{}\n';
+        writeFixtureFile(root, path.join('garda-agent-orchestrator', relativePath), content);
+    }
+}
+
+test('gate command warns and continues when source checkout runtime is stale', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-warning-dispatch-'));
+    const previousExitCode = process.exitCode;
+    const originalConsoleError = console.error;
+    const capturedErrors: string[] = [];
+    try {
+        seedMatchingSourceCheckoutBundle(tmpDir);
+        writeFixtureFile(tmpDir, 'src/gates/next-step.ts', 'export const source = true;\n');
+        writeFixtureFile(tmpDir, 'dist/src/index.js', 'module.exports = {};\n');
+        writeFixtureFile(tmpDir, 'dist/src/gates/next-step.js', 'exports.source = false;\n');
+        const oldTime = new Date(Date.now() - 5000);
+        fs.utimesSync(path.join(tmpDir, 'dist', 'src', 'gates', 'next-step.js'), oldTime, oldTime);
+
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        process.exitCode = 0;
+
+        await assert.rejects(
+            () => dispatchCliCommand({
+                commandName: 'gate',
+                commandArgv: ['stale-runtime-probe', '--repo-root', tmpDir],
+                packageJson: TEST_PACKAGE_JSON,
+                packageRoot: REPO_ROOT,
+                globalFlags: { offline: false, forceNetwork: false }
+            }),
+            /Unknown gate: stale-runtime-probe/
+        );
+
+        const combinedErrors = capturedErrors.join('\n');
+        assert.ok(combinedErrors.includes('Source Runtime Warning: source checkout generated runtime may be stale.'));
+        assert.ok(combinedErrors.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js'));
+        assert.ok(combinedErrors.includes('Remediation: Run "npm run build"'));
+    } finally {
+        console.error = originalConsoleError;
+        process.exitCode = previousExitCode;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('next-step command warns and continues when source checkout runtime is stale', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-warning-dispatch-'));
+    const previousExitCode = process.exitCode;
+    const originalConsoleError = console.error;
+    const originalStdoutWrite = process.stdout.write;
+    const capturedErrors: string[] = [];
+    const capturedOutput: string[] = [];
+    try {
+        seedMatchingSourceCheckoutBundle(tmpDir);
+        writeFixtureFile(tmpDir, 'src/gates/next-step.ts', 'export const source = true;\n');
+        writeFixtureFile(tmpDir, 'dist/src/index.js', 'module.exports = {};\n');
+        writeFixtureFile(tmpDir, 'dist/src/gates/next-step.js', 'exports.source = false;\n');
+        const oldTime = new Date(Date.now() - 5000);
+        fs.utimesSync(path.join(tmpDir, 'dist', 'src', 'gates', 'next-step.js'), oldTime, oldTime);
+
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        (process.stdout as unknown as { write: (...args: unknown[]) => boolean }).write = (...args: unknown[]): boolean => {
+            capturedOutput.push(String(args[0]));
+            return true;
+        };
+        process.exitCode = 0;
+
+        await dispatchCliCommand({
+            commandName: 'next-step',
+            commandArgv: ['T-runtime-probe', '--repo-root', tmpDir],
+            packageJson: TEST_PACKAGE_JSON,
+            packageRoot: REPO_ROOT,
+            globalFlags: { offline: false, forceNetwork: false }
+        });
+
+        const combinedErrors = capturedErrors.join('\n');
+        assert.ok(combinedErrors.includes('Source Runtime Warning: source checkout generated runtime may be stale.'));
+        assert.ok(combinedErrors.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js'));
+        assert.ok(capturedOutput.join('').includes('GARDA_NEXT_STEP'));
+    } finally {
+        console.error = originalConsoleError;
+        (process.stdout as unknown as { write: typeof process.stdout.write }).write = originalStdoutWrite;
+        process.exitCode = previousExitCode;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
 
 test('CLI blocks task execution commands when bundle is stale', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-fail-fast-'));

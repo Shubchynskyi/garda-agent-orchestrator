@@ -1,5 +1,8 @@
 import { PRIMARY_PACKAGE_NAME } from '../../core/constants';
-import { detectSourceBundleParity } from '../../validators/workspace-layout';
+import {
+    detectSourceBundleParity,
+    detectSourceCheckoutRuntimeStaleness
+} from '../../validators/workspace-layout';
 import { assertOfflinePolicy } from '../../policy/offline-mode';
 import { EXIT_VALIDATION_FAILURE } from '../exit-codes';
 import { buildGuardedCommandHelpText, buildParityBlockedCommandText } from './cli-format-output';
@@ -58,6 +61,7 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
 
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
     const { commandName, commandArgv, packageJson, packageRoot, globalFlags } = options;
+    const isIntrospection = commandArgv.some((arg) => arg === '--help' || arg === '-h' || arg === '--version' || arg === '-v');
 
     if (commandName === 'help') {
         printHelp(packageJson);
@@ -92,9 +96,20 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
                 })
             );
         }
+        if (!isIntrospection && (commandName === 'gate' || commandName === 'next-step')) {
+            const runtimeStaleness = detectSourceCheckoutRuntimeStaleness(parityRoot);
+            if (runtimeStaleness.isStale) {
+                console.error(
+                    [
+                        'Source Runtime Warning: source checkout generated runtime may be stale.',
+                        ...runtimeStaleness.violations.map((violation) => `- ${violation}`),
+                        `Remediation: ${runtimeStaleness.remediation || 'Run "npm run build" before continuing gate execution.'}`
+                    ].join('\n')
+                );
+            }
+        }
     }
 
-    const isIntrospection = commandArgv.some((arg) => arg === '--help' || arg === '-h' || arg === '--version' || arg === '-v');
     if (!isIntrospection) {
         assertOfflinePolicy({
             offlineFlag: globalFlags.offline,

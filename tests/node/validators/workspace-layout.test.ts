@@ -23,6 +23,7 @@ import {
     getMissingProjectCommands,
     readUtf8IfExists,
     detectSourceBundleParity,
+    detectSourceCheckoutRuntimeStaleness,
     validateBundleInvariants,
     detectNestedBundleDuplication
 } from '../../../src/validators/workspace-layout';
@@ -84,6 +85,108 @@ test('detectSourceBundleParity detects stale bundle when launcher is older', () 
         assert.equal(result.isSourceCheckout, true);
         assert.equal(result.isStale, true);
         assert.ok(result.violations.some(v => v.includes('older than')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectSourceCheckoutRuntimeStaleness detects gate source newer than generated runtime', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-staleness-test-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src', 'gates'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'dist', 'src', 'gates'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export {};\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'dist', 'src', 'index.js'), 'module.exports = {};\n', 'utf8');
+        const sourcePath = path.join(tmpDir, 'src', 'gates', 'next-step.ts');
+        const generatedPath = path.join(tmpDir, 'dist', 'src', 'gates', 'next-step.js');
+        fs.writeFileSync(sourcePath, 'export const source = true;\n', 'utf8');
+        fs.writeFileSync(generatedPath, 'exports.source = false;\n', 'utf8');
+        const oldTime = new Date(Date.now() - 5000);
+        fs.utimesSync(generatedPath, oldTime, oldTime);
+        fs.utimesSync(path.join(tmpDir, 'dist', 'src', 'index.js'), oldTime, oldTime);
+
+        const result = detectSourceCheckoutRuntimeStaleness(tmpDir);
+
+        assert.equal(result.isSourceCheckout, true);
+        assert.equal(result.isStale, true);
+        assert.ok(result.violations.some((violation) => violation.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js')));
+        assert.ok(result.remediation?.includes('npm run build'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectSourceCheckoutRuntimeStaleness detects missing generated runtime output', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-staleness-test-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export {};\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+
+        const result = detectSourceCheckoutRuntimeStaleness(tmpDir);
+
+        assert.equal(result.isSourceCheckout, true);
+        assert.equal(result.runtimeRoot, null);
+        assert.equal(result.isStale, true);
+        assert.ok(result.violations.some((violation) => violation.includes('Generated source-checkout runtime output is missing')));
+        assert.ok(result.remediation?.includes('npm run build'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectSourceCheckoutRuntimeStaleness detects missing generated file under existing runtime root', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-staleness-test-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src', 'gates'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'dist', 'src'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export {};\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'gates', 'next-step.ts'), 'export const source = true;\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'dist', 'src', 'index.js'), 'module.exports = {};\n', 'utf8');
+
+        const result = detectSourceCheckoutRuntimeStaleness(tmpDir);
+
+        assert.equal(result.isSourceCheckout, true);
+        assert.equal(result.isStale, true);
+        assert.ok(result.violations.some((violation) => violation.includes('src/gates/next-step.ts -> dist/src/gates/next-step.js')));
+        assert.ok(result.remediation?.includes('npm run build'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectSourceCheckoutRuntimeStaleness passes when generated runtime is current', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-staleness-test-'));
+    try {
+        fs.mkdirSync(path.join(tmpDir, 'src', 'gates'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'dist', 'src', 'gates'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export {};\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'dist', 'src', 'index.js'), 'module.exports = {};\n', 'utf8');
+        const sourcePath = path.join(tmpDir, 'src', 'gates', 'next-step.ts');
+        const generatedPath = path.join(tmpDir, 'dist', 'src', 'gates', 'next-step.js');
+        fs.writeFileSync(sourcePath, 'export const source = true;\n', 'utf8');
+        fs.writeFileSync(generatedPath, 'exports.source = true;\n', 'utf8');
+        const now = new Date();
+        fs.utimesSync(sourcePath, now, now);
+        fs.utimesSync(generatedPath, now, now);
+        fs.utimesSync(path.join(tmpDir, 'dist', 'src', 'index.js'), now, now);
+
+        const result = detectSourceCheckoutRuntimeStaleness(tmpDir);
+
+        assert.equal(result.isSourceCheckout, true);
+        assert.equal(result.isStale, false);
+        assert.deepEqual(result.violations, []);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
