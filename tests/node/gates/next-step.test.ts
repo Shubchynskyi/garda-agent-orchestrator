@@ -1758,6 +1758,35 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
     });
 
+    it('explains zero-diff no-review closeout before required reviews check', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        preflight.profile_guardrails = {
+            zero_diff_no_reviewable_scope: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'required-reviews-check');
+        assert.equal(result.title, 'Validate zero-diff no-review closeout.');
+        assert.ok(result.reason.includes('no reviewable diff'));
+        assert.ok(result.reason.includes('audited no-op evidence'));
+        assert.ok(!result.reason.includes('All required review artifacts appear present'));
+        assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
+    });
+
     it('routes back to preflight refresh when workspace scope drifts after compile', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

@@ -337,6 +337,24 @@ function getRequiredReviewTypes(requiredReviews: Record<string, boolean>): strin
     return REVIEW_PREPARATION_ORDER.filter((reviewType) => requiredReviews[reviewType] === true);
 }
 
+function hasZeroDiffNoReviewableScopeSuppression(
+    preflight: Record<string, unknown> | null,
+    requiredReviewTypes: string[]
+): boolean {
+    if (!preflight || requiredReviewTypes.length > 0) {
+        return false;
+    }
+    const zeroDiffGuard = isPlainRecord(preflight.zero_diff_guard)
+        ? preflight.zero_diff_guard
+        : null;
+    const profileGuardrails = isPlainRecord(preflight.profile_guardrails)
+        ? preflight.profile_guardrails
+        : null;
+    return zeroDiffGuard?.zero_diff_detected === true
+        && zeroDiffGuard.status === 'BASELINE_ONLY'
+        && profileGuardrails?.zero_diff_no_reviewable_scope === true;
+}
+
 function resolveReviewPolicy(preflight: Record<string, unknown> | null): {
     mode: EffectiveReviewExecutionPolicyMode;
     source: 'preflight' | 'workflow_config_fallback';
@@ -3231,12 +3249,17 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (!isGatePassed(summary, 'required-reviews-check')) {
+        const zeroDiffNoReviewCloseout = hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes);
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
             nextGate: 'required-reviews-check',
-            title: 'Run required reviews check.',
-            reason: 'All required review artifacts appear present, but the review gate has not validated them.',
+            title: zeroDiffNoReviewCloseout
+                ? 'Validate zero-diff no-review closeout.'
+                : 'Run required reviews check.',
+            reason: zeroDiffNoReviewCloseout
+                ? 'Profile-forced reviews were suppressed because the current preflight is BASELINE_ONLY with no reviewable diff; required-reviews-check must validate audited no-op evidence before closeout.'
+                : 'All required review artifacts appear present, but the review gate has not validated them.',
             commands: [
                 buildCommand(
                     'Run required reviews check',
