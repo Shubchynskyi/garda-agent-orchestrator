@@ -169,15 +169,13 @@ export interface ProfileGuardrailOptions {
     protectedControlPlaneChanged?: boolean;
 }
 
-function shouldLightenExplicitFastCodeReview(
+function shouldLightenExplicitCodeReviewForDocsOnly(
     reviewType: string,
-    profileName: string,
     profileValue: boolean | 'auto' | undefined,
     scopeCategory: string,
     options: ProfileGuardrailOptions
 ): boolean {
     return reviewType === 'code'
-        && profileName === 'fast'
         && profileValue === true
         && scopeCategory === 'docs-only'
         && options.protectedControlPlaneChanged !== true;
@@ -385,9 +383,8 @@ export function applyProfileGuardrails(
             && hasDomainSurfaceEvidence
         );
         const domainSurfaceMissing = needsDomainSurface && !domainSurfacePresent;
-        const scopeLightenedExplicitReview = shouldLightenExplicitFastCodeReview(
+        const scopeLightenedExplicitReview = shouldLightenExplicitCodeReviewForDocsOnly(
             key,
-            profileName,
             profileValue,
             scopeCategory,
             options

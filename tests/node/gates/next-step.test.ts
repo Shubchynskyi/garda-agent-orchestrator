@@ -342,6 +342,61 @@ function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', 'PASS', {}, timestampUtc);
 }
 
+function writeGitAutoPreflight(
+    repoRoot: string,
+    taskId: string,
+    requiredReviews: Record<string, boolean>
+): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+    writeJson(preflightPath, {
+        task_id: taskId,
+        detection_source: snapshot.detection_source,
+        mode: 'FULL_PATH',
+        scope_category: 'code',
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        },
+        required_reviews: requiredReviews,
+        changed_files: snapshot.changed_files,
+        review_execution_policy: {
+            mode: 'code_first_optional',
+            visible_summary_line: 'Review execution policy: code_first_optional'
+        }
+    });
+    appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+        output_path: normalizeForTimeline(preflightPath)
+    });
+    seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+    return preflightPath;
+}
+
+function seedGitAutoCompilePass(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
+        timestamp_utc: new Date().toISOString(),
+        task_id: taskId,
+        event_source: 'compile-gate',
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_hash_sha256: fileSha256(preflightPath),
+        scope_detection_source: snapshot.detection_source,
+        scope_include_untracked: snapshot.include_untracked,
+        scope_changed_files: snapshot.changed_files,
+        scope_changed_files_count: snapshot.changed_files_count,
+        scope_changed_lines_total: snapshot.changed_lines_total,
+        scope_changed_files_sha256: snapshot.changed_files_sha256,
+        scope_content_sha256: snapshot.scope_content_sha256,
+        scope_sha256: snapshot.scope_sha256
+    });
+    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
+}
+
 function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const preflight = fs.existsSync(preflightPath)
@@ -1765,6 +1820,49 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'completion-gate');
         assert.ok(result.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('routes to doc-impact without refreshing preflight when changelog is added after reviews', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Documented reviewed behavior.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+        assert.ok(result.reason.includes('Completion requires an explicit docs decision.'));
+    });
+
+    it('routes back to preflight when post-review docs delta touches protected control-plane docs', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md'),
+            '\nProtected workflow rule wording changed.\n',
+            'utf8'
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('stale preflight file set'));
+        assert.ok(result.reason.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
     });
 
     it('routes back to preflight when post-review drift includes an undeclared source file', () => {

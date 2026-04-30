@@ -959,6 +959,18 @@ test('applyProfileGuardrails: fast docs-only scope lightens explicit code review
     assert.match(String(codeDecision?.reason || ''), /true docs-only scope/);
 });
 
+test('applyProfileGuardrails: balanced docs-only scope lightens explicit code review', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: 'auto' };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: true, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'docs-only', 'balanced');
+    const codeDecision = result.decisions.find(d => d.review_type === 'code');
+    assert.equal(codeDecision?.effective_value, false);
+    assert.equal(codeDecision?.decision, 'lightened_by_profile');
+});
+
 test('applyProfileGuardrails: fast docs-only keeps code review for protected control-plane scope', () => {
     const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
     const caps: ReviewCapabilities = {

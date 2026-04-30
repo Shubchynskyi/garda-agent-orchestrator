@@ -246,6 +246,7 @@ interface PreflightWorkspaceReadiness {
     ready: boolean;
     reason: string;
     currentChangedFiles?: string[];
+    acceptedDocsOnlyDeltaFiles?: string[];
 }
 
 interface PreflightWorkspaceReadinessOptions {
@@ -1320,6 +1321,7 @@ function readCompileReadiness(
         ? evidence.scope_changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
     const scopeSha256 = String(evidence.scope_sha256 || '').trim();
+    const scopeContentSha256 = String(evidence.scope_content_sha256 || '').trim().toLowerCase();
     const changedFilesSha256 = String(evidence.scope_changed_files_sha256 || '').trim();
     const changedLinesTotal = Number.parseInt(String(evidence.scope_changed_lines_total || 0), 10) || 0;
     if (!detectionSource || !scopeSha256 || !changedFilesSha256) {
@@ -1340,6 +1342,27 @@ function readCompileReadiness(
         || currentScope.changed_files_sha256 !== changedFilesSha256
         || currentScope.changed_lines_total !== changedLinesTotal
     ) {
+        const includeUntracked = evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked;
+        const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
+        const docsOnlyDeltaReadiness = currentGitSnapshot
+            ? buildDocsOnlyDeltaReadiness(
+                repoRoot,
+                currentGitSnapshot.changed_files,
+                changedFiles,
+                changedLinesTotal,
+                includeUntracked,
+                detectionSource,
+                changedFilesSha256,
+                scopeContentSha256,
+                getDocImpactDeclaredDocsUpdated(path.join(reviewsRoot, `${taskId}-doc-impact.json`))
+            )
+            : null;
+        if (docsOnlyDeltaReadiness) {
+            return {
+                ready: true,
+                reason: `Compile gate evidence is current after accepting ordinary docs-only updates for doc-impact. ${docsOnlyDeltaReadiness.reason}`
+            };
+        }
         return {
             ready: false,
             reason: 'Workspace changed after compile gate; rerun compile-gate before review preparation.'
@@ -1422,44 +1445,51 @@ function isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSou
     return normalized === 'git_auto' || normalized === 'explicit_changed_files';
 }
 
-function buildPostReviewDocsOnlyReadiness(
+function isOrdinaryDocumentationDeltaPath(
+    filePath: string,
+    classificationConfig: ReturnType<typeof getClassificationConfig>
+): boolean {
+    return isDocumentationLikePath(filePath)
+        && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
+        && !testPathPrefix(filePath, classificationConfig.protected_control_plane_roots);
+}
+
+function buildDocsOnlyDeltaReadiness(
     repoRoot: string,
-    preflight: Record<string, unknown>,
-    options: PreflightWorkspaceReadinessOptions,
     currentChangedFiles: string[],
     preflightChangedFiles: string[],
     expectedChangedLinesTotal: number,
     includeUntracked: boolean,
     detectionSource: string,
-    expectedChangedFilesSha256: string
+    expectedChangedFilesSha256: string,
+    expectedScopeContentSha256: string,
+    declaredDocsUpdated: string[]
 ): PreflightWorkspaceReadiness | null {
     if (!isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource)) {
         return null;
     }
-    const declaredDocsUpdated = getDocImpactDeclaredDocsUpdated(options.docImpactPath);
-    if (declaredDocsUpdated.length === 0) {
-        return null;
-    }
 
     const classificationConfig = getClassificationConfig(repoRoot);
-    const nonDocumentationPaths = declaredDocsUpdated.filter((filePath) => (
-        !isDocumentationLikePath(filePath)
-        || isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
-    ));
-    const protectedControlPlaneDocs = declaredDocsUpdated.filter((filePath) => (
-        testPathPrefix(filePath, classificationConfig.protected_control_plane_roots)
-    ));
-    if (nonDocumentationPaths.length > 0 || protectedControlPlaneDocs.length > 0) {
+
+    const preflightSet = new Set(preflightChangedFiles);
+    const currentFiles = [...new Set(currentChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+    const missingPreflightFiles = preflightChangedFiles.filter((entry) => !currentFiles.includes(entry));
+    const docsOnlyDeltaFiles = currentFiles.filter((entry) => !preflightSet.has(entry));
+    if (missingPreflightFiles.length > 0 || docsOnlyDeltaFiles.length === 0) {
         return null;
     }
 
-    const preflightSet = new Set(preflightChangedFiles);
-    const allowedFiles = new Set([...preflightChangedFiles, ...declaredDocsUpdated]);
-    const currentFiles = [...new Set(currentChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
-    const undeclaredCurrentFiles = currentFiles.filter((entry) => !allowedFiles.has(entry));
-    const missingPreflightFiles = preflightChangedFiles.filter((entry) => !currentFiles.includes(entry));
-    const declaredCurrentDocs = currentFiles.filter((entry) => !preflightSet.has(entry) && declaredDocsUpdated.includes(entry));
-    if (undeclaredCurrentFiles.length > 0 || missingPreflightFiles.length > 0 || declaredCurrentDocs.length === 0) {
+    const declaredDocsSet = declaredDocsUpdated.length > 0
+        ? new Set(declaredDocsUpdated.map((entry) => normalizePath(entry)).filter(Boolean))
+        : null;
+    if (declaredDocsSet && docsOnlyDeltaFiles.some((entry) => !declaredDocsSet.has(entry))) {
+        return null;
+    }
+
+    const nonOrdinaryDocs = docsOnlyDeltaFiles.filter((filePath) => (
+        !isOrdinaryDocumentationDeltaPath(filePath, classificationConfig)
+    ));
+    if (nonOrdinaryDocs.length > 0) {
         return null;
     }
 
@@ -1470,10 +1500,6 @@ function buildPostReviewDocsOnlyReadiness(
         preflightChangedFiles,
         { noCache: true, readOnly: true }
     );
-    const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
-    const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
-        ? metrics.scope_content_sha256.trim().toLowerCase()
-        : '';
     const reviewScopeViolations: string[] = [];
     if (currentReviewScope.changed_files_sha256 !== expectedChangedFilesSha256) {
         reviewScopeViolations.push('preflight changed_files differ from the current non-doc workspace snapshot');
@@ -1498,8 +1524,10 @@ function buildPostReviewDocsOnlyReadiness(
     return {
         ready: true,
         reason:
-            'Preflight implementation scope still matches the current workspace after accepting declared doc-impact docs-only updates: ' +
-            `${describePathList(declaredCurrentDocs)}.`
+            'Preflight implementation scope still matches the current workspace after accepting ordinary docs-only updates for doc-impact: ' +
+            `${describePathList(docsOnlyDeltaFiles)}.`,
+        currentChangedFiles: currentFiles,
+        acceptedDocsOnlyDeltaFiles: docsOnlyDeltaFiles
     };
 }
 
@@ -1528,6 +1556,9 @@ function readPreflightWorkspaceReadiness(
         ? [...new Set(preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
         : [];
     const expectedChangedFilesSha256 = stringSha256(changedFiles.join('\n'));
+    const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
+        ? metrics.scope_content_sha256.trim().toLowerCase()
+        : '';
     const currentScope = getWorkspaceSnapshotCached(
         repoRoot,
         detectionSource,
@@ -1537,7 +1568,18 @@ function readPreflightWorkspaceReadiness(
     );
     const violations: string[] = [];
     if (currentScope.changed_files_sha256 !== expectedChangedFilesSha256) {
-        violations.push('preflight changed_files differ from the current workspace snapshot');
+        const currentScopeFiles = Array.isArray(currentScope.changed_files)
+            ? currentScope.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+            : [];
+        const expectedSet = new Set(changedFiles);
+        const currentSet = new Set(currentScopeFiles);
+        const missingFromPreflight = currentScopeFiles.filter((entry) => !expectedSet.has(entry));
+        const noLongerCurrent = changedFiles.filter((entry) => !currentSet.has(entry));
+        violations.push(
+            `stale preflight file set ${describePathList(changedFiles)} differs from current workspace snapshot ${describePathList(currentScopeFiles)}` +
+            `; missing from preflight: ${describePathList(missingFromPreflight)}` +
+            `; no longer current: ${describePathList(noLongerCurrent)}`
+        );
     }
     if (currentScope.changed_lines_total !== expectedChangedLinesTotal) {
         violations.push(
@@ -1561,19 +1603,19 @@ function readPreflightWorkspaceReadiness(
                 !unchangedProtectedFiles.has(normalizePath(entry))
             ));
             currentChangedFiles = currentGitChangedFiles;
-            const postReviewDocsReadiness = buildPostReviewDocsOnlyReadiness(
+            const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
                 repoRoot,
-                preflight,
-                options,
                 currentGitChangedFiles,
                 changedFiles,
                 expectedChangedLinesTotal,
                 includeUntracked,
                 detectionSource,
-                expectedChangedFilesSha256
+                expectedChangedFilesSha256,
+                expectedScopeContentSha256,
+                getDocImpactDeclaredDocsUpdated(options.docImpactPath)
             );
-            if (postReviewDocsReadiness) {
-                return postReviewDocsReadiness;
+            if (docsOnlyDeltaReadiness) {
+                return docsOnlyDeltaReadiness;
             }
             const currentFileSetHash = stringSha256(currentGitChangedFiles.join('\n'));
             if (currentFileSetHash !== expectedChangedFilesSha256) {
@@ -1593,19 +1635,19 @@ function readPreflightWorkspaceReadiness(
         }
     }
 
-    const postReviewDocsReadiness = buildPostReviewDocsOnlyReadiness(
+    const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
         repoRoot,
-        preflight,
-        options,
         currentScope.changed_files,
         changedFiles,
         expectedChangedLinesTotal,
         includeUntracked,
         detectionSource,
-        expectedChangedFilesSha256
+        expectedChangedFilesSha256,
+        expectedScopeContentSha256,
+        getDocImpactDeclaredDocsUpdated(options.docImpactPath)
     );
-    if (postReviewDocsReadiness) {
-        return postReviewDocsReadiness;
+    if (docsOnlyDeltaReadiness) {
+        return docsOnlyDeltaReadiness;
     }
 
     if (violations.length === 0) {
@@ -2152,9 +2194,13 @@ function buildDocImpactCommand(
     taskId: string,
     preflightCommandPath: string,
     preflight: Record<string, unknown> | null,
-    repoRoot: string
+    repoRoot: string,
+    additionalDocsUpdated: string[] = []
 ): string {
-    const docsUpdated = getDocImpactChangedFiles(preflight, repoRoot);
+    const docsUpdated = [...new Set([
+        ...getDocImpactChangedFiles(preflight, repoRoot),
+        ...additionalDocsUpdated.map((entry) => normalizePath(entry)).filter(Boolean)
+    ])].sort();
     const changelogUpdated = docsUpdated.some((filePath) => isChangelogPath(filePath));
     const parts = [
         `${cliPrefix} gate doc-impact-gate`,
@@ -3210,7 +3256,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Run doc impact gate',
-                    buildDocImpactCommand(cliPrefix, taskId, preflightCommandPath, preflight, repoRoot)
+                    buildDocImpactCommand(
+                        cliPrefix,
+                        taskId,
+                        preflightCommandPath,
+                        preflight,
+                        repoRoot,
+                        preflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
+                    )
                 )
             ]
         });

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- kept ordinary docs/`CHANGELOG.md` follow-up changes in doc-impact scope after reviews instead of forcing fresh code/test review cycles, while protected control-plane docs still fail closed
 - added `garda gate complete-reviewer-launch` so real delegated reviewer launches can fill post-launch metadata without hand-editing reviewer launch artifacts
 - preserved PASS review reuse across same-scope preflight refreshes by hashing only review-relevant scoped-diff metadata and printing explicit review reuse accept/reject diagnostics from `build-review-context`
 - stopped the performance review path trigger from matching ordinary `Profile` policy filenames while preserving benchmark, profiling, and performance-path triggers
