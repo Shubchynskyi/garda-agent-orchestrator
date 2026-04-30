@@ -2866,6 +2866,46 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
+    const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
+    if (fullSuiteConfig.enabled && nextReview.reviewType === 'test') {
+        if (fullSuiteGateStatus === 'FAIL') {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'implementation',
+                title: 'Fix full-suite failures before launching test review.',
+                reason:
+                    `Full-suite validation is enabled and already failed for the current compiled scope. ` +
+                    `Do not launch the mandatory test reviewer until the configured full-suite command passes; ` +
+                    `fix the failures, rerun compile-gate if implementation changed, then rerun full-suite-validation.`,
+                commands: [
+                    buildCommand(
+                        'Rerun navigator after fixing implementation',
+                        navigatorCommand
+                    )
+                ]
+            });
+        }
+        if (!isGatePassed(summary, 'full-suite-validation')) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'full-suite-validation',
+                title: 'Run full-suite validation before test review.',
+                reason:
+                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}. ` +
+                    `Run it before launching the mandatory test reviewer so suite failures fail fast on the same compiled scope. ` +
+                    `The final closeout can reuse this artifact only if no relevant task scope changes occur afterward. Command: ${fullSuiteConfig.command}.`,
+                commands: [
+                    buildCommand(
+                        'Run full-suite validation',
+                        `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                    )
+                ]
+            });
+        }
+    }
+
     if (nextReview.reviewType) {
         const reviewType = nextReview.reviewType;
         const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);

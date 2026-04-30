@@ -152,7 +152,8 @@ function appendEvent(
     taskId: string,
     eventType: string,
     outcome = 'PASS',
-    details: Record<string, unknown> = {}
+    details: Record<string, unknown> = {},
+    timestampUtc?: string
 ): { task_sequence: number; prev_event_sha256: string | null; event_sha256: string } {
     const timelinePath = path.join(eventsRoot(repoRoot), `${taskId}.jsonl`);
     const existingLines = fs.existsSync(timelinePath)
@@ -174,7 +175,7 @@ function appendEvent(
         outcome,
         actor: 'gate',
         message: eventType,
-        timestamp_utc: new Date().toISOString(),
+        timestamp_utc: timestampUtc || new Date().toISOString(),
         details,
         integrity: {
             schema_version: 1,
@@ -319,10 +320,11 @@ function writePreflight(
     return preflightPath;
 }
 
-function seedCompilePass(repoRoot: string, taskId: string): void {
+function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
+        timestamp_utc: timestampUtc || new Date().toISOString(),
         task_id: taskId,
         event_source: 'compile-gate',
         status: 'PASSED',
@@ -337,7 +339,7 @@ function seedCompilePass(repoRoot: string, taskId: string): void {
         scope_changed_files_sha256: snapshot.changed_files_sha256,
         scope_sha256: snapshot.scope_sha256
     });
-    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
+    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', 'PASS', {}, timestampUtc);
 }
 
 function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
@@ -493,6 +495,46 @@ function seedCompletionPass(repoRoot: string, taskId: string): void {
         outcome: 'PASS'
     });
     appendEvent(repoRoot, taskId, 'COMPLETION_GATE_PASSED');
+}
+
+function seedFullSuiteValidation(
+    repoRoot: string,
+    taskId: string,
+    status: 'PASSED' | 'FAILED' = 'PASSED',
+    timestampUtc?: string
+): void {
+    const timelinePath = path.join(eventsRoot(repoRoot), `${taskId}.jsonl`);
+    const timelineEvents = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const latestCompile = [...timelineEvents]
+        .reverse()
+        .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const cycleBinding = {
+        task_id: taskId,
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fileSha256(preflightPath),
+        compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
+    };
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-validation.json`), {
+        task_id: taskId,
+        status,
+        enabled: true,
+        command: 'npm test',
+        exit_code: status === 'PASSED' ? 0 : 1,
+        cycle_binding: cycleBinding,
+        output_artifact_path: path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-output.log`)
+    });
+    appendEvent(
+        repoRoot,
+        taskId,
+        status === 'PASSED' ? 'FULL_SUITE_VALIDATION_PASSED' : 'FULL_SUITE_VALIDATION_FAILED',
+        status === 'PASSED' ? 'PASS' : 'FAIL',
+        { cycle_binding: cycleBinding },
+        timestampUtc
+    );
 }
 
 function materializeFinalCloseout(repoRoot: string, taskId: string): void {
@@ -1040,6 +1082,138 @@ describe('gates/next-step', () => {
         assert.equal(afterCode.next_gate, 'build-review-context');
         assert.equal(afterCode.review.next_review_type, 'test');
         assert.ok(afterCode.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('runs enabled full-suite validation before launching mandatory test review', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.title, /before test review/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('uses current early full-suite pass before continuing to mandatory test review', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('blocks mandatory test review after current early full-suite failure', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.title, /Fix full-suite failures/);
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+    });
+
+    it('reruns full-suite before test review when prior full-suite pass is stale after a newer compile', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED', '2099-01-01T00:00:02.000Z');
+        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.title, /before test review/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('reruns full-suite before test review when prior full-suite failure is stale after a newer compile', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED', '2099-01-01T00:00:02.000Z');
+        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.title, /before test review/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('implementation'));
     });
 
     it('stops after a failed upstream code review instead of launching downstream test review', () => {
