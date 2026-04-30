@@ -480,6 +480,10 @@ describe('gates/build-review-context', () => {
             fs.mkdirSync(rulesRoot, { recursive: true });
             fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
             fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
             for (const ruleFile of getRulePack('code').full) {
                 fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
             }
@@ -499,6 +503,7 @@ describe('gates/build-review-context', () => {
             const preflightPath = path.join(reviewsRoot, 'T-901-scope-preflight.json');
             fs.writeFileSync(preflightPath, JSON.stringify({
                 task_id: 'T-901-scope',
+                detection_source: 'explicit_changed_files',
                 mode: 'FULL_PATH',
                 scope_category: 'code',
                 changed_files: ['src/app.ts'],
@@ -670,6 +675,177 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('rejects required code review contexts without task diff material for changed code files', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-missing-diff-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const stable = true;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-missing-diff', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-missing-diff-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-missing-diff',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: ['src/app.ts'],
+                required_reviews: { code: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-missing-diff-code-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-missing-diff-code-review-context.json'),
+                    repoRoot
+                }),
+                /no task diff material.*src\/app\.ts/s
+            );
+            assert.equal(fs.existsSync(path.join(reviewsRoot, 'T-901-missing-diff-code-review-context.json')), false);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('rejects required scoped reviews when preflight expects metadata even if live config changed', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-missing-scoped-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('security').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'src', 'auth.ts'), 'export const auth = true;\n', 'utf8');
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({
+                enabled: false,
+                enabled_depths: [1, 2],
+                scoped_diffs: false
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-missing-scoped', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-missing-scoped-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-missing-scoped',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: ['src/auth.ts'],
+                required_reviews: { security: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true, security: true },
+                budget_forecast: { token_economy_active_for_depth: true },
+                risk_aware_depth: { compression: { scoped_diffs: true } }
+            }, null, 2), 'utf8');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'security',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-missing-scoped-security-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-missing-scoped-security-review-context.json'),
+                    repoRoot
+                }),
+                /expects scoped diff metadata.*src\/auth\.ts/s
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('does not require scoped diff metadata for true docs-only review contexts', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-docs-only-scoped-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('security').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'docs', 'usage.md'), '# Usage\n', 'utf8');
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({
+                enabled: true,
+                enabled_depths: [1, 2],
+                scoped_diffs: true
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-docs-only-scoped', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-docs-only-scoped-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-docs-only-scoped',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'docs-only',
+                changed_files: ['docs/usage.md'],
+                required_reviews: { security: true },
+                triggers: { runtime_changed: false, runtime_code_changed: false, security: true },
+                budget_forecast: { token_economy_active_for_depth: true },
+                risk_aware_depth: { compression: { scoped_diffs: true } }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'security',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-docs-only-scoped-security-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-docs-only-scoped-security-review-context.json'),
+                repoRoot
+            });
+
+            assert.equal(result.scoped_diff.expected, false);
+            assert.equal(result.scoped_diff.metadata, null);
+            assert.equal(result.task_scope.diff.available, true);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('preserves whitespace in untracked file content for reviewer prompt artifacts', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-explicit-untracked-whitespace-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -755,7 +931,7 @@ describe('gates/build-review-context', () => {
                 mode: 'FULL_PATH',
                 scope_category: 'code',
                 changed_files: ['src/cached.ts'],
-                required_reviews: { security: true, refactor: true },
+                required_reviews: { code: true, security: false, refactor: false },
                 triggers: { runtime_changed: true, runtime_code_changed: true }
             }, null, 2), 'utf8');
 
@@ -819,7 +995,7 @@ describe('gates/build-review-context', () => {
                 mode: 'FULL_PATH',
                 scope_category: 'code',
                 changed_files: ['src/*.ts'],
-                required_reviews: { code: true },
+                required_reviews: { code: false },
                 triggers: { runtime_changed: true, runtime_code_changed: true }
             }, null, 2), 'utf8');
 

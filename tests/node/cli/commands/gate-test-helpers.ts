@@ -34,6 +34,7 @@ export {
     runEnterTaskMode,
     createReviewerRoutingFixture,
     writePreflight,
+    prepareReviewDiffFixture,
     appendPreflightClassifiedEvent,
     writeCompilePassEvidence,
     writeReceiptBackedReviewArtifact,

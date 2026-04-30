@@ -540,6 +540,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         skipReviews: skipReviewsList,
         compileGateEvidence: compileGateEvidence.status === 'PASS' ? { status: 'PASSED' } : null,
         reviewArtifacts: reviewArtifactsMap,
+        preflightPayload: preflight,
         canonicalSourceOfTruth: runtimeIdentity.canonical_source_of_truth,
         executionProvider: runtimeIdentity.execution_provider,
         executionProviderSource: runtimeIdentity.execution_provider_source,

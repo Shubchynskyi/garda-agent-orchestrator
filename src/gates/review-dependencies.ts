@@ -264,6 +264,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
         skippedByOverride: false,
         preflightPath: options.preflightPath,
         preflightSha256: options.preflightHashSha256,
+        preflightPayload: options.preflightPayload,
         canonicalSourceOfTruth: runtimeIdentity.canonical_source_of_truth,
         executionProvider: runtimeIdentity.execution_provider,
         executionProviderSource: runtimeIdentity.execution_provider_source,

@@ -1,10 +1,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { convertToGitPathspecs, filterDiffByHunks } from '../gate-runtime/scoped-diff';
+import { convertToGitPathspecs, filterDiffByHunks, parseUnifiedDiff, reassembleDiff } from '../gate-runtime/scoped-diff';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { matchAnyRegex } from '../gate-runtime/text-utils';
-import { normalizePath, resolveGitRoot, resolvePathInsideRepo, toStringArray, toPosix } from './helpers';
+import { fileSha256, normalizePath, resolveGitRoot, resolvePathInsideRepo, stringSha256, toStringArray, toPosix } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
+import { readReviewContextChangedFiles } from './review-context-diff';
+
+const GIT_DIFF_HARDENING_ARGS = ['--no-ext-diff', '--no-textconv', '--no-color'];
+export const SCOPED_DIFF_UNTRACKED_FILE_MAX_CHARS = 1024 * 1024;
+export const SCOPED_DIFF_UNTRACKED_TOTAL_MAX_CHARS = 1024 * 1024;
 
 /**
  * Resolve output path for scoped diff.
@@ -34,7 +39,7 @@ export function resolveMetadataPath(explicitMetadataPath: string, preflightPath:
  * Run git diff and return stdout text.
  */
 export function runGitDiff(gitRoot: string, useStaged: boolean, pathspecs: string[]): string {
-    const gitArgs = ['-C', String(gitRoot), 'diff', '--no-color'];
+    const gitArgs = ['-C', String(gitRoot), 'diff', ...GIT_DIFF_HARDENING_ARGS];
     if (useStaged) gitArgs.push('--staged');
     else gitArgs.push('HEAD');
     if (pathspecs && pathspecs.length > 0) {
@@ -58,6 +63,201 @@ export function runGitDiff(gitRoot: string, useStaged: boolean, pathspecs: strin
         throw new Error(`git diff exited with code ${result.status}. ${errText}`);
     }
     return String(result.stdout || '');
+}
+
+function runGitText(gitRoot: string, args: string[]): string {
+    const result = spawnSyncWithTimeout('git', ['-C', String(gitRoot), ...args], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        maxBuffer: 50 * 1024 * 1024,
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+    });
+    if (result.timedOut) {
+        throw new Error(`git ${args[0] || ''} timed out after ${DEFAULT_GIT_TIMEOUT_MS} ms.`);
+    }
+    if (result.error) {
+        throw new Error(`git ${args[0] || ''} exited with error: ${result.error.message || result.error}`);
+    }
+    if (result.status !== 0) {
+        const errText = String(result.stderr || '').trim();
+        throw new Error(`git ${args[0] || ''} exited with code ${result.status}. ${errText}`);
+    }
+    return String(result.stdout || '');
+}
+
+function shouldIncludeUntracked(preflight: Record<string, unknown>): boolean {
+    const detectionSource = String(preflight.detection_source || '').trim().toLowerCase();
+    return detectionSource === 'explicit_changed_files'
+        || detectionSource === 'git_auto'
+        || detectionSource === 'git_staged_plus_untracked';
+}
+
+function getDetectionSource(preflight: Record<string, unknown>): string {
+    return String(preflight.detection_source || '').trim().toLowerCase();
+}
+
+function usesStagedScope(preflight: Record<string, unknown>): boolean {
+    const detectionSource = getDetectionSource(preflight);
+    return detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked';
+}
+
+function normalizeOptionalHash(value: unknown): string | null {
+    const trimmed = String(value || '').trim().toLowerCase();
+    return trimmed ? trimmed : null;
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function toLiteralGitPathspecs(pathspecs: string[]): string[] {
+    return pathspecs.map((pathspec) => `:(literal)${pathspec}`);
+}
+
+function resolveGitRelativePath(gitRoot: string, relativeFile: string): string | null {
+    const normalizedFile = normalizePath(relativeFile);
+    if (
+        !normalizedFile
+        || normalizedFile === '.'
+        || normalizedFile === '..'
+        || normalizedFile.startsWith('../')
+        || normalizedFile.endsWith('/..')
+        || normalizedFile.includes('/../')
+        || normalizedFile.startsWith(':')
+        || path.isAbsolute(normalizedFile)
+    ) {
+        return null;
+    }
+    const resolvedGitRoot = path.resolve(gitRoot);
+    const resolvedPath = path.resolve(resolvedGitRoot, normalizedFile);
+    const relativeFromRoot = path.relative(resolvedGitRoot, resolvedPath);
+    if (!relativeFromRoot || relativeFromRoot.startsWith('..') || path.isAbsolute(relativeFromRoot)) {
+        return null;
+    }
+    return resolvedPath;
+}
+
+function listUntrackedFiles(gitRoot: string, pathspecs: string[]): string[] {
+    const args = ['ls-files', '--others', '--exclude-standard'];
+    if (pathspecs.length > 0) {
+        args.push('--', ...pathspecs);
+    }
+    return runGitText(gitRoot, args)
+        .split(/\r?\n/)
+        .map((entry) => normalizePath(entry))
+        .filter((entry) => entry.length > 0);
+}
+
+function readUntrackedFileBody(gitRoot: string, relativeFile: string, maxChars: number): { body: string; mode: string; truncated: boolean } | null {
+    const absolutePath = resolveGitRelativePath(gitRoot, relativeFile);
+    if (!absolutePath) {
+        return null;
+    }
+    try {
+        const stat = fs.lstatSync(absolutePath);
+        if (stat.isSymbolicLink()) {
+            return {
+                mode: '120000',
+                body: '+[untracked file content omitted: symbolic_link]',
+                truncated: false
+            };
+        }
+        if (!stat.isFile()) {
+            return null;
+        }
+        const effectiveMaxChars = Math.max(0, maxChars);
+        const file = fs.openSync(absolutePath, 'r');
+        let content = '';
+        let truncated = false;
+        try {
+            const buffer = Buffer.alloc(Math.min(stat.size, effectiveMaxChars + 4096));
+            const bytesRead = fs.readSync(file, buffer, 0, buffer.length, 0);
+            const rawContent = buffer.subarray(0, bytesRead).toString('utf8');
+            content = rawContent.slice(0, effectiveMaxChars);
+            truncated = rawContent.length > effectiveMaxChars || stat.size > bytesRead;
+        } finally {
+            fs.closeSync(file);
+        }
+        const truncatedMarker = truncated
+            ? `\n+[untracked file content truncated: ${stat.size} bytes exceeds scoped-diff untracked limit]`
+            : '';
+        return {
+            mode: '100644',
+            body: `${content.split(/\r?\n/).map((line) => `+${line}`).join('\n')}${truncatedMarker}`,
+            truncated
+        };
+    } catch {
+        return null;
+    }
+}
+
+function buildUntrackedDiff(gitRoot: string, pathspecs: string[]): { text: string; files: string[]; truncated: boolean } {
+    const untrackedFiles = listUntrackedFiles(gitRoot, pathspecs);
+    const chunks: string[] = [];
+    const includedFiles: string[] = [];
+    let outputCharCount = 0;
+    let truncated = false;
+    for (const relativeFile of untrackedFiles) {
+        const remainingChars = SCOPED_DIFF_UNTRACKED_TOTAL_MAX_CHARS - outputCharCount;
+        if (remainingChars <= 0) {
+            truncated = true;
+            break;
+        }
+        const header = [
+            `diff --git a/${relativeFile} b/${relativeFile}`,
+            'new file mode 100644',
+            '--- /dev/null',
+            `+++ b/${relativeFile}`
+        ].join('\n') + '\n';
+        const markerReserveChars = 256;
+        const fileBody = readUntrackedFileBody(
+            gitRoot,
+            relativeFile,
+            Math.min(SCOPED_DIFF_UNTRACKED_FILE_MAX_CHARS, Math.max(0, remainingChars - header.length - markerReserveChars))
+        );
+        if (!fileBody) {
+            continue;
+        }
+        const chunk = [
+            `diff --git a/${relativeFile} b/${relativeFile}`,
+            `new file mode ${fileBody.mode}`,
+            '--- /dev/null',
+            `+++ b/${relativeFile}`,
+            fileBody.body
+        ].join('\n');
+        const boundedChunk = chunk.slice(0, remainingChars);
+        chunks.push(boundedChunk);
+        outputCharCount += boundedChunk.length;
+        truncated = truncated || fileBody.truncated || chunk.length > boundedChunk.length;
+        includedFiles.push(relativeFile);
+    }
+    return {
+        text: chunks.join('\n'),
+        files: includedFiles,
+        truncated
+    };
+}
+
+function runGitDiffBestEffort(gitRoot: string, useStaged: boolean, pathspecs: string[]): string {
+    try {
+        return runGitDiff(gitRoot, useStaged, pathspecs);
+    } catch {
+        return '';
+    }
+}
+
+function filterDiffToChangedFiles(diffText: string, changedFiles: string[]): string {
+    const allowedFiles = new Set(changedFiles.map((changedFile) => normalizePath(changedFile)));
+    if (allowedFiles.size === 0) {
+        return '';
+    }
+    const blocks = parseUnifiedDiff(diffText);
+    if (blocks.length === 0) {
+        return '';
+    }
+    return reassembleDiff(blocks.filter((block) => allowedFiles.has(normalizePath(block.filePath))));
 }
 
 export interface BuildScopedDiffOptions {
@@ -86,16 +286,18 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
     const metadataPath = options.metadataPath;
     const fullDiffPath = options.fullDiffPath || null;
     const repoRoot = options.repoRoot;
-    const useStaged = options.useStaged || false;
     const hunkLevel = options.hunkLevel || false;
 
     const gitRepoRoot = resolveGitRoot(repoRoot);
 
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
-    const changedFiles = [...new Set(
-        toStringArray(preflight.changed_files).map(f => String(f).replace(/\\/g, '/')).filter(Boolean)
-    )].sort();
+    const detectionSource = getDetectionSource(preflight);
+    const useStaged = options.useStaged === undefined ? usesStagedScope(preflight) : options.useStaged === true;
+    const useStagedSource = options.useStaged === undefined ? 'preflight_detection_source' : 'explicit_option';
+    const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
 
+    const preflightMetrics = asPlainRecord(preflight.metrics);
+    const preflightSha256 = fileSha256(preflightPath);
     const pathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8'));
     const triggers = pathsConfig.triggers || {};
     const triggerRegexes = toStringArray(triggers[reviewType]);
@@ -114,11 +316,27 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
     let scopedDiffText = '';
     let fallbackToFullDiff = false;
     let fullDiffSource = 'none';
+    const includeUntracked = shouldIncludeUntracked(preflight);
+    let untrackedFiles: string[] = [];
+    let untrackedDiffTruncated = false;
+    const changedFilePathspecs = toLiteralGitPathspecs(
+        convertToGitPathspecs(changedFiles, toPosix(repoRoot), toPosix(gitRepoRoot))
+    );
 
     if (matchedFiles.length > 0) {
         try {
-            const gitPathspecs = convertToGitPathspecs(matchedFiles, toPosix(repoRoot), toPosix(gitRepoRoot));
-            scopedDiffText = runGitDiff(gitRepoRoot, useStaged, gitPathspecs);
+            const gitPathspecs = toLiteralGitPathspecs(
+                convertToGitPathspecs(matchedFiles, toPosix(repoRoot), toPosix(gitRepoRoot))
+            );
+            const trackedDiffText = includeUntracked
+                ? runGitDiffBestEffort(gitRepoRoot, useStaged, gitPathspecs)
+                : runGitDiff(gitRepoRoot, useStaged, gitPathspecs);
+            const untrackedDiff = includeUntracked
+                ? buildUntrackedDiff(gitRepoRoot, gitPathspecs)
+                : { text: '', files: [], truncated: false };
+            untrackedFiles = [...new Set([...untrackedFiles, ...untrackedDiff.files])].sort();
+            untrackedDiffTruncated = untrackedDiffTruncated || untrackedDiff.truncated;
+            scopedDiffText = [trackedDiffText, untrackedDiff.text].filter((text) => text.trim()).join('\n');
             if (!scopedDiffText.trim()) fallbackToFullDiff = true;
         } catch {
             fallbackToFullDiff = true;
@@ -129,12 +347,26 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
 
     let outputDiffText = scopedDiffText;
     if (fallbackToFullDiff) {
+        let artifactDiffText = '';
         if (fullDiffPath && fs.existsSync(fullDiffPath) && fs.statSync(fullDiffPath).isFile()) {
-            outputDiffText = fs.readFileSync(fullDiffPath, 'utf8');
-            fullDiffSource = 'artifact';
+            artifactDiffText = filterDiffToChangedFiles(fs.readFileSync(fullDiffPath, 'utf8'), changedFiles);
+        }
+        if (artifactDiffText.trim()) {
+            outputDiffText = artifactDiffText;
+            fullDiffSource = 'artifact_scoped';
         } else {
-            outputDiffText = runGitDiff(gitRepoRoot, useStaged, []);
-            fullDiffSource = 'git';
+            const trackedFullDiffText = includeUntracked
+                ? runGitDiffBestEffort(gitRepoRoot, useStaged, changedFilePathspecs)
+                : runGitDiff(gitRepoRoot, useStaged, changedFilePathspecs);
+            const untrackedFullDiff = includeUntracked
+                ? buildUntrackedDiff(gitRepoRoot, changedFilePathspecs)
+                : { text: '', files: [], truncated: false };
+            untrackedFiles = [...new Set([...untrackedFiles, ...untrackedFullDiff.files])].sort();
+            untrackedDiffTruncated = untrackedDiffTruncated || untrackedFullDiff.truncated;
+            outputDiffText = [trackedFullDiffText, untrackedFullDiff.text].filter((text) => text.trim()).join('\n');
+            fullDiffSource = includeUntracked && untrackedFullDiff.files.length > 0
+                ? 'git_plus_untracked'
+                : 'git';
         }
     }
 
@@ -167,6 +399,11 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
     const result: Record<string, unknown> = {
         review_type: reviewType,
         preflight_path: normalizePath(preflightPath),
+        preflight_sha256: preflightSha256,
+        detection_source: detectionSource,
+        changed_files_sha256: normalizeOptionalHash(preflightMetrics?.changed_files_sha256),
+        scope_content_sha256: normalizeOptionalHash(preflightMetrics?.scope_content_sha256),
+        scope_sha256: normalizeOptionalHash(preflightMetrics?.scope_sha256),
         paths_config_path: normalizePath(pathsConfigPath),
         output_path: normalizePath(outputPath),
         metadata_path: normalizePath(metadataPath),
@@ -174,9 +411,17 @@ export function buildScopedDiff(options: BuildScopedDiffOptions) {
         full_diff_path: fullDiffPath ? normalizePath(fullDiffPath) : null,
         full_diff_source: fullDiffSource,
         use_staged: !!useStaged,
+        use_staged_source: useStagedSource,
+        include_untracked: includeUntracked,
+        untracked_files_count: untrackedFiles.length,
+        untracked_files: untrackedFiles,
+        untracked_diff_truncated: untrackedDiffTruncated,
+        changed_files_count: changedFiles.length,
+        changed_files: changedFiles,
         matched_files_count: matchedFiles.length,
         matched_files: matchedFiles,
         fallback_to_full_diff: !!fallbackToFullDiff,
+        output_diff_sha256: stringSha256(outputPayload),
         scoped_diff_line_count: lineCount(scopedDiffText),
         output_diff_line_count: lineCount(outputPayload),
         hunk_level: !!hunkLevel

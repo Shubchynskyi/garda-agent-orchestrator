@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
     checkRequiredReviews,
@@ -288,6 +291,140 @@ describe('gates/required-reviews-check', () => {
     });
 
     describe('validateReviewArtifactGateEligibility', () => {
+        it('loads preflight payload from path before validating required diff material', () => {
+            const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-eligibility-preflight-'));
+            const preflightPath = path.join(tempRoot, 'T-272-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-272',
+                scope_category: 'code',
+                changed_files: ['src/app.ts'],
+                required_reviews: { code: true }
+            }), 'utf8');
+
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-272',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath,
+                preflightSha256: 'abc123',
+                reviewArtifact: {
+                    path: path.join(tempRoot, 'T-272-code.md'),
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated the required review context binding and confirmed the artifact is intentionally non-trivial.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: path.join(tempRoot, 'T-272-code-review-context.json'),
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-272',
+                        review_type: 'code',
+                        preflight_path: preflightPath,
+                        preflight_sha256: 'abc123',
+                        reviewer_routing: {
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:T-272'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact'
+                },
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint'
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('missing task_scope')));
+            fs.rmSync(tempRoot, { recursive: true, force: true });
+        });
+
+        it('rejects specialist review contexts that opt out of preflight-required scoped diff metadata', () => {
+            const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-eligibility-scoped-'));
+            const preflightPath = path.join(tempRoot, 'T-272-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-272',
+                scope_category: 'code',
+                changed_files: ['src/auth.ts'],
+                required_reviews: { security: true },
+                budget_forecast: { token_economy_active_for_depth: true },
+                risk_aware_depth: { compression: { scoped_diffs: true } }
+            }), 'utf8');
+
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-272',
+                reviewKey: 'security',
+                required: true,
+                skippedByOverride: false,
+                preflightPath,
+                preflightSha256: 'abc123',
+                reviewArtifact: {
+                    path: path.join(tempRoot, 'T-272-security.md'),
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated the security review context binding and confirmed the artifact is intentionally non-trivial.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'SECURITY REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: path.join(tempRoot, 'T-272-security-review-context.json'),
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-272',
+                        review_type: 'security',
+                        preflight_path: preflightPath,
+                        preflight_sha256: 'abc123',
+                        task_scope: {
+                            changed_files: ['src/auth.ts'],
+                            diff: { available: true, source: 'fixture', char_count: 120 }
+                        },
+                        scoped_diff: {
+                            expected: false,
+                            metadata_path: path.join(tempRoot, 'T-272-security-scoped.json'),
+                            metadata: null
+                        },
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'provider_entrypoint',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:T-272'
+                        }
+                    },
+                    reviewContextSha256: 'ctx',
+                    artifactSha256: 'artifact'
+                },
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'provider_entrypoint'
+            });
+
+            assert.ok(result.violations.some((violation) => violation.includes('must declare scoped_diff.expected=true')));
+            fs.rmSync(tempRoot, { recursive: true, force: true });
+        });
+
         it('rejects a review-context artifact whose review_type does not match the expected review', () => {
             const result = validateReviewArtifactGateEligibility({
                 resolvedTaskId: 'T-053',
@@ -378,6 +515,76 @@ describe('gates/required-reviews-check', () => {
             assert.ok(result.violations.some((violation) => violation.includes('missing task_id')));
             assert.ok(result.violations.some((violation) => violation.includes('missing preflight_path')));
             assert.ok(result.violations.some((violation) => violation.includes('missing preflight_sha256')));
+        });
+
+        it('requires task and preflight binding metadata for canonical required review-context paths', () => {
+            const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-eligibility-canonical-binding-'));
+            const preflightPath = path.join(tempRoot, 'T-272-preflight.json');
+            const artifactPath = path.join(tempRoot, 'T-272-code.md');
+            const reviewContextPath = path.join(tempRoot, 'T-272-code-review-context.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-272',
+                scope_category: 'code',
+                changed_files: ['src/app.ts'],
+                required_reviews: { code: true }
+            }), 'utf8');
+
+            try {
+                const result = validateReviewArtifactGateEligibility({
+                    resolvedTaskId: 'T-272',
+                    reviewKey: 'code',
+                    required: true,
+                    skippedByOverride: false,
+                    preflightPath,
+                    preflightSha256: 'abc123',
+                    reviewArtifact: {
+                        path: artifactPath,
+                        content: [
+                            '# Review',
+                            '',
+                            'Validated the required review context binding and confirmed this artifact has meaningful implementation detail.',
+                            '',
+                            '## Findings by Severity',
+                            'none',
+                            '',
+                            '## Residual Risks',
+                            'none',
+                            '',
+                            '## Verdict',
+                            'REVIEW PASSED'
+                        ].join('\n'),
+                        reviewContextPath,
+                        reviewContext: {
+                            schema_version: 2,
+                            review_type: 'code',
+                            task_scope: {
+                                changed_files: ['src/app.ts'],
+                                diff: { available: true, source: 'fixture', char_count: 120 }
+                            },
+                            reviewer_routing: {
+                                source_of_truth: 'Codex',
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                execution_provider_source: 'provider_entrypoint',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:T-272'
+                            }
+                        },
+                        reviewContextSha256: 'ctx',
+                        artifactSha256: 'artifact'
+                    },
+                    canonicalSourceOfTruth: 'Codex',
+                    executionProvider: 'Codex',
+                    executionProviderSource: 'provider_entrypoint'
+                });
+
+                assert.ok(result.violations.some((violation) => violation.includes('missing task_id')));
+                assert.ok(result.violations.some((violation) => violation.includes('missing preflight_path')));
+                assert.ok(result.violations.some((violation) => violation.includes('missing preflight_sha256')));
+            } finally {
+                fs.rmSync(tempRoot, { recursive: true, force: true });
+            }
         });
 
         it('rejects review-context runtime identity mismatches even when canonical ownership matches', () => {

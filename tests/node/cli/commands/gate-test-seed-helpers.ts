@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
 
 import {
     runClassifyChangeCommand,
@@ -280,6 +281,137 @@ export function writePreflight(
     return preflightPath;
 }
 
+function runGitBestEffort(repoRoot: string, args: string[]): void {
+    childProcess.spawnSync('git', args, {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+}
+
+function readChangedFilesFromPreflight(preflightPath: string): string[] {
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        return ['src/app.ts'];
+    }
+    try {
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        return Array.isArray(preflight.changed_files)
+            ? preflight.changed_files
+                .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+                .filter(Boolean)
+            : ['src/app.ts'];
+    } catch {
+        return ['src/app.ts'];
+    }
+}
+
+export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string): void {
+    const changedFiles = readChangedFilesFromPreflight(preflightPath);
+    if (changedFiles.length === 0) {
+        return;
+    }
+
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGitBestEffort(repoRoot, ['init']);
+    }
+    runGitBestEffort(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGitBestEffort(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+    if (head.status !== 0) {
+        runGitBestEffort(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+    }
+
+    for (const changedFile of changedFiles) {
+        if (
+            changedFile.startsWith('/')
+            || changedFile.startsWith('../')
+            || changedFile.includes('/../')
+            || changedFile.startsWith(':')
+        ) {
+            continue;
+        }
+        const absolutePath = path.join(repoRoot, ...changedFile.split('/'));
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        if (!fs.existsSync(absolutePath)) {
+            fs.writeFileSync(absolutePath, `// review fixture for ${changedFile}\n`, 'utf8');
+        }
+    }
+}
+
+function buildManualReviewContextTaskScopeFixture(repoRoot: string, taskId: string): Record<string, unknown> {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const changedFiles = readChangedFilesFromPreflight(preflightPath);
+    return {
+        changed_files: changedFiles,
+        changed_file_count: changedFiles.length,
+        diff: {
+            available: changedFiles.length > 0,
+            source: 'fixture_task_diff',
+            char_count: changedFiles.length > 0 ? 120 : 0,
+            truncated: false
+        }
+    };
+}
+
+function buildReceiptBackedReviewContextFixture(
+    repoRoot: string,
+    taskId: string,
+    reviewKey: string,
+    reviewerEvidence: ReturnType<typeof resolveDefaultReviewerEvidence>
+): { reviewContext: Record<string, unknown>; reviewContextText: string } {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    if (fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()) {
+        try {
+            buildReviewContext({
+                reviewType: reviewKey,
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`),
+                outputPath: reviewContextPath,
+                repoRoot
+            });
+            applyReviewerRoutingMetadata(reviewContextPath, {
+                actualExecutionMode: reviewerEvidence.executionMode,
+                reviewerSessionId: reviewerEvidence.reviewerIdentity,
+                fallbackReason: reviewerEvidence.reviewerFallbackReason
+            });
+            const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
+            return {
+                reviewContext: JSON.parse(reviewContextText) as Record<string, unknown>,
+                reviewContextText
+            };
+        } catch {
+            // Fall through to the legacy manual fixture for tests that are not about review-context production.
+        }
+    }
+
+    const reviewContext = {
+        review_type: reviewKey,
+        task_scope: buildManualReviewContextTaskScopeFixture(repoRoot, taskId),
+        scoped_diff: {
+            expected: false,
+            metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`),
+            metadata: null
+        },
+        reviewer_routing: createReviewerRoutingFixture(reviewerEvidence.sourceOfTruth, {
+            ...reviewerEvidence.routingOverrides
+        })
+    };
+    return {
+        reviewContext,
+        reviewContextText: JSON.stringify(reviewContext, null, 2)
+    };
+}
+
 export function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
     const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
     const existingEvents = readTaskTimelineEvents(repoRoot, taskId);
@@ -325,6 +457,7 @@ export function appendPreflightClassifiedEvent(repoRoot: string, taskId: string,
 export function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPath: string): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     const crypto = require('node:crypto');
+    prepareReviewDiffFixture(repoRoot, preflightPath);
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const changedFiles = Array.isArray(preflight.changed_files)
@@ -434,13 +567,7 @@ export function writeReceiptBackedReviewArtifact(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
-    const reviewContext = {
-        review_type: reviewKey,
-        reviewer_routing: createReviewerRoutingFixture(reviewerEvidence.sourceOfTruth, {
-            ...reviewerEvidence.routingOverrides
-        })
-    };
-    const reviewContextText = JSON.stringify(reviewContext, null, 2);
+    const { reviewContext, reviewContextText } = buildReceiptBackedReviewContextFixture(repoRoot, taskId, reviewKey, reviewerEvidence);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
 
     const crypto = require('node:crypto');
@@ -558,6 +685,7 @@ export function seedReusableReviewEvidence(
         '## Verdict',
         verdict
     ].join('\n');
+    prepareReviewDiffFixture(repoRoot, preflightPath);
     buildReviewContext({
         reviewType: reviewKey,
         depth: 2,

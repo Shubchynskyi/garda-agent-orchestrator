@@ -194,6 +194,54 @@ function writePreflight(
     return preflightPath;
 }
 
+function runGitBestEffort(repoRoot: string, args: string[]): void {
+    childProcess.spawnSync('git', args, {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+}
+
+function ensureReviewDiffFixture(repoRoot: string, preflightPath: string): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean)
+        : [];
+    if (changedFiles.length === 0) {
+        return;
+    }
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGitBestEffort(repoRoot, ['init']);
+    }
+    runGitBestEffort(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGitBestEffort(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+    if (head.status !== 0) {
+        runGitBestEffort(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+    }
+    for (const changedFile of changedFiles) {
+        if (
+            changedFile.startsWith('/')
+            || changedFile.startsWith('../')
+            || changedFile.includes('/../')
+            || changedFile.startsWith(':')
+        ) {
+            continue;
+        }
+        const absolutePath = path.join(repoRoot, ...changedFile.split('/'));
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        if (!fs.existsSync(absolutePath)) {
+            fs.writeFileSync(absolutePath, `// legacy review fixture for ${changedFile}\n`, 'utf8');
+        }
+    }
+}
+
 function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
     const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
     const existingEvents = readTaskTimelineEvents(repoRoot, taskId);
@@ -239,6 +287,7 @@ function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, prefli
 function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPath: string): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     const crypto = require('node:crypto');
+    ensureReviewDiffFixture(repoRoot, preflightPath);
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const changedFiles = Array.isArray(preflight.changed_files)
@@ -304,6 +353,7 @@ function seedReusableReviewEvidence(
         '## Verdict',
         verdict
     ].join('\n');
+    ensureReviewDiffFixture(repoRoot, preflightPath);
     buildReviewContext({
         reviewType: reviewKey,
         depth: 2,
@@ -1277,6 +1327,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
+        ensureReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-custom-code-context-legacy-blocked.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
@@ -1341,6 +1392,8 @@ describe('cli/commands/gates', () => {
                 : {};
             const legacyContext = {
                 review_type: canonicalContext.review_type,
+                task_scope: canonicalContext.task_scope,
+                scoped_diff: canonicalContext.scoped_diff,
                 reviewer_routing: {
                     ...routing,
                     actual_execution_mode: 'delegated_subagent',
@@ -1629,6 +1682,8 @@ describe('cli/commands/gates', () => {
             const canonicalContext = JSON.parse(fs.readFileSync(canonicalContextPath, 'utf8')) as Record<string, unknown>;
             const legacyContext = {
                 review_type: canonicalContext.review_type,
+                task_scope: canonicalContext.task_scope,
+                scoped_diff: canonicalContext.scoped_diff,
                 reviewer_routing: canonicalContext.reviewer_routing
             };
             fs.writeFileSync(legacyContextPath, JSON.stringify(legacyContext, null, 2) + '\n', 'utf8');

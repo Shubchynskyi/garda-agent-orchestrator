@@ -11,7 +11,10 @@ import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getReviewArtifactFindingsEvidence, isTrivialReview } from './completion';
 import { fileSha256, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence } from './no-op';
-import { getReviewContextContractViolations } from './review-context-contract';
+import {
+    buildReviewContextPreflightDiffExpectations,
+    getReviewContextContractViolations
+} from './review-context-contract';
 import { resolveReviewContextRoutingIdentity } from './review-context-routing';
 import { type ReviewDependencyTimelineEvent } from './review-dependencies';
 import {
@@ -77,6 +80,26 @@ export function parseSkipReviews(value: unknown): string[] {
     if (!value || !String(value).trim()) return [];
     const parts = String(value).trim().toLowerCase().split(/[,; ]+/).filter(s => s.trim());
     return [...new Set(parts)].sort();
+}
+
+function readPreflightPayloadForReviewValidation(preflightPath?: string | null): Record<string, unknown> | null {
+    const resolvedPath = String(preflightPath || '').trim();
+    if (!resolvedPath) {
+        return null;
+    }
+    try {
+        return toPlainRecord(JSON.parse(fs.readFileSync(resolvedPath, 'utf8')));
+    } catch {
+        return null;
+    }
+}
+
+function resolvePreflightPayloadForReviewValidation(options: {
+    preflightPayload?: Record<string, unknown> | null;
+    preflightPath?: string | null;
+}): Record<string, unknown> | null {
+    return toPlainRecord(options.preflightPayload)
+        ?? readPreflightPayloadForReviewValidation(options.preflightPath);
 }
 
 export function testExpectedVerdict(errors: string[], label: string, required: boolean, skippedByOverride: boolean, actualVerdict: string, passVerdict: string): void {
@@ -431,6 +454,7 @@ export function validateReviewArtifactGateEligibility(options: {
     reviewArtifact: ReviewArtifactEntry;
     preflightPath?: string | null;
     preflightSha256?: string | null;
+    preflightPayload?: Record<string, unknown> | null;
     sourceOfTruth?: string | null;
     canonicalSourceOfTruth?: string | null;
     executionProvider?: string | null;
@@ -501,12 +525,6 @@ export function validateReviewArtifactGateEligibility(options: {
     let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
 
     if (artifactPath && artifactContent) {
-        const canonicalPreferredContextPath = artifactPath.replace(/\.md$/, '-review-context.json');
-        const normalizedReviewContextPath = reviewArtifact.reviewContextPath
-            ? normalizePath(reviewArtifact.reviewContextPath)
-            : null;
-        const requireStrictBindingMetadata = normalizedReviewContextPath != null
-            && normalizedReviewContextPath !== normalizePath(canonicalPreferredContextPath);
         compactionAudit = auditReviewArtifactCompaction({
             artifactPath,
             content: artifactContent,
@@ -527,6 +545,11 @@ export function validateReviewArtifactGateEligibility(options: {
             if (!reviewContext) {
                 errors.push(`Required review '${reviewKey}' is missing a valid review-context artifact.`);
             }
+            const preflightPayload = resolvePreflightPayloadForReviewValidation({
+                preflightPayload: options.preflightPayload,
+                preflightPath: options.preflightPath
+            });
+            const diffExpectations = buildReviewContextPreflightDiffExpectations(preflightPayload, reviewKey);
             errors.push(...getReviewContextContractViolations({
                 contextPath: reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json'),
                 reviewContext: reviewContext || null,
@@ -535,9 +558,10 @@ export function validateReviewArtifactGateEligibility(options: {
                 expectedPreflightPath: options.preflightPath,
                 expectedPreflightSha256: options.preflightSha256,
                 requireReviewType: true,
-                requireTaskId: requireStrictBindingMetadata,
-                requirePreflightPath: requireStrictBindingMetadata,
-                requirePreflightSha256: requireStrictBindingMetadata
+                requireTaskId: true,
+                requirePreflightPath: true,
+                requirePreflightSha256: true,
+                ...diffExpectations
             }));
             if (routingMetadata?.actual_execution_mode && !contextExecutionMode) {
                 errors.push(
@@ -903,6 +927,7 @@ export interface CheckRequiredReviewsOptions {
     skipReviews?: string[];
     compileGateEvidence?: Record<string, unknown> | null;
     reviewArtifacts?: Record<string, ReviewArtifactEntry>;
+    preflightPayload?: Record<string, unknown> | null;
     sourceOfTruth?: string | null;
     canonicalSourceOfTruth?: string | null;
     executionProvider?: string | null;
@@ -928,6 +953,10 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     const resolvedTaskId = validatedPreflight.resolved_task_id;
     const requiredReviews = validatedPreflight.required_reviews;
     const verdicts = resolveExpectedReviewVerdicts(requiredReviews, options.verdicts, skipReviews);
+    const preflightPayload = resolvePreflightPayloadForReviewValidation({
+        preflightPayload: options.preflightPayload,
+        preflightPath: validatedPreflight.preflight_path
+    });
     const timelinePath = resolvedTaskId
         ? path.join(
             path.dirname(path.dirname(validatedPreflight.preflight_path)),
@@ -975,6 +1004,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 reviewArtifact: reviewArtifacts[reviewKey],
                 preflightPath: validatedPreflight.preflight_path,
                 preflightSha256: validatedPreflight.preflight_hash,
+                preflightPayload,
                 sourceOfTruth: options.sourceOfTruth,
                 canonicalSourceOfTruth,
                 executionProvider,

@@ -23,8 +23,11 @@ import { getNoOpEvidence } from './no-op';
 import { getHandshakeEvidence, getHandshakeEvidenceViolations } from './handshake-diagnostics';
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from './shell-smoke-preflight';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from './rule-pack';
-import { getCanonicalReviewContextPath, resolveCanonicalReviewContextPath } from './review-context-paths';
-import { getReviewContextContractViolations } from './review-context-contract';
+import { resolveCanonicalReviewContextPath } from './review-context-paths';
+import {
+    buildReviewContextPreflightDiffExpectations,
+    getReviewContextContractViolations
+} from './review-context-contract';
 import {
     resolveRuntimeReviewerIdentity,
     resolveReviewerRoutingPolicy
@@ -368,10 +371,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
             reviewType: reviewKey,
             explicitPath: recordedReviewContextPath
         });
-        const normalizedReviewContextPath = normalizePath(reviewContextPath);
-        const requireStrictBindingMetadata = normalizedReviewContextPath !== normalizePath(
-            getCanonicalReviewContextPath(reviewsRoot, resolvedTaskId, reviewKey)
-        );
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
 
@@ -399,9 +398,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
                             expectedPreflightPath: validatedPreflight.preflight_path,
                             expectedPreflightSha256: validatedPreflight.preflight_hash,
                             requireReviewType: true,
-                            requireTaskId: requireStrictBindingMetadata,
-                            requirePreflightPath: requireStrictBindingMetadata,
-                            requirePreflightSha256: requireStrictBindingMetadata
+                            requireTaskId: true,
+                            requirePreflightPath: true,
+                            requirePreflightSha256: true,
+                            ...buildReviewContextPreflightDiffExpectations(validatedPreflight.preflight, reviewKey)
                         }));
                     }
                 }

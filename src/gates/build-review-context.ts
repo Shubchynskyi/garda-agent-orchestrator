@@ -19,6 +19,10 @@ import {
     REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS,
     type GitDiffSummary
 } from './review-context-diff';
+import {
+    buildReviewContextPreflightDiffExpectations,
+    getReviewContextContractViolations,
+} from './review-context-contract';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 import { getReviewSkillCandidates, hasSkillEntrypoint } from '../core/review-capabilities';
@@ -374,7 +378,9 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const failTailLines = toNonNegativeInt(tokenConfig.fail_tail_lines);
     const stripExamplesApplied = tokenEconomyActive && stripExamplesFlag;
     const stripCodeBlocksApplied = tokenEconomyActive && stripCodeBlocksFlag;
-    const scopedDiffExpected = tokenEconomyActive && ['db', 'security', 'refactor'].includes(reviewType) && scopedDiffsFlag;
+    const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
+    const diffExpectations = buildReviewContextPreflightDiffExpectations(preflight, reviewType);
+    const scopedDiffExpected = diffExpectations.expectedScopedDiff;
 
     let scopedDiffMetadata = null;
     if (scopedDiffMetadataPath && fs.existsSync(scopedDiffMetadataPath) && fs.statSync(scopedDiffMetadataPath).isFile()) {
@@ -418,7 +424,6 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         fail_tail_lines: failTailLines
     };
     const tokenEconomyOmissionReason = (omittedSections.length > 0 || omittedRulePaths.length > 0) ? 'token_economy_compaction' : 'none';
-    const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
     const requiredReviewTypes = summarizeBooleanRecord(preflight.required_reviews);
     const activeTriggers = summarizeBooleanRecord(preflight.triggers);
     const gitDiff = buildGitDiffSummary(repoRoot, changedFiles, preflight, preflightPath);
@@ -580,6 +585,26 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         },
         plan: planMetadata
     };
+
+    const diffMaterialViolations = getReviewContextContractViolations({
+        contextPath: outputPath,
+        reviewContext: result,
+        expectedTaskId: taskId,
+        expectedReviewType: reviewType,
+        expectedPreflightPath: preflightPath,
+        expectedPreflightSha256: preflightSha256,
+        requireReviewType: true,
+        requireTaskId: true,
+        requirePreflightPath: true,
+        requirePreflightSha256: true,
+        ...diffExpectations
+    });
+    if (diffMaterialViolations.length > 0) {
+        throw new Error(
+            `Review context cannot be built because required diff material is missing. ` +
+            diffMaterialViolations.join(' ')
+        );
+    }
 
     withReviewArtifactLock(outputPath, () => {
         writeArtifactFileAtomically(ruleContextArtifactPath, promptArtifactText);

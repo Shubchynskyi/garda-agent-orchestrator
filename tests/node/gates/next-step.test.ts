@@ -340,6 +340,33 @@ function seedCompilePass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
 }
 
+function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflight = fs.existsSync(preflightPath)
+        ? JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>
+        : {};
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    return {
+        task_scope: {
+            changed_files: changedFiles,
+            diff: {
+                available: changedFiles.length > 0,
+                source: 'test_fixture',
+                char_count: changedFiles.length > 0 ? 120 : 0,
+                truncated: false,
+                error: null
+            }
+        },
+        scoped_diff: {
+            expected: false,
+            metadata_path: path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-scoped.json`),
+            metadata: null
+        }
+    };
+}
+
 function writeReviewEvidence(
     repoRoot: string,
     taskId: string,
@@ -358,6 +385,7 @@ function writeReviewEvidence(
         review_type: reviewType,
         preflight_path: preflightPath,
         preflight_sha256: fileSha256(preflightPath),
+        ...buildReviewContextScopeFixture(repoRoot, taskId, reviewType),
         reviewer_routing: {
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: `agent:${reviewType}-reviewer`
@@ -414,6 +442,7 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
         review_type: reviewType,
         preflight_path: preflightPath,
         preflight_sha256: fileSha256(preflightPath),
+        ...buildReviewContextScopeFixture(repoRoot, taskId, reviewType),
         reviewer_routing: {
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: reviewerIdentity
@@ -429,6 +458,7 @@ function writeFreshReviewContextWithoutRouting(repoRoot: string, taskId: string,
         review_type: reviewType,
         preflight_path: preflightPath,
         preflight_sha256: fileSha256(preflightPath),
+        ...buildReviewContextScopeFixture(repoRoot, taskId, reviewType),
         reviewer_routing: {
             actual_execution_mode: null,
             reviewer_session_id: null
@@ -695,6 +725,58 @@ describe('gates/next-step', () => {
             '80-task-workflow.md',
             '90-skill-catalog.md'
         ]);
+    });
+
+    it('routes stale scoped diff metadata back to build-scoped-diff before review context', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json'), {
+            enabled: false,
+            enabled_depths: [2],
+            scoped_diffs: false
+        });
+        const preflightPath = writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            security: true
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.budget_forecast = {
+            requested_depth: 2,
+            effective_depth: 2,
+            total_forecast_tokens: 1600,
+            effective_forecast_tokens: 1200,
+            token_economy_active_for_depth: true
+        };
+        preflight.risk_aware_depth = {
+            compression: {
+                scoped_diffs: true
+            }
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const metrics = preflight.metrics as Record<string, unknown>;
+        const metadataPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-security-scoped.json`);
+        const outputPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-security-scoped.diff`);
+        writeJson(metadataPath, {
+            review_type: 'security',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: '0'.repeat(64),
+            changed_files_sha256: metrics.changed_files_sha256,
+            scope_content_sha256: metrics.scope_content_sha256,
+            scope_sha256: metrics.scope_sha256,
+            output_path: outputPath.replace(/\\/g, '/'),
+            metadata_path: metadataPath.replace(/\\/g, '/'),
+            changed_files: ['src/app.ts'],
+            output_diff_line_count: 4
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-scoped-diff');
+        assert.ok(result.reason.includes('stale preflight_sha256'));
+        assert.ok(result.commands[0].command.includes('gate build-scoped-diff'));
     });
 
     it('uses task-mode planned scope when building the initial classify-change command', () => {
@@ -1042,6 +1124,39 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /no longer current after the latest compile cycle/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('refreshes scoped diff before rebuilding a stale failed specialist review context', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, security: true });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.budget_forecast = {
+            requested_depth: 2,
+            effective_depth: 2,
+            total_forecast_tokens: 1600,
+            effective_forecast_tokens: 1200,
+            token_economy_active_for_depth: true
+        };
+        preflight.risk_aware_depth = {
+            compression: {
+                scoped_diffs: true
+            }
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'security', { verdict: 'fail' });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'build-scoped-diff');
+        assert.equal(result.review.next_review_type, 'security');
+        assert.match(result.title, /Prepare 'security' scoped diff metadata/);
+        assert.ok(result.commands[0].command.includes('gate build-scoped-diff'));
+        assert.ok(result.commands[0].command.includes('--review-type "security"'));
     });
 
     it('routes to fresh reviewer routing after stale failed review context has been rebuilt', () => {

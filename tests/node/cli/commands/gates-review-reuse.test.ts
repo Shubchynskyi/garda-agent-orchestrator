@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
 
 import {
     EXIT_GATE_FAILURE
@@ -35,7 +36,6 @@ import {
 } from '../../../../src/gates/review-reuse';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
-import * as childProcess from 'node:child_process';
 
 function createReviewerRoutingFixture(
     sourceOfTruth: string,
@@ -202,6 +202,54 @@ function getReviewsRoot(repoRoot: string): string {
 
 function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
+}
+
+function runGitBestEffort(repoRoot: string, args: string[]): void {
+    childProcess.spawnSync('git', args, {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+}
+
+function ensureReviewDiffFixture(repoRoot: string, preflightPath: string): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean)
+        : [];
+    if (changedFiles.length === 0) {
+        return;
+    }
+
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGitBestEffort(repoRoot, ['init']);
+    }
+    runGitBestEffort(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGitBestEffort(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    if (head.status !== 0) {
+        runGitBestEffort(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+    }
+
+    for (const changedFile of changedFiles) {
+        if (
+            changedFile.startsWith('/')
+            || changedFile.startsWith('../')
+            || changedFile.includes('/../')
+            || changedFile.startsWith(':')
+        ) {
+            continue;
+        }
+        const absolutePath = path.join(repoRoot, ...changedFile.split('/'));
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        if (!fs.existsSync(absolutePath)) {
+            fs.writeFileSync(absolutePath, `// review reuse fixture for ${changedFile}\n`, 'utf8');
+        }
+    }
 }
 
 function writePreflight(
@@ -475,6 +523,7 @@ function seedReusableReviewEvidence(
         '## Verdict',
         verdict
     ].join('\n');
+    ensureReviewDiffFixture(repoRoot, preflightPath);
     buildReviewContext({
         reviewType: reviewKey,
         depth: 2,

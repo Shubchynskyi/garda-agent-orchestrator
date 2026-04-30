@@ -50,6 +50,7 @@ import {
     runEnterTaskMode,
     createReviewerRoutingFixture,
     writePreflight,
+    prepareReviewDiffFixture,
     writeCompilePassEvidence,
     writeReceiptBackedReviewArtifact,
     writeCleanReviewArtifact,
@@ -103,6 +104,56 @@ function stripAnsi(value: string): string {
 
 function assertCompileFailureIncludesNextStepHint(outputLines: string[]): void {
     assert.ok(outputLines.some((line) => line.includes('NextStep: run') && line.includes('next-step')));
+}
+
+// Manual review-context fixtures are used only by CLI routing/receipt tests that
+// do not exercise production review-context construction.
+function manualReviewContextTaskScopeFixture(repoRoot: string, taskId: string): Record<string, unknown> {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    let changedFiles = ['src/app.ts'];
+    if (fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()) {
+        try {
+            const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+            changedFiles = Array.isArray(preflight.changed_files)
+                ? preflight.changed_files
+                    .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+                    .filter(Boolean)
+                : changedFiles;
+        } catch {
+            // Keep the stable default fixture.
+        }
+    }
+    return {
+        changed_files: changedFiles,
+        changed_file_count: changedFiles.length,
+        diff: {
+            available: changedFiles.length > 0,
+            source: 'fixture_task_diff',
+            char_count: changedFiles.length > 0 ? 120 : 0,
+            truncated: false
+        }
+    };
+}
+
+function manualReviewContextBindingFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflightSha256 = fs.existsSync(preflightPath)
+        ? createHash('sha256').update(fs.readFileSync(preflightPath)).digest('hex')
+        : null;
+    return {
+        task_id: taskId,
+        review_type: reviewType,
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: preflightSha256
+    };
+}
+
+function reviewContextScopedDiffFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
+    return {
+        expected: false,
+        metadata_path: path.join(getReviewsRoot(repoRoot), `${taskId}-${reviewType}-scoped.json`).replace(/\\/g, '/'),
+        metadata: null
+    };
 }
 
 function getSourceCheckoutNestedCwd(): string {
@@ -217,7 +268,9 @@ async function seedRoutedReviewerLaunchFixture(options: {
     fs.writeFileSync(reviewerPromptPath, 'reviewer prompt payload\n', 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${options.taskId}-${reviewType}-review-context.json`);
     fs.writeFileSync(reviewContextPath, JSON.stringify({
-        review_type: reviewType,
+        ...manualReviewContextBindingFixture(options.repoRoot, options.taskId, reviewType),
+        task_scope: manualReviewContextTaskScopeFixture(options.repoRoot, options.taskId),
+        scoped_diff: reviewContextScopedDiffFixture(options.repoRoot, options.taskId, reviewType),
         rule_context: {
             artifact_path: reviewerPromptPath.replace(/\\/g, '/')
         },
@@ -2466,7 +2519,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -2503,6 +2558,51 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-routing rejects required canonical contexts without current preflight binding', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-missing-binding';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            review_type: 'code',
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity')
+        }, null, 2) + '\n', 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-routing',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.notEqual(observedExitCode, 0);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-invocation accepts completed launch metadata after current preparation', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-invocation';
@@ -2514,7 +2614,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -3016,7 +3118,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -3069,7 +3173,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
@@ -3127,7 +3233,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -3253,7 +3361,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -3406,7 +3516,9 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             schema_version: 2,
             task_id: taskId,
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             preflight_path: preflightPath.replace(/\\/g, '/'),
             preflight_sha256: preflightSha256,
             reviewer_routing: {
@@ -3492,7 +3604,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -3581,7 +3695,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -3644,7 +3760,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
@@ -3716,7 +3834,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -3811,7 +3931,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -3892,7 +4014,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 capability_level: 'delegation_capable'
             })
@@ -3968,7 +4092,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 capability_level: 'delegation_capable'
             })
@@ -4056,7 +4182,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 capability_level: 'delegation_capable'
             })
@@ -4139,7 +4267,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -4254,7 +4384,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -4360,7 +4492,9 @@ describe('cli/commands/gates', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 capability_level: 'delegation_capable'
             })
@@ -4438,7 +4572,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'single_agent_only',
                 expected_execution_mode: 'same_agent_fallback'
@@ -4523,7 +4659,9 @@ describe('cli/commands/gates', () => {
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -4605,7 +4743,9 @@ describe('cli/commands/gates', () => {
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -4725,7 +4865,9 @@ describe('cli/commands/gates', () => {
         const reviewContext = {
             schema_version: 2,
             task_id: taskId,
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             preflight_path: preflightPath.replace(/\\/g, '/'),
             preflight_sha256: preflightSha256,
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
@@ -4825,7 +4967,9 @@ describe('cli/commands/gates', () => {
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 capability_level: 'delegation_capable'
             })
@@ -4920,7 +5064,9 @@ describe('cli/commands/gates', () => {
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 capability_level: 'delegation_capable'
             })
@@ -4976,7 +5122,9 @@ describe('cli/commands/gates', () => {
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })
@@ -5085,7 +5233,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
@@ -5138,7 +5288,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
@@ -5234,7 +5386,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
@@ -5325,7 +5479,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
@@ -5405,7 +5561,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
@@ -5472,7 +5630,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
@@ -5541,7 +5701,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
@@ -5610,7 +5772,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Qwen')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
@@ -5698,7 +5862,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         applyReviewerRoutingMetadata(reviewContextPath, {
@@ -5764,7 +5930,9 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
@@ -5811,7 +5979,9 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
@@ -5854,7 +6024,9 @@ describe('cli/commands/gates', () => {
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 fallback_allowed: true,
                 fallback_reason_required: true
@@ -5977,7 +6149,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Required reviews gate passed.', {});
@@ -6035,7 +6209,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -6116,7 +6292,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -6197,7 +6375,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 actual_execution_mode: 'delegated_subagent',
                 reviewer_session_id: 'agent:test-reviewer'
@@ -6252,7 +6432,9 @@ describe('cli/commands/gates', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Qwen')
         }, null, 2) + '\n', 'utf8');
 
@@ -6368,7 +6550,9 @@ describe('cli/commands/gates', () => {
             'TEST REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'test',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'test'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'test'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 execution_provider_source: 'provider_bridge',
                 routed_to: '.antigravity/agents/orchestrator.md',
@@ -6472,6 +6656,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
+        prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-sequenced-review.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
@@ -6687,6 +6872,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
+        prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-sequenced-review-invalid.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
@@ -6882,7 +7068,9 @@ describe('cli/commands/gates', () => {
         const testReviewArtifactPath = path.join(reviewsRoot, `${taskId}-test.md`);
         const testReviewReceiptPath = testReviewArtifactPath.replace(/\.md$/, '-receipt.json');
         fs.writeFileSync(testReviewContextPath, JSON.stringify({
-            review_type: 'test',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'test'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'test'),
             reviewer_routing: createReviewerRoutingFixture('Codex', {
                 capability_level: 'delegation_capable'
             })
@@ -6970,6 +7158,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
+        prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-custom-code-context.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
@@ -7195,6 +7384,7 @@ describe('cli/commands/gates', () => {
                 dependency: false
             }
         });
+        prepareReviewDiffFixture(repoRoot, preflightPath);
         const commandsPath = path.join(repoRoot, 'commands-canonical-review-context-preferred.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
@@ -8440,7 +8630,9 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 execution_provider_source: 'provider_bridge',
                 routed_to: '.antigravity/agents/orchestrator.md',
@@ -8707,7 +8899,9 @@ describe('executeCommand timeout protection (T-061)', () => {
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
-            review_type: 'code',
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
                 capability_level: 'delegation_capable'
             })

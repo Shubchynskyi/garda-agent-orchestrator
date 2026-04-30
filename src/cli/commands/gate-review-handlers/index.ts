@@ -41,7 +41,10 @@ import {
     isNonTestReviewScope
 } from '../../../gates/review-reuse';
 import { resolveCanonicalReviewContextPath } from '../../../gates/review-context-paths';
-import { getReviewContextContractViolations } from '../../../gates/review-context-contract';
+import {
+    buildReviewContextPreflightDiffExpectations,
+    getReviewContextContractViolations
+} from '../../../gates/review-context-contract';
 import { resolveReviewContextRoutingIdentity } from '../../../gates/review-context-routing';
 import { assertReviewLifecycleGuard } from '../../../gates/review-lifecycle-guard';
 import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
@@ -737,8 +740,12 @@ function assertReviewContextContractOrThrow(options: {
     reviewContext: Record<string, unknown> | null;
     preflightPath: string;
     preflightSha256: string | null;
+    preflightPayload?: Record<string, unknown> | null;
     requireStrictBindingMetadata?: boolean;
 }): void {
+    const diffExpectations = buildReviewContextPreflightDiffExpectations(options.preflightPayload, options.reviewType);
+    const requireStrictBindingMetadata = options.requireStrictBindingMetadata === true
+        || diffExpectations.expectedRequiredReview === true;
     const violations = getReviewContextContractViolations({
         contextPath: options.contextPath,
         reviewContext: options.reviewContext,
@@ -747,9 +754,10 @@ function assertReviewContextContractOrThrow(options: {
         expectedPreflightPath: options.preflightPath,
         expectedPreflightSha256: options.preflightSha256,
         requireReviewType: true,
-        requireTaskId: options.requireStrictBindingMetadata === true,
-        requirePreflightPath: options.requireStrictBindingMetadata === true,
-        requirePreflightSha256: options.requireStrictBindingMetadata === true
+        requireTaskId: requireStrictBindingMetadata,
+        requirePreflightPath: requireStrictBindingMetadata,
+        requirePreflightSha256: requireStrictBindingMetadata,
+        ...diffExpectations
     });
     if (violations.length > 0) {
         throw new Error(violations.join(' '));
@@ -1440,6 +1448,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewContext: parsedReviewContext,
         preflightPath: options.preflightPath,
         preflightSha256,
+        preflightPayload: preflight as Record<string, unknown>,
         requireStrictBindingMetadata: options.requireStrictBindingMetadata
     });
     const currentRouting = parsedReviewContext.reviewer_routing
@@ -1681,6 +1690,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
         reviewContext: parsedReviewContext,
         preflightPath,
         preflightSha256,
+        preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
     });
     const currentRouting = parsedReviewContext.reviewer_routing
@@ -1794,6 +1804,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
     );
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
     assertReviewContextContractOrThrow({
         taskId,
@@ -1802,6 +1813,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewContext: parsedReviewContext,
         preflightPath,
         preflightSha256,
+        preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
     });
     const currentRouting = parsedReviewContext.reviewer_routing
@@ -2064,6 +2076,7 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
     );
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
     assertReviewContextContractOrThrow({
         taskId,
@@ -2072,6 +2085,7 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         reviewContext: parsedReviewContext,
         preflightPath,
         preflightSha256,
+        preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
     });
     const currentRouting = parsedReviewContext.reviewer_routing
@@ -2289,6 +2303,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         reviewContext: parsedReviewContext,
         preflightPath,
         preflightSha256,
+        preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
     });
     const currentRouting = parsedReviewContext.reviewer_routing

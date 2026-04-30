@@ -61,6 +61,10 @@ import {
     selectRulePackFiles
 } from './build-review-context';
 import {
+    buildReviewContextPreflightDiffExpectations,
+    getReviewContextContractViolations
+} from './review-context-contract';
+import {
     validateReviewReuseRecordedEventMatch
 } from './review-reuse-telemetry';
 import {
@@ -353,7 +357,8 @@ function readReviewArtifactState(
     taskId: string,
     reviewType: string,
     preflightPath: string,
-    preflightSha256: string | null
+    preflightSha256: string | null,
+    preflightPayload: Record<string, unknown> | null
 ): ReviewArtifactState {
     const contextPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
@@ -405,7 +410,24 @@ function readReviewArtifactState(
                 && contextPreflightPath.toLowerCase() === expectedPreflightPath.toLowerCase()
                 && contextPreflightHash === expectedPreflightHash
             ) {
-                contextCurrent = true;
+                const contractViolations = getReviewContextContractViolations({
+                    contextPath,
+                    reviewContext: context,
+                    expectedTaskId: taskId,
+                    expectedReviewType: reviewType,
+                    expectedPreflightPath: preflightPath,
+                    expectedPreflightSha256: preflightSha256,
+                    requireReviewType: true,
+                    requireTaskId: true,
+                    requirePreflightPath: true,
+                    requirePreflightSha256: true,
+                    ...buildReviewContextPreflightDiffExpectations(preflightPayload, reviewType)
+                });
+                if (contractViolations.length === 0) {
+                    contextCurrent = true;
+                } else {
+                    violations.push(...contractViolations);
+                }
             } else {
                 violations.push('review context preflight binding is stale or missing');
             }
@@ -563,6 +585,79 @@ function readReviewArtifactState(
         reusedFromReviewContextReuseSha256,
         reviewerProvenance
     };
+}
+
+function scopedDiffExpectedForReview(options: {
+    preflight: Record<string, unknown> | null;
+    reviewType: string;
+}): boolean {
+    return buildReviewContextPreflightDiffExpectations(options.preflight, options.reviewType).expectedScopedDiff;
+}
+
+function getScopedDiffMetadataReadiness(options: {
+    metadataPath: string;
+    preflight: Record<string, unknown> | null;
+    preflightPath: string;
+    preflightSha256: string | null;
+    reviewType: string;
+}): { ready: boolean; reason: string } {
+    const metadataPath = options.metadataPath;
+    if (!fileExists(metadataPath)) {
+        return {
+            ready: false,
+            reason: `Scoped diff metadata is missing: ${normalizePath(metadataPath)}.`
+        };
+    }
+    const metadata = safeReadJson(metadataPath);
+    if (!isPlainRecord(metadata)) {
+        return {
+            ready: false,
+            reason: `Scoped diff metadata is invalid JSON: ${normalizePath(metadataPath)}.`
+        };
+    }
+    if (typeof metadata.parse_error === 'string' && metadata.parse_error.trim()) {
+        return {
+            ready: false,
+            reason: `Scoped diff metadata contains parse_error: ${metadata.parse_error.trim()}.`
+        };
+    }
+    const outputDiffLineCount = typeof metadata.output_diff_line_count === 'number'
+        ? metadata.output_diff_line_count
+        : Number(metadata.output_diff_line_count);
+    if (!Number.isFinite(outputDiffLineCount) || outputDiffLineCount <= 0) {
+        return {
+            ready: false,
+            reason: `Scoped diff metadata has no output diff lines: ${normalizePath(metadataPath)}.`
+        };
+    }
+
+    const contractViolations = getReviewContextContractViolations({
+        contextPath: metadataPath,
+        reviewContext: {
+            scoped_diff: {
+                expected: true,
+                metadata_path: normalizePath(metadataPath),
+                metadata
+            }
+        },
+        expectedReviewType: options.reviewType,
+        expectedPreflightPath: options.preflightPath,
+        expectedPreflightSha256: options.preflightSha256,
+        requireReviewType: false,
+        requireTaskId: false,
+        requirePreflightPath: false,
+        requirePreflightSha256: false,
+        requireDiffMaterialForRequiredReview: false,
+        ...buildReviewContextPreflightDiffExpectations(options.preflight, options.reviewType),
+        expectedScopedDiff: true
+    });
+    if (contractViolations.length > 0) {
+        return {
+            ready: false,
+            reason: `Scoped diff metadata is stale or mismatched: ${contractViolations.join(' ')}`
+        };
+    }
+    return { ready: true, reason: 'Scoped diff metadata is ready.' };
 }
 
 function getLatestTaskSequenceForEventTypes(eventsRoot: string, taskId: string, eventTypes: string[]): number | null {
@@ -2447,7 +2542,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const reviewPolicy = resolveReviewPolicy(preflight);
     const preflightSha256 = fileExists(preflightPath) ? fileSha256(preflightPath) : null;
     const reviewStates = requiredReviewTypes.map((reviewType) => (
-        readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256)
+        readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
     ));
     const nextReview = getNextReviewType(
         requiredReviewTypes,
@@ -2788,6 +2883,21 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             ? timelineHasReviewContextPreparedAfterCompile(eventsRoot, taskId, reviewType, state.contextPath)
             : false;
         const dependencies = nextReview.blockedDependencies;
+        const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
+        const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
+        const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
+        const scopedDiffReadiness = scopedDiffExpectedForReview({
+            preflight,
+            reviewType
+        })
+            ? getScopedDiffMetadataReadiness({
+                metadataPath: scopedDiffMetadataPath,
+                preflight,
+                preflightPath,
+                preflightSha256,
+                reviewType
+            })
+            : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
         if (dependencies.length > 0) {
             const dependencyDetails = describeBlockedReviewDependencies(dependencies, reviewStates);
             return buildResult({
@@ -2832,6 +2942,24 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         if (state?.failed && !currentReviewEvidenceSatisfied && !currentReviewContextPrepared) {
+            if (!scopedDiffReadiness.ready) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'build-scoped-diff',
+                    title: `Prepare '${reviewType}' scoped diff metadata.`,
+                    reason:
+                        `${scopedDiffReadiness.reason} A previous '${reviewType}' review recorded ` +
+                        `'${state.verdictToken || state.failToken || 'FAILED'}', but scoped diff metadata must be refreshed ` +
+                        `before rebuilding '${reviewType}' review context.`,
+                    commands: [
+                        buildCommand(
+                            'Build scoped diff',
+                            `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                        )
+                    ]
+                });
+            }
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -2844,12 +2972,27 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Build review context',
-                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${getEffectiveDepthForPostPreflightRules(preflight, taskMode)}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${reviewDepth}" --preflight-path "${preflightCommandPath}" --repo-root "."`
                     )
                 ]
             });
         }
         if (!state || !state.contextExists || !state.contextCurrent) {
+            if (!scopedDiffReadiness.ready) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'build-scoped-diff',
+                    title: `Prepare '${reviewType}' scoped diff metadata.`,
+                    reason: `${scopedDiffReadiness.reason} Required '${reviewType}' review contexts for code-changing scopes must include scoped diff metadata before reviewer routing.`,
+                    commands: [
+                        buildCommand(
+                            'Build scoped diff',
+                            `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                        )
+                    ]
+                });
+            }
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -2861,7 +3004,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Build review context',
-                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${getEffectiveDepthForPostPreflightRules(preflight, taskMode)}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${reviewDepth}" --preflight-path "${preflightCommandPath}" --repo-root "."`
                     )
                 ]
             });

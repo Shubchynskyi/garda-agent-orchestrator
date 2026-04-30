@@ -120,6 +120,9 @@ export async function handleBuildScopedDiff(gateArgv: string[]): Promise<void> {
     const fullDiffPath = options.fullDiffPath
         ? gateHelpers.resolvePathInsideRepo(String(options.fullDiffPath), repoRoot)
         : null;
+    const useStaged = Object.prototype.hasOwnProperty.call(options, 'useStaged')
+        ? options.useStaged === true
+        : undefined;
     const result = buildScopedDiff({
         reviewType,
         preflightPath,
@@ -128,7 +131,7 @@ export async function handleBuildScopedDiff(gateArgv: string[]): Promise<void> {
         metadataPath,
         fullDiffPath,
         repoRoot,
-        useStaged: options.useStaged === true,
+        useStaged,
         hunkLevel: options.hunkLevel === true
     });
     const outputKV: Record<string, unknown> = {
