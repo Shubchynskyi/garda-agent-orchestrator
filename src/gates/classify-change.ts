@@ -523,6 +523,16 @@ function isStrongDatabaseChangedScope(pathValue: string, sqlOrMigrationRegexes: 
     });
 }
 
+function hasPerformanceSensitiveCacheIntent(taskIntent: string): boolean {
+    return /\b(ttl|time-to-live|expir(?:y|ation|e)|evict(?:ion)?|lru|lfu|hit[-\s]?rate|miss[-\s]?rate|warm(?:up|-up)?|latency|throughput|performance|perf|benchmark|profil(?:e|ing)|redis|memcached|hot[-\s]?path|memory|size[-\s]?limit)\b/i.test(taskIntent);
+}
+
+function isOrdinaryOrchestratorCacheMaintenancePath(pathValue: string): boolean {
+    const normalizedPath = normalizePath(pathValue).replace(/^garda-agent-orchestrator\//, '');
+    return normalizedPath === 'src/gates/workspace-snapshot-cache.ts'
+        || normalizedPath === 'src/gates/protected-hash-cache.ts';
+}
+
 export function isDocumentationLikePath(pathValue: string): boolean {
     return testPrecompiled(normalizePath(pathValue), DOC_LIKE_COMPILED);
 }
@@ -665,7 +675,16 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const dependencyTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.dependency_trigger_regexes));
     const infraTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.infra_trigger_regexes));
     const testTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.test_trigger_regexes));
-    const performancePathTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.performance_trigger_regexes));
+    const performancePathMatchedFiles = normalizedFiles.filter((p: string) => testMatch(p, classificationConfig.performance_trigger_regexes));
+    const ordinaryCacheMaintenanceFiles = performancePathMatchedFiles.filter(isOrdinaryOrchestratorCacheMaintenancePath);
+    const performanceCacheIntent = ordinaryCacheMaintenanceFiles.length > 0 && hasPerformanceSensitiveCacheIntent(taskIntent);
+    const performancePathTriggeredFiles = performancePathMatchedFiles.filter((p: string) => (
+        !isOrdinaryOrchestratorCacheMaintenancePath(p) || performanceCacheIntent
+    ));
+    const performanceCacheSuppressedFiles = performanceCacheIntent
+        ? []
+        : ordinaryCacheMaintenanceFiles;
+    const performancePathTriggered = performancePathTriggeredFiles.length > 0;
     const sqlOrMigrationCount = normalizedFiles.filter((p: string) => testMatch(p, sqlOrMigration)).length;
     const onlySqlOrMigration = normalizedFiles.length > 0 && sqlOrMigrationCount === normalizedFiles.length;
 
@@ -772,6 +791,10 @@ export function classifyChange(options: ClassifyChangeOptions) {
             refactor_intent: refactorIntentTriggered,
             refactor_heuristic: refactorHeuristicTriggered,
             refactor_heuristic_reasons: refactorHeuristicReasons,
+            performance_path_changed_files: performancePathTriggeredFiles,
+            performance_cache_candidate_files: ordinaryCacheMaintenanceFiles,
+            performance_cache_intent: performanceCacheIntent,
+            performance_cache_suppressed_files: performanceCacheSuppressedFiles,
             performance_heuristic: performanceHeuristicTriggered,
             fast_path_eligible: fastPathEligible,
             fast_path_sensitive_match: hasFastSensitiveMatch

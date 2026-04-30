@@ -134,6 +134,106 @@ describe('gates/classify-change', () => {
             assert.equal(pascalCaseResult.required_reviews.performance, false);
         });
 
+        it('does not trigger performance review for ordinary cache helper maintenance', () => {
+            const workspaceSnapshotCacheResult = classifyChange({
+                normalizedFiles: ['src/gates/workspace-snapshot-cache.ts'],
+                taskIntent: 'Update workspace snapshot cache diagnostics',
+                changedLinesTotal: 24,
+                additionsTotal: 16,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const protectedHashCacheResult = classifyChange({
+                normalizedFiles: ['src/gates/protected-hash-cache.ts'],
+                taskIntent: 'Update protected hash cache diagnostics',
+                changedLinesTotal: 24,
+                additionsTotal: 16,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+
+            assert.equal(workspaceSnapshotCacheResult.triggers.performance, false);
+            assert.equal(workspaceSnapshotCacheResult.required_reviews.performance, false);
+            assert.deepEqual(
+                (workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_candidate_files,
+                ['src/gates/workspace-snapshot-cache.ts']
+            );
+            assert.deepEqual(
+                (workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+                ['src/gates/workspace-snapshot-cache.ts']
+            );
+            assert.equal((workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_intent, false);
+            assert.equal(protectedHashCacheResult.triggers.performance, false);
+            assert.equal(protectedHashCacheResult.required_reviews.performance, false);
+            assert.deepEqual(
+                (protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_candidate_files,
+                ['src/gates/protected-hash-cache.ts']
+            );
+            assert.deepEqual(
+                (protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+                ['src/gates/protected-hash-cache.ts']
+            );
+            assert.equal((protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_intent, false);
+        });
+
+        it('keeps performance review for cache tuning intent and cache-adjacent performance paths', () => {
+            const cacheTuningResult = classifyChange({
+                normalizedFiles: ['src/gates/workspace-snapshot-cache.ts'],
+                taskIntent: 'Tune cache eviction TTL for a hot path',
+                changedLinesTotal: 24,
+                additionsTotal: 16,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const redisCacheResult = classifyChange({
+                normalizedFiles: ['src/runtime/RedisCache.ts'],
+                taskIntent: 'Update redis cache integration',
+                changedLinesTotal: 24,
+                additionsTotal: 16,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+            const runtimeCacheResult = classifyChange({
+                normalizedFiles: ['src/runtime/ResponseCache.ts'],
+                taskIntent: 'Update response cache behavior',
+                changedLinesTotal: 24,
+                additionsTotal: 16,
+                deletionsTotal: 8,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true }
+            });
+
+            assert.equal(cacheTuningResult.triggers.performance, true);
+            assert.equal(cacheTuningResult.required_reviews.performance, true);
+            assert.deepEqual(
+                (cacheTuningResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+                []
+            );
+            assert.equal((cacheTuningResult.triggers as Record<string, unknown>).performance_cache_intent, true);
+            assert.equal(redisCacheResult.triggers.performance, true);
+            assert.equal(redisCacheResult.required_reviews.performance, true);
+            assert.equal(runtimeCacheResult.triggers.performance, true);
+            assert.equal(runtimeCacheResult.required_reviews.performance, true);
+            assert.deepEqual(
+                (runtimeCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+                []
+            );
+        });
+
         it('keeps performance review triggers for benchmark and profiling surfaces', () => {
             const profilingFilenameResult = classifyChange({
                 normalizedFiles: ['src/runtime/RequestProfiling.ts'],
