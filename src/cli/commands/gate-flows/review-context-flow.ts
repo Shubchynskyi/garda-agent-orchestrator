@@ -37,7 +37,7 @@ import {
 import { getTaskModeEvidence } from '../../../gates/task-mode';
 import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
 import {
-    computeCodeReviewScopeFingerprint,
+    computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
     computeReviewContextReuseHash,
     isNonTestReviewScope
@@ -213,7 +213,11 @@ async function tryReuseReviewEvidence(options: {
         reason
     });
     const nonTestReviewScope = isNonTestReviewScope(options.reviewType);
-    const codeScopeFingerprint = computeCodeReviewScopeFingerprint(options.preflightPayload, options.repoRoot);
+    const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(
+        options.reviewType,
+        options.preflightPayload,
+        options.repoRoot
+    );
     if (codeScopeFingerprint.missing_non_test_files.length > 0) {
         return reject(`missing non-test scope file(s): ${codeScopeFingerprint.missing_non_test_files.join(', ')}`);
     }
@@ -284,6 +288,27 @@ async function tryReuseReviewEvidence(options: {
     const historicalReviewArtifactSha256 = String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase();
     if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== historicalReviewArtifactSha256) {
         return reject('prior review artifact hash no longer matches the receipt');
+    }
+    const requiredReviews = options.preflightPayload.required_reviews
+        && typeof options.preflightPayload.required_reviews === 'object'
+        && !Array.isArray(options.preflightPayload.required_reviews)
+        ? options.preflightPayload.required_reviews as Record<string, unknown>
+        : {};
+    const performanceSupportFiles = codeScopeFingerprint.performance_support_changed_files || [];
+    const delegatesPerformanceSupportToPerformanceReview = (
+        options.reviewType === 'code'
+        && performanceSupportFiles.length > 0
+        && requiredReviews.performance === true
+    );
+    if (
+        options.reviewType === 'code'
+        && performanceSupportFiles.length > 0
+        && requiredReviews.performance !== true
+    ) {
+        return reject(
+            'code review reuse saw non-runtime performance support file(s), but performance review is not required: ' +
+            `${performanceSupportFiles.join(', ')}`
+        );
     }
     const currentCodeScopeSha256 = normalizeReceiptSha256(codeScopeFingerprint.code_scope_sha256);
     const hasCurrentCodeScope = codeScopeFingerprint.non_test_changed_files.length > 0;
@@ -477,6 +502,10 @@ async function tryReuseReviewEvidence(options: {
             contextHashMatches
                 ? 'accepted: exact review context hash and scope evidence match prior independent PASS review'
                 : 'accepted: review context reuse hash and scope evidence match prior independent PASS review'
+        ) + (
+            delegatesPerformanceSupportToPerformanceReview
+                ? `; non-runtime performance support file(s) delegated to required performance review: ${performanceSupportFiles.join(', ')}`
+                : ''
         )
     };
 }

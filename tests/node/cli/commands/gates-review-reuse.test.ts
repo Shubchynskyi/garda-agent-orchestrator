@@ -30,6 +30,7 @@ import {
 } from '../../../../src/gate-runtime/review-context';
 import {
     computeCodeReviewScopeFingerprint,
+    computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
     computeReviewContextReuseHash,
     isNonTestReviewScope
@@ -1428,6 +1429,290 @@ describe('cli/commands/gates – review-reuse suites', () => {
             && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
         ));
         assert.equal((testRecordedEvents.at(-1)?.details as Record<string, unknown>).reused_existing_review, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('reuses prior code-review evidence when non-runtime performance support is delegated to performance review', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-code-reuse-performance-support';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'benchmark'), { recursive: true });
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reuse code review when only benchmark support changes'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, codeReviewContextPath, 'agent:code-reviewer');
+
+        fs.writeFileSync(path.join(repoRoot, 'benchmark', 'reviewed.ts'), 'export const benchmark = "alpha";\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['src/app.ts', 'benchmark/reviewed.ts'],
+            metrics: { changed_lines_total: 4 },
+            triggers: { performance: true },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: true,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: codeReviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+        assert.ok(codeBuild.outputLines.includes('ReviewReuseDecision: accepted'));
+        assert.ok(codeBuild.outputLines.some((line) => line.includes('non-runtime performance support file(s) delegated')));
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const refreshedReceipt = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(
+            refreshedReceipt.code_scope_sha256,
+            computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot).code_scope_sha256
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not reuse code-review evidence for non-runtime performance support without performance review', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-code-no-reuse-performance-support';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'benchmark'), { recursive: true });
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Do not reuse code review when benchmark support is not delegated'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, codeReviewContextPath, 'agent:code-reviewer');
+
+        fs.writeFileSync(path.join(repoRoot, 'benchmark', 'reviewed.ts'), 'export const benchmark = "alpha";\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['src/app.ts', 'benchmark/reviewed.ts'],
+            metrics: { changed_lines_total: 4 },
+            triggers: { performance: false },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: codeReviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, false);
+        assert.ok(codeBuild.outputLines.includes('ReviewReuseDecision: rejected'));
+        assert.ok(codeBuild.outputLines.some((line) => (
+            line.includes('non-runtime performance support file(s)')
+            && line.includes('performance review is not required')
+            && line.includes('benchmark/reviewed.ts')
+        )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not reuse code-review evidence for non-src runtime performance paths', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-runtime-perf-code-no-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'apps', 'shop', 'perf'), { recursive: true });
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Do not reuse code review for runtime performance paths'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, codeReviewContextPath, 'agent:code-reviewer');
+
+        fs.writeFileSync(path.join(repoRoot, 'apps', 'shop', 'perf', 'cache.ts'), 'export const cache = "alpha";\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'code',
+            changed_files: ['src/app.ts', 'apps/shop/perf/cache.ts'],
+            metrics: { changed_lines_total: 4 },
+            triggers: { performance: true },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: true,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: codeReviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, false);
+        assert.ok(codeBuild.outputLines.includes('ReviewReuseDecision: rejected'));
+        assert.ok(codeBuild.outputLines.some((line) => line.includes('non-test scope changed')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not reuse performance-review evidence when benchmark support content changes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-performance-support-no-reuse';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'benchmark'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'benchmark', 'reviewed.ts'), 'export const benchmark = "alpha";\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Do not reuse performance review after benchmark support changes'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['benchmark/reviewed.ts'],
+            metrics: { changed_lines_total: 3 },
+            triggers: { performance: true },
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: true,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const performanceReviewContextPath = path.join(reviewsRoot, `${taskId}-performance-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'performance',
+            'PERFORMANCE REVIEW PASSED',
+            priorPreflightPath,
+            performanceReviewContextPath,
+            'agent:performance-reviewer'
+        );
+
+        fs.writeFileSync(path.join(repoRoot, 'benchmark', 'reviewed.ts'), 'export const benchmark = "bravo";\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['benchmark/reviewed.ts'],
+            metrics: { changed_lines_total: 3 },
+            triggers: { performance: true },
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: true,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const performanceBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'performance',
+            depth: 2,
+            preflightPath,
+            outputPath: performanceReviewContextPath
+        });
+        assert.equal(performanceBuild.reusedReviewEvidence, false);
+        assert.ok(performanceBuild.outputLines.includes('ReviewReuseDecision: rejected'));
+        assert.ok(performanceBuild.outputLines.some((line) => line.includes('non-test scope changed')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

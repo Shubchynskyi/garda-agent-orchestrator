@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
+    computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint
 } from '../../../src/gates/review-reuse';
 
@@ -90,6 +91,39 @@ describe('gates/review-reuse', () => {
             fs.writeFileSync(path.join(repoRoot, 'src', 'auth', 'TokenCache.ts'), 'export const cache = "bravo";\n', 'utf8');
             const bravoScope = computeCodeReviewScopeFingerprint(preflight, repoRoot);
             assert.notEqual(bravoScope.code_scope_sha256, alphaScope.code_scope_sha256);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('limits code-review reuse scope to non-performance code while keeping performance scope complete', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-code-perf-support-'));
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'benchmark'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'apps', 'shop', 'perf'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const app = "alpha";\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'benchmark', 'reviewed.ts'), 'export const perf = "alpha";\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'apps', 'shop', 'perf', 'cache.ts'), 'export const cache = "alpha";\n', 'utf8');
+
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                changed_files: ['src/app.ts', 'benchmark/reviewed.ts', 'apps/shop/perf/cache.ts']
+            };
+            const defaultScope = computeCodeReviewScopeFingerprint(preflight, repoRoot);
+            const codeReuseScope = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+            const performanceReuseScope = computeReviewReuseCodeScopeFingerprint('performance', preflight, repoRoot);
+
+            assert.deepEqual(
+                defaultScope.non_test_changed_files,
+                ['apps/shop/perf/cache.ts', 'benchmark/reviewed.ts', 'src/app.ts']
+            );
+            assert.deepEqual(codeReuseScope.performance_support_changed_files, ['benchmark/reviewed.ts']);
+            assert.deepEqual(codeReuseScope.non_test_changed_files, ['apps/shop/perf/cache.ts', 'src/app.ts']);
+            assert.deepEqual(
+                performanceReuseScope.non_test_changed_files,
+                ['apps/shop/perf/cache.ts', 'benchmark/reviewed.ts', 'src/app.ts']
+            );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

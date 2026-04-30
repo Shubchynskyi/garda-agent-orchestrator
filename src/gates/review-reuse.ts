@@ -13,6 +13,7 @@ export interface CodeReviewScopeFingerprint {
     all_changed_files: string[];
     non_test_changed_files: string[];
     docs_only_changed_files: string[];
+    performance_support_changed_files: string[];
     missing_non_test_files: string[];
     code_scope_sha256: string | null;
     test_only: boolean;
@@ -148,6 +149,43 @@ function getDetectionSource(preflight: Record<string, unknown>): string {
     return String(preflight.detection_source || '').trim().toLowerCase();
 }
 
+function pathStartsWithConfiguredRoot(filePath: string, roots: readonly string[]): boolean {
+    const normalizedPath = normalizePath(filePath);
+    return roots.some((rootValue) => {
+        const root = normalizePath(rootValue).replace(/^\/+/, '').replace(/\/+$/, '');
+        return !!root && (normalizedPath === root || normalizedPath.startsWith(`${root}/`));
+    });
+}
+
+function hasPerformanceSupportDirectory(filePath: string): boolean {
+    const segments = normalizePath(filePath).split('/').filter(Boolean);
+    const supportDirectories = new Set(['benchmark', 'benchmarks', 'perf', 'performance']);
+    const supportParents = new Set(['scripts', 'tools', 'tooling']);
+    if (segments.length >= 2 && supportDirectories.has(segments[0])) {
+        return true;
+    }
+    return segments.length >= 3
+        && supportParents.has(segments[0])
+        && supportDirectories.has(segments[1]);
+}
+
+function isNonRuntimePerformanceSupportPath(
+    filePath: string,
+    classificationConfig: ReturnType<typeof getClassificationConfig>
+): boolean {
+    const normalizedPath = normalizePath(filePath);
+    if (!hasPerformanceSupportDirectory(normalizedPath)) {
+        return false;
+    }
+    if (pathStartsWithConfiguredRoot(normalizedPath, classificationConfig.runtime_roots)) {
+        return false;
+    }
+    return matchAnyRegex(normalizedPath, classificationConfig.performance_trigger_regexes, {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    });
+}
+
 function usesStagedContent(preflight: Record<string, unknown>): boolean {
     const detectionSource = getDetectionSource(preflight);
     return detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked';
@@ -201,9 +239,10 @@ function getScopedContentFingerprint(
     };
 }
 
-export function computeCodeReviewScopeFingerprint(
+function computeCodeReviewScopeFingerprintInternal(
     preflight: Record<string, unknown>,
-    repoRoot: string
+    repoRoot: string,
+    options: { excludeNonRuntimePerformanceSupportFiles?: boolean } = {}
 ): CodeReviewScopeFingerprint {
     const classificationConfig = getClassificationConfig(repoRoot);
     const allChangedFiles = Array.isArray(preflight.changed_files)
@@ -217,9 +256,16 @@ export function computeCodeReviewScopeFingerprint(
         isDocumentationLikePath(filePath)
         && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
     ));
+    const performanceSupportChangedFiles = allChangedFiles.filter((filePath) => (
+        isNonRuntimePerformanceSupportPath(filePath, classificationConfig)
+    ));
+    const performanceSupportSet = new Set(
+        options.excludeNonRuntimePerformanceSupportFiles ? performanceSupportChangedFiles : []
+    );
     const nonTestChangedFiles = allChangedFiles.filter((filePath) => (
         !testChangedFiles.includes(filePath)
         && !docsOnlyChangedFiles.includes(filePath)
+        && !performanceSupportSet.has(filePath)
     ));
     const sortedNonTestFiles = [...nonTestChangedFiles].sort();
     const missingNonTestFiles: string[] = [];
@@ -235,11 +281,30 @@ export function computeCodeReviewScopeFingerprint(
         all_changed_files: allChangedFiles,
         non_test_changed_files: sortedNonTestFiles,
         docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
+        performance_support_changed_files: [...performanceSupportChangedFiles].sort(),
         missing_non_test_files: missingNonTestFiles,
         code_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         test_only: sortedNonTestFiles.length === 0 && testChangedFiles.length === allChangedFiles.length,
         docs_only: sortedNonTestFiles.length === 0 && docsOnlyChangedFiles.length === allChangedFiles.length
     };
+}
+
+export function computeCodeReviewScopeFingerprint(
+    preflight: Record<string, unknown>,
+    repoRoot: string
+): CodeReviewScopeFingerprint {
+    return computeCodeReviewScopeFingerprintInternal(preflight, repoRoot);
+}
+
+export function computeReviewReuseCodeScopeFingerprint(
+    reviewType: string,
+    preflight: Record<string, unknown>,
+    repoRoot: string
+): CodeReviewScopeFingerprint {
+    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
+    return computeCodeReviewScopeFingerprintInternal(preflight, repoRoot, {
+        excludeNonRuntimePerformanceSupportFiles: normalizedReviewType === 'code'
+    });
 }
 
 export function computeReviewRelevantScopeFingerprint(

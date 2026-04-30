@@ -35,7 +35,7 @@ import {
     type ReviewDependencyTimelineEvent
 } from '../../../gates/review-dependencies';
 import {
-    computeCodeReviewScopeFingerprint,
+    computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
     computeReviewContextReuseHash,
     isNonTestReviewScope
@@ -1555,7 +1555,11 @@ async function recordReviewReceiptFromArtifacts(options: {
         );
     }
     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight as Record<string, unknown>, options.repoRoot);
-    const codeScopeFingerprint = computeCodeReviewScopeFingerprint(preflight as Record<string, unknown>, options.repoRoot);
+    const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(
+        options.reviewType,
+        preflight as Record<string, unknown>,
+        options.repoRoot
+    );
     const receipt = buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
