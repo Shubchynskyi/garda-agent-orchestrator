@@ -73,6 +73,77 @@ function toSourceFileSummary(value: unknown): Array<Record<string, unknown>> {
         }));
 }
 
+function toBoolean(value: unknown): boolean | null {
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'true') {
+        return true;
+    }
+    if (normalized === 'false') {
+        return false;
+    }
+    return null;
+}
+
+function toNumberOrNull(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toLowerHash(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+}
+
+function toNormalizedPathList(value: unknown): string[] {
+    return toStringList(value)
+        .map((entry) => normalizePath(entry))
+        .filter(Boolean)
+        .sort();
+}
+
+function buildScopedDiffReuseMetadata(value: unknown): Record<string, unknown> {
+    const metadata = toRecord(value);
+    if (Object.keys(metadata).length === 0) {
+        return {};
+    }
+    const hunkFilter = toRecord(metadata.hunk_filter);
+    return {
+        review_type: String(metadata.review_type || '').trim().toLowerCase() || null,
+        detection_source: String(metadata.detection_source || '').trim().toLowerCase() || null,
+        changed_files: toNormalizedPathList(metadata.changed_files),
+        matched_files: toNormalizedPathList(metadata.matched_files),
+        changed_files_sha256: toLowerHash(metadata.changed_files_sha256),
+        scope_content_sha256: toLowerHash(metadata.scope_content_sha256),
+        scope_sha256: toLowerHash(metadata.scope_sha256),
+        use_staged: toBoolean(metadata.use_staged),
+        include_untracked: toBoolean(metadata.include_untracked),
+        untracked_files: toNormalizedPathList(metadata.untracked_files),
+        untracked_diff_truncated: toBoolean(metadata.untracked_diff_truncated),
+        full_diff_source: String(metadata.full_diff_source || '').trim() || null,
+        fallback_to_full_diff: toBoolean(metadata.fallback_to_full_diff),
+        output_diff_sha256: toLowerHash(metadata.output_diff_sha256),
+        scoped_diff_line_count: toNumberOrNull(metadata.scoped_diff_line_count),
+        output_diff_line_count: toNumberOrNull(metadata.output_diff_line_count),
+        hunk_level: toBoolean(metadata.hunk_level),
+        hunk_filter: Object.keys(hunkFilter).length > 0
+            ? {
+                total_file_blocks: toNumberOrNull(hunkFilter.total_file_blocks),
+                included_file_blocks: toNumberOrNull(hunkFilter.included_file_blocks),
+                total_hunks: toNumberOrNull(hunkFilter.total_hunks),
+                included_hunks: toNumberOrNull(hunkFilter.included_hunks),
+                hunk_level_filtered: toBoolean(hunkFilter.hunk_level_filtered)
+            }
+            : null,
+        parse_error: String(metadata.parse_error || '').trim() || null
+    };
+}
+
 function getDetectionSource(preflight: Record<string, unknown>): string {
     return String(preflight.detection_source || '').trim().toLowerCase();
 }
@@ -242,7 +313,7 @@ export function computeReviewContextReuseHash(reviewContext: Record<string, unkn
         },
         scoped_diff: {
             expected: scopedDiff.expected === true,
-            metadata: toRecord(scopedDiff.metadata)
+            metadata: buildScopedDiffReuseMetadata(scopedDiff.metadata)
         },
         reviewer_routing: {
             source_of_truth: String(reviewerRouting.source_of_truth || '').trim() || null,

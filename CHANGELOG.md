@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- preserved PASS review reuse across same-scope preflight refreshes by hashing only review-relevant scoped-diff metadata and printing explicit review reuse accept/reject diagnostics from `build-review-context`
 - stopped the performance review path trigger from matching ordinary `Profile` policy filenames while preserving benchmark, profiling, and performance-path triggers
 - made fast-profile code review forcing skip true docs-only scopes unless protected control-plane files changed or `classify-change --force-code-review` is passed explicitly
 - made strict-profile domain reviews evidence-aware so DB/API/performance/infra/dependency reviews are not forced without matching domain surface evidence, while budget forecasts and profile diagnostics show the filtered review set and explicit all-domain overrides report `profile_forced`

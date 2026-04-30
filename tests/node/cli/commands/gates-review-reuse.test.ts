@@ -1402,6 +1402,8 @@ describe('cli/commands/gates – review-reuse suites', () => {
             outputPath: codeReviewContextPath
         });
         assert.equal(codeBuild.reusedReviewEvidence, true);
+        assert.ok(codeBuild.outputLines.includes('ReviewReuseDecision: accepted'));
+        assert.ok(codeBuild.outputLines.some((line) => line.startsWith('ReviewReuseReason: accepted:')));
 
         const testBuild = await runBuildReviewContextCommand({
             repoRoot,
@@ -1584,6 +1586,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
             outputPath: securityReviewContextPath
         });
         assert.equal(securityBuild.reusedReviewEvidence, true);
+        assert.ok(securityBuild.outputLines.includes('ReviewReuseDecision: accepted'));
 
         const testBuild = await runBuildReviewContextCommand({
             repoRoot,
@@ -1593,6 +1596,8 @@ describe('cli/commands/gates – review-reuse suites', () => {
             outputPath: testReviewContextPath
         });
         assert.equal(testBuild.reusedReviewEvidence, false);
+        assert.ok(testBuild.outputLines.includes('ReviewReuseDecision: rejected'));
+        assert.ok(testBuild.outputLines.some((line) => line.includes('review-relevant scope changed')));
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const latestCompileSequence = findLastTimelineEventIndex(events, (event) => event.event_type === 'COMPILE_GATE_PASSED');

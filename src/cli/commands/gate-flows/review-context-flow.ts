@@ -60,6 +60,7 @@ interface ReviewReuseResult {
     receiptPath: string | null;
     reviewerExecutionMode: string | null;
     reviewerIdentity: string | null;
+    reason: string;
 }
 
 interface CompileEvidenceSummary {
@@ -204,35 +205,42 @@ async function tryReuseReviewEvidence(options: {
     previousReviewContextReuseSha256?: string | null;
     timelineEventsSummary?: TimelineEventsSummaryResult | null;
 }): Promise<ReviewReuseResult> {
+    const reject = (reason: string): ReviewReuseResult => ({
+        reused: false,
+        receiptPath: null,
+        reviewerExecutionMode: null,
+        reviewerIdentity: null,
+        reason
+    });
     const nonTestReviewScope = isNonTestReviewScope(options.reviewType);
     const codeScopeFingerprint = computeCodeReviewScopeFingerprint(options.preflightPayload, options.repoRoot);
     if (codeScopeFingerprint.missing_non_test_files.length > 0) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject(`missing non-test scope file(s): ${codeScopeFingerprint.missing_non_test_files.join(', ')}`);
     }
     const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(options.preflightPayload, options.repoRoot);
     if (reviewScopeFingerprint.missing_review_relevant_files.length > 0) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject(`missing review-relevant scope file(s): ${reviewScopeFingerprint.missing_review_relevant_files.join(', ')}`);
     }
 
     const reviewsRoot = path.dirname(options.preflightPath);
     const artifactPath = path.join(reviewsRoot, `${options.taskId}-${options.reviewType}.md`);
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('no prior review artifact exists for this review type');
     }
     if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('no prior review receipt exists for this review type');
     }
     const artifactText = fs.readFileSync(artifactPath, 'utf8');
     if (!artifactHasPassVerdict(options.reviewType, artifactText)) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('prior review artifact is not a PASS verdict');
     }
 
     let receipt: ReviewReceipt;
     try {
         receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
     } catch {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('prior review receipt is not valid JSON');
     }
 
     const reviewerExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
@@ -254,13 +262,13 @@ async function tryReuseReviewEvidence(options: {
     const expectedReviewScopeSha256 = String(receipt.review_scope_sha256 || '').trim().toLowerCase() || null;
     const expectedCodeScopeSha256 = normalizeReceiptSha256(receipt.code_scope_sha256);
     if (receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('prior review receipt task id or review type does not match current request');
     }
     if (!reviewerExecutionMode || !reviewerIdentity || !expectedContextSha256) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('prior review receipt is missing reviewer identity or review-context hash');
     }
     if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('prior review receipt is not delegated-subagent evidence with historical provenance');
     }
     if (
         historicalTrustLevel !== 'INDEPENDENT_AUDITED'
@@ -271,11 +279,11 @@ async function tryReuseReviewEvidence(options: {
         || historicalReviewerProvenance.reviewer_identity !== reviewerIdentity
         || historicalReviewerProvenance.review_context_sha256 !== historicalReviewContextSha256
     ) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('prior review provenance does not bind to the prior delegated reviewer invocation');
     }
     const historicalReviewArtifactSha256 = String(gateHelpers.fileSha256(artifactPath) || '').trim().toLowerCase();
     if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== historicalReviewArtifactSha256) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('prior review artifact hash no longer matches the receipt');
     }
     const currentCodeScopeSha256 = normalizeReceiptSha256(codeScopeFingerprint.code_scope_sha256);
     const hasCurrentCodeScope = codeScopeFingerprint.non_test_changed_files.length > 0;
@@ -284,7 +292,10 @@ async function tryReuseReviewEvidence(options: {
         && hasCurrentCodeScope
         && (!expectedCodeScopeSha256 || expectedCodeScopeSha256 !== currentCodeScopeSha256)
     ) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject(
+            `non-test scope changed since the prior review (expected code_scope_sha256=${expectedCodeScopeSha256 || 'missing'}, ` +
+            `current=${currentCodeScopeSha256 || 'missing'})`
+        );
     }
     const hasCurrentReviewScope = reviewScopeFingerprint.review_relevant_changed_files.length > 0;
     if (
@@ -293,7 +304,10 @@ async function tryReuseReviewEvidence(options: {
         && (!expectedReviewScopeSha256
             || expectedReviewScopeSha256 !== String(reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase())
     ) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject(
+            `review-relevant scope changed since the prior review (expected review_scope_sha256=${expectedReviewScopeSha256 || 'missing'}, ` +
+            `current=${String(reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || 'missing'})`
+        );
     }
     const compileEvidence = readCompileEvidenceSummary(options.repoRoot, options.taskId);
     const currentPreflightHash = String(gateHelpers.fileSha256(options.preflightPath) || '').trim().toLowerCase() || null;
@@ -303,7 +317,7 @@ async function tryReuseReviewEvidence(options: {
         || compileEvidence.preflightPath !== normalizedPreflightPath
         || compileEvidence.preflightHashSha256 !== currentPreflightHash
     ) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('compile evidence is missing, failed, or bound to a different preflight artifact');
     }
 
     const timelinePath = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'task-events', `${options.taskId}.jsonl`));
@@ -313,7 +327,7 @@ async function tryReuseReviewEvidence(options: {
         (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
     );
     if (latestCompilePassSequence == null) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('task timeline has no compile pass before the current review cycle');
     }
     const historicalInvocationEvent = timelineEvents.find((entry) => (
         entry.sequence < latestCompilePassSequence
@@ -335,7 +349,7 @@ async function tryReuseReviewEvidence(options: {
         && String(entry.details?.routing_event_sha256 || entry.details?.routingEventSha256 || '').trim().toLowerCase() === historicalReviewerProvenance.routing_event_sha256
     ));
     if (!historicalInvocationEvent) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('historical delegated reviewer invocation telemetry is missing or does not match the receipt');
     }
     const historicalRecordedEvent = findMatchingHistoricalReviewRecordedTelemetryEvent(timelineEvents, {
         taskId: options.taskId,
@@ -352,7 +366,7 @@ async function tryReuseReviewEvidence(options: {
         maxEventSequenceExclusive: latestCompilePassSequence
     });
     if (!historicalRecordedEvent) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('historical REVIEW_RECORDED telemetry does not match the prior receipt');
     }
     const hasCurrentCycleReviewEvidence = timelineEvents.some((entry) => (
         entry.sequence > latestCompilePassSequence
@@ -364,7 +378,7 @@ async function tryReuseReviewEvidence(options: {
         )
     ));
     if (hasCurrentCycleReviewEvidence) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('current review cycle already has routing or review-recorded evidence for this review type');
     }
 
     const currentReviewContext = JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as Record<string, unknown>;
@@ -377,7 +391,10 @@ async function tryReuseReviewEvidence(options: {
     const contextHashMatches = !!expectedContextSha256 && expectedContextSha256 === currentReviewContextSha256;
     const contextReuseHashMatches = !!currentContextReuseSha256 && acceptableContextReuseHashes.includes(currentContextReuseSha256);
     if (!contextHashMatches && !contextReuseHashMatches) {
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject(
+            `review context inputs changed (context_sha256_match=${contextHashMatches}; ` +
+            `reuse_sha256_match=${contextReuseHashMatches})`
+        );
     }
     const receiptRollbackState = fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()
         ? {
@@ -449,13 +466,18 @@ async function tryReuseReviewEvidence(options: {
         } catch {
             // Best-effort rollback only.
         }
-        return { reused: false, receiptPath: null, reviewerExecutionMode: null, reviewerIdentity: null };
+        return reject('current-cycle REVIEW_RECORDED reuse telemetry could not be persisted');
     }
     return {
         reused: true,
         receiptPath: gateHelpers.normalizePath(receiptPath),
         reviewerExecutionMode,
-        reviewerIdentity
+        reviewerIdentity,
+        reason: (
+            contextHashMatches
+                ? 'accepted: exact review context hash and scope evidence match prior independent PASS review'
+                : 'accepted: review context reuse hash and scope evidence match prior independent PASS review'
+        )
     };
 }
 
@@ -568,7 +590,7 @@ export async function runBuildReviewContextCommand(
         repoRoot
     );
     let previousReviewContextReuseSha256: string | null = null;
-    if (['code', 'test'].includes(reviewType) && fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()) {
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()) {
         try {
             previousReviewContextReuseSha256 = computeReviewContextReuseHash(
                 JSON.parse(fs.readFileSync(outputPath, 'utf8')) as Record<string, unknown>
@@ -597,7 +619,8 @@ export async function runBuildReviewContextCommand(
         reused: false,
         receiptPath: null,
         reviewerExecutionMode: null,
-        reviewerIdentity: null
+        reviewerIdentity: null,
+        reason: 'reuse check not run'
     };
 
     try {
@@ -642,9 +665,11 @@ export async function runBuildReviewContextCommand(
     const outputKV: Record<string, unknown> = {
         outputPath: result.output_path,
         ruleContextArtifactPath: result.rule_context.artifact_path,
-        tokenEconomyActive: result.token_economy_active
+        tokenEconomyActive: result.token_economy_active,
+        reviewReuseDecision: reviewReuseResult.reused ? 'accepted' : 'rejected',
+        reviewReuseReason: reviewReuseResult.reason
     };
-    const orderedKeys = ['outputPath', 'ruleContextArtifactPath', 'tokenEconomyActive'];
+    const orderedKeys = ['outputPath', 'ruleContextArtifactPath', 'tokenEconomyActive', 'reviewReuseDecision', 'reviewReuseReason'];
     if (reviewReuseResult.reused) {
         outputKV.reusedReviewEvidence = true;
         outputKV.reusedReceiptPath = reviewReuseResult.receiptPath;
