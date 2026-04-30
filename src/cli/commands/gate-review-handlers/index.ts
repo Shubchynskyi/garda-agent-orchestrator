@@ -104,6 +104,13 @@ interface ReviewerLaunchArtifactValidationResult {
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
 const PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE = 'garda_prepare_reviewer_launch';
+const FORBIDDEN_COMPLETED_REVIEWER_LAUNCH_ATTESTATION_SOURCES = new Set([
+    PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
+    'orchestrator_mock',
+    'mock',
+    'manual'
+]);
+const UTC_ISO_8601_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 const LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY = (
     'Local reviewer launch artifacts are convenience metadata for a real delegated reviewer launch; ' +
     'they are not non-forgeable proof without provider-owned recording.'
@@ -119,6 +126,35 @@ const REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS = Object.freeze([
 
 function stringSha256(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function normalizeReviewerLaunchAttestationSource(value: unknown): string {
+    return String(value || '').trim().toLowerCase();
+}
+
+function isForbiddenReviewerLaunchAttestationSource(value: string): boolean {
+    return FORBIDDEN_COMPLETED_REVIEWER_LAUNCH_ATTESTATION_SOURCES.has(
+        normalizeReviewerLaunchAttestationSource(value)
+    );
+}
+
+function isValidUtcIso8601Timestamp(value: string): boolean {
+    const match = UTC_ISO_8601_TIMESTAMP_PATTERN.exec(value);
+    if (!match) {
+        return false;
+    }
+    const timestampMs = Date.parse(value);
+    if (!Number.isFinite(timestampMs)) {
+        return false;
+    }
+    const parsed = new Date(timestampMs);
+    const [, year, month, day, hour, minute, second] = match.map(Number);
+    return parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() + 1 === month
+        && parsed.getUTCDate() === day
+        && parsed.getUTCHours() === hour
+        && parsed.getUTCMinutes() === minute
+        && parsed.getUTCSeconds() === second;
 }
 
 function buildReviewerLaunchBindingSha256(options: {
@@ -1235,9 +1271,9 @@ function validateReviewerLaunchArtifact(options: {
     const routingEventSha256 = String(
         artifact.routing_event_sha256 || artifact.routingEventSha256 || ''
     ).trim().toLowerCase();
-    const attestationSource = String(
+    const attestationSource = normalizeReviewerLaunchAttestationSource(
         artifact.attestation_source || artifact.attestationSource || artifact.source || ''
-    ).trim();
+    );
     const launchTool = String(artifact.launch_tool || artifact.launchTool || '').trim();
     const providerInvocationId = getStringField(
         artifact,
@@ -1332,12 +1368,7 @@ function validateReviewerLaunchArtifact(options: {
     }
     if (!attestationSource) {
         violations.push('attestation_source is required');
-    } else if (
-        attestationSource === PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
-        || attestationSource === 'orchestrator_mock'
-        || attestationSource === 'mock'
-        || attestationSource === 'manual'
-    ) {
+    } else if (isForbiddenReviewerLaunchAttestationSource(attestationSource)) {
         violations.push('attestation_source must be provider/controller-owned completed launch evidence');
     }
     if (!launchTool) {
@@ -1348,6 +1379,8 @@ function validateReviewerLaunchArtifact(options: {
     }
     if (!launchedAtUtc) {
         violations.push('launched_at_utc is required');
+    } else if (!isValidUtcIso8601Timestamp(launchedAtUtc)) {
+        violations.push('launched_at_utc must be a valid UTC ISO-8601 timestamp');
     }
     if (violations.length > 0) {
         throw new Error(
@@ -2098,16 +2131,14 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     if (!launchedAtUtc) {
         throw new Error('LaunchedAtUtc is required (ISO-8601 launch timestamp).');
     }
-    const attestationSource = String(options.attestationSource || '').trim().toLowerCase();
+    if (!isValidUtcIso8601Timestamp(launchedAtUtc)) {
+        throw new Error('LaunchedAtUtc must be a valid UTC ISO-8601 timestamp.');
+    }
+    const attestationSource = normalizeReviewerLaunchAttestationSource(options.attestationSource);
     if (!attestationSource) {
         throw new Error('AttestationSource is required (provider/controller source).');
     }
-    if (
-        attestationSource === PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
-        || attestationSource === 'orchestrator_mock'
-        || attestationSource === 'mock'
-        || attestationSource === 'manual'
-    ) {
+    if (isForbiddenReviewerLaunchAttestationSource(attestationSource)) {
         throw new Error(
             `AttestationSource '${attestationSource}' is not a valid provider/controller-owned attestation source. ` +
             'Use the actual provider or controller identifier (e.g., claude_task_tool_launch, codex_agent_launch).'

@@ -3047,6 +3047,97 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-invocation rejects mixed-case forbidden source and malformed launch timestamp', async () => {
+        const cases = [
+            {
+                taskId: 'T-257-launch-mixed-case-source',
+                artifactUpdates: { attestation_source: 'Manual' },
+                expectedError: 'attestation_source must be provider/controller-owned completed launch evidence'
+            },
+            {
+                taskId: 'T-257-launch-invalid-timestamp',
+                artifactUpdates: { launched_at_utc: 'not-a-date' },
+                expectedError: 'launched_at_utc must be a valid UTC ISO-8601 timestamp'
+            }
+        ];
+
+        for (const testCase of cases) {
+            const repoRoot = createTempRepo();
+            try {
+                const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId: testCase.taskId });
+                const launchArtifactPath = path.join(repoRoot, '.review-temp', testCase.taskId, 'code', 'reviewer-launch.json');
+
+                const previousPrepareExitCode = process.exitCode;
+                const previousPrepareCwd = process.cwd();
+                process.exitCode = 0;
+                try {
+                    process.chdir(repoRoot);
+                    await runCliMainWithHandling([
+                        'gate',
+                        'prepare-reviewer-launch',
+                        '--task-id', testCase.taskId,
+                        '--review-type', 'code',
+                        '--repo-root', repoRoot,
+                        '--reviewer-execution-mode', 'delegated_subagent',
+                        '--reviewer-identity', fixture.reviewerIdentity
+                    ]);
+                    assert.equal(process.exitCode ?? 0, 0);
+                } finally {
+                    process.chdir(previousPrepareCwd);
+                    process.exitCode = previousPrepareExitCode;
+                }
+
+                const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+                fs.writeFileSync(launchArtifactPath, JSON.stringify({
+                    ...preparedLaunchArtifact,
+                    evidence_type: 'delegated_reviewer_launch',
+                    attestation_state: 'launched',
+                    attestation_source: 'test_provider_controller',
+                    launch_tool: 'test-subagent-spawn',
+                    provider_invocation_id: 'test-invocation-123',
+                    launched_at_utc: '2026-04-28T00:00:00.000Z',
+                    fork_context: false,
+                    ...testCase.artifactUpdates
+                }, null, 2) + '\n', 'utf8');
+
+                const previousExitCode = process.exitCode;
+                const previousCwd = process.cwd();
+                const originalConsoleError = console.error;
+                const capturedErrors: string[] = [];
+                process.exitCode = 0;
+                let observedExitCode = 0;
+                console.error = (...args: unknown[]) => {
+                    capturedErrors.push(args.map((value) => String(value)).join(' '));
+                };
+                try {
+                    process.chdir(repoRoot);
+                    await runCliMainWithHandling([
+                        'gate',
+                        'record-review-invocation',
+                        '--task-id', testCase.taskId,
+                        '--review-type', 'code',
+                        '--repo-root', repoRoot,
+                        '--reviewer-execution-mode', 'delegated_subagent',
+                        '--reviewer-identity', fixture.reviewerIdentity,
+                        '--reviewer-launch-artifact-path', launchArtifactPath
+                    ]);
+                    observedExitCode = process.exitCode ?? 0;
+                } finally {
+                    console.error = originalConsoleError;
+                    process.chdir(previousCwd);
+                    process.exitCode = previousExitCode;
+                }
+
+                assert.ok(observedExitCode !== 0, `Expected non-zero exit code for ${testCase.taskId}, got ${observedExitCode}`);
+                assert.ok(capturedErrors.some((line) => line.includes(testCase.expectedError)), capturedErrors.join('\n'));
+                const events = readTaskTimelineEvents(repoRoot, testCase.taskId);
+                assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        }
+    });
+
     it('record-review-invocation rejects completed-looking launch artifacts without provider invocation provenance', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-launch-missing-provider-proof';
@@ -3514,7 +3605,7 @@ describe('cli/commands/gates', () => {
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
                 '--launched-at-utc', '2026-07-01T00:00:00.000Z',
-                '--attestation-source', 'garda_prepare_reviewer_launch',
+                '--attestation-source', 'Manual',
                 '--fork-context', 'false'
             ]);
             observedExitCode = process.exitCode ?? 0;
@@ -3771,6 +3862,69 @@ describe('cli/commands/gates', () => {
 
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.ok(capturedErrors.some((line) => line.includes('LaunchedAtUtc is required')));
+        const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        assert.equal(artifact.attestation_state, 'prepared', 'Artifact should remain in prepared state after failed complete');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch rejects malformed launched-at-utc and leaves artifact unchanged', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-257-complete-launch-bad-utc';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+
+        const previousPrepareExitCode = process.exitCode;
+        const previousPrepareCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate', 'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousPrepareCwd);
+            process.exitCode = previousPrepareExitCode;
+        }
+
+        const capturedErrors: string[] = [];
+        const originalConsoleError = console.error;
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => capturedErrors.push(args.map(String).join(' '));
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate', 'complete-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath,
+                '--provider-invocation-id', 'test-invocation-305',
+                '--launched-at-utc', '2026-02-30T00:00:00.000Z',
+                '--attestation-source', 'claude_task_tool_launch',
+                '--fork-context', 'false'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.ok(capturedErrors.some((line) => line.includes('LaunchedAtUtc must be a valid UTC ISO-8601 timestamp')));
         const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
         assert.equal(artifact.attestation_state, 'prepared', 'Artifact should remain in prepared state after failed complete');
 
