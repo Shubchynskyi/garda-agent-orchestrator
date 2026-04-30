@@ -19,6 +19,7 @@ import {
     handleRecordReviewResult,
     handleRecordReviewRouting,
     handlePrepareReviewerLaunch,
+    handleCompleteReviewerLaunch,
     handleRecordReviewInvocation,
     handleRecordReviewReceipt
 } from './gate-review-handlers';
@@ -117,6 +118,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleRecordReviewRouting(gateArgv);
         case 'prepare-reviewer-launch':
             return handlePrepareReviewerLaunch(gateArgv);
+        case 'complete-reviewer-launch':
+            return handleCompleteReviewerLaunch(gateArgv);
         case 'record-review-invocation':
             return handleRecordReviewInvocation(gateArgv);
         case 'record-review-receipt':

@@ -283,6 +283,13 @@ function buildReviewGateHelpEntries(
                 true
             )
         },
+        'complete-reviewer-launch': {
+            ...createSingleUsageEntry(
+                'Complete reviewer launch metadata after a real delegated reviewer has been launched; fills post-launch fields without re-writing prepared hashes.',
+                `${cliPrefix} gate complete-reviewer-launch --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --reviewer-launch-artifact-path ".review-temp/${TASK_ID_PLACEHOLDER}/<review-type>/reviewer-launch.json" --provider-invocation-id "<actual-invocation-id>" --launched-at-utc "<ISO-8601>" --attestation-source "<provider-source>" --fork-context false --repo-root "."`,
+                true
+            )
+        },
         'record-review-invocation': {
             ...createSingleUsageEntry(
                 'Record delegated reviewer launch attestation from a completed task-owned provider launch artifact.',

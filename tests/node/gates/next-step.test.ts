@@ -1444,7 +1444,7 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
     });
 
-    it('routes to record-review-invocation after current launch metadata is prepared', () => {
+    it('routes to complete-reviewer-launch after current launch metadata is prepared', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -1484,12 +1484,12 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'record-review-invocation');
+        assert.equal(result.next_gate, 'complete-reviewer-launch');
         assert.ok(result.reason.includes('launch metadata'));
         assert.ok(result.reason.includes('Launch the delegated reviewer with the prepared prompt'));
-        assert.ok(result.reason.includes('completed launch metadata'));
-        assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
-        assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
+        assert.ok(result.reason.includes('complete-reviewer-launch'));
+        assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
+        assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
     });
 
     it('routes to record-review-invocation after current completed launch metadata is present', () => {

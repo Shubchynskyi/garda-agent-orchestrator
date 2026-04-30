@@ -3106,9 +3106,23 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     ]
                 });
             }
-            const launchInstruction = launchArtifactState === 'launched'
-                ? 'The launch artifact already contains completed launch evidence; record that evidence with record-review-invocation.'
-                : 'Launch the delegated reviewer with the prepared prompt, then record the completed launch metadata.';
+            if (launchArtifactState === 'prepared') {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'complete-reviewer-launch',
+                    title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
+                    reason:
+                        `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
+                        'Launch the delegated reviewer with the prepared prompt, then run complete-reviewer-launch to persist the post-launch fields before recording the invocation.',
+                    commands: [
+                        buildCommand(
+                            'Complete delegated reviewer launch metadata',
+                            `${cliPrefix} gate complete-reviewer-launch --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --provider-invocation-id "<actual-invocation-id>" --launched-at-utc "<ISO-8601>" --attestation-source "<provider-source>" --fork-context false --repo-root "."`
+                        )
+                    ]
+                });
+            }
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -3116,7 +3130,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Record '${reviewType}' delegated reviewer launch attestation.`,
                 reason:
                     `Required review '${reviewType}' has launch metadata for the current routing event and review context. ` +
-                    launchInstruction,
+                    'The launch artifact already contains completed launch evidence; record that evidence with record-review-invocation.',
                 commands: [
                     buildCommand(
                         'Record delegated reviewer launch attestation',

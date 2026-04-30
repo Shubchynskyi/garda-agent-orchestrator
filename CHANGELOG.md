@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added `garda gate complete-reviewer-launch` so real delegated reviewer launches can fill post-launch metadata without hand-editing reviewer launch artifacts
 - preserved PASS review reuse across same-scope preflight refreshes by hashing only review-relevant scoped-diff metadata and printing explicit review reuse accept/reject diagnostics from `build-review-context`
 - stopped the performance review path trigger from matching ordinary `Profile` policy filenames while preserving benchmark, profiling, and performance-path triggers
 - made fast-profile code review forcing skip true docs-only scopes unless protected control-plane files changed or `classify-change --force-code-review` is passed explicitly

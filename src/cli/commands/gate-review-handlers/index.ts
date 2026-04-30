@@ -2040,6 +2040,168 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log('NextAction: launch the delegated reviewer, update after_launch_required_updates, then run RecordInvocationCommand.');
 }
 
+export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--review-context-path': { key: 'reviewContextPath', type: 'string' },
+        '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
+        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
+        '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
+        '--reviewer-launch-artifact-path': { key: 'reviewerLaunchArtifactPath', type: 'string' },
+        '--provider-invocation-id': { key: 'providerInvocationId', type: 'string' },
+        '--controller-invocation-id': { key: 'controllerInvocationId', type: 'string' },
+        '--launched-at-utc': { key: 'launchedAtUtc', type: 'string' },
+        '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--fresh-context': { key: 'freshContext', type: 'boolean' },
+        '--isolated-context': { key: 'isolatedContext', type: 'boolean' },
+        '--fork-context': { key: 'forkContext', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = String(options.reviewType || '').trim().toLowerCase();
+    if (!reviewType) throw new Error('ReviewType is required.');
+
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    assertReviewLifecycleGuard(repoRoot, taskId, 'complete-reviewer-launch', 'review_phase');
+    const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        throw new Error(`Preflight artifact not found: ${normalizePath(preflightPath)}.`);
+    }
+    const reviewsRoot = path.dirname(preflightPath);
+    const contextPath = resolveCanonicalReviewContextPath({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        explicitPath: options.reviewContextPath ? String(options.reviewContextPath) : '',
+        repoRoot
+    });
+    if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
+        throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
+    }
+    const { reviewerExecutionMode, reviewerIdentity } = parseReviewerIdentity(
+        options,
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
+    );
+
+    const providerInvocationId = String(options.providerInvocationId || '').trim();
+    const controllerInvocationId = String(options.controllerInvocationId || '').trim();
+    if (!providerInvocationId && !controllerInvocationId) {
+        throw new Error('ProviderInvocationId or ControllerInvocationId is required (the actual delegated reviewer invocation id).');
+    }
+    if (providerInvocationId && controllerInvocationId) {
+        throw new Error('Provide either --provider-invocation-id or --controller-invocation-id, not both.');
+    }
+    const launchedAtUtc = String(options.launchedAtUtc || '').trim();
+    if (!launchedAtUtc) {
+        throw new Error('LaunchedAtUtc is required (ISO-8601 launch timestamp).');
+    }
+    const attestationSource = String(options.attestationSource || '').trim().toLowerCase();
+    if (!attestationSource) {
+        throw new Error('AttestationSource is required (provider/controller source).');
+    }
+    if (
+        attestationSource === PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
+        || attestationSource === 'orchestrator_mock'
+        || attestationSource === 'mock'
+        || attestationSource === 'manual'
+    ) {
+        throw new Error(
+            `AttestationSource '${attestationSource}' is not a valid provider/controller-owned attestation source. ` +
+            'Use the actual provider or controller identifier (e.g., claude_task_tool_launch, codex_agent_launch).'
+        );
+    }
+    const freshContext = options.freshContext === true || options.isolatedContext === true || options.forkContext === false;
+    if (!freshContext) {
+        throw new Error(
+            'At least one of --fresh-context, --isolated-context, or --fork-context false must attest clean reviewer context.'
+        );
+    }
+
+    const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot,
+        taskId,
+        reviewType,
+        artifactPathValue: options.reviewerLaunchArtifactPath
+    });
+    if (!fs.existsSync(launchArtifactPath) || !fs.statSync(launchArtifactPath).isFile()) {
+        throw new Error(
+            `Reviewer launch artifact not found: ${normalizePath(launchArtifactPath)}. ` +
+            'Run prepare-reviewer-launch first.'
+        );
+    }
+
+    const contextSha256 = fileSha256(contextPath);
+    if (!contextSha256) {
+        throw new Error(`Reviewer launch completion requires a hashable review-context artifact: ${normalizePath(contextPath)}.`);
+    }
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    const routingEvent = findMatchingRoutingEvent(timelineEvents, reviewType, reviewerExecutionMode, reviewerIdentity, null);
+    if (!routingEvent) {
+        throw new Error(
+            `Reviewer launch completion requires current-cycle REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}' ` +
+            `and reviewer '${reviewerIdentity}'.`
+        );
+    }
+    const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
+    if (!routingEventProvenance) {
+        throw new Error(
+            `Reviewer launch completion requires integrity-backed REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}'.`
+        );
+    }
+    assertPreparedReviewerLaunchArtifact({
+        artifactPath: launchArtifactPath,
+        taskId,
+        reviewType,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewContextSha256: contextSha256,
+        routingEventSha256: routingEventProvenance.event_sha256
+    });
+
+    const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const completedArtifact: Record<string, unknown> = {
+        ...preparedArtifact,
+        evidence_type: COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
+        attestation_state: 'launched',
+        attestation_source: attestationSource
+    };
+    if (providerInvocationId) {
+        completedArtifact.provider_invocation_id = providerInvocationId;
+    } else {
+        completedArtifact.controller_invocation_id = controllerInvocationId;
+    }
+    completedArtifact.launched_at_utc = launchedAtUtc;
+    if (options.freshContext === true) {
+        completedArtifact.fresh_context = true;
+    }
+    if (options.isolatedContext === true) {
+        completedArtifact.isolated_context = true;
+    }
+    if (options.forkContext !== undefined) {
+        completedArtifact.fork_context = options.forkContext;
+    }
+    writeReviewArtifactJson(launchArtifactPath, completedArtifact);
+
+    const invocationId = providerInvocationId || controllerInvocationId;
+    const invocationIdLabel = providerInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
+    console.log(`REVIEWER_LAUNCH_COMPLETED: ${reviewType}`);
+    console.log(`ReviewerIdentity: ${reviewerIdentity}`);
+    console.log(`LaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
+    console.log(`${invocationIdLabel}: ${invocationId}`);
+    console.log(`LaunchedAtUtc: ${launchedAtUtc}`);
+    console.log(`AttestationSource: ${attestationSource}`);
+    console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
+    const recordCommand = getStringField(preparedArtifact, 'record_invocation_command', 'recordInvocationCommand');
+    if (recordCommand) {
+        console.log(`RecordInvocationCommand: ${recordCommand}`);
+    }
+    console.log('NextAction: run RecordInvocationCommand to attest the invocation.');
+}
+
 export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<void> {
     const defs = {
         '--task-id': { key: 'taskId', type: 'string' },
