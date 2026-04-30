@@ -205,6 +205,47 @@ function buildDomainReviewSurface(triggers: Record<string, unknown>): Record<str
     };
 }
 
+function hasAnyRiskTrigger(triggers: Record<string, unknown>): boolean {
+    return [
+        'db',
+        'security',
+        'api',
+        'test',
+        'performance',
+        'infra',
+        'dependency',
+        'refactor',
+        'refactor_intent',
+        'refactor_heuristic'
+    ].some((key) => triggers[key] === true);
+}
+
+function isZeroDiffBaselineOnlyNoReviewableScope(
+    result: ClassificationResult,
+    domainSurface: Record<string, boolean>,
+    plannedChangedFiles: string[],
+    dirtyWorkspaceBaselineChangedFiles: string[]
+): boolean {
+    const metrics = result.metrics as Record<string, unknown>;
+    const triggers = result.triggers as Record<string, unknown>;
+    const zeroDiffGuard = result.zero_diff_guard as Record<string, unknown> | undefined;
+
+    return result.detection_source === 'git_auto'
+        && result.scope_category === 'empty'
+        && Array.isArray(result.changed_files)
+        && result.changed_files.length === 0
+        && plannedChangedFiles.length === 0
+        && dirtyWorkspaceBaselineChangedFiles.length === 0
+        && Number(metrics.changed_files_count || 0) === 0
+        && Number(metrics.changed_lines_total || 0) === 0
+        && zeroDiffGuard?.zero_diff_detected === true
+        && zeroDiffGuard?.status === 'BASELINE_ONLY'
+        && zeroDiffGuard?.completion_requires_audited_no_op === true
+        && triggers.protected_control_plane_changed !== true
+        && !hasAnyRiskTrigger(triggers)
+        && !Object.values(domainSurface).some((value) => value === true);
+}
+
 function getClassificationRenameCount(repoRoot: string, detectionSource: string, changedFiles: string[]): number {
     if (detectionSource === 'explicit_changed_files' && changedFiles.length === 0) {
         return 0;
@@ -585,15 +626,22 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
         if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
             try {
+                const domainSurface = buildDomainReviewSurface(result.triggers as Record<string, unknown>);
                 const resolvedProfile = resolveTaskProfileSelection(
                     orchestratorRoot,
                     rawTaskProfile,
                     typeof result.scope_category === 'string' ? result.scope_category : null,
                     {
-                        domainSurface: buildDomainReviewSurface(result.triggers as Record<string, unknown>),
+                        domainSurface,
                         forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false),
                         forceCodeReview: parseBooleanOption(options.forceCodeReview, false),
-                        protectedControlPlaneChanged: (result.triggers as Record<string, unknown>).protected_control_plane_changed === true
+                        protectedControlPlaneChanged: (result.triggers as Record<string, unknown>).protected_control_plane_changed === true,
+                        zeroDiffBaselineOnly: isZeroDiffBaselineOnlyNoReviewableScope(
+                            result,
+                            domainSurface,
+                            taskModeEvidence.planned_changed_files || [],
+                            taskModeEvidence.dirty_workspace_baseline?.changed_files || []
+                        )
                     }
                 );
                 effectiveTaskPolicy = resolvedProfile.effective_policy;

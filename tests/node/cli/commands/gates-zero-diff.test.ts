@@ -138,14 +138,14 @@ function writePreflight(
     return preflightPath;
 }
 
-function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
+function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string, force = false): void {
     const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
     const existingEvents = readTaskTimelineEvents(repoRoot, taskId);
     const latestMatchingEvent = [...existingEvents].reverse().find((event) => (
         event.event_type === 'PREFLIGHT_CLASSIFIED'
         && String((event.details as Record<string, unknown> | undefined)?.output_path || '') === normalizedPreflightPath
     ));
-    if (latestMatchingEvent) {
+    if (latestMatchingEvent && !force) {
         return;
     }
 
@@ -399,6 +399,101 @@ function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Code
     );
 }
 
+function writeZeroDiffNoReviewPreflight(
+    repoRoot: string,
+    taskId: string,
+    overrides: Record<string, unknown> = {}
+): string {
+    return writePreflight(repoRoot, taskId, {
+        detection_source: 'git_auto',
+        mode: 'FULL_PATH',
+        scope_category: 'empty',
+        metrics: { changed_lines_total: 0 },
+        required_reviews: {
+            code: false,
+            db: false,
+            security: false,
+            refactor: false,
+            api: false,
+            test: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        },
+        triggers: {},
+        changed_files: [],
+        profile_guardrails: {
+            zero_diff_no_reviewable_scope: true
+        },
+        zero_diff_guard: {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true,
+            no_op_artifact_suffix: '-no-op.json',
+            rationale: 'Preflight on a clean workspace is baseline-only.'
+        },
+        ...overrides
+    });
+}
+
+function writeCompileCommands(repoRoot: string, fileName = 'commands-zero.md'): string {
+    const commandsPath = path.join(repoRoot, fileName);
+    fs.writeFileSync(commandsPath, [
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        'node -e "console.log(\'build ok\')"',
+        '```'
+    ].join('\n'), 'utf8');
+    return commandsPath;
+}
+
+function assertNoDelegatedReviewArtifacts(repoRoot: string, taskId: string): void {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    for (const reviewType of ['code', 'test']) {
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}.md`)), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`)), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`)), false);
+    }
+}
+
+async function setupZeroDiffReviewGateFixture(taskId: string): Promise<{
+    repoRoot: string;
+    preflightPath: string;
+    commandsPath: string;
+    outputFiltersPath: string;
+}> {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+    const commandsPath = writeCompileCommands(repoRoot);
+    initializeGitRepo(repoRoot);
+    seedTaskQueue(repoRoot, taskId);
+    seedInitAnswers(repoRoot);
+    const preflightPath = writeZeroDiffNoReviewPreflight(repoRoot, taskId);
+    const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+    runEnterTaskMode({
+        repoRoot,
+        taskId,
+        taskSummary: 'Close baseline-only zero-diff task without delegated reviews'
+    });
+    loadTaskEntryRulePack(repoRoot, taskId);
+    runHandshakeForTask(repoRoot, taskId);
+    runShellSmokeForTask(repoRoot, taskId);
+    loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+    const compileResult = await runCompileGateCommand({
+        repoRoot,
+        taskId,
+        preflightPath,
+        commandsPath,
+        outputFiltersPath,
+        emitMetrics: false
+    });
+    assert.equal(compileResult.exitCode, 0);
+
+    return { repoRoot, preflightPath, commandsPath, outputFiltersPath };
+}
+
 describe('cli/commands/gates', () => {
     it('requires audited no-op evidence before zero-diff completion can pass', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
@@ -536,6 +631,180 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(passedCompletion.outcome, 'PASS');
         assert.equal(passedCompletion.zero_diff_evidence.status, 'SATISFIED_BY_AUDITED_NO_OP');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps suppressed zero-diff reviews inside the review gate until audited no-op is recorded', { concurrency: false }, async () => {
+        const taskId = 'T-312-zero-review';
+        const { repoRoot, preflightPath, outputFiltersPath } = await setupZeroDiffReviewGateFixture(taskId);
+
+        const failedReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(failedReviewResult.exitCode, EXIT_GATE_FAILURE);
+        const failedReviewOutput = failedReviewResult.outputLines.join('\n');
+        assert.ok(failedReviewOutput.includes(`record-no-op --task-id "${taskId}"`));
+        assert.ok(failedReviewOutput.includes(`--preflight-path "${preflightPath.replace(/\\/g, '/')}"`));
+        assertNoDelegatedReviewArtifacts(repoRoot, taskId);
+
+        const failedReviewGate = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const failedZeroDiffGuard = failedReviewGate.zero_diff_guard as Record<string, unknown>;
+        assert.equal(failedZeroDiffGuard.status, 'REQUIRES_DIFF_OR_NO_OP');
+        assert.equal(failedZeroDiffGuard.no_op_evidence_status, 'EVIDENCE_FILE_MISSING');
+
+        const noOpResult = runRecordNoOpCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            classification: 'ALREADY_DONE',
+            reason: 'The current baseline already satisfies this zero-diff closeout.',
+            emitMetrics: false
+        });
+        assert.equal(noOpResult.exitCode, 0);
+
+        const noOpPath = path.join(getReviewsRoot(repoRoot), `${taskId}-no-op.json`);
+        const missingHashNoOp = JSON.parse(fs.readFileSync(noOpPath, 'utf8')) as Record<string, unknown>;
+        delete missingHashNoOp.preflight_sha256;
+        fs.writeFileSync(noOpPath, JSON.stringify(missingHashNoOp, null, 2), 'utf8');
+
+        const missingHashReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(missingHashReviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(missingHashReviewResult.outputLines.some((line) => line.includes('EVIDENCE_PREFLIGHT_HASH_MISSING')));
+
+        const refreshedNoOpResult = runRecordNoOpCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            classification: 'ALREADY_DONE',
+            reason: 'The current baseline already satisfies this zero-diff closeout.',
+            emitMetrics: false
+        });
+        assert.equal(refreshedNoOpResult.exitCode, 0);
+
+        const passedReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(passedReviewResult.exitCode, 0);
+        assertNoDelegatedReviewArtifacts(repoRoot, taskId);
+
+        const passedReviewGate = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const passedZeroDiffGuard = passedReviewGate.zero_diff_guard as Record<string, unknown>;
+        assert.equal(passedZeroDiffGuard.status, 'SATISFIED_BY_AUDITED_NO_OP');
+        assert.equal(passedZeroDiffGuard.no_op_evidence_status, 'PASS');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects stale no-op evidence for suppressed zero-diff review gate closeout', { concurrency: false }, async () => {
+        const taskId = 'T-312-stale-no-op';
+        const { repoRoot, preflightPath, commandsPath, outputFiltersPath } = await setupZeroDiffReviewGateFixture(taskId);
+
+        const noOpResult = runRecordNoOpCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            classification: 'ALREADY_DONE',
+            reason: 'The current baseline already satisfies this zero-diff closeout.',
+            emitMetrics: false
+        });
+        assert.equal(noOpResult.exitCode, 0);
+
+        writeZeroDiffNoReviewPreflight(repoRoot, taskId, {
+            zero_diff_guard: {
+                zero_diff_detected: true,
+                status: 'BASELINE_ONLY',
+                completion_requires_audited_no_op: true,
+                no_op_artifact_suffix: '-no-op.json',
+                rationale: 'A refreshed zero-diff preflight must invalidate older no-op evidence.'
+            }
+        });
+        appendPreflightClassifiedEvent(repoRoot, taskId, preflightPath, true);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, false);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const staleReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(staleReviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(staleReviewResult.outputLines.some((line) => line.includes('EVIDENCE_PREFLIGHT_HASH_MISMATCH')));
+
+        const staleReviewGate = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const staleZeroDiffGuard = staleReviewGate.zero_diff_guard as Record<string, unknown>;
+        assert.equal(staleZeroDiffGuard.status, 'REQUIRES_DIFF_OR_NO_OP');
+        assert.equal(staleZeroDiffGuard.no_op_evidence_status, 'EVIDENCE_PREFLIGHT_HASH_MISMATCH');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects foreign no-op evidence for suppressed zero-diff review gate closeout', { concurrency: false }, async () => {
+        const taskId = 'T-312-foreign-no-op';
+        const { repoRoot, preflightPath, outputFiltersPath } = await setupZeroDiffReviewGateFixture(taskId);
+
+        const noOpResult = runRecordNoOpCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            classification: 'ALREADY_DONE',
+            reason: 'The current baseline already satisfies this zero-diff closeout.',
+            emitMetrics: false
+        });
+        assert.equal(noOpResult.exitCode, 0);
+
+        const noOpPath = path.join(getReviewsRoot(repoRoot), `${taskId}-no-op.json`);
+        const noOpArtifact = JSON.parse(fs.readFileSync(noOpPath, 'utf8')) as Record<string, unknown>;
+        noOpArtifact.task_id = 'T-312F';
+        fs.writeFileSync(noOpPath, JSON.stringify(noOpArtifact, null, 2), 'utf8');
+
+        const foreignReviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(foreignReviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(foreignReviewResult.outputLines.some((line) => line.includes('EVIDENCE_TASK_MISMATCH')));
+
+        const foreignReviewGate = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-review-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const foreignZeroDiffGuard = foreignReviewGate.zero_diff_guard as Record<string, unknown>;
+        assert.equal(foreignZeroDiffGuard.status, 'REQUIRES_DIFF_OR_NO_OP');
+        assert.equal(foreignZeroDiffGuard.no_op_evidence_status, 'EVIDENCE_TASK_MISMATCH');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -255,6 +255,9 @@ describe('gates/completion — protected control-plane', () => {
             const workspace = createCompletionWorkspace(false, 'none');
 
             try {
+                const legacyNoOp = JSON.parse(fs.readFileSync(workspace.noOpPath, 'utf8')) as Record<string, unknown>;
+                assert.equal(Object.prototype.hasOwnProperty.call(legacyNoOp, 'preflight_sha256'), false);
+
                 fs.writeFileSync(workspace.protectedFilePath, 'console.log("after");\n', 'utf8');
 
                 const result = runCompletionGate({

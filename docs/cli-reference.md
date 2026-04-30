@@ -485,3 +485,4 @@ Zero-diff task contract:
 | Component | Requirement |
 |---|---|
 | Public CLI and gate commands | Node.js 24 LTS |
+| Task orchestration workspace | Local Git repository with the `git` CLI available; GitHub, GitLab, or other remotes are optional |

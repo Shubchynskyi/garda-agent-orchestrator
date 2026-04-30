@@ -147,6 +147,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 ## Runtime Baseline
 
 - **Node.js 24 LTS is the supported runtime baseline** for the public CLI, lifecycle commands, and gate commands. CI targets Node 24 across the supported OS matrix.
+- **A local Git working tree is required.** Garda uses `git status` and `git diff` from the local repository to derive task scope, dirty-worktree baselines, zero-diff evidence, protected control-plane drift, and review freshness. The hosting service does not matter: GitHub, GitLab, Bitbucket, a private server, or no remote at all are all acceptable as long as the project is a local Git repository and the `git` CLI is available.
 - **Compatibility note:** as of `v1.0.0`, the codebase also builds on `Node 20.20.2` and `Node 22.22.2`. However, those versions are not part of the official support contract, and runtime diagnostics still enforce the documented `>=24.0.0` baseline.
 - **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/garda.ts` compiles into the public `bin/garda.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
 - **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and the wider repo graph (`tsconfig.node-foundation.json` / `tsconfig.tests.json`) covers `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.

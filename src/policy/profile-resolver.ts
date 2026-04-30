@@ -117,6 +117,8 @@ export interface ResolveOptions {
     forceCodeReview?: boolean;
     /** Whether current scope touches protected orchestrator control-plane files. */
     protectedControlPlaneChanged?: boolean;
+    /** Current preflight proved a clean BASELINE_ONLY scope with no reviewable diff. */
+    zeroDiffBaselineOnly?: boolean;
 }
 
 /**
@@ -148,6 +150,7 @@ export interface ProfileReviewDecision {
         | 'capability_default'
         | 'lightened_by_profile'
         | 'domain_triggered'
+        | 'zero_diff_no_reviewable_scope'
         | 'not_applicable_no_domain_surface';
     reason: string;
 }
@@ -158,6 +161,7 @@ export interface ProfileGuardrailResult {
     profile_name: string;
     guardrails_active: boolean;
     lightening_eligible: boolean;
+    zero_diff_no_reviewable_scope: boolean;
     decisions: ProfileReviewDecision[];
     safety_floors_applied: string[];
 }
@@ -167,6 +171,7 @@ export interface ProfileGuardrailOptions {
     forceAllDomainReviews?: boolean;
     forceCodeReview?: boolean;
     protectedControlPlaneChanged?: boolean;
+    zeroDiffBaselineOnly?: boolean;
 }
 
 function shouldLightenExplicitCodeReviewForDocsOnly(
@@ -179,6 +184,23 @@ function shouldLightenExplicitCodeReviewForDocsOnly(
         && profileValue === true
         && scopeCategory === 'docs-only'
         && options.protectedControlPlaneChanged !== true;
+}
+
+function hasAnyDomainSurface(domainSurface: Record<string, boolean> | undefined): boolean {
+    if (!domainSurface) {
+        return false;
+    }
+    return Object.values(domainSurface).some((value) => value === true);
+}
+
+function isZeroDiffNoReviewableScope(scopeCategory: string, options: ProfileGuardrailOptions): boolean {
+    return scopeCategory === 'empty'
+        && options.zeroDiffBaselineOnly === true
+        && options.forceAllDomainReviews !== true
+        && options.forceCodeReview !== true
+        && options.protectedControlPlaneChanged !== true
+        && options.domainSurface !== undefined
+        && !hasAnyDomainSurface(options.domainSurface);
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -360,8 +382,11 @@ export function applyProfileGuardrails(
     profileName: string,
     options: ProfileGuardrailOptions = {}
 ): ProfileGuardrailResult {
-    const isCodeChangingTask = !LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
-    const lightEligible = LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
+    const zeroDiffNoReviewableScope = isZeroDiffNoReviewableScope(scopeCategory, options);
+    const isCodeChangingTask = zeroDiffNoReviewableScope
+        ? false
+        : !LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
+    const lightEligible = zeroDiffNoReviewableScope || LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory);
 
     const { merged, floorsApplied } = mergeReviewPolicy(profilePolicy, capabilities, isCodeChangingTask);
 
@@ -390,7 +415,9 @@ export function applyProfileGuardrails(
             options
         );
         const codeReviewExplicitlyForced = key === 'code' && options.forceCodeReview === true;
-        const effectiveValue = codeReviewExplicitlyForced || (domainSurfaceMissing || scopeLightenedExplicitReview ? false : mergedWantsReview);
+        const effectiveValue = zeroDiffNoReviewableScope
+            ? false
+            : codeReviewExplicitlyForced || (domainSurfaceMissing || scopeLightenedExplicitReview ? false : mergedWantsReview);
         const forcedDomainWithoutSurface = isDomainReview
             && mergedWantsReview
             && options.forceAllDomainReviews === true
@@ -403,7 +430,10 @@ export function applyProfileGuardrails(
 
         const wasFloored = floorsApplied.some((f) => f.startsWith(`${key}:`));
 
-        if (codeReviewExplicitlyForced) {
+        if (zeroDiffNoReviewableScope) {
+            decision = 'zero_diff_no_reviewable_scope';
+            reason = `${key} review suppressed because current preflight is BASELINE_ONLY with no reviewable diff; audited no-op evidence is required before completion`;
+        } else if (codeReviewExplicitlyForced) {
             decision = 'profile_forced';
             reason = `${key} review explicitly forced by task preflight override`;
         } else if (domainSurfaceMissing) {
@@ -456,6 +486,7 @@ export function applyProfileGuardrails(
         profile_name: profileName,
         guardrails_active: isCodeChangingTask,
         lightening_eligible: lightEligible,
+        zero_diff_no_reviewable_scope: zeroDiffNoReviewableScope,
         decisions,
         safety_floors_applied: floorsApplied
     };
@@ -469,6 +500,7 @@ export function formatProfileGuardrailDiagnostics(result: ProfileGuardrailResult
     lines.push(`CodeChangingTask: ${result.is_code_changing_task}`);
     lines.push(`GuardrailsActive: ${result.guardrails_active}`);
     lines.push(`LighteningEligible: ${result.lightening_eligible}`);
+    lines.push(`ZeroDiffNoReviewableScope: ${result.zero_diff_no_reviewable_scope}`);
     lines.push('');
     lines.push('Decisions:');
     for (const d of result.decisions) {
@@ -578,9 +610,13 @@ export function resolveEffectivePolicy(
 
     // Determine code-changing status from scope category or explicit flag
     const scopeCategory = options.scopeCategory || null;
-    const isCodeChangingTask = scopeCategory
+    const zeroDiffNoReviewableScope = scopeCategory
+        ? isZeroDiffNoReviewableScope(scopeCategory, options)
+        : false;
+    const scopeIsCodeChangingTask = scopeCategory
         ? !LIGHTENABLE_SCOPE_CATEGORIES.has(scopeCategory)
         : options.isCodeChangingTask !== false;
+    const isCodeChangingTask = zeroDiffNoReviewableScope ? false : scopeIsCodeChangingTask;
 
     const capabilities = loadReviewCapabilities(configPaths.reviewCapabilities);
     const tokenEconomyConfig = loadTokenEconomyConfig(configPaths.tokenEconomy);
@@ -610,7 +646,8 @@ export function resolveEffectivePolicy(
                 domainSurface: options.domainSurface,
                 forceAllDomainReviews: options.forceAllDomainReviews,
                 forceCodeReview: options.forceCodeReview,
-                protectedControlPlaneChanged: options.protectedControlPlaneChanged
+                protectedControlPlaneChanged: options.protectedControlPlaneChanged,
+                zeroDiffBaselineOnly: options.zeroDiffBaselineOnly
             }
         );
         for (const decision of guardrailDiagnostics.decisions) {

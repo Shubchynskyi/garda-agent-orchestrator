@@ -28,6 +28,7 @@ export interface TaskProfileSelectionOptions {
     forceAllDomainReviews?: boolean;
     forceCodeReview?: boolean;
     protectedControlPlaneChanged?: boolean;
+    zeroDiffBaselineOnly?: boolean;
 }
 
 export function normalizeTaskProfileValue(value: unknown): string | null {
@@ -53,7 +54,8 @@ export function resolveTaskProfileSelection(
         ...(options.domainSurface ? { domainSurface: options.domainSurface } : {}),
         ...(options.forceAllDomainReviews === true ? { forceAllDomainReviews: true } : {}),
         ...(options.forceCodeReview === true ? { forceCodeReview: true } : {}),
-        ...(options.protectedControlPlaneChanged === true ? { protectedControlPlaneChanged: true } : {})
+        ...(options.protectedControlPlaneChanged === true ? { protectedControlPlaneChanged: true } : {}),
+        ...(options.zeroDiffBaselineOnly === true ? { zeroDiffBaselineOnly: true } : {})
     });
 
     return {

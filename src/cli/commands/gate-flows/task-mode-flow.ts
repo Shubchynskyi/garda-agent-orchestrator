@@ -896,7 +896,8 @@ export function runRecordNoOpCommand(options: RecordNoOpCommandOptions): { outpu
         classification: options.classification,
         reason,
         actor: options.actor,
-        preflightPath
+        preflightPath,
+        preflightSha256: preflightPath ? gateHelpers.fileSha256(preflightPath) : null
     });
     writeJsonArtifact(artifactPath, artifact);
 
@@ -909,7 +910,8 @@ export function runRecordNoOpCommand(options: RecordNoOpCommandOptions): { outpu
         task_id: taskId,
         artifact_path: gateHelpers.normalizePath(artifactPath),
         classification: artifact.classification,
-        preflight_path: artifact.preflight_path
+        preflight_path: artifact.preflight_path,
+        preflight_sha256: artifact.preflight_sha256
     }, parseBooleanOption(options.emitMetrics, true));
 
     appendTaskEvent(
@@ -922,7 +924,8 @@ export function runRecordNoOpCommand(options: RecordNoOpCommandOptions): { outpu
             artifact_path: gateHelpers.normalizePath(artifactPath),
             classification: artifact.classification,
             reason: artifact.reason,
-            preflight_path: artifact.preflight_path
+            preflight_path: artifact.preflight_path,
+            preflight_sha256: artifact.preflight_sha256
         }
     );
 

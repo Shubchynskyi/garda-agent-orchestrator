@@ -37,6 +37,7 @@ export interface NoOpArtifact {
     reason: string;
     actor: string;
     preflight_path: string | null;
+    preflight_sha256: string | null;
 }
 
 export interface BuildNoOpArtifactOptions {
@@ -45,6 +46,7 @@ export interface BuildNoOpArtifactOptions {
     reason: unknown;
     actor?: unknown;
     preflightPath?: unknown;
+    preflightSha256?: unknown;
 }
 
 export interface NoOpEvidenceResult {
@@ -58,6 +60,7 @@ export interface NoOpEvidenceResult {
     classification: string | null;
     reason: string | null;
     preflight_path: string | null;
+    preflight_sha256: string | null;
 }
 
 export function normalizeNoOpClassification(value: unknown): NoOpClassification {
@@ -102,6 +105,7 @@ export function buildNoOpArtifact(options: BuildNoOpArtifactOptions): NoOpArtifa
 
     const actor = String(options.actor || 'orchestrator').trim() || 'orchestrator';
     const preflightPath = String(options.preflightPath || '').trim();
+    const preflightSha256 = String(options.preflightSha256 || '').trim().toLowerCase();
 
     return {
         timestamp_utc: new Date().toISOString(),
@@ -112,11 +116,26 @@ export function buildNoOpArtifact(options: BuildNoOpArtifactOptions): NoOpArtifa
         classification,
         reason,
         actor,
-        preflight_path: preflightPath ? normalizePath(preflightPath) : null
+        preflight_path: preflightPath ? normalizePath(preflightPath) : null,
+        preflight_sha256: preflightSha256 || null
     };
 }
 
-export function getNoOpEvidence(repoRoot: string, taskId: string | null, artifactPath = ''): NoOpEvidenceResult {
+function preflightRequiresNoOpHash(preflightPath: string): boolean {
+    try {
+        const payload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        return !!payload.zero_diff_guard;
+    } catch {
+        return true;
+    }
+}
+
+export function getNoOpEvidence(
+    repoRoot: string,
+    taskId: string | null,
+    artifactPath = '',
+    expectedPreflightPath = ''
+): NoOpEvidenceResult {
     const result: NoOpEvidenceResult = {
         task_id: taskId,
         evidence_path: null,
@@ -127,7 +146,8 @@ export function getNoOpEvidence(repoRoot: string, taskId: string | null, artifac
         evidence_source: null,
         classification: null,
         reason: null,
-        preflight_path: null
+        preflight_path: null,
+        preflight_sha256: null
     };
 
     if (!taskId) {
@@ -160,6 +180,7 @@ export function getNoOpEvidence(repoRoot: string, taskId: string | null, artifac
     result.classification = String(artifactObject.classification || '').trim() || null;
     result.reason = String(artifactObject.reason || '').trim() || null;
     result.preflight_path = String(artifactObject.preflight_path || '').trim() || null;
+    result.preflight_sha256 = String(artifactObject.preflight_sha256 || '').trim().toLowerCase() || null;
 
     if (result.evidence_task_id !== resolvedTaskId) {
         result.evidence_status = 'EVIDENCE_TASK_MISMATCH';
@@ -176,6 +197,32 @@ export function getNoOpEvidence(repoRoot: string, taskId: string | null, artifac
     if (!result.reason || result.reason.length < 12) {
         result.evidence_status = 'EVIDENCE_REASON_INVALID';
         return result;
+    }
+    const normalizedExpectedPreflightPath = expectedPreflightPath
+        ? normalizePath(resolvePathInsideRepo(expectedPreflightPath, repoRoot, { allowMissing: true }) || expectedPreflightPath)
+        : '';
+    if (normalizedExpectedPreflightPath) {
+        if (!result.preflight_path) {
+            result.evidence_status = 'EVIDENCE_PREFLIGHT_PATH_MISSING';
+            return result;
+        }
+        if (normalizePath(result.preflight_path).toLowerCase() !== normalizedExpectedPreflightPath.toLowerCase()) {
+            result.evidence_status = 'EVIDENCE_PREFLIGHT_PATH_MISMATCH';
+            return result;
+        }
+        const expectedPreflightSha256 = fileSha256(normalizedExpectedPreflightPath);
+        if (!result.preflight_sha256) {
+            if (preflightRequiresNoOpHash(normalizedExpectedPreflightPath)) {
+                result.evidence_status = 'EVIDENCE_PREFLIGHT_HASH_MISSING';
+                return result;
+            }
+        } else if (
+            expectedPreflightSha256
+            && result.preflight_sha256.toLowerCase() !== expectedPreflightSha256.toLowerCase()
+        ) {
+            result.evidence_status = 'EVIDENCE_PREFLIGHT_HASH_MISMATCH';
+            return result;
+        }
     }
     if (result.evidence_status === 'PASSED' && result.evidence_outcome === 'PASS') {
         result.evidence_status = 'PASS';

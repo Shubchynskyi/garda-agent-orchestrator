@@ -61,7 +61,8 @@ export function validateZeroDiffCompletionEvidence(
         violations: [
             `Task '${taskId}'${summarySuffix} has zero-diff preflight on a clean tree. ` +
             'Baseline-only preflight cannot complete the task by itself. ' +
-            `Produce a real diff or record an audited no-op artifact at '${normalizePath(noOpEvidence.evidence_path || '')}' before DONE.`
+            `Produce a real diff or record an audited no-op artifact at '${normalizePath(noOpEvidence.evidence_path || '')}' before DONE. ` +
+            `No-op evidence status: ${noOpEvidence.evidence_status}.`
         ]
     };
 }

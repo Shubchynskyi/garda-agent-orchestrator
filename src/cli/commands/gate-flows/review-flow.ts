@@ -437,7 +437,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         preflight,
         String(resolvedTaskId || ''),
         repoRoot,
-        options.noOpArtifactPath || ''
+        options.noOpArtifactPath || '',
+        validatedPreflight.preflight_path
     );
     errors.push(...zeroDiffGuard.violations);
 

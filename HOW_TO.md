@@ -278,6 +278,7 @@ Custom project-specific skills still live under `garda-agent-orchestrator/live/s
 | Component | Requirement |
 |---|---|
 | Public CLI and gate commands | Node.js 24 LTS |
+| Task orchestration workspace | Local Git repository with the `git` CLI available; GitHub/GitLab/other remotes are optional and do not affect local gate logic |
 
 If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `tsconfig.json`; it extends `tsconfig.node-foundation.json` and is the editor-facing project file.
 

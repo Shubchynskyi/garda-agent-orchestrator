@@ -887,6 +887,130 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change strict profile suppresses reviews for audited zero-diff baseline-only closeout', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-zero-diff.json');
+        const taskId = 'T-930-strict-zero-diff';
+        seedStrictProfileConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Close out reviewer trust validation with no additional file changes'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Close out reviewer trust validation with no additional file changes',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.scope_category, 'empty');
+        assert.equal(payload.metrics.changed_files_count, 0);
+        assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
+        assert.equal(payload.zero_diff_guard.completion_requires_audited_no_op, true);
+        assert.equal(payload.profile_guardrails.zero_diff_no_reviewable_scope, true);
+        assert.equal(payload.required_reviews.code, false);
+        assert.equal(payload.required_reviews.security, false);
+        assert.equal(payload.required_reviews.refactor, false);
+        assert.equal(payload.required_reviews.db, false);
+        assert.equal(payload.budget_forecast.required_reviews.length, 0);
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'code')?.decision,
+            'zero_diff_no_reviewable_scope'
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change strict profile keeps reviews for zero-diff with planned task scope', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-zero-diff-planned.json');
+        const taskId = 'T-930-strict-zero-diff-planned';
+        seedStrictProfileConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Plan a source change before implementation',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Plan a source change before implementation',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.scope_category, 'empty');
+        assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
+        assert.equal(payload.profile_guardrails.zero_diff_no_reviewable_scope, false);
+        assert.equal(payload.required_reviews.code, true);
+        assert.equal(payload.budget_forecast.required_reviews.includes('code'), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change strict profile keeps reviews for explicit empty scoped preflight', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-explicit-empty.json');
+        const taskId = 'T-930-strict-explicit-empty';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Attempt an explicit empty scoped preflight'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: [],
+            taskId,
+            taskIntent: 'Attempt an explicit empty scoped preflight',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.detection_source, 'explicit_changed_files');
+        assert.equal(payload.scope_category, 'empty');
+        assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
+        assert.equal(payload.profile_guardrails.zero_diff_no_reviewable_scope, false);
+        assert.equal(payload.required_reviews.code, true);
+        assert.equal(payload.budget_forecast.required_reviews.includes('code'), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change strict profile keeps DB review when DB surface evidence is present', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const migrationPath = path.join(repoRoot, 'src', 'db', 'migrations', '001_init.sql');

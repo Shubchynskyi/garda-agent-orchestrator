@@ -158,7 +158,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         taskModePath: options.taskModePath || ''
     });
     const fullSuiteValidationConfig = loadFullSuiteValidationConfig(repoRoot);
-    const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '');
+    const noOpEvidence = getNoOpEvidence(repoRoot, resolvedTaskId, options.noOpArtifactPath || '', preflightPath);
     const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
         artifactPath: options.handshakePath || '',
         taskModePath: options.taskModePath || '',

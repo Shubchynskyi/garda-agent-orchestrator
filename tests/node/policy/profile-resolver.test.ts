@@ -971,6 +971,58 @@ test('applyProfileGuardrails: balanced docs-only scope lightens explicit code re
     assert.equal(codeDecision?.decision, 'lightened_by_profile');
 });
 
+test('applyProfileGuardrails: zero-diff baseline-only scope suppresses profile-forced reviews', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: true, test: true, performance: true, infra: false, dependency: true
+    };
+    const result = applyProfileGuardrails(profile, caps, 'empty', 'strict', {
+        zeroDiffBaselineOnly: true,
+        domainSurface: {
+            db: false,
+            api: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        }
+    });
+
+    assert.equal(result.zero_diff_no_reviewable_scope, true);
+    assert.equal(result.guardrails_active, false);
+    assert.equal(result.lightening_eligible, true);
+    for (const reviewType of ['code', 'security', 'refactor', 'db']) {
+        const decision = result.decisions.find(d => d.review_type === reviewType);
+        assert.equal(decision?.effective_value, false, `${reviewType} review should be suppressed`);
+        assert.equal(decision?.decision, 'zero_diff_no_reviewable_scope');
+        assert.match(String(decision?.reason || ''), /no reviewable diff/);
+    }
+    assert.equal(result.safety_floors_applied.length, 0);
+});
+
+test('applyProfileGuardrails: zero-diff suppression fails closed when code review is forced', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'empty', 'fast', {
+        zeroDiffBaselineOnly: true,
+        forceCodeReview: true,
+        domainSurface: {
+            db: false,
+            api: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        }
+    });
+    const codeDecision = result.decisions.find(d => d.review_type === 'code');
+    assert.equal(result.zero_diff_no_reviewable_scope, false);
+    assert.equal(codeDecision?.effective_value, true);
+    assert.equal(codeDecision?.decision, 'profile_forced');
+});
+
 test('applyProfileGuardrails: fast docs-only keeps code review for protected control-plane scope', () => {
     const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
     const caps: ReviewCapabilities = {

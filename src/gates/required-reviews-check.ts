@@ -1095,7 +1095,8 @@ export function validateZeroDiffForReviewGate(
     preflight: Record<string, unknown> | null,
     taskId: string,
     repoRoot: string,
-    noOpArtifactPath?: string
+    noOpArtifactPath?: string,
+    preflightPath?: string
 ): ZeroDiffReviewGuardResult {
     const zeroDiffDetected = detectZeroDiffFromPreflight(preflight);
 
@@ -1108,7 +1109,7 @@ export function validateZeroDiffForReviewGate(
         };
     }
 
-    const noOpEvidence = getNoOpEvidence(repoRoot, taskId, noOpArtifactPath || '');
+    const noOpEvidence = getNoOpEvidence(repoRoot, taskId, noOpArtifactPath || '', preflightPath || '');
 
     if (noOpEvidence.evidence_status === 'PASS') {
         return {
@@ -1119,6 +1120,10 @@ export function validateZeroDiffForReviewGate(
         };
     }
 
+    const noOpPreflightArg = preflightPath
+        ? ` --preflight-path "${normalizePath(preflightPath)}"`
+        : '';
+
     return {
         zero_diff_detected: true,
         status: 'REQUIRES_DIFF_OR_NO_OP',
@@ -1127,8 +1132,9 @@ export function validateZeroDiffForReviewGate(
             `Task '${taskId}' has zero-diff preflight (clean tree). ` +
             'Review gate cannot pass without produced changes. ' +
             'Either implement changes and re-run preflight, record an audited no-op artifact ' +
-            `('node ${resolveBundleName()}/bin/garda.js gate record-no-op --task-id "${taskId}" --reason "..."'), ` +
-            'or set the task to BLOCKED.'
+            `('node ${resolveBundleName()}/bin/garda.js gate record-no-op --task-id "${taskId}"` +
+            `${noOpPreflightArg} --reason "..."'), ` +
+            `or set the task to BLOCKED. No-op evidence status: ${noOpEvidence.evidence_status}.`
         ]
     };
 }
