@@ -4903,6 +4903,250 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result error names exact accepted tokens and output-file requirement when verdict token is wrong (T-306)', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-306-wrong-token-diagnostic';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        // Intentionally uses 'pass' (a wrong flag-style token) instead of a canonical verdict token.
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated that a flag-style "pass" value in the file body is not a recognized verdict token.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'pass'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        // Error message must name accepted tokens and explain the output-file requirement.
+        const errorText = capturedErrors.join('\n');
+        assert.ok(errorText.includes('recognized verdict token'), 'error should mention recognized verdict token');
+        assert.ok(errorText.includes('REVIEW PASSED') || errorText.includes('CODE REVIEW PASSED'), 'error should name a PASS token');
+        assert.ok(errorText.includes('REVIEW FAILED') || errorText.includes('CODE REVIEW FAILED'), 'error should name a FAIL token');
+        assert.ok(errorText.includes('--review-output-path'), 'error should reference --review-output-path');
+        assert.ok(errorText.includes('## Verdict'), 'error should mention ## Verdict heading guidance');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result error names test-review-specific accepted tokens when token is wrong for test review type (T-306)', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-306-wrong-token-test-type';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-test.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'test'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'test'),
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-test-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        // Uses a code-review token for a test review – should be rejected with the correct test-review tokens listed.
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated that a code-review token is rejected for a test-review materialization.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'CODE REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'test',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:test-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        const errorText = capturedErrors.join('\n');
+        // Must name the correct test-review pass token and not just 'code'.
+        assert.ok(errorText.includes('TEST REVIEW PASSED') || errorText.includes('REVIEW PASSED'), 'error should name the test-review PASS token');
+        assert.ok(errorText.includes('--review-output-path'), 'error should reference --review-output-path');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result error names exact pass and fail example lines when verdict file uses wrong standalone token (T-306)', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-306-wrong-token-example-lines';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        // APPROVED is not a recognized token; the error must show both PASS and FAIL example lines.
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated that the rejection error names both the canonical PASS and FAIL example lines so agents can fix the output without a retry loop.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'APPROVED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        const errorText = capturedErrors.join('\n');
+        // Error must include both the PASS example line and the FAIL example line so the agent knows both options.
+        assert.ok(errorText.includes('Example PASS line'), 'error should include Example PASS line label');
+        assert.ok(errorText.includes('Example FAIL line'), 'error should include Example FAIL line label');
+        assert.ok(errorText.includes('REVIEW PASSED') || errorText.includes('CODE REVIEW PASSED'), 'error should name a canonical PASS token');
+        assert.ok(errorText.includes('REVIEW FAILED') || errorText.includes('CODE REVIEW FAILED'), 'error should name a canonical FAIL token');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+
+
     it('record-review-result rejects trivial passed reviewer output before routing or receipt materialization', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-trivial-pass';

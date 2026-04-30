@@ -776,7 +776,7 @@ Hard stops:
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
 - Do not mark \`DONE\` without \`COMPLETION_GATE_PASSED\`.
 - Do not create fake review artifacts or bypass reviewer routing.
-- The \`40-commands.md\` preference to avoid ad-hoc manual commands does NOT exempt mandatory gates. Gates such as \`compile-gate\` must execute their underlying build/test commands when the workflow requires them.
+- The \`40-commands.md\` restraint applies only to standalone ad-hoc commands. It does NOT exempt mandatory gates: gates such as \`compile-gate\` and \`full-suite-validation\` must execute their underlying build/test/type-check commands when the workflow requires them.
 ${MANAGED_END}`.trim();
 }
 

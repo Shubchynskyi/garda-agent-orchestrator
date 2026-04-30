@@ -2,27 +2,28 @@
 
 Primary entry point: selected source-of-truth entrypoint for this workspace.
 
-IMPORTANT: The user prefers running ad-hoc commands manually. Do not execute ad-hoc `task` commands (e.g., standalone `npm run build`, `npm test`, `npm run lint`) unless the prompt explicitly asks for it or a mandatory gate requires the underlying command.
-Exception — mandatory gates always run: `compile-gate`, `required-reviews-check`, `doc-impact-gate`, `completion-gate`, and any other gate in the mandatory sequence must execute their underlying commands (including builds, tests, or type-checks) regardless of this preference. The preference applies only to ad-hoc command execution outside the gate pipeline.
-Exception: You may run tests and iterate only when the user explicitly requests this workflow.
+IMPORTANT: Prefer orchestrator-managed validation over ad-hoc validation.
+During orchestrated task execution, run builds, tests, type-checks, and full-suite validation through the mandatory gate flow whenever possible. Use `next-step` to choose the next lifecycle command, `compile-gate` for build/type-check validation, and `full-suite-validation` for the configured full test suite.
+Avoid standalone ad-hoc commands such as `npm run build`, `npm test`, or `npm run lint` outside the gate pipeline unless the prompt explicitly asks for them, a focused local debug pass is needed before mandatory gates, or a mandatory gate requires the underlying command.
+User preferences such as "do not run rebuild" or "skip tests" never waive mandatory gate validation. If a required gate wraps a build, test, or type-check command, run the gate and let the gate manage the command and output filtering.
 Canonical gate surface is `node garda-agent-orchestrator/bin/garda.js gate <name>`.
 Default task loop: run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure. Follow its single recommended command instead of guessing from defaults, stale artifacts, or the static gate list.
 
 ### Ad-Hoc vs Mandatory Gate Commands
-The "prefer manual commands" preference and mandatory gate execution are separate concerns:
-- **Ad-hoc commands** (`npm run build`, `npm test`, `npm run lint` executed directly) — avoid unless the user requests them or you have an explicit justification.
-- **Mandatory gate commands** (`node garda-agent-orchestrator/bin/garda.js gate compile-gate`, etc.) — always execute when required by the workflow, even when the gate internally runs `npm run build` or similar. A gate wrapping a build/test command is not an ad-hoc execution; it is lifecycle-required infrastructure.
-- **Known producer-consumer validation chains** (`npm run build:node-foundation` -> direct `node --test .node-build/...`, similar generated-artifact consumers) — do not fan these out through raw shell sidecars. Use the guarded workflow path, `npm test`, or run producer then consumer strictly sequentially.
+Ad-hoc command restraint and mandatory gate execution are separate concerns:
+- **Ad-hoc commands** (`npm run build`, `npm test`, `npm run lint` executed directly) - avoid as routine task validation. Use them only when requested, when doing a focused local debug pass, or when there is an explicit technical reason before returning to the gate flow.
+- **Mandatory gate commands** (`node garda-agent-orchestrator/bin/garda.js gate compile-gate`, `full-suite-validation`, etc.) - always execute when required by the workflow. A gate wrapping a build/test command is not ad-hoc execution; it is lifecycle-required validation with controlled output.
+- **Known producer-consumer validation chains** (`npm run build:node-foundation` -> direct `node --test .node-build/...`, similar generated-artifact consumers) - do not fan these out through raw shell sidecars. Use the guarded workflow path, `npm test`, or run producer then consumer strictly sequentially.
 
 Example (materialized/deployed workspace):
 ```
-# ✗ Ad-hoc — avoid unless requested:
+# x Ad-hoc - avoid as routine task validation:
 npm run build
 npm test
 
-# ✓ Mandatory gate — always execute when required:
+# OK Mandatory gate - always execute when required:
 node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "T-042" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md"
-# compile-gate internally runs `npm run build` — that is allowed because it is gate-driven, not ad-hoc.
+# compile-gate internally runs `npm run build`; that is allowed because it is gate-driven, not ad-hoc.
 ```
 
 ## Project Commands (Required)

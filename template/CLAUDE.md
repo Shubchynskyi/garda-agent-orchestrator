@@ -13,7 +13,7 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 2. Read only the linked rule files required for the current task.
 3. Avoid loading unrelated rule files to save context and tokens.
 4. Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.
-5. The `40-commands.md` preference to avoid ad-hoc manual commands does NOT apply to mandatory gates. Gates like `compile-gate` must still execute their underlying commands (builds, tests, type-checks) when the workflow requires them. See `00-core.md` § Mandatory Infrastructure Integrity.
+5. The `40-commands.md` restraint applies only to standalone ad-hoc commands. It does NOT exempt mandatory gates: gates like `compile-gate` and `full-suite-validation` must execute their underlying build/test/type-check commands when the workflow requires them. See `00-core.md` § Mandatory Infrastructure Integrity.
 
 ## Hard Stop For Task Execution
 - Before implementing any task, open `TASK.md`.

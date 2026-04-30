@@ -2426,9 +2426,14 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
     const verdictTokenSet = buildReviewVerdictTokenSet(reviewType, expectedPassVerdict, expectedFailVerdict);
     const verdictToken = extractReviewVerdictToken(reviewContent, expectedPassVerdict, expectedFailVerdict, reviewType);
     if (!verdictToken) {
+        const passExample = verdictTokenSet.canonicalPassToken || expectedPassVerdict;
+        const failExample = verdictTokenSet.canonicalFailToken || expectedFailVerdict;
         throw new Error(
             `Review output must contain a recognized verdict token for '${reviewType}'. ` +
-            formatAcceptedReviewVerdictTokens(verdictTokenSet)
+            formatAcceptedReviewVerdictTokens(verdictTokenSet) +
+            ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. ` +
+            `Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. ` +
+            `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.`
         );
     }
     const materializationAnalysis = analyzeEarlyReviewMaterialization({
