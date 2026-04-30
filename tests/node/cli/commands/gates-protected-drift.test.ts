@@ -274,6 +274,46 @@ function runExplicitPreflight(
     return preflightPath;
 }
 
+function readReviewPreflightFixture(repoRoot: string, taskId: string): {
+    preflight: Record<string, unknown>;
+    preflightPath: string;
+    preflightSha256: string | null;
+} {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        return {
+            preflight: {},
+            preflightPath,
+            preflightSha256: null
+        };
+    }
+    const preflightText = fs.readFileSync(preflightPath, 'utf8');
+    const crypto = require('node:crypto');
+    return {
+        preflight: JSON.parse(preflightText) as Record<string, unknown>,
+        preflightPath,
+        preflightSha256: crypto.createHash('sha256').update(preflightText).digest('hex')
+    };
+}
+
+function buildReviewContextTaskScopeFixture(preflight: Record<string, unknown>): Record<string, unknown> {
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files
+            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+            .filter(Boolean)
+        : [];
+    return {
+        changed_files: changedFiles,
+        changed_file_count: changedFiles.length,
+        diff: {
+            available: changedFiles.length > 0,
+            source: 'fixture_task_diff',
+            char_count: changedFiles.length > 0 ? 120 : 0,
+            truncated: false
+        }
+    };
+}
+
 function writeReceiptBackedReviewArtifact(
     repoRoot: string,
     taskId: string,
@@ -303,8 +343,18 @@ function writeReceiptBackedReviewArtifact(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
+    const preflightFixture = readReviewPreflightFixture(repoRoot, taskId);
     const reviewContext = {
+        task_id: taskId,
         review_type: reviewKey,
+        preflight_path: preflightFixture.preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: preflightFixture.preflightSha256,
+        task_scope: buildReviewContextTaskScopeFixture(preflightFixture.preflight),
+        scoped_diff: {
+            expected: false,
+            metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`).replace(/\\/g, '/'),
+            metadata: null
+        },
         reviewer_routing: createReviewerRoutingFixture('Codex', 'provider_entrypoint', {
             actual_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,

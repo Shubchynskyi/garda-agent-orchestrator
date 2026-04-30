@@ -8488,7 +8488,9 @@ describe('cli/commands/gates', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         const preflightPath = writePreflight(repoRoot, taskId);
-        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+        writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED', undefined, {
+            allowLegacyManualReviewContext: true
+        });
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Required reviews gate passed.', {});
 
         const beforeEvents = readTaskTimelineEvents(repoRoot, taskId).length;

@@ -422,6 +422,88 @@ function runExplicitPreflight(
     return preflightPath;
 }
 
+function readReviewPreflightFixture(repoRoot: string, taskId: string, preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`)): {
+    preflight: Record<string, unknown>;
+    preflightPath: string;
+    preflightSha256: string | null;
+} {
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        return {
+            preflight: {},
+            preflightPath,
+            preflightSha256: null
+        };
+    }
+    const preflightText = fs.readFileSync(preflightPath, 'utf8');
+    const crypto = require('node:crypto');
+    return {
+        preflight: JSON.parse(preflightText) as Record<string, unknown>,
+        preflightPath,
+        preflightSha256: crypto.createHash('sha256').update(preflightText).digest('hex')
+    };
+}
+
+function buildReviewContextTaskScopeFixture(preflight: Record<string, unknown>): Record<string, unknown> {
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files
+            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+            .filter(Boolean)
+        : [];
+    return {
+        changed_files: changedFiles,
+        changed_file_count: changedFiles.length,
+        diff: {
+            available: changedFiles.length > 0,
+            source: 'fixture_task_diff',
+            char_count: changedFiles.length > 0 ? 120 : 0,
+            truncated: false
+        }
+    };
+}
+
+function prepareReviewDiffFixture(repoRoot: string, preflightPath: string): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files
+            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+            .filter(Boolean)
+        : [];
+    if (changedFiles.length === 0) {
+        return;
+    }
+
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGit(repoRoot, ['init']);
+    }
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+    if (head.status !== 0) {
+        runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+    }
+
+    for (const changedFile of changedFiles) {
+        if (
+            changedFile.startsWith('/')
+            || changedFile.startsWith('../')
+            || changedFile.includes('/../')
+            || changedFile.startsWith(':')
+        ) {
+            continue;
+        }
+        const absolutePath = path.join(repoRoot, ...changedFile.split('/'));
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        if (!fs.existsSync(absolutePath)) {
+            fs.writeFileSync(absolutePath, `// review fixture for ${changedFile}\n`, 'utf8');
+        }
+    }
+}
+
 function writeReceiptBackedReviewArtifact(
     repoRoot: string,
     taskId: string,
@@ -452,8 +534,18 @@ function writeReceiptBackedReviewArtifact(
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
     const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth);
+    const preflightFixture = readReviewPreflightFixture(repoRoot, taskId);
     const reviewContext = {
+        task_id: taskId,
         review_type: reviewKey,
+        preflight_path: preflightFixture.preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: preflightFixture.preflightSha256,
+        task_scope: buildReviewContextTaskScopeFixture(preflightFixture.preflight),
+        scoped_diff: {
+            expected: false,
+            metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`).replace(/\\/g, '/'),
+            metadata: null
+        },
         reviewer_routing: createReviewerRoutingFixture(sourceOfTruth, {
             actual_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,
@@ -562,6 +654,7 @@ function seedReusableReviewEvidence(
         '## Verdict',
         verdict
     ].join('\n');
+    prepareReviewDiffFixture(repoRoot, preflightPath);
     buildReviewContext({
         reviewType: reviewKey,
         depth: 2,

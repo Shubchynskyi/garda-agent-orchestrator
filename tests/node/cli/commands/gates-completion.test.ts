@@ -307,6 +307,90 @@ function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPat
     });
 }
 
+function readReviewPreflightFixture(repoRoot: string, taskId: string): {
+    preflightPath: string;
+    preflightSha256: string | null;
+    preflight: Record<string, unknown>;
+} {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        return {
+            preflightPath,
+            preflightSha256: null,
+            preflight: {}
+        };
+    }
+
+    const preflightText = fs.readFileSync(preflightPath, 'utf8');
+    const crypto = require('node:crypto');
+    return {
+        preflightPath,
+        preflightSha256: crypto.createHash('sha256').update(preflightText).digest('hex'),
+        preflight: JSON.parse(preflightText) as Record<string, unknown>
+    };
+}
+
+function buildReviewContextTaskScopeFixture(preflight: Record<string, unknown>): Record<string, unknown> {
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files
+            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+            .filter(Boolean)
+        : ['src/app.ts'];
+    return {
+        changed_files: changedFiles,
+        changed_file_count: changedFiles.length,
+        diff: {
+            available: changedFiles.length > 0,
+            source: 'fixture_task_diff',
+            char_count: changedFiles.length > 0 ? 120 : 0,
+            truncated: false
+        }
+    };
+}
+
+function prepareReviewDiffFixture(repoRoot: string, preflightPath: string): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files
+            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+            .filter(Boolean)
+        : [];
+    if (changedFiles.length === 0) {
+        return;
+    }
+
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+        runGit(repoRoot, ['init']);
+    }
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+    if (head.status !== 0) {
+        runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+    }
+
+    for (const changedFile of changedFiles) {
+        if (
+            changedFile.startsWith('/')
+            || changedFile.startsWith('../')
+            || changedFile.includes('/../')
+            || changedFile.startsWith(':')
+        ) {
+            continue;
+        }
+        const absolutePath = path.join(repoRoot, ...changedFile.split('/'));
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        if (!fs.existsSync(absolutePath)) {
+            fs.writeFileSync(absolutePath, `// review fixture for ${changedFile}\n`, 'utf8');
+        }
+    }
+}
+
 function writeReceiptBackedReviewArtifact(
     repoRoot: string,
     taskId: string,
@@ -336,8 +420,18 @@ function writeReceiptBackedReviewArtifact(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
+    const preflightFixture = readReviewPreflightFixture(repoRoot, taskId);
     const reviewContext = {
+        task_id: taskId,
         review_type: reviewKey,
+        preflight_path: preflightFixture.preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: preflightFixture.preflightSha256,
+        task_scope: buildReviewContextTaskScopeFixture(preflightFixture.preflight),
+        scoped_diff: {
+            expected: false,
+            metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`).replace(/\\/g, '/'),
+            metadata: null
+        },
         reviewer_routing: createReviewerRoutingFixture('Codex', 'provider_entrypoint', {
             actual_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,
@@ -353,18 +447,28 @@ function writeReceiptBackedReviewArtifact(
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
     let reviewerProvenance: ReturnType<typeof buildReviewReceiptReviewerProvenance> | null = null;
-    fs.writeFileSync(receiptPath, JSON.stringify({
-        schema_version: 2,
-        task_id: taskId,
-        review_type: reviewKey,
-        review_artifact_sha256: artifactHash,
-        review_context_sha256: reviewContextHash,
-        reviewer_execution_mode: execution.reviewerExecutionMode,
-        reviewer_identity: execution.reviewerIdentity,
-        reviewer_fallback_reason: execution.reviewerFallbackReason,
-        reviewer_provenance: reviewerProvenance,
-        trust_level: execution.trustLevel
-    }));
+    const writeReceipt = () => {
+        const scopeSha256 = String((preflightFixture.preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null;
+        const codeScopeSha256 = reviewKey === 'code' && preflightFixture.preflightSha256
+            ? computeCodeReviewScopeFingerprint(preflightFixture.preflight, repoRoot).code_scope_sha256
+            : null;
+        fs.writeFileSync(receiptPath, JSON.stringify(buildReviewReceipt({
+            taskId,
+            reviewType: reviewKey,
+            preflightSha256: preflightFixture.preflightSha256,
+            scopeSha256,
+            codeScopeSha256,
+            reviewContextSha256: reviewContextHash,
+            reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
+            reviewArtifactSha256: artifactHash,
+            reviewerExecutionMode: execution.reviewerExecutionMode,
+            reviewerIdentity: execution.reviewerIdentity,
+            reviewerFallbackReason: execution.reviewerFallbackReason,
+            reviewerProvenance,
+            trustLevel: execution.trustLevel
+        }), null, 2) + '\n', 'utf8');
+    };
+    writeReceipt();
 
     // Emit mandatory telemetry for authenticity
     const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -405,18 +509,7 @@ function writeReceiptBackedReviewArtifact(
             invocationEvent?.integrity,
             invocationDetails
         );
-        fs.writeFileSync(receiptPath, JSON.stringify({
-            schema_version: 2,
-            task_id: taskId,
-            review_type: reviewKey,
-            review_artifact_sha256: artifactHash,
-            review_context_sha256: reviewContextHash,
-            reviewer_execution_mode: execution.reviewerExecutionMode,
-            reviewer_identity: execution.reviewerIdentity,
-            reviewer_fallback_reason: execution.reviewerFallbackReason,
-            reviewer_provenance: reviewerProvenance,
-            trust_level: execution.trustLevel
-        }));
+        writeReceipt();
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
 }
@@ -439,6 +532,7 @@ function seedReusableReviewEvidence(
         taskModePath?: string | null;
         sourceOfTruth?: string;
         executionProviderSource?: 'provider_entrypoint' | 'provider_bridge';
+        reviewerRoutingOverrides?: Record<string, unknown>;
     } = {}
 ): string {
     const crypto = require('node:crypto');
@@ -460,6 +554,7 @@ function seedReusableReviewEvidence(
         '## Verdict',
         verdict
     ].join('\n');
+    prepareReviewDiffFixture(repoRoot, preflightPath);
     buildReviewContext({
         reviewType: reviewKey,
         depth: 2,
@@ -470,6 +565,19 @@ function seedReusableReviewEvidence(
         outputPath: reviewContextPath,
         repoRoot
     });
+    if (options.reviewerRoutingOverrides && Object.keys(options.reviewerRoutingOverrides).length > 0) {
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerRouting = reviewContext.reviewer_routing
+            && typeof reviewContext.reviewer_routing === 'object'
+            && !Array.isArray(reviewContext.reviewer_routing)
+            ? reviewContext.reviewer_routing as Record<string, unknown>
+            : {};
+        reviewContext.reviewer_routing = {
+            ...reviewerRouting,
+            ...options.reviewerRoutingOverrides
+        };
+        fs.writeFileSync(reviewContextPath, JSON.stringify(reviewContext, null, 2) + '\n', 'utf8');
+    }
     const execution = resolveReviewerExecutionFixture(
         taskId,
         options.sourceOfTruth || 'Codex',
@@ -3781,7 +3889,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -3854,7 +3962,14 @@ describe('cli/commands/gates', () => {
             'REVIEW PASSED',
             preflightPath,
             path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`),
-            'agent:code-reviewer'
+            'agent:code-reviewer',
+            {
+                executionProviderSource: 'provider_bridge',
+                reviewerRoutingOverrides: {
+                    execution_provider: 'Antigravity',
+                    execution_provider_source: 'provider_bridge'
+                }
+            }
         );
 
         const reviewResult = runRequiredReviewsCheckCommand({
@@ -3865,7 +3980,7 @@ describe('cli/commands/gates', () => {
             outputFiltersPath,
             emitMetrics: false
         });
-        assert.equal(reviewResult.exitCode, 0);
+        assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));
 
         const docImpactResult = runDocImpactGateCommand({
             repoRoot,
@@ -3894,5 +4009,3 @@ describe('cli/commands/gates', () => {
     });
 
 });
-
-

@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import {
     runClassifyChangeCommand,
@@ -363,39 +364,54 @@ function buildReceiptBackedReviewContextFixture(
     repoRoot: string,
     taskId: string,
     reviewKey: string,
-    reviewerEvidence: ReturnType<typeof resolveDefaultReviewerEvidence>
+    reviewerEvidence: ReturnType<typeof resolveDefaultReviewerEvidence>,
+    options: { allowLegacyManualReviewContext?: boolean } = {}
 ): { reviewContext: Record<string, unknown>; reviewContextText: string } {
     const reviewsRoot = getReviewsRoot(repoRoot);
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
-    if (fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()) {
-        try {
-            buildReviewContext({
-                reviewType: reviewKey,
-                depth: 2,
-                preflightPath,
-                tokenEconomyConfigPath: path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json'),
-                scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`),
-                outputPath: reviewContextPath,
-                repoRoot
-            });
-            applyReviewerRoutingMetadata(reviewContextPath, {
-                actualExecutionMode: reviewerEvidence.executionMode,
-                reviewerSessionId: reviewerEvidence.reviewerIdentity,
-                fallbackReason: reviewerEvidence.reviewerFallbackReason
-            });
-            const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
-            return {
-                reviewContext: JSON.parse(reviewContextText) as Record<string, unknown>,
-                reviewContextText
-            };
-        } catch {
-            // Fall through to the legacy manual fixture for tests that are not about review-context production.
-        }
+    if (
+        fs.existsSync(preflightPath)
+        && fs.statSync(preflightPath).isFile()
+        && options.allowLegacyManualReviewContext !== true
+    ) {
+        prepareReviewDiffFixture(repoRoot, preflightPath);
+        buildReviewContext({
+            reviewType: reviewKey,
+            depth: 2,
+            preflightPath,
+            tokenEconomyConfigPath: path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json'),
+            scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`),
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+        applyReviewerRoutingMetadata(reviewContextPath, {
+            actualExecutionMode: reviewerEvidence.executionMode,
+            reviewerSessionId: reviewerEvidence.reviewerIdentity,
+            fallbackReason: reviewerEvidence.reviewerFallbackReason
+        });
+        const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
+        return {
+            reviewContext: JSON.parse(reviewContextText) as Record<string, unknown>,
+            reviewContextText
+        };
     }
 
+    if (options.allowLegacyManualReviewContext !== true) {
+        throw new Error(
+            'Manual review-context fixtures require explicit allowLegacyManualReviewContext opt-in. ' +
+            `Missing or bypassed preflight artifact: ${preflightPath}`
+        );
+    }
+
+    const preflightSha256 = fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()
+        ? createHash('sha256').update(fs.readFileSync(preflightPath)).digest('hex')
+        : null;
     const reviewContext = {
+        task_id: taskId,
         review_type: reviewKey,
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: preflightSha256,
         task_scope: buildManualReviewContextTaskScopeFixture(repoRoot, taskId),
         scoped_diff: {
             expected: false,
@@ -543,7 +559,8 @@ export function writeReceiptBackedReviewArtifact(
     taskId: string,
     reviewKey: string,
     verdict: string,
-    contentLines?: string[]
+    contentLines?: string[],
+    options: { allowLegacyManualReviewContext?: boolean } = {}
 ): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
@@ -567,7 +584,7 @@ export function writeReceiptBackedReviewArtifact(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
-    const { reviewContext, reviewContextText } = buildReceiptBackedReviewContextFixture(repoRoot, taskId, reviewKey, reviewerEvidence);
+    const { reviewContext, reviewContextText } = buildReceiptBackedReviewContextFixture(repoRoot, taskId, reviewKey, reviewerEvidence, options);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
 
     const crypto = require('node:crypto');
