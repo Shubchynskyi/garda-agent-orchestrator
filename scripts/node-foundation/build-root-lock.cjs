@@ -8,7 +8,7 @@ const BUILD_ROOT_LOCK_STALE_MS = 15 * 60 * 1000;
 const BUILD_ROOT_LOCK_BACKOFF_BASE_MS = 50;
 const BUILD_ROOT_LOCK_BACKOFF_MULTIPLIER = 2;
 const BUILD_ROOT_LOCK_BACKOFF_MAX_MS = 2000;
-const BUILD_ROOT_LOCK_RELEASE_MAX_RETRIES = 3;
+const BUILD_ROOT_LOCK_RELEASE_MAX_RETRIES = 8;
 const BUILD_ROOT_LOCK_OWNER_FILENAME = 'owner.json';
 
 function getErrorCode(error) {
@@ -334,7 +334,12 @@ function acquireBuildRootLock(lockPath, options = {}) {
 function releaseBuildRootLock(lockPath) {
     for (let attempt = 0; attempt <= BUILD_ROOT_LOCK_RELEASE_MAX_RETRIES; attempt += 1) {
         try {
-            fs.rmSync(lockPath, { recursive: true, force: true });
+            fs.rmSync(lockPath, {
+                recursive: true,
+                force: true,
+                maxRetries: 5,
+                retryDelay: 50
+            });
             return;
         } catch (error) {
             if (isRetryableBuildRootLockError(error) && attempt < BUILD_ROOT_LOCK_RELEASE_MAX_RETRIES) {

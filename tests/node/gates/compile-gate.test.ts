@@ -189,6 +189,36 @@ describe('gates/compile-gate', () => {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }
         });
+
+        it('ignores generated orchestrator lock directories in workspace scope', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-locks-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            const srcDir = path.join(repoRoot, 'src');
+
+            try {
+                fs.mkdirSync(srcDir, { recursive: true });
+                execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
+                execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
+                execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+
+                fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const value = 1;\n', 'utf8');
+                execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
+                execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+
+                fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const value = 2;\n', 'utf8');
+                fs.mkdirSync(path.join(repoRoot, '.scripts-build.lock'), { recursive: true });
+                fs.writeFileSync(path.join(repoRoot, '.scripts-build.lock', 'owner.json'), '{}\n', 'utf8');
+                fs.mkdirSync(path.join(repoRoot, '.node-build.lock'), { recursive: true });
+                fs.writeFileSync(path.join(repoRoot, '.node-build.lock', 'owner.json'), '{}\n', 'utf8');
+
+                const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+
+                assert.deepEqual(snapshot.changed_files, ['src/app.ts']);
+                assert.equal(snapshot.changed_files_count, 1);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
     });
 
     describe('extractNewPathFromNumstat', () => {

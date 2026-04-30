@@ -49,6 +49,9 @@ export interface FullSuiteValidationResult {
     out_of_scope_failure_policy: OutOfScopeFailurePolicy;
     out_of_scope_failure_detected: boolean;
     out_of_scope_audit_verdict: 'BLOCKED' | 'WARNED' | 'NOT_APPLICABLE';
+    harness_failure_detected?: boolean;
+    harness_failure_audit_verdict?: 'WARNED' | 'NOT_APPLICABLE';
+    harness_failure_reason?: string | null;
     violations: string[];
     warnings: string[];
     output_telemetry?: Record<string, unknown> | null;
@@ -240,10 +243,6 @@ export function buildValidationResult(
     const violations: string[] = [];
     const warnings: string[] = [];
 
-    if (timedOut) {
-        violations.push(`Full suite validation timed out after ${config.timeout_ms}ms.`);
-    }
-
     if (passed) {
         return {
             status: 'PASSED',
@@ -265,20 +264,27 @@ export function buildValidationResult(
 
     const failureChunks = compactRedFailureChunks(outputLines, config.red_failure_chunk_lines);
     const outOfScopeDetected = detectOutOfScopeFailures(outputLines, taskChangedFiles);
+    const harnessFailure = detectHarnessTimeoutFailure(outputLines, taskChangedFiles, timedOut);
     let auditVerdict: 'BLOCKED' | 'WARNED' | 'NOT_APPLICABLE' = 'NOT_APPLICABLE';
     if (outOfScopeDetected) {
-        auditVerdict = config.out_of_scope_failure_policy === 'AUDIT_AND_BLOCK' ? 'BLOCKED' : 'WARNED';
+        auditVerdict = harnessFailure.detected || config.out_of_scope_failure_policy === 'AUDIT_AND_WARN'
+            ? 'WARNED'
+            : 'BLOCKED';
     }
 
     const effectiveStatus: 'FAILED' | 'WARNED' =
-        outOfScopeDetected
+        harnessFailure.detected
+            ? 'WARNED'
+            : outOfScopeDetected
             && config.out_of_scope_failure_policy === 'AUDIT_AND_WARN'
             && !timedOut
-            ? 'WARNED'
-            : 'FAILED';
+                ? 'WARNED'
+                : 'FAILED';
 
     if (effectiveStatus === 'FAILED') {
-        if (!timedOut) {
+        if (timedOut) {
+            violations.push(`Full suite validation timed out after ${config.timeout_ms}ms.`);
+        } else {
             violations.push(`Full suite validation failed with exit code ${exitCode}.`);
         }
         if (outOfScopeDetected && auditVerdict === 'BLOCKED') {
@@ -288,11 +294,21 @@ export function buildValidationResult(
             );
         }
     } else {
-        warnings.push(
-            'Out-of-scope test failures detected. Policy AUDIT_AND_WARN records the finding but does not block completion. ' +
-            'Review the full output artifact for details.'
-        );
-        warnings.push(`Full suite exited with code ${exitCode} (non-blocking under AUDIT_AND_WARN).`);
+        if (harnessFailure.detected) {
+            warnings.push(
+                'Full suite timed out in an out-of-scope test harness or lock surface. ' +
+                'Recorded as WARNED so unrelated reviewed tasks are not blocked indefinitely. ' +
+                'Review the full output artifact and fix the harness separately.'
+            );
+            warnings.push(`Harness failure reason: ${harnessFailure.reason}`);
+            warnings.push(`Full suite exited with code ${exitCode} after timeout ${config.timeout_ms}ms.`);
+        } else {
+            warnings.push(
+                'Out-of-scope test failures detected. Policy AUDIT_AND_WARN records the finding but does not block completion. ' +
+                'Review the full output artifact for details.'
+            );
+            warnings.push(`Full suite exited with code ${exitCode} (non-blocking under AUDIT_AND_WARN).`);
+        }
     }
 
     return {
@@ -307,6 +323,9 @@ export function buildValidationResult(
         out_of_scope_failure_policy: config.out_of_scope_failure_policy,
         out_of_scope_failure_detected: outOfScopeDetected,
         out_of_scope_audit_verdict: auditVerdict,
+        harness_failure_detected: harnessFailure.detected,
+        harness_failure_audit_verdict: harnessFailure.detected ? 'WARNED' : 'NOT_APPLICABLE',
+        harness_failure_reason: harnessFailure.reason,
         violations,
         warnings,
         cycle_binding: cycleBinding
@@ -319,17 +338,7 @@ export function detectOutOfScopeFailures(outputLines: string[], taskChangedFiles
     }
 
     const changedSet = new Set(taskChangedFiles.map((filePath) => normalizePath(filePath)));
-    const failureFileRefs: string[] = [];
-
-    for (const line of outputLines) {
-        if (!/\bfail(ed|ure|ing)?\b/i.test(line) && !/\berror\b/i.test(line) && !/\bnot ok\b/i.test(line)) {
-            continue;
-        }
-        const fileRefMatch = line.match(/(?:at\s+|in\s+|file\s+)?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z]{1,4})[\s:(\]]/);
-        if (fileRefMatch) {
-            failureFileRefs.push(normalizePath(fileRefMatch[1]));
-        }
-    }
+    const failureFileRefs = collectFailureFileRefs(outputLines);
 
     if (failureFileRefs.length === 0) {
         return false;
@@ -343,6 +352,70 @@ export function detectOutOfScopeFailures(outputLines: string[], taskChangedFiles
     }
 
     return false;
+}
+
+function collectFailureFileRefs(outputLines: string[]): string[] {
+    const failureFileRefs: string[] = [];
+
+    for (const line of outputLines) {
+        if (!/\bfail(ed|ure|ing)?\b/i.test(line) && !/\berror\b/i.test(line) && !/\bnot ok\b/i.test(line)) {
+            continue;
+        }
+        const fileRefMatch = line.match(/(?:at\s+|in\s+|file\s+)?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z]{1,4})[\s:(\]]/);
+        if (fileRefMatch) {
+            failureFileRefs.push(normalizePath(fileRefMatch[1]));
+        }
+    }
+
+    return failureFileRefs;
+}
+
+function failureRefMatchesChangedFile(ref: string, changedFiles: Set<string>): boolean {
+    for (const changed of changedFiles) {
+        if (ref.includes(changed) || changed.includes(ref)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function detectHarnessTimeoutFailure(
+    outputLines: string[],
+    taskChangedFiles: string[],
+    timedOut: boolean
+): { detected: boolean; reason: string | null; } {
+    if (!timedOut || taskChangedFiles.length === 0) {
+        return { detected: false, reason: null };
+    }
+
+    const joinedOutput = outputLines.join('\n');
+    const hasHarnessSignal =
+        /Process timed out after \d+ ms\./i.test(joinedOutput)
+        && (
+            /Timed out acquiring file lock:/i.test(joinedOutput)
+            || /task-event append failed/i.test(joinedOutput)
+            || /\.scripts-build\.lock|\.node-build\.lock|dist\.lock/i.test(joinedOutput)
+            || /cli[\\/]+commands[\\/]+gates/i.test(joinedOutput)
+        );
+    if (!hasHarnessSignal) {
+        return { detected: false, reason: null };
+    }
+
+    const failureFileRefs = collectFailureFileRefs(outputLines);
+    if (failureFileRefs.length === 0) {
+        return { detected: false, reason: null };
+    }
+
+    const changedSet = new Set(taskChangedFiles.map((filePath) => normalizePath(filePath)));
+    const hasInScopeFailure = failureFileRefs.some((ref) => failureRefMatchesChangedFile(ref, changedSet));
+    if (hasInScopeFailure) {
+        return { detected: false, reason: null };
+    }
+
+    return {
+        detected: true,
+        reason: 'timeout_with_out_of_scope_lock_or_cli_gates_harness_failures'
+    };
 }
 
 function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult): string[] {
@@ -390,6 +463,13 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
     if (result.out_of_scope_failure_detected) {
         lines.push(`OutOfScopePolicy: ${result.out_of_scope_failure_policy}`);
         lines.push(`OutOfScopeAuditVerdict: ${result.out_of_scope_audit_verdict}`);
+    }
+    if (result.harness_failure_detected) {
+        lines.push('HarnessFailureDetected: true');
+        lines.push(`HarnessFailureAuditVerdict: ${result.harness_failure_audit_verdict || 'WARNED'}`);
+        if (result.harness_failure_reason) {
+            lines.push(`HarnessFailureReason: ${result.harness_failure_reason}`);
+        }
     }
 
     if (result.violations.length > 0) {

@@ -137,6 +137,42 @@ function createBuildScriptsFixture(repoRoot: string): string {
     return tempRoot;
 }
 
+test('releaseBuildRootLock retries transient Windows-style removal failures', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-release-retry-'));
+    const buildRoot = path.join(tempRoot, '.scripts-build');
+    const lockPath = getBuildRootLockPath(buildRoot);
+    const mutableFs = require('node:fs') as typeof import('node:fs') & { rmSync: typeof fs.rmSync; };
+    const originalRmSync = mutableFs.rmSync;
+    let injectedFailures = 0;
+
+    try {
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            hostname: os.hostname(),
+            pid: process.pid,
+            startedAtUtc: new Date().toISOString()
+        }), 'utf8');
+
+        mutableFs.rmSync = ((targetPath: fs.PathLike, options?: fs.RmOptions) => {
+            if (path.resolve(String(targetPath)) === path.resolve(lockPath) && injectedFailures < 2) {
+                injectedFailures += 1;
+                const error = new Error('Injected transient removal failure') as NodeJS.ErrnoException;
+                error.code = 'EBUSY';
+                throw error;
+            }
+            return originalRmSync(targetPath, options);
+        }) as typeof fs.rmSync;
+
+        releaseBuildRootLock(lockPath);
+
+        assert.equal(injectedFailures, 2);
+        assert.equal(fs.existsSync(lockPath), false);
+    } finally {
+        mutableFs.rmSync = originalRmSync;
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('withBuildRootLock serializes concurrent workers without leaving lock directories', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-root-lock-'));
     const buildRoot = path.join(tempRoot, '.node-build');

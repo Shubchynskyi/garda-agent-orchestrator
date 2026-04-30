@@ -155,6 +155,61 @@ describe('gates/full-suite-validation', () => {
             assert.ok(result.warnings.length > 0);
         });
 
+        it('buildValidationResult records out-of-scope harness timeouts as WARNED', () => {
+            const config = loadFullSuiteValidationConfig('/nonexistent');
+            const result = buildValidationResult(
+                { ...config, enabled: true, out_of_scope_failure_policy: 'AUDIT_AND_BLOCK' },
+                1,
+                true,
+                [
+                    'not ok 1 - failed at tests/node/cli/commands/gates.test.ts:10',
+                    'WARNING: task-event append failed: Timed out acquiring file lock: runtime/task-events/.T-001.lock;',
+                    'Process timed out after 600000 ms.'
+                ],
+                null,
+                ['src/gates/full-suite-validation.ts'],
+                {
+                    task_id: 'T-123',
+                    preflight_path: 'runtime/reviews/T-123-preflight.json',
+                    preflight_sha256: 'abc123',
+                    compile_gate_timestamp: null
+                }
+            );
+
+            assert.equal(result.status, 'WARNED');
+            assert.equal(result.out_of_scope_audit_verdict, 'WARNED');
+            assert.equal(result.harness_failure_detected, true);
+            assert.equal(result.harness_failure_audit_verdict, 'WARNED');
+            assert.equal(result.violations.length, 0);
+            assert.ok(result.warnings.some((line) => line.includes('out-of-scope test harness or lock surface')));
+        });
+
+        it('buildValidationResult keeps in-scope harness timeouts blocking', () => {
+            const config = loadFullSuiteValidationConfig('/nonexistent');
+            const result = buildValidationResult(
+                { ...config, enabled: true, out_of_scope_failure_policy: 'AUDIT_AND_BLOCK' },
+                1,
+                true,
+                [
+                    'not ok 1 - failed at tests/node/cli/commands/gates.test.ts:10',
+                    'WARNING: task-event append failed: Timed out acquiring file lock: runtime/task-events/.T-001.lock;',
+                    'Process timed out after 600000 ms.'
+                ],
+                null,
+                ['tests/node/cli/commands/gates.test.ts'],
+                {
+                    task_id: 'T-123',
+                    preflight_path: 'runtime/reviews/T-123-preflight.json',
+                    preflight_sha256: 'abc123',
+                    compile_gate_timestamp: null
+                }
+            );
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.harness_failure_detected, false);
+            assert.ok(result.violations.some((line) => line.includes('timed out')));
+        });
+
         it('formatFullSuiteValidationResult includes cycle binding', () => {
             const config = loadFullSuiteValidationConfig('/nonexistent');
             const result = buildSkippedResult(config, {
@@ -541,6 +596,69 @@ describe('gates/full-suite-validation', () => {
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation removes dead generated build locks after command timeout', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-timeout-lock-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'hang-with-lock.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const fs = require("node:fs");',
+                    'const os = require("node:os");',
+                    'const path = require("node:path");',
+                    'const lockPath = path.join(process.cwd(), ".scripts-build.lock");',
+                    'fs.mkdirSync(lockPath, { recursive: true });',
+                    'fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({',
+                    '  hostname: os.hostname(),',
+                    '  pid: process.pid,',
+                    '  startedAtUtc: new Date().toISOString()',
+                    '}, null, 2) + "\\n", "utf8");',
+                    'process.stdout.write("helper acquired generated lock\\n");',
+                    'setInterval(() => {}, 1000);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 300,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 10,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-LOCK-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-TIMEOUT-LOCK',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-TIMEOUT-LOCK',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            assert.equal(fs.existsSync(path.join(tempDir, '.scripts-build.lock')), false);
+            const artifactPath = path.join(reviewsDir, 'T-TIMEOUT-LOCK-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.timed_out, true);
+            assert.ok(artifact.warnings.some((line: string) => line.includes('timeout cleanup removed generated lock')));
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

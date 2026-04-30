@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { stringSha256, fileSha256, normalizePath, joinOrchestratorPath } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
+import { isGeneratedOrchestratorLockPath } from './generated-lock-paths';
 
 /**
  * Detect the compile command profile (kind/strategy/label/failure/success profiles).
@@ -218,6 +219,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         const normalized = normalizePath(relativePath);
         return !!normalized && normalized === snapshotCacheRelativePath;
     }
+    function isIgnoredWorkspaceSnapshotPath(relativePath: string): boolean {
+        return isInternalSnapshotCachePath(relativePath) || isGeneratedOrchestratorLockPath(relativePath);
+    }
 
     function gitLines(args: string[], failMsg: string): string[] {
         const result = spawnSyncWithTimeout('git', ['-C', String(repoRoot), ...args], {
@@ -242,7 +246,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     const normalizedExplicit = [...new Set(
         (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
     )]
-        .filter((item: string) => !isInternalSnapshotCachePath(item))
+        .filter((item: string) => !isIgnoredWorkspaceSnapshotPath(item))
         .sort();
 
     if (source === 'explicit_changed_files') {
@@ -301,7 +305,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         const parts = row.split('\t');
         if (parts.length < 3) continue;
         const filePath = extractNewPathFromNumstat(parts.slice(2).join('\t'));
-        if (filePath) changedFromDiff.push(filePath);
+        const normalizedFilePath = normalizePath(filePath);
+        if (!normalizedFilePath || isIgnoredWorkspaceSnapshotPath(normalizedFilePath)) continue;
+        changedFromDiff.push(normalizedFilePath);
         if (/^\d+$/.test(parts[0])) additionsTotal += parseInt(parts[0], 10);
         if (/^\d+$/.test(parts[1])) deletionsTotal += parseInt(parts[1], 10);
     }
@@ -310,13 +316,13 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     if (includeUntracked) {
         untracked = gitLines(['ls-files', '--others', '--exclude-standard'], 'Failed to collect untracked files snapshot.')
             .map((item: string) => normalizePath(item))
-            .filter((item: string) => !!item && !isInternalSnapshotCachePath(item));
+            .filter((item: string) => !!item && !isIgnoredWorkspaceSnapshotPath(item));
     }
 
     const normalizedChanged = [...new Set(
         [...changedFromDiff, ...untracked]
             .map((item: string) => normalizePath(item))
-            .filter((item: string) => !!item && !isInternalSnapshotCachePath(item))
+            .filter((item: string) => !!item && !isIgnoredWorkspaceSnapshotPath(item))
     )].sort();
 
     if (includeUntracked) {

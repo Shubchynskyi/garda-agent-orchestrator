@@ -1542,6 +1542,27 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Preflight scope is stale before compile'));
     });
 
+    it('does not route to preflight refresh only because generated orchestrator locks exist', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        for (const lockName of ['.scripts-build.lock', '.node-build.lock']) {
+            const lockPath = path.join(repoRoot, lockName);
+            fs.mkdirSync(lockPath, { recursive: true });
+            writeJson(path.join(lockPath, 'owner.json'), {
+                hostname: os.hostname(),
+                pid: 999999,
+                startedAtUtc: new Date().toISOString()
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'required-reviews-check');
+        assert.ok(!result.reason.includes('Preflight scope is stale'));
+    });
+
     it('routes to completion when doc-impact accepted declared post-review docs and changelog updates', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
