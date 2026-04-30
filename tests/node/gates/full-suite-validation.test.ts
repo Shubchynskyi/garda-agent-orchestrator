@@ -478,6 +478,134 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
+        it('gate full-suite-validation streams over 1 MiB stdout without maxBuffer failure', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-large-output-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'large-pass.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const chunk = "x".repeat(64 * 1024);',
+                    'for (let index = 0; index < 17; index += 1) {',
+                    '  process.stdout.write(`${chunk}\\n`);',
+                    '}',
+                    'process.stdout.write("# tests 1\\n# pass 1\\n# fail 0\\n# duration_ms 1\\n");',
+                    'process.exit(0);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-LARGE-PASS-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-LARGE-PASS',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-LARGE-PASS',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-LARGE-PASS-full-suite-validation.json');
+            assert.ok(fs.existsSync(artifactPath));
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
+            assert.equal(artifact.exit_code, 0);
+            assert.equal(artifact.timed_out, false);
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('# pass 1')));
+            assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
+
+            const outputArtifactPath = path.join(reviewsDir, 'T-LARGE-PASS-full-suite-output.log');
+            assert.ok(fs.statSync(outputArtifactPath).size > 1024 * 1024);
+            const timelinePath = path.join(eventsDir, 'T-LARGE-PASS.jsonl');
+            const timeline = fs.readFileSync(timelinePath, 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation reports real command failure after over 1 MiB stdout', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-large-fail-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'large-fail.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'process.stdout.write("not ok 1 - failed at src/changed.ts:1\\n");',
+                    'for (let index = 0; index < 70000; index += 1) {',
+                    '  process.stdout.write(`verbose detail line ${index}\\n`);',
+                    '}',
+                    'process.exit(7);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 10,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-LARGE-FAIL-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-LARGE-FAIL',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-LARGE-FAIL',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-LARGE-FAIL-full-suite-validation.json');
+            assert.ok(fs.existsSync(artifactPath));
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.exit_code, 7);
+            assert.equal(artifact.timed_out, false);
+            assert.ok(artifact.violations.some((line: string) => line.includes('exit code 7')));
+
+            const outputArtifactPath = path.join(reviewsDir, 'T-LARGE-FAIL-full-suite-output.log');
+            assert.ok(fs.statSync(outputArtifactPath).size > 1024 * 1024);
+            const timelinePath = path.join(eventsDir, 'T-LARGE-FAIL.jsonl');
+            const timeline = fs.readFileSync(timelinePath, 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
         it('keeps the canonical artifact and task timeline when only aggregate append warns after FULL_SUITE_VALIDATION_PASSED', async () => {
             const repoRoot = path.resolve(process.cwd());
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-pass-aggregate-warning-'));
