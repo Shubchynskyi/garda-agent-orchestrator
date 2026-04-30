@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
 import { SHARED_START_TASK_WORKFLOW_RELATIVE_PATH } from '../materialization/common';

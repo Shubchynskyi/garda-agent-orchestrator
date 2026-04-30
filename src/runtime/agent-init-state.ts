@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { resolveAgentInitStateRelativePath } from '../core/constants';
-import { pathExists } from '../core/fs';
+import { pathExists } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 
 export const AGENT_INIT_STATE_VERSION = 1;

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { PRIMARY_PACKAGE_NAME, resolveBundleName } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import {
     DEFAULT_NPM_TIMEOUT_MS,
     spawnStreamed,

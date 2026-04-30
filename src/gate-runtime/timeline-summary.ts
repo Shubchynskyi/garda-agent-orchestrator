@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomically } from '../core/filesystem';
 import {
     validateTimelineCompleteness,
     isTaskBoundFullSuiteValidationRequirement,
@@ -187,15 +188,7 @@ function readTimelineSummaryIndexForCleanupPrune(eventsRoot: string): CleanupPru
 
 export function writeTimelineSummaryIndex(eventsRoot: string, index: TimelineSummaryIndex): void {
     const summaryPath = getTimelineSummaryPath(eventsRoot);
-    const randomSuffix = Math.random().toString(16).slice(2, 10);
-    const tmpPath = summaryPath + '.' + process.pid + '.' + randomSuffix + '.tmp';
-    try {
-        fs.writeFileSync(tmpPath, JSON.stringify(index, null, 2) + '\n', 'utf8');
-        fs.renameSync(tmpPath, summaryPath);
-    } finally {
-        // Clean up tmp file if rename failed or was skipped
-        try { fs.unlinkSync(tmpPath); } catch { /* already renamed or missing */ }
-    }
+    writeFileAtomically(summaryPath, JSON.stringify(index, null, 2) + '\n', { encoding: 'utf8', fsync: false });
 }
 
 export function isTimelineSummaryEntryCurrent(

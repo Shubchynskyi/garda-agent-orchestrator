@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomically } from '../core/filesystem';
 import { stringSha256, joinOrchestratorPath, normalizePath } from './helpers';
 import { getWorkspaceSnapshot } from './compile-gate';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
@@ -355,16 +356,7 @@ export function readSnapshotCache(cachePath: string): WorkspaceSnapshotCacheEntr
  */
 export function writeSnapshotCache(cachePath: string, entry: WorkspaceSnapshotCacheEntry): void {
     const resolved = path.resolve(cachePath);
-    const dir = path.dirname(resolved);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${resolved}.tmp-${process.pid}-${Date.now()}`;
-    try {
-        fs.writeFileSync(tmpPath, JSON.stringify(entry, null, 2) + '\n', 'utf8');
-        fs.renameSync(tmpPath, resolved);
-    } catch (error: unknown) {
-        try { fs.rmSync(tmpPath, { force: true }); } catch { /* best-effort */ }
-        throw error;
-    }
+    writeFileAtomically(resolved, JSON.stringify(entry, null, 2) + '\n', { encoding: 'utf8', fsync: false });
 }
 
 /**

@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { resolveBundleName } from './constants';
-import { pathExists } from './fs';
+import { pathExists } from './filesystem';
 import { readJsonFile } from './json';
 
 export const REVIEW_EXECUTION_POLICY_MODES = Object.freeze([

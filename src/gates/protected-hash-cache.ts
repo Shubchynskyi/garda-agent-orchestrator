@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomically } from '../core/filesystem';
 import { normalizePath, joinOrchestratorPath } from './path-utils';
 import { fileSha256 } from './hashing-metrics';
 
@@ -63,11 +64,7 @@ export function readProtectedHashCache(cachePath: string): ProtectedHashCache | 
  */
 export function writeProtectedHashCache(cachePath: string, cache: ProtectedHashCache): void {
     const resolved = path.resolve(cachePath);
-    const dir = path.dirname(resolved);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = resolved + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(cache, null, 2) + '\n', 'utf8');
-    fs.renameSync(tmpPath, resolved);
+    writeFileAtomically(resolved, JSON.stringify(cache, null, 2) + '\n', { encoding: 'utf8', fsync: false });
 }
 
 /**

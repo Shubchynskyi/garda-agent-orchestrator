@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { readJsonFile } from '../core/json';
 import { isPathInsideRoot } from '../core/paths';
 import { validateInitAnswers } from '../schemas/init-answers';

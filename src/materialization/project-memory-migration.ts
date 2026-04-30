@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { extractNonEmptySections, selectRuleSource, stripHtmlComments } from './rule-materialization';
 
 interface MigrationMapping {

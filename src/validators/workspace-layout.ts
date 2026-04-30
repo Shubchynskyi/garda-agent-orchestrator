@@ -10,7 +10,7 @@ import {
     SOURCE_TO_ENTRYPOINT_MAP,
     SOURCE_OF_TRUTH_VALUES
 } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 
 function resolveCliRelativePathCandidates(bundleName: string): string[] {
     return CLI_ENTRYPOINT_CANDIDATES.map((entrypoint) => `${bundleName}/${entrypoint}`);

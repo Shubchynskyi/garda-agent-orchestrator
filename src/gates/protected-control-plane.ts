@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { writeFileAtomically } from '../core/filesystem';
 import {
     ALL_AGENT_ENTRYPOINT_FILES,
     isRecognizedPackageName,
@@ -133,8 +134,7 @@ export function buildProtectedControlPlaneManifest(repoRoot: string): ProtectedC
 export function writeProtectedControlPlaneManifest(repoRoot: string): string {
     const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
     const manifest = buildProtectedControlPlaneManifest(repoRoot);
-    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    writeFileAtomically(manifestPath, JSON.stringify(manifest, null, 2), { encoding: 'utf8' });
     return manifestPath;
 }
 

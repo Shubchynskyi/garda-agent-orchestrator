@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ensureDirectory, pathExists } from '../core/fs';
+import { ensureDirectory, pathExists } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 
 import {

@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import {
+    resolveProtectedControlPlaneManifestPath,
+    writeProtectedControlPlaneManifest
+} from '../../../src/gates/protected-control-plane';
+
+test('writeProtectedControlPlaneManifest preserves the previous manifest when final rename fails', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'protected-control-plane-'));
+    try {
+        const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
+        fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+        fs.writeFileSync(manifestPath, '{"previous":true}\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalRenameSync = realFs.renameSync;
+        try {
+            realFs.renameSync = function (...args: any[]) {
+                if (args[1] === manifestPath) {
+                    throw new Error('simulated manifest rename failure');
+                }
+                return originalRenameSync.apply(realFs, args);
+            };
+
+            assert.throws(
+                () => writeProtectedControlPlaneManifest(repoRoot),
+                /simulated manifest rename failure/
+            );
+        } finally {
+            realFs.renameSync = originalRenameSync;
+        }
+
+        assert.equal(fs.readFileSync(manifestPath, 'utf8'), '{"previous":true}\n');
+        assert.deepStrictEqual(
+            fs.readdirSync(path.dirname(manifestPath)).filter((entry) => entry.includes('.tmp-')),
+            []
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});

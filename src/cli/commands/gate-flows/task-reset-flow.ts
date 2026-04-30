@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { writeFileAtomically } from '../../../core/filesystem';
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
 import { withFilesystemLock } from '../../../gate-runtime/task-events-locking';
 import { KNOWN_SUFFIXES, removeEntries } from '../../../gate-runtime/reviews-index';
@@ -149,7 +150,7 @@ function removeTaskLinesFromAggregateLog(aggregatePath: string, taskId: string):
         }
     }
     if (removed > 0) {
-        fs.writeFileSync(aggregatePath, kept.length > 0 ? `${kept.join('\n')}\n` : '', 'utf8');
+        writeFileAtomically(aggregatePath, kept.length > 0 ? `${kept.join('\n')}\n` : '', { encoding: 'utf8' });
     }
     return removed;
 }
@@ -440,7 +441,7 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
         reset_by: 'operator'
     };
     fs.mkdirSync(reviewsRoot, { recursive: true });
-    fs.writeFileSync(resetReportPath, JSON.stringify(resetReport, null, 2) + '\n', 'utf8');
+    writeFileAtomically(resetReportPath, JSON.stringify(resetReport, null, 2) + '\n', { encoding: 'utf8' });
 
     // Delete per-task events file under task lock
     withFilesystemLock(scope.taskLockPath, {}, () => {

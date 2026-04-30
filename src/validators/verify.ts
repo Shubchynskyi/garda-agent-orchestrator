@@ -8,7 +8,7 @@ import {
     getSourceCliCommand,
     resolveBundleName
 } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { isPathInsideRoot } from '../core/paths';
 import { getManagedGitignoreEntries } from '../materialization/common';
 import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';

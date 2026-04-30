@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from './constants';
-import { pathExists } from './fs';
+import { pathExists } from './filesystem';
 import { readJsonFile, writeJsonFile } from './json';
 import { cloneJsonValue, isPlainObject, mergeConfig } from './config-merge';
 import {

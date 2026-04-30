@@ -6,7 +6,7 @@ import {
     BOOLEAN_TRUE_VALUES
 } from '../core/constants';
 import { getProviderBridgeRelativePaths } from '../core/provider-registry';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
 import {

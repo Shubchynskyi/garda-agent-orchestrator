@@ -4,7 +4,7 @@ import {
     UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
     resolveBundleName
 } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { isPlainObject } from '../core/config-merge';
 import { getWorkflowConfigPath, syncWorkflowConfigWithTemplate } from '../core/workflow-config';

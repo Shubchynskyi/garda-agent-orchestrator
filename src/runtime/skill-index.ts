@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { ensureDirectory, pathExists } from '../core/fs';
+import { ensureDirectory, pathExists } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { asObjectRecord, listBuiltinSkillPacks } from './skill-manifest';
 import { writeSkillsHeadlines } from './skill-headlines';

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomically } from '../core/filesystem';
 import {
     isTaskBoundFullSuiteValidationRequirement,
     validateTimelineCompleteness,
@@ -65,16 +66,7 @@ export function readCompletenessSummary(cachePath: string): TimelineCompleteness
  */
 export function writeCompletenessSummary(cachePath: string, summary: TimelineCompletenessSummary): void {
     const resolved = path.resolve(cachePath);
-    const dir = path.dirname(resolved);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${resolved}.tmp-${process.pid}-${Date.now()}`;
-    try {
-        fs.writeFileSync(tmpPath, JSON.stringify(summary, null, 2) + '\n', 'utf8');
-        fs.renameSync(tmpPath, resolved);
-    } catch (error: unknown) {
-        try { fs.rmSync(tmpPath, { force: true }); } catch { /* best-effort */ }
-        throw error;
-    }
+    writeFileAtomically(resolved, JSON.stringify(summary, null, 2) + '\n', { encoding: 'utf8', fsync: false });
 }
 
 /**

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomically } from '../core/filesystem';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
 import { fileSha256, toPosix } from './helpers';
@@ -1160,9 +1161,8 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
             ...summary.final_closeout,
             artifact_state: 'MATERIALIZED' as const
         };
-        fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
-        fs.writeFileSync(jsonPath, JSON.stringify(closeout, null, 2) + '\n', 'utf8');
-        fs.writeFileSync(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', 'utf8');
+        writeFileAtomically(jsonPath, JSON.stringify(closeout, null, 2) + '\n', { encoding: 'utf8' });
+        writeFileAtomically(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', { encoding: 'utf8' });
         summary.final_closeout = closeout;
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);

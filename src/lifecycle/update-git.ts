@@ -19,7 +19,7 @@ import {
     createLifecycleDiagnosticError
 } from './update-diagnostics';
 import { registerTempRoot } from '../cli/signal-handler';
-import { pathExists } from '../core/fs';
+import { pathExists } from '../core/filesystem';
 
 export const DEFAULT_GIT_UPDATE_REPO_URL = 'https://github.com/Shubchynskyi/garda-agent-orchestrator.git';
 

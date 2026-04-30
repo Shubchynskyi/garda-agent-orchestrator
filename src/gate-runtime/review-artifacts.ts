@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { writeFileAtomically } from '../core/filesystem';
 import {
     acquireFilesystemLock,
     filesystemLockRequiresExplicitForeignHostRecovery,
@@ -314,45 +315,8 @@ export function getReviewArtifactLockPath(artifactPath: string): string {
     return `${artifactPath}.lock`;
 }
 
-function createTempArtifactPath(artifactPath: string): string {
-    const directoryPath = path.dirname(artifactPath);
-    const fileName = path.basename(artifactPath);
-    const randomSuffix = Math.random().toString(16).slice(2, 10);
-    return path.join(directoryPath, `.${fileName}.tmp-${process.pid}-${Date.now()}-${randomSuffix}`);
-}
-
-function closeFileDescriptor(fileDescriptor: number | undefined): void {
-    if (fileDescriptor === undefined) {
-        return;
-    }
-    fs.closeSync(fileDescriptor);
-}
-
 export function writeArtifactFileAtomically(filePath: string, content: string): string {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tempPath = createTempArtifactPath(filePath);
-    let fileDescriptor: number | undefined;
-    try {
-        fileDescriptor = fs.openSync(tempPath, 'wx');
-        fs.writeFileSync(fileDescriptor, content, 'utf8');
-        fs.fsyncSync(fileDescriptor);
-        closeFileDescriptor(fileDescriptor);
-        fileDescriptor = undefined;
-        fs.renameSync(tempPath, filePath);
-        return filePath;
-    } catch (error: unknown) {
-        try {
-            closeFileDescriptor(fileDescriptor);
-        } catch {
-            // Best-effort cleanup only.
-        }
-        try {
-            fs.rmSync(tempPath, { force: true });
-        } catch {
-            // Best-effort cleanup only.
-        }
-        throw error;
-    }
+    return writeFileAtomically(filePath, content, { encoding: 'utf8' });
 }
 
 export function withReviewArtifactLock<T>(

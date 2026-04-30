@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { validateInitAnswers } from '../schemas/init-answers';
 import { runInstall } from '../materialization/install';
 import { runInit } from '../materialization/init';

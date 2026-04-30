@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import {
     getProviderOrchestratorProfileDefinitions,
     normalizeAgentEntrypointToken,

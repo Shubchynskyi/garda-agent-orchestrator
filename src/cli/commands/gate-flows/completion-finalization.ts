@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { writeFileAtomically } from '../../../core/filesystem';
 import {
     getBundleCliCommand,
     getSourceCliCommand,
@@ -243,7 +244,7 @@ function restoreFileSnapshot(snapshot: FileSnapshot): void {
         return;
     }
     fs.mkdirSync(path.dirname(snapshot.path), { recursive: true });
-    fs.writeFileSync(snapshot.path, snapshot.content || '', 'utf8');
+    writeFileAtomically(snapshot.path, snapshot.content || '', { encoding: 'utf8' });
 }
 
 function restoreSnapshots(snapshots: readonly FileSnapshot[]): string[] {
@@ -328,18 +329,7 @@ function rollbackAggregateTaskEntriesUnsafe(options: AggregateRollbackOptions): 
         }
         return;
     }
-    const randomSuffix = Math.random().toString(16).slice(2, 10);
-    const tmpPath = `${aggregatePath}.${process.pid}.${randomSuffix}.tmp`;
-    try {
-        fs.writeFileSync(tmpPath, restoredContent, 'utf8');
-        fs.renameSync(tmpPath, aggregatePath);
-    } finally {
-        try {
-            fs.unlinkSync(tmpPath);
-        } catch {
-            // Already renamed or missing.
-        }
-    }
+    writeFileAtomically(aggregatePath, restoredContent, { encoding: 'utf8' });
 }
 
 function normalizeRollbackDetailValue(value: unknown): string {

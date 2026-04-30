@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { pathExists } from '../core/fs';
+import { pathExists } from '../core/filesystem';
 import { normalizeRelativePath } from '../core/paths';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 import {

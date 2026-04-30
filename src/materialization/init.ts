@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { ensureDirectory, pathExists, readTextFile } from '../core/filesystem';
 import { cloneJsonValue, isPlainObject, mergeConfig } from '../core/config-merge';
 import { readJsonFile } from '../core/json';
 import {

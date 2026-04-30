@@ -2344,21 +2344,20 @@ describe('cli/commands/gates', () => {
         const fsModule = require('node:fs') as typeof import('node:fs');
         const taskEventsIoModule = loadTaskEventsIoModule();
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
-        const originalWriteFileSync = fsModule.writeFileSync;
+        const originalRenameSync = fsModule.renameSync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
                 const result = await originalAppendTaskEventAsync(...args);
-                throw new Error('Injected post-append failure before aggregate rollback temp-write failure');
+                throw new Error('Injected post-append failure before aggregate rollback atomic promotion failure');
             }
             return originalAppendTaskEventAsync(...args);
         };
-        fsModule.writeFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | Uint8Array, options?: fs.WriteFileOptions) => {
-            const normalizedPath = typeof filePath === 'string' ? path.resolve(filePath) : '';
-            if (normalizedPath.startsWith(path.resolve(aggregatePath) + '.') && normalizedPath.endsWith('.tmp')) {
-                throw new Error('Injected aggregate rollback temp write failure');
+        fsModule.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+            if (path.resolve(String(newPath)) === path.resolve(aggregatePath)) {
+                throw new Error('Injected aggregate rollback atomic promotion failure');
             }
-            return originalWriteFileSync(filePath, data, options);
-        }) as typeof fsModule.writeFileSync;
+            return originalRenameSync(oldPath, newPath);
+        }) as typeof fsModule.renameSync;
 
         try {
             const error = await captureExpectedAsyncError(async () => {
@@ -2369,17 +2368,17 @@ describe('cli/commands/gates', () => {
                 ]);
             });
             assert.match(error.message, /mandatory COMPLETION_GATE_PASSED append failed/i);
-            assert.match(error.message, /Injected aggregate rollback temp write failure/i);
+            assert.match(error.message, /Injected aggregate rollback atomic promotion failure/i);
         } finally {
             taskEventsIoModule.appendTaskEventAsync = originalAppendTaskEventAsync;
-            fsModule.writeFileSync = originalWriteFileSync;
+            fsModule.renameSync = originalRenameSync;
         }
 
         const aggregateContentAfterFailure = fs.readFileSync(aggregatePath, 'utf8');
         assert.equal(
             aggregateContentAfterFailure.startsWith(baselineAggregateContent),
             true,
-            'aggregate rollback temp write failure must not corrupt or replace the original aggregate log content'
+            'aggregate rollback atomic promotion failure must not corrupt or replace the original aggregate log content'
         );
         assert.equal(
             aggregateContentAfterFailure.includes('"event_type":"COMPLETION_GATE_PASSED"'),

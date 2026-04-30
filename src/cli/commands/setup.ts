@@ -6,7 +6,7 @@ import {
     SOURCE_OF_TRUTH_VALUES
 } from '../../core/constants';
 import { buildSetupStartBannerSentence } from '../../core/orchestrator-start-banner';
-import { pathExists, readTextFile } from '../../core/fs';
+import { pathExists, readTextFile } from '../../core/filesystem';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getStatusSnapshot } from '../../validators/status';
 import { readActiveProfileHint } from '../../validators/task-command';

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { pathExists } from '../core/fs';
+import { pathExists } from '../core/filesystem';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, resolveBundleName } from '../core/constants';
 import { parseTaskMdTableRow } from '../core/task-md-table';
 import {

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomically } from '../core/filesystem';
 import { withFilesystemLock } from './task-events-locking';
 
 // Bounded metadata cache for runtime/reviews artifacts.
@@ -11,6 +12,7 @@ const INDEX_FILE_NAME = 'reviews-index.json';
 const DEFAULT_INDEX_LOCK_TIMEOUT_MS = 1000;
 const DEFAULT_INDEX_LOCK_RETRY_MS = 25;
 const DEFAULT_INDEX_LOCK_STALE_MS = 30 * 1000;
+const SELF_WRITE_MARKER_TOLERANCE_MS = 0.01;
 
 // Known artifact type suffixes used to split task-id from artifact-type.
 // Ordered longest-first so greedy suffix matching selects the right boundary.
@@ -105,6 +107,55 @@ function getDirectoryEntryCount(dirPath: string): number {
     }
 }
 
+function refreshIndexDirectoryMetadata(index: ReviewsIndex, reviewsDir: string): void {
+    const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
+    index.directoryMtimeMs = dirSnapshot.mtimeMs;
+    index.directoryCtimeMs = dirSnapshot.ctimeMs;
+    index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
+    index.generatedAtMs = Date.now();
+}
+
+function timestampsMatchSelfWriteMarker(leftMs: number, rightMs: number): boolean {
+    return Math.abs(leftMs - rightMs) <= SELF_WRITE_MARKER_TOLERANCE_MS;
+}
+
+function markIndexFileAsDirectorySelfWrite(indexPath: string, reviewsDir: string): void {
+    try {
+        const directorySnapshot = getDirectoryTimestampSnapshot(reviewsDir);
+        const markerSeconds = directorySnapshot.mtimeMs / 1000;
+        fs.utimesSync(indexPath, markerSeconds, markerSeconds);
+    } catch {
+        // Best-effort marker; a missed marker only causes a rebuild.
+    }
+}
+
+function isDirectoryChangeFromIndexWrite(
+    indexPath: string,
+    reviewsDir: string,
+    cached: ReviewsIndex,
+    currentDirSnapshot: { mtimeMs: number; ctimeMs: number }
+): boolean {
+    if (
+        typeof cached.directoryEntryCount === 'number'
+        && getDirectoryEntryCount(reviewsDir) !== cached.directoryEntryCount
+    ) {
+        return false;
+    }
+
+    try {
+        const indexStat = fs.statSync(indexPath);
+        if (!indexStat.isFile()) {
+            return false;
+        }
+        return (
+            currentDirSnapshot.mtimeMs >= cached.directoryMtimeMs
+            && timestampsMatchSelfWriteMarker(indexStat.mtimeMs, currentDirSnapshot.mtimeMs)
+        );
+    } catch {
+        return false;
+    }
+}
+
 function readIndexFile(indexPath: string): ReviewsIndex | null {
     try {
         if (!fs.existsSync(indexPath)) return null;
@@ -123,7 +174,7 @@ function readIndexFile(indexPath: string): ReviewsIndex | null {
  *
  * The index is stale when:
  * - it doesn't exist or is unreadable
- * - the reviews directory mtime changed (files added/removed)
+ * - the reviews directory mtime changed for a reason other than our own index rewrite
  * - the index is older than `maxStalenessMs` (guard against mtime quirks)
  */
 export function isIndexStale(
@@ -135,8 +186,18 @@ export function isIndexStale(
     if (!cached) return true;
 
     const currentDirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
-    if (currentDirSnapshot.mtimeMs !== cached.directoryMtimeMs) return true;
-    if (typeof cached.directoryCtimeMs === 'number' && currentDirSnapshot.ctimeMs !== cached.directoryCtimeMs) return true;
+    if (currentDirSnapshot.mtimeMs !== cached.directoryMtimeMs) {
+        if (!isDirectoryChangeFromIndexWrite(indexPath, reviewsDir, cached, currentDirSnapshot)) {
+            return true;
+        }
+    }
+    if (
+        typeof cached.directoryCtimeMs === 'number'
+        && currentDirSnapshot.ctimeMs !== cached.directoryCtimeMs
+        && !isDirectoryChangeFromIndexWrite(indexPath, reviewsDir, cached, currentDirSnapshot)
+    ) {
+        return true;
+    }
     if (typeof cached.directoryEntryCount === 'number' && getDirectoryEntryCount(reviewsDir) !== cached.directoryEntryCount) return true;
 
     if (Date.now() - cached.generatedAtMs > maxStalenessMs) return true;
@@ -230,35 +291,11 @@ export function rebuildIndex(reviewsDir: string): ReviewsIndex {
 
 /**
  * Write the index atomically to avoid partial reads.
- * After the rename, re-snapshots the directory mtime so the
- * stored value reflects the write itself (the rename changes
- * the directory mtime on most filesystems).
  */
 export function writeIndex(indexPath: string, index: ReviewsIndex): void {
     const dir = path.dirname(indexPath);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${indexPath}.tmp-${process.pid}-${Date.now()}`;
-    try {
-        fs.writeFileSync(tmpPath, JSON.stringify(index, null, 2) + '\n', 'utf8');
-        fs.renameSync(tmpPath, indexPath);
-        // The rename changed the directory mtime. Re-snapshot and
-        // overwrite in-place so the stored mtime matches the current state.
-        // An in-place write is used (not temp+rename) because overwriting
-        // an existing file does not change the directory mtime.
-        const currentDirSnapshot = getDirectoryTimestampSnapshot(dir);
-        if (
-            currentDirSnapshot.mtimeMs !== index.directoryMtimeMs
-            || currentDirSnapshot.ctimeMs !== index.directoryCtimeMs
-        ) {
-            index.directoryMtimeMs = currentDirSnapshot.mtimeMs;
-            index.directoryCtimeMs = currentDirSnapshot.ctimeMs;
-            index.directoryEntryCount = getDirectoryEntryCount(dir);
-            fs.writeFileSync(indexPath, JSON.stringify(index, null, 2) + '\n', 'utf8');
-        }
-    } catch (error: unknown) {
-        try { fs.rmSync(tmpPath, { force: true }); } catch { /* best-effort */ }
-        throw error;
-    }
+    writeFileAtomically(indexPath, JSON.stringify(index, null, 2) + '\n', { encoding: 'utf8', fsync: false });
+    markIndexFileAsDirectorySelfWrite(indexPath, dir);
 }
 
 export function resolveIndexPath(reviewsDir: string): string {
@@ -358,11 +395,7 @@ export function upsertEntry(reviewsDir: string, fileName: string): void {
                 index.entries.push(entry);
             }
 
-            const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
-            index.directoryMtimeMs = dirSnapshot.mtimeMs;
-            index.directoryCtimeMs = dirSnapshot.ctimeMs;
-            index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
-            index.generatedAtMs = Date.now();
+            refreshIndexDirectoryMetadata(index, reviewsDir);
         }
 
         try {
@@ -391,11 +424,7 @@ export function removeEntries(reviewsDir: string, fileNames: string[]): void {
 
         if (index.entries.length === originalLength) return;
 
-        const dirSnapshot = getDirectoryTimestampSnapshot(reviewsDir);
-        index.directoryMtimeMs = dirSnapshot.mtimeMs;
-        index.directoryCtimeMs = dirSnapshot.ctimeMs;
-        index.directoryEntryCount = getDirectoryEntryCount(reviewsDir);
-        index.generatedAtMs = Date.now();
+        refreshIndexDirectoryMetadata(index, reviewsDir);
 
         try {
             writeIndex(indexPath, index);

@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { resolveBundleName } from '../core/constants';
-import { pathExists } from '../core/fs';
+import { pathExists } from '../core/filesystem';
 import { readJsonFile } from '../core/json';
 import { runInstall } from '../materialization/install';
 import { runInit } from '../materialization/init';

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveInitAnswersRelativePath } from '../core/constants';
-import { pathExists } from '../core/fs';
+import { pathExists } from '../core/filesystem';
 import {
     collectTimelineSummaryForDoctor,
     type DoctorTimelineEvidence

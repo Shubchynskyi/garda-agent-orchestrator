@@ -1,5 +1,4 @@
-import * as path from 'node:path';
-import { ensureDirectory } from './fs';
+import { writeFileAtomically } from './filesystem';
 import { ensureTrailingLineEnding } from './line-endings';
 import * as fs from 'node:fs';
 
@@ -28,8 +27,5 @@ export function formatJson(value: unknown, options: FormatJsonOptions = {}): str
 }
 
 export function writeJsonFile(filePath: string, value: unknown, options: FormatJsonOptions = {}): string {
-    ensureDirectory(path.dirname(filePath));
-    fs.writeFileSync(filePath, formatJson(value, options), 'utf8');
-    return filePath;
+    return writeFileAtomically(filePath, formatJson(value, options), { encoding: 'utf8' });
 }
-

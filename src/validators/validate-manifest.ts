@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { pathExists, readTextFile } from '../core/fs';
+import { pathExists, readTextFile } from '../core/filesystem';
 import { isPathInsideRoot } from '../core/paths';
 
 export type ManifestDiagnosticCode =

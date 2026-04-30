@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { ensureDirectory, pathExists } from '../core/fs';
+import { ensureDirectory, pathExists } from '../core/filesystem';
 import { formatJson, readJsonFile, writeJsonFile } from '../core/json';
 import {
     BASELINE_SKILL_DIRECTORIES,

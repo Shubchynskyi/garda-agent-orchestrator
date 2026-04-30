@@ -325,6 +325,44 @@ test('pruneAggregateLog keeps most recent lines when over limit', () => {
     }
 });
 
+test('pruneAggregateLog preserves the aggregate when final rename fails', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-prune-rename-failure-'));
+    try {
+        const allTasksPath = path.join(tempDir, 'all-tasks.jsonl');
+        const lines = Array.from({ length: 20 }, (_, i) =>
+            JSON.stringify({ seq: i, task_id: `T-${i}` })
+        );
+        const originalContent = lines.join('\n') + '\n';
+        fs.writeFileSync(allTasksPath, originalContent, 'utf8');
+
+        const realFs = require('node:fs');
+        const originalRenameSync = realFs.renameSync;
+        try {
+            realFs.renameSync = function (...args: any[]) {
+                if (args[1] === allTasksPath) {
+                    throw new Error('simulated aggregate rename failure');
+                }
+                return originalRenameSync.apply(realFs, args);
+            };
+
+            const result = pruneAggregateLog(allTasksPath, 5);
+            assert.equal(result.pruned, false);
+            assert.equal(result.lines_before, 20);
+            assert.equal(result.lines_after, 20);
+        } finally {
+            realFs.renameSync = originalRenameSync;
+        }
+
+        assert.equal(fs.readFileSync(allTasksPath, 'utf8'), originalContent);
+        assert.deepStrictEqual(
+            fs.readdirSync(tempDir).filter((entry) => entry.includes('.tmp-')),
+            []
+        );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('pruneAggregateLog accepts knownLineCount to skip counting', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-prune-known-'));
     try {

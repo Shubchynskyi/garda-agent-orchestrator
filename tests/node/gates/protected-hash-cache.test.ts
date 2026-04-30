@@ -129,6 +129,71 @@ describe('gates/protected-hash-cache', () => {
             writeProtectedHashCache(p, { cache_version: 1, entries: {} });
             assert.ok(fs.existsSync(p));
             assert.ok(!fs.existsSync(p + '.tmp'));
+            assert.deepStrictEqual(
+                fs.readdirSync(tempDir).filter((entry) => entry.includes('.tmp-')),
+                []
+            );
+        });
+
+        it('preserves the previous cache when final rename fails', () => {
+            const p = path.join(tempDir, 'atomic-failure.json');
+            const previousCache: ProtectedHashCache = {
+                cache_version: 1,
+                entries: {
+                    'src/old.ts': { size: 1, mtime_ms: 2, sha256: 'old' }
+                }
+            };
+            const nextCache: ProtectedHashCache = {
+                cache_version: 1,
+                entries: {
+                    'src/new.ts': { size: 3, mtime_ms: 4, sha256: 'new' }
+                }
+            };
+            writeProtectedHashCache(p, previousCache);
+
+            const realFs = require('node:fs');
+            const originalRenameSync = realFs.renameSync;
+            try {
+                realFs.renameSync = function (...args: any[]) {
+                    if (args[1] === p) {
+                        throw new Error('simulated rename failure');
+                    }
+                    return originalRenameSync.apply(realFs, args);
+                };
+
+                assert.throws(
+                    () => writeProtectedHashCache(p, nextCache),
+                    /simulated rename failure/
+                );
+            } finally {
+                realFs.renameSync = originalRenameSync;
+            }
+
+            const readBack = readProtectedHashCache(p);
+            assert.ok(readBack);
+            assert.equal(readBack.entries['src/old.ts'].sha256, 'old');
+            assert.equal(readBack.entries['src/new.ts'], undefined);
+            assert.deepStrictEqual(
+                fs.readdirSync(tempDir).filter((entry) => entry.includes('.tmp-')),
+                []
+            );
+        });
+
+        it('treats cache fsync as optional', () => {
+            const p = path.join(tempDir, 'optional-fsync.json');
+            const realFs = require('node:fs');
+            const originalFsyncSync = realFs.fsyncSync;
+            try {
+                realFs.fsyncSync = function () {
+                    throw new Error('cache fsync should be disabled');
+                };
+
+                writeProtectedHashCache(p, { cache_version: 1, entries: {} });
+            } finally {
+                realFs.fsyncSync = originalFsyncSync;
+            }
+
+            assert.ok(readProtectedHashCache(p));
         });
     });
 

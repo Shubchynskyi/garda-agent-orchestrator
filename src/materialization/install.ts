@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES } from '../core/constants';
 import { getRequiredReviewSkillBridgeHostEntry } from '../core/provider-registry';
-import { ensureDirectory, pathExists, readTextFile } from '../core/fs';
+import { ensureDirectory, pathExists, readTextFile } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolvePathInsideRoot } from '../core/paths';

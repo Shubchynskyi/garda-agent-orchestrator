@@ -186,6 +186,58 @@ describe('reviews-index', () => {
             writeIndex(badPath, index);
             assert.ok(fs.existsSync(badPath));
         });
+
+        it('preserves the previous index when final rename fails', () => {
+            const indexPath = resolveIndexPath(reviewsDir);
+            const previousIndex: ReviewsIndex = {
+                version: 1,
+                directoryMtimeMs: 1,
+                directoryCtimeMs: 1,
+                directoryEntryCount: 0,
+                generatedAtMs: Date.now(),
+                entries: []
+            };
+            const nextIndex: ReviewsIndex = {
+                version: 1,
+                directoryMtimeMs: 2,
+                directoryCtimeMs: 2,
+                directoryEntryCount: 1,
+                generatedAtMs: Date.now(),
+                entries: [{
+                    fileName: 'T-002-preflight.json',
+                    taskId: 'T-002',
+                    artifactType: 'preflight.json',
+                    mtimeMs: 100,
+                    sizeBytes: 10
+                }]
+            };
+            const previousContent = JSON.stringify(previousIndex, null, 2) + '\n';
+            fs.writeFileSync(indexPath, previousContent, 'utf8');
+
+            const realFs = require('node:fs');
+            const originalRenameSync = realFs.renameSync;
+            try {
+                realFs.renameSync = function (...args: any[]) {
+                    if (args[1] === indexPath) {
+                        throw new Error('simulated index rename failure');
+                    }
+                    return originalRenameSync.apply(realFs, args);
+                };
+
+                assert.throws(
+                    () => writeIndex(indexPath, nextIndex),
+                    /simulated index rename failure/
+                );
+            } finally {
+                realFs.renameSync = originalRenameSync;
+            }
+
+            assert.equal(fs.readFileSync(indexPath, 'utf8'), previousContent);
+            assert.deepStrictEqual(
+                fs.readdirSync(reviewsDir).filter((entry) => entry.includes('.tmp-')),
+                []
+            );
+        });
     });
 
     describe('isIndexStale', () => {
@@ -250,6 +302,39 @@ describe('reviews-index', () => {
             assert.equal(second.index.entries.length, 1);
         });
 
+        it('uses cache without statting each artifact on cache hit', () => {
+            for (let i = 0; i < 25; i++) {
+                writeArtifact(reviewsDir, `T-${String(i).padStart(3, '0')}-task-mode.json`);
+            }
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.source, 'rebuilt');
+
+            const realFs = require('node:fs');
+            const originalStatSync = realFs.statSync;
+            let artifactStatCount = 0;
+            try {
+                realFs.statSync = function (...args: any[]) {
+                    const targetPath = typeof args[0] === 'string'
+                        ? path.resolve(args[0])
+                        : '';
+                    if (
+                        path.dirname(targetPath) === path.resolve(reviewsDir)
+                        && path.basename(targetPath) !== 'reviews-index.json'
+                    ) {
+                        artifactStatCount += 1;
+                    }
+                    return originalStatSync.apply(realFs, args);
+                };
+
+                const second = loadIndex(reviewsDir);
+                assert.equal(second.source, 'cache');
+            } finally {
+                realFs.statSync = originalStatSync;
+            }
+
+            assert.equal(artifactStatCount, 0);
+        });
+
         it('rebuilds when forceRebuild is true', () => {
             writeArtifact(reviewsDir, 'T-001-task-mode.json');
 
@@ -272,6 +357,52 @@ describe('reviews-index', () => {
             const second = loadIndex(reviewsDir);
             assert.equal(second.source, 'rebuilt');
             assert.equal(second.index.entries.length, 2);
+        });
+
+        it('rebuilds when an existing artifact is atomically replaced without changing entry count', async () => {
+            const artifactPath = writeArtifact(reviewsDir, 'T-001-handshake.json', 'old');
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.source, 'rebuilt');
+            assert.equal(first.index.entries.length, 1);
+            const firstEntry = first.index.entries[0];
+
+            await delay(5);
+            const replacementPath = path.join(reviewsDir, '.T-001-handshake.json.tmp-test');
+            fs.writeFileSync(replacementPath, 'new', 'utf8');
+            fs.renameSync(replacementPath, artifactPath);
+
+            const second = loadIndex(reviewsDir);
+            assert.equal(second.source, 'rebuilt');
+            assert.equal(second.index.entries.length, 1);
+            assert.equal(second.index.entries[0].fileName, 'T-001-handshake.json');
+            assert.notEqual(second.index.entries[0].mtimeMs, firstEntry.mtimeMs);
+        });
+
+        it('rebuilds when artifact replacement shares a millisecond bucket with the index marker', () => {
+            const artifactPath = writeArtifact(reviewsDir, 'T-001-handshake.json', 'old');
+            const first = loadIndex(reviewsDir);
+            assert.equal(first.source, 'rebuilt');
+            assert.equal(first.index.entries.length, 1);
+            assert.equal(first.index.entries[0].sizeBytes, 3);
+
+            const replacementPath = path.join(reviewsDir, '.T-001-handshake.json.tmp-test');
+            fs.writeFileSync(replacementPath, 'new-content', 'utf8');
+            fs.renameSync(replacementPath, artifactPath);
+
+            const replacementDirMtimeMs = fs.statSync(reviewsDir).mtimeMs;
+            const markerBucketMs = Math.max(
+                Math.trunc(replacementDirMtimeMs),
+                Math.trunc(first.index.directoryMtimeMs) + 1
+            );
+            const simulatedDirMtimeSeconds = (markerBucketMs + 0.75) / 1000;
+            fs.utimesSync(reviewsDir, simulatedDirMtimeSeconds, simulatedDirMtimeSeconds);
+            fs.utimesSync(resolveIndexPath(reviewsDir), markerBucketMs / 1000, markerBucketMs / 1000);
+
+            const second = loadIndex(reviewsDir);
+            assert.equal(second.source, 'rebuilt');
+            assert.equal(second.index.entries.length, 1);
+            assert.equal(second.index.entries[0].fileName, 'T-001-handshake.json');
+            assert.equal(second.index.entries[0].sizeBytes, 'new-content'.length);
         });
 
         it('does not count index file itself as an artifact', () => {
@@ -297,6 +428,8 @@ describe('reviews-index', () => {
             const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
             assert.equal(index.entries.length, 2);
             assert.ok(index.entries.some(e => e.fileName === 'T-002-preflight.json'));
+            assert.equal(isIndexStale(indexPath, reviewsDir), false);
+            assert.equal(loadIndex(reviewsDir).source, 'cache');
         });
 
         it('updates existing entry', () => {
@@ -311,6 +444,8 @@ describe('reviews-index', () => {
             const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
             assert.equal(index.entries.length, 1);
             assert.equal(index.entries[0].fileName, 'T-001-task-mode.json');
+            assert.equal(isIndexStale(indexPath, reviewsDir), false);
+            assert.equal(loadIndex(reviewsDir).source, 'cache');
         });
 
         it('triggers rebuild when no index exists', () => {
@@ -407,6 +542,24 @@ describe('reviews-index', () => {
             const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as ReviewsIndex;
             assert.equal(index.entries.length, 1);
             assert.equal(index.entries[0].fileName, 'T-002-task-mode.json');
+        });
+
+        it('keeps the index fresh after removing deleted artifact entries', () => {
+            const firstPath = writeArtifact(reviewsDir, 'T-001-task-mode.json');
+            const secondPath = writeArtifact(reviewsDir, 'T-001-preflight.json');
+            writeArtifact(reviewsDir, 'T-002-task-mode.json');
+            loadIndex(reviewsDir);
+
+            fs.rmSync(firstPath, { force: true });
+            fs.rmSync(secondPath, { force: true });
+            removeEntries(reviewsDir, ['T-001-task-mode.json', 'T-001-preflight.json']);
+
+            const indexPath = resolveIndexPath(reviewsDir);
+            assert.equal(isIndexStale(indexPath, reviewsDir), false);
+            const loaded = loadIndex(reviewsDir);
+            assert.equal(loaded.source, 'cache');
+            assert.equal(loaded.index.entries.length, 1);
+            assert.equal(loaded.index.entries[0].fileName, 'T-002-task-mode.json');
         });
 
         it('is a no-op when no matching entries exist', () => {

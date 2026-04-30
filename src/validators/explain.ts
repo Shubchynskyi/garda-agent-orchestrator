@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { pathExists } from '../core/fs';
+import { pathExists } from '../core/filesystem';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, PRIMARY_PACKAGE_NAME, resolveBundleName } from '../core/constants';
 
 export interface ExplainEntry {

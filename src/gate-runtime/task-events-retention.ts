@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { writeFileAtomically } from '../core/filesystem';
 import {
     withFilesystemLock,
     withFilesystemLockAsync,
@@ -118,7 +119,7 @@ export function pruneAggregateLog(
             if (!pruned) {
                 return { pruned: false, lines_before: lines.length, lines_after: lines.length };
             }
-            fs.writeFileSync(allTasksPath, keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '', 'utf8');
+            writeFileAtomically(allTasksPath, keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '', { encoding: 'utf8' });
             return { pruned: true, lines_before: lines.length, lines_after: keptLines.length };
         } catch {
             return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
@@ -167,7 +168,7 @@ export function pruneAggregateLog(
         if (tailSize <= 0) {
             fs.closeSync(fd);
             try {
-                fs.writeFileSync(allTasksPath, '', 'utf8');
+                writeFileAtomically(allTasksPath, '', { encoding: 'utf8' });
             } catch {
                 return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
             }
@@ -179,7 +180,7 @@ export function pruneAggregateLog(
         fs.closeSync(fd);
 
         try {
-            fs.writeFileSync(allTasksPath, tail);
+            writeFileAtomically(allTasksPath, tail);
         } catch {
             return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
         }
