@@ -44,6 +44,7 @@ type InitAnswers = ReturnType<typeof validateInitAnswers>;
 interface LiveVersionPayload {
     Version?: unknown;
     SourceOfTruth?: unknown;
+    EnforceNoAutoCommit?: unknown;
 }
 
 type AgentInitStateResult = ReturnType<typeof readAgentInitStateSafe>;
@@ -64,6 +65,7 @@ interface LiveVersionState {
 }
 
 export interface StatusSnapshot extends CliStatusSnapshot {
+    enforceNoAutoCommit: boolean | null;
     initAnswersPathForDisplay: string;
     initAnswersPresent: boolean;
     taskPresent: boolean;
@@ -719,8 +721,16 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     const mandatoryFullSuiteEnabled = bundlePresent ? readMandatoryFullSuiteEnabled(bundlePath) : null;
     const latestUpdateNotice = bundlePresent ? readLatestUpdateNotice(bundlePath) : null;
 
+    let enforceNoAutoCommit: boolean | null = null;
+    if (liveVersionState.payload && typeof liveVersionState.payload.EnforceNoAutoCommit === 'boolean') {
+        enforceNoAutoCommit = liveVersionState.payload.EnforceNoAutoCommit;
+    } else if (answers && typeof answers.EnforceNoAutoCommit === 'boolean') {
+        enforceNoAutoCommit = answers.EnforceNoAutoCommit;
+    }
+
     return {
         targetRoot: resolvedTargetRoot,
+        enforceNoAutoCommit,
         bundlePath,
         initAnswersResolvedPath: initAnswersState.resolvedPath,
         initAnswersPathForDisplay: initAnswersPath || resolveInitAnswersRelativePathForTarget(resolvedTargetRoot),

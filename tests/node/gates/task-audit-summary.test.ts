@@ -3936,6 +3936,43 @@ describe('gates/task-audit-summary', () => {
         });
     });
 
+    describe('commit guidance based on worktree state', () => {
+        it('suppresses commit question when the worktree is already clean', () => {
+            // Setup a clean git repo in tmpDir
+            const execSync = require('node:child_process').execSync;
+            execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
+            execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'ignore' });
+            execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'ignore' });
+            execSync('git commit --allow-empty -m "Initial commit"', { cwd: tmpDir, stdio: 'ignore' });
+
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['docs/landing.md'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: {}
+            });
+            fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            // The commit question should adapt to the clean worktree
+            assert.equal(
+                result.final_closeout.commit_question,
+                'Worktree is already clean; no further commit necessary.'
+            );
+            assert.equal(
+                result.final_report_contract.commit_question,
+                'Worktree is already clean; no further commit necessary.'
+            );
+            // The command suggestion should remain in the contract
+            assert.ok(result.final_report_contract.required_order.includes(result.final_report_contract.commit_command_suggestion));
+        });
+    });
+
     describe('formatTaskAuditSummaryText', () => {
         it('renders compact text output', () => {
             const summary: TaskAuditSummaryResult = {

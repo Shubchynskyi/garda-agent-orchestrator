@@ -127,16 +127,16 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         it('uses "ad-hoc" qualifier in manual-command preference', () => {
             const content = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
             assert.ok(
-                content.includes('user prefers running ad-hoc commands manually'),
-                '40-commands.md must qualify "manual" preference with "ad-hoc" to prevent blanket ban interpretation'
+                content.includes('Prefer orchestrator-managed validation over ad-hoc validation'),
+                '40-commands.md must prefer orchestrator-managed validation to prevent blanket test/build bans'
             );
         });
 
         it('includes mandatory-gate exception immediately after preference', () => {
             const content = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
             assert.ok(
-                content.includes('mandatory gates always run'),
-                '40-commands.md must state that mandatory gates always run near the preference text'
+                content.includes('never waive mandatory gate validation'),
+                '40-commands.md must state that user preferences do not waive mandatory gate validation'
             );
         });
 
@@ -175,15 +175,15 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
 
         it('uses "ad-hoc" qualifier in manual-command preference', () => {
             assert.ok(
-                content.includes('user prefers running ad-hoc commands manually'),
-                'template 40-commands.md must qualify "manual" preference with "ad-hoc"'
+                content.includes('Prefer orchestrator-managed validation over ad-hoc validation'),
+                'template 40-commands.md must prefer orchestrator-managed validation'
             );
         });
 
         it('includes mandatory-gate exception', () => {
             assert.ok(
-                content.includes('mandatory gates always run'),
-                'template 40-commands.md must state that mandatory gates always run'
+                content.includes('never waive mandatory gate validation'),
+                'template 40-commands.md must state that user preferences do not waive mandatory gate validation'
             );
         });
 
@@ -210,16 +210,16 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         it('cross-references 40-commands.md preference in Mandatory Infrastructure Integrity', () => {
             const content = readMaterializedBundleFile('live/docs/agent-rules/00-core.md');
             assert.ok(
-                content.includes('40-commands.md') && content.includes('ad-hoc manual commands'),
-                '00-core.md Mandatory Infrastructure Integrity must cross-reference 40-commands.md ad-hoc preference'
+                content.includes('40-commands.md') && content.includes('standalone ad-hoc commands'),
+                '00-core.md Mandatory Infrastructure Integrity must cross-reference 40-commands.md ad-hoc restraint'
             );
         });
 
         it('explicitly exempts mandatory gates from ad-hoc preference', () => {
             const content = readMaterializedBundleFile('live/docs/agent-rules/00-core.md');
             assert.ok(
-                content.includes('compile-gate') && content.includes('does not apply to mandatory gate execution'),
-                '00-core.md must state the ad-hoc preference does not apply to mandatory gate execution'
+                content.includes('compile-gate') && content.includes('full-suite-validation') && content.includes('required lifecycle gate'),
+                '00-core.md must state the ad-hoc restraint does not apply to required lifecycle gates'
             );
         });
     });
@@ -229,15 +229,15 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
 
         it('cross-references 40-commands.md preference in Mandatory Infrastructure Integrity', () => {
             assert.ok(
-                content.includes('40-commands.md') && content.includes('ad-hoc manual commands'),
-                'template 00-core.md must cross-reference 40-commands.md ad-hoc preference'
+                content.includes('40-commands.md') && content.includes('standalone ad-hoc commands'),
+                'template 00-core.md must cross-reference 40-commands.md ad-hoc restraint'
             );
         });
 
         it('explicitly exempts mandatory gates from ad-hoc preference', () => {
             assert.ok(
-                content.includes('compile-gate') && content.includes('does not apply to mandatory gate execution'),
-                'template 00-core.md must state the ad-hoc preference does not apply to mandatory gate execution'
+                content.includes('compile-gate') && content.includes('full-suite-validation') && content.includes('required lifecycle gate'),
+                'template 00-core.md must state the ad-hoc restraint does not apply to required lifecycle gates'
             );
         });
     });
@@ -282,7 +282,7 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         it('includes clarification that ad-hoc preference does not apply to mandatory gates', () => {
             const content = readMaterializedProjectFile('.github/copilot-instructions.md');
             assert.ok(
-                content.includes('does NOT apply to mandatory gates'),
+                content.includes('restraint applies only to standalone ad-hoc commands'),
                 '.github/copilot-instructions.md must clarify that ad-hoc preference does not apply to mandatory gates'
             );
         });
@@ -293,7 +293,7 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
 
         it('includes clarification that ad-hoc preference does not apply to mandatory gates', () => {
             assert.ok(
-                content.includes('does NOT apply to mandatory gates'),
+                content.includes('restraint applies only to standalone ad-hoc commands'),
                 'template/CLAUDE.md must clarify that ad-hoc preference does not apply to mandatory gates'
             );
         });
@@ -303,7 +303,7 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         it('live 40-commands.md still discourages ad-hoc npm run build', () => {
             const liveCommands = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
             assert.ok(
-                liveCommands.includes('Do not execute ad-hoc'),
+                liveCommands.includes('Avoid standalone ad-hoc commands'),
                 'live 40-commands.md must still discourage ad-hoc command execution'
             );
         });
@@ -311,7 +311,7 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         it('template 40-commands.md still discourages ad-hoc npm run build', () => {
             const templateCommands = readRepoFile('template/docs/agent-rules/40-commands.md');
             assert.ok(
-                templateCommands.includes('Do not execute ad-hoc'),
+                templateCommands.includes('Avoid standalone ad-hoc commands'),
                 'template 40-commands.md must still discourage ad-hoc command execution'
             );
         });
@@ -319,8 +319,7 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         it('live 40-commands.md marks direct npm run build as ad-hoc to avoid', () => {
             const liveCommands = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
             assert.ok(
-                liveCommands.includes('Ad-hoc - avoid unless requested') ||
-                liveCommands.includes('Ad-hoc — avoid unless requested'),
+                liveCommands.includes('Ad-hoc - avoid as routine task validation'),
                 'live 40-commands.md example must mark direct build as ad-hoc to avoid'
             );
         });
@@ -330,7 +329,7 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         it('buildSharedStartTaskWorkflowContent includes mandatory-gate exemption hard-stop', () => {
             const generated = buildSharedStartTaskWorkflowContent('.github/copilot-instructions.md');
             assert.ok(
-                generated.includes('does NOT exempt mandatory gates'),
+                generated.includes('restraint applies only to standalone ad-hoc commands'),
                 'Generated start-task content must include hard-stop about mandatory gates not being exempted by ad-hoc preference'
             );
         });

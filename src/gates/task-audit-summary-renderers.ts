@@ -5,6 +5,7 @@ import {
     buildAgentReportBlock,
     getAgentReportMessages
 } from '../cli/commands/cli-format-output';
+import { getNodeGateCommandPrefix } from '../materialization/command-constants';
 
 function normalizeCommitToken(value: string): string {
     return String(value || '')
@@ -98,9 +99,12 @@ function inferCommitSubject(taskMetadata: TaskQueueMetadata | null): string {
 
 export function buildCommitCommandSuggestion(
     changedFiles: string[],
-    taskMetadata: TaskQueueMetadata | null
+    taskMetadata: TaskQueueMetadata | null,
+    commitGuardEnabled: boolean
 ): { template: string; suggestion: string } {
-    const template = 'git commit -m "<type>(<scope>): <summary>"';
+    const template = commitGuardEnabled
+        ? `${getNodeGateCommandPrefix()} human-commit --message "<type>(<scope>): <summary>"`
+        : 'git commit -m "<type>(<scope>): <summary>"';
     const subject = inferCommitSubject(taskMetadata);
     if (subject === '<summary>') {
         return { template, suggestion: template };
@@ -108,9 +112,12 @@ export function buildCommitCommandSuggestion(
 
     const type = inferCommitType(taskMetadata);
     const scope = inferCommitScope(changedFiles, taskMetadata);
+    const message = `${type}(${scope}): ${subject}`;
     return {
         template,
-        suggestion: `git commit -m "${type}(${scope}): ${subject}"`
+        suggestion: commitGuardEnabled
+            ? `${getNodeGateCommandPrefix()} human-commit --message "${message}"`
+            : `git commit -m "${message}"`
     };
 }
 

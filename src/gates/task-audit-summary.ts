@@ -25,6 +25,7 @@ import {
     type EffectiveReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
 import { getStatusSnapshot } from '../validators/status';
+import { getWorkspaceSnapshotCached } from './workspace-snapshot-cache';
 import {
     buildUnavailableRequiredReviewTrustSummary,
     type BlockerEntry,
@@ -976,7 +977,20 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         status = 'INCOMPLETE';
     }
 
-    const commitCommand = buildCommitCommandSuggestion(changedFiles, taskMetadata);
+    const commitGuardEnabled = workspaceStatusSnapshot.enforceNoAutoCommit === true;
+    const commitCommand = buildCommitCommandSuggestion(changedFiles, taskMetadata, commitGuardEnabled);
+    let isCleanWorktree = false;
+    try {
+        const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);
+        isCleanWorktree = currentWorkspaceSnapshot.changed_files_count === 0;
+    } catch (e) {
+        // Fallback for tests or non-git workspaces
+        isCleanWorktree = false;
+    }
+    const commitQuestionText = isCleanWorktree
+        ? 'Worktree is already clean; no further commit necessary.'
+        : 'Do you want me to commit now? (yes/no)';
+    
     const reviewGatePath = path.join(reviewsRoot, `${safeTaskId}-review-gate.json`);
     const reviewGate = safeReadJson(reviewGatePath);
     const reviewVerdicts = readReviewVerdicts(requiredReviews, reviewGate);
@@ -1061,7 +1075,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         required_order: [
             'implementation summary',
             commitCommand.suggestion,
-            'Do you want me to commit now? (yes/no)'
+            commitQuestionText
         ],
         implementation_summary_requirements: [
             'depth',
@@ -1071,7 +1085,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         ],
         commit_command_template: commitCommand.template,
         commit_command_suggestion: commitCommand.suggestion,
-        commit_question: 'Do you want me to commit now? (yes/no)'
+        commit_question: commitQuestionText
     };
     const finalCloseout: FinalCloseoutArtifact = {
         schema_version: 1,
