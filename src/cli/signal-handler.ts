@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
 
+import { EXIT_SIGNAL_INTERRUPT } from './exit-codes';
+
 const cleanupCallbacks: Set<() => void> = new Set();
 
 let controller: AbortController | null = null;
@@ -58,7 +60,7 @@ export function uninstallSignalHandlers() {
     shuttingDown = false;
 }
 
-function onSignal() {
+function onSignal(sig: NodeJS.Signals | null) {
     if (shuttingDown) return;
     shuttingDown = true;
 
@@ -78,8 +80,29 @@ function onSignal() {
     cleanupCallbacks.clear();
 
     // Exit with conventional signal exit code (128 + signal number).
-    // SIGINT = 2, SIGTERM = 15 – use 130 as the common Ctrl+C code.
-    process.exit(130);
+    // SIGINT = 2  → 130, SIGTERM = 15 → 143, SIGHUP = 1 → 129.
+    const exitCode = computeSignalExitCode(sig);
+    process.exit(exitCode);
+}
+
+const SIGNAL_EXIT_CODE_MAP: Readonly<Record<string, number>> = Object.freeze({
+    SIGHUP: 1,
+    SIGINT: 2,
+    SIGPIPE: 13,
+    SIGTERM: 15,
+    SIGBREAK: 21,
+    SIGWINCH: 28,
+});
+
+export function computeSignalExitCode(sig: NodeJS.Signals | null): number {
+    if (!sig) {
+        return EXIT_SIGNAL_INTERRUPT;
+    }
+    const signalNumber = SIGNAL_EXIT_CODE_MAP[sig];
+    if (signalNumber != null) {
+        return 128 + signalNumber;
+    }
+    return EXIT_SIGNAL_INTERRUPT;
 }
 
 export function registerTempRoot(dirPath: string): () => void {
