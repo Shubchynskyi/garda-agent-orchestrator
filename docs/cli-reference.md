@@ -325,6 +325,21 @@ Notes:
 - `gc` is dry-run by default; pass `--confirm` to apply removals.
 - `clean` is a public alias for `gc`.
 
+### Task Reset Aliases
+
+Safe aliases for the guarded task reset gate. They route directly to `garda gate task-reset` and enforce the same confirmation requirements.
+
+```text
+garda task-reset T-137 --reopen --dry-run
+garda task-reset T-137 --discard --confirm
+garda task reset T-137 --reopen --confirm
+```
+
+Notes:
+- `task-reset` and `task reset` are aliases that route to the `garda gate task-reset` command.
+- They route through `garda gate task-reset --task-id "<task-id>" --reopen --dry-run/--confirm --repo-root "."` or `--discard --confirm`.
+- Task-reset-shaped near-misses (e.g., `garda taskreset`, `garda resettask`) fail early with remediation guidance before the bootstrap directory creation process.
+
 ### `garda workflow`
 
 Show or change repo-local workflow configuration.
