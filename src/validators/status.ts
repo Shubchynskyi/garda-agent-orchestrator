@@ -496,8 +496,11 @@ function buildHeadlineText(snapshot: StatusSnapshot): string {
     return 'Not installed';
 }
 
-function buildBadge(enabled: boolean): string {
-    return enabled ? '[x]' : '[ ]';
+function buildBadge(enabled: boolean, options?: { warning?: boolean }): string {
+    const warning = options?.warning || false;
+    if (enabled) return '[x]';
+    if (warning) return '[~]';
+    return '[ ]';
 }
 
 function buildSeverityBadge(severity: 'pass' | 'warn' | 'fail'): string {
@@ -516,7 +519,7 @@ function appendParityLines(lines: string[], snapshot: StatusSnapshot): void {
         return;
     }
 
-    lines.push(`  ${buildBadge(!snapshot.parityResult.isStale)} Source parity (Self-hosted)`);
+    lines.push(`  ${buildBadge(!snapshot.parityResult.isStale, { warning: snapshot.parityResult.isStale })} Source parity (Self-hosted)`);
     if (!snapshot.parityResult.isStale) {
         return;
     }
@@ -631,6 +634,14 @@ function appendToxinLines(lines: string[], snapshot: StatusSnapshot): void {
     for (const line of formatToxinSummaryLines(snapshot.toxinMetricsSummary)) {
         lines.push(`  ${line}`);
     }
+}
+
+function appendCommandsLines(lines: string[], snapshot: StatusSnapshot): void {
+    if (snapshot.agentInitializationPendingReason !== 'PROJECT_COMMANDS_PENDING') {
+        return;
+    }
+    lines.push(`CommandsRule: ${snapshot.commandsRulePath}`);
+    lines.push('CommandsStatus: PENDING_AGENT_CONTEXT');
 }
 
 export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string): StatusSnapshot {
@@ -796,14 +807,14 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     lines.push('');
     lines.push('Workspace Stages');
     lines.push(`  ${buildBadge(snapshot.bundlePresent)} Installed`);
-    lines.push(`  ${buildBadge(snapshot.primaryInitializationComplete)} Primary initialization`);
-    lines.push(`  ${buildBadge(snapshot.agentInitializationComplete)} Agent initialization`);
+    lines.push(`  ${buildBadge(snapshot.primaryInitializationComplete, { warning: snapshot.bundlePresent && !snapshot.primaryInitializationComplete })} Primary initialization`);
+    lines.push(`  ${buildBadge(snapshot.agentInitializationComplete, { warning: snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete })} Agent initialization`);
 
     appendParityLines(lines, snapshot);
     appendProviderComplianceLines(lines, snapshot);
     appendProtectedManifestLines(lines, snapshot);
 
-    lines.push(`  ${buildBadge(snapshot.readyForTasks)} Ready for task execution`);
+    lines.push(`  ${buildBadge(snapshot.readyForTasks, { warning: snapshot.agentInitializationComplete && !snapshot.readyForTasks })} Ready for task execution`);
 
     const pendingCheckpointLine = buildPendingCheckpointLine(snapshot);
     if (pendingCheckpointLine) {
@@ -821,6 +832,7 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
 
     appendTimelineLines(lines, snapshot);
     appendToxinLines(lines, snapshot);
+    appendCommandsLines(lines, snapshot);
 
     lines.push(`RecommendedNextCommand: ${snapshot.recommendedNextCommand}`);
     return lines.join('\n');

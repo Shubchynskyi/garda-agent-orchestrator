@@ -78,6 +78,7 @@ export const buildBannerText = cliFormatOutput.buildBannerText;
 export const getStageBadge = cliFormatOutput.getStageBadge;
 export const getWorkspaceHeadline = cliFormatOutput.getWorkspaceHeadline;
 export const printStatus = cliFormatOutput.printStatus;
+export const applyStatusFormatting = cliFormatOutput.applyStatusFormatting;
 export const printCommandSummary = cliFormatOutput.printCommandSummary;
 export const buildCommandSummaryLines = cliFormatOutput.buildCommandSummaryLines;
 export const buildGuardedCommandHelpText = cliFormatOutput.buildGuardedCommandHelpText;

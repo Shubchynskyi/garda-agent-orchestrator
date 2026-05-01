@@ -8,6 +8,7 @@ import {
     PRODUCT_ACRONYM_EXPANSION,
     PRODUCT_NAME
 } from '../../core/constants';
+import { formatStatusSnapshot, type StatusSnapshot as DetailedStatusSnapshot } from '../../validators/status';
 import { COMMAND_SUMMARY } from './cli-constants';
 import type {
     HighlightedPairOptions,
@@ -320,60 +321,66 @@ export function getWorkspaceHeadline(snapshot: StatusSnapshot): string {
     return red('Not installed');
 }
 
-export function printStatus(snapshot: StatusSnapshot, options?: { heading?: string }): void {
-    const heading = (options && options.heading) || 'GARDA_STATUS';
-    console.log(heading);
-    console.log(bold(getWorkspaceHeadline(snapshot)));
-    console.log(`Project: ${snapshot.targetRoot}`);
-    console.log(`Bundle: ${snapshot.bundlePath}`);
-    console.log(`InitAnswers: ${snapshot.initAnswersResolvedPath}`);
-    console.log(`CollectedVia: ${snapshot.collectedVia || 'n/a'}`);
-    if (snapshot.activeAgentFiles) console.log(`ActiveAgentFiles: ${snapshot.activeAgentFiles}`);
-    console.log(`SourceOfTruth: ${snapshot.sourceOfTruth || 'n/a'}${snapshot.canonicalEntrypoint ? ` -> ${snapshot.canonicalEntrypoint}` : ''}`);
-    if (snapshot.activeProfile) console.log(`ActiveProfile: ${snapshot.activeProfile}`);
-    console.log('');
-    console.log(bold('Workspace Stages'));
-    console.log(`  ${getStageBadge(snapshot.bundlePresent)} Installed`);
-    console.log(`  ${getStageBadge(snapshot.primaryInitializationComplete, { warning: snapshot.bundlePresent && !snapshot.primaryInitializationComplete })} Primary initialization`);
-    console.log(`  ${getStageBadge(snapshot.agentInitializationComplete, { warning: snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete })} Agent initialization`);
+function getLineFormattingType(line: string): 'headline' | 'section' | 'badge' | 'kvpair' | 'other' {
+    if (line === 'Workspace ready' || line === 'Agent setup required' || 
+        line === 'Primary setup required' || line === 'Not installed' ||
+        line.startsWith('Error')) {
+        return 'headline';
+    }
+    if (line === 'Workspace Stages' || line === 'Toxin Metrics') {
+        return 'section';
+    }
+    if (line.includes('[x]') || line.includes('[~]') || line.includes('[ ]')) {
+        return 'badge';
+    }
+    // Dynamic kvpair detection: matches "Key: value" pattern (starts with word followed by colon)
+    if (/^[A-Za-z][A-Za-z0-9]*:\s/.test(line)) {
+        return 'kvpair';
+    }
+    return 'other';
+}
 
-    if (snapshot.parityResult.isSourceCheckout) {
-        console.log(`  ${getStageBadge(!snapshot.parityResult.isStale, { warning: snapshot.parityResult.isStale })} Source parity (Self-hosted)`);
-        if (snapshot.parityResult.isStale) {
-            for (const violation of snapshot.parityResult.violations) {
-                console.log(`    Violation: ${violation}`);
+export function applyStatusFormatting(text: string): string {
+    const lines = text.split('\n');
+    const formatted = lines.map((line, index) => {
+        // First line: heading
+        if (index === 0) {
+            return line;
+        }
+        
+        const lineType = getLineFormattingType(line);
+        
+        if (lineType === 'headline') {
+            return bold(line);
+        }
+        if (lineType === 'section') {
+            return bold(line);
+        }
+        if (lineType === 'badge') {
+            let formatted = line;
+            formatted = formatted.replace(/\[x\]/g, green('[x]'));
+            formatted = formatted.replace(/\[~\]/g, yellow('[~]'));
+            formatted = formatted.replace(/\[ \]/g, dim('[ ]'));
+            return formatted;
+        }
+        if (lineType === 'kvpair') {
+            const colonIndex = line.indexOf(':');
+            if (colonIndex !== -1) {
+                const label = line.substring(0, colonIndex);
+                const value = line.substring(colonIndex + 1).trim();
+                return `${yellow(label + ':')} ${green(value)}`;
             }
         }
-    }
+        
+        return line;
+    });
+    return formatted.join('\n');
+}
 
-    console.log(`  ${getStageBadge(snapshot.readyForTasks, { warning: snapshot.agentInitializationComplete && !snapshot.readyForTasks })} Ready for task execution`);
-    if (snapshot.agentInitializationPendingReason === 'AGENT_HANDOFF_REQUIRED') {
-        printHighlightedPair('NextStage:', 'Launch your agent with AGENT_INIT_PROMPT.md');
-    } else if (snapshot.agentInitializationPendingReason === 'LANGUAGE_CONFIRMATION_PENDING') {
-        console.log('  Pending checkpoint: Confirm assistant language during AGENT_INIT_PROMPT flow');
-    } else if (snapshot.agentInitializationPendingReason === 'ACTIVE_AGENT_FILES_PENDING') {
-        console.log('  Pending checkpoint: Confirm active agent files during AGENT_INIT_PROMPT flow');
-    } else if (snapshot.agentInitializationPendingReason === 'AGENT_STATE_STALE') {
-        console.log('  Pending checkpoint: Agent-init state no longer matches current init answers');
-    } else if (snapshot.agentInitializationPendingReason === 'PROJECT_RULES_PENDING') {
-        console.log('  Pending checkpoint: Update project-specific live rules before finalizing agent init');
-    } else if (snapshot.agentInitializationPendingReason === 'SKILLS_PROMPT_PENDING') {
-        console.log('  Pending checkpoint: Ask the built-in specialist skills question before finalizing agent init');
-    } else if (snapshot.agentInitializationPendingReason === 'VALIDATION_PENDING') {
-        console.log('  Pending checkpoint: Final agent-init validation has not passed yet');
-    } else if (snapshot.agentInitializationPendingReason === 'AGENT_STATE_INVALID') {
-        console.log('  Pending checkpoint: Repair invalid agent-init state file');
-    } else if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
-        console.log(`  Missing project commands: ${snapshot.missingProjectCommands.length}`);
-    }
-    if (snapshot.initAnswersError) console.log(`InitAnswersStatus: INVALID (${snapshot.initAnswersError})`);
-    if (snapshot.liveVersionError) console.log(`LiveVersionStatus: INVALID (${snapshot.liveVersionError})`);
-    if (snapshot.agentInitStateError) console.log(`AgentInitStateStatus: INVALID (${snapshot.agentInitStateError})`);
-    if (snapshot.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
-        console.log(`CommandsRule: ${snapshot.commandsRulePath}`);
-        printHighlightedPair('CommandsStatus:', 'PENDING_AGENT_CONTEXT');
-    }
-    printHighlightedPair('RecommendedNextCommand:', snapshot.recommendedNextCommand);
+export function printStatus(snapshot: DetailedStatusSnapshot, options?: { heading?: string }): void {
+    const formatted = formatStatusSnapshot(snapshot, options);
+    const withColors = applyStatusFormatting(formatted);
+    console.log(withColors);
     console.log('');
     printCommandSummary();
 }

@@ -1,5 +1,6 @@
 import { getStatusSnapshot, formatStatusSnapshot } from '../../validators/status';
 import {
+    applyStatusFormatting,
     buildBannerText,
     buildCommandSummaryLines,
     normalizePathValue,
@@ -30,7 +31,8 @@ export function buildOverviewOutput(packageJson: PackageJsonLike, targetRoot?: s
 }
 
 export function printOverview(packageJson: PackageJsonLike, targetRoot?: string): void {
-    console.log(buildOverviewOutput(packageJson, targetRoot));
+    const output = buildOverviewOutput(packageJson, targetRoot);
+    console.log(applyStatusFormatting(output));
 }
 
 export function handleOverview(packageJson: PackageJsonLike, targetRoot?: string): void {

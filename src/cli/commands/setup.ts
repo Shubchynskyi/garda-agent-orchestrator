@@ -448,7 +448,7 @@ export async function handleSetup(
             }
         }
 
-        let snapshot = getStatusSnapshot(targetRoot, initAnswersPath) as StatusSnapshot;
+        let snapshot = getStatusSnapshot(targetRoot, initAnswersPath);
         let verifyStatus = options.skipVerify ? 'SKIPPED' : 'PENDING_AGENT_CONTEXT';
         if (!options.skipVerify) {
             try {
@@ -483,7 +483,7 @@ export async function handleSetup(
                 autoConfirmPrompts: options.preserveAgentState === true,
                 autoAcceptRules: options.preserveAgentState === true
             }));
-            snapshot = getStatusSnapshot(targetRoot, initAnswersPath) as StatusSnapshot;
+            snapshot = getStatusSnapshot(targetRoot, initAnswersPath);
         }
 
         console.log(`Setup: ${manifestStatus === 'FAIL' ? 'FAIL' : 'PASSED'}`);
