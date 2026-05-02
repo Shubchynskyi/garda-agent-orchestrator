@@ -3007,7 +3007,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('prepare-reviewer-launch rejects schema-less review contexts without tree_state binding', async () => {
+    it('record-review-routing rejects schema-less review contexts without tree_state binding', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-265-schema-less-tree-state-bypass';
         seedTaskQueue(repoRoot, taskId);
@@ -3037,25 +3037,13 @@ describe('cli/commands/gates', () => {
             '--reviewer-execution-mode', 'delegated_subagent',
             '--reviewer-identity', reviewerIdentity
         ], { cwd: repoRoot });
-        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
 
-        const prepare = await runCliWithCapturedOutput([
-            'gate',
-            'prepare-reviewer-launch',
-            '--task-id', taskId,
-            '--review-type', 'code',
-            '--repo-root', repoRoot,
-            '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', reviewerIdentity,
-            '--reviewer-launch-artifact-path', path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json')
-        ], { cwd: repoRoot });
-
-        assert.notEqual(prepare.exitCode, 0);
+        assert.notEqual(routing.exitCode, 0);
         assert.ok(
-            prepare.errors.some((line) => line.includes('prepare-reviewer-launch requires review context tree_state binding')),
-            prepare.errors.join('\n')
+            routing.errors.some((line) => line.includes('record-review-routing requires review context tree_state binding')),
+            routing.errors.join('\n')
         );
-        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

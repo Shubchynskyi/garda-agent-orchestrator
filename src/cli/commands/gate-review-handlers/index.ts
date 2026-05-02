@@ -1845,6 +1845,12 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
         preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
     });
+    assertReviewTreeStateFresh({
+        repoRoot,
+        reviewContext: parsedReviewContext,
+        contextPath,
+        gateName: 'record-review-routing'
+    });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
         && !Array.isArray(parsedReviewContext.reviewer_routing)
