@@ -67,6 +67,8 @@ import { resolveBudgetTokensFromForecast, resolveOutputFiltersPath } from './out
 import { readTaskQueueStatus, syncTaskQueueStatus } from './task-queue-sync';
 import {
     getCompileGateEvidence,
+    formatReviewArtifactPathEscapeViolation,
+    isReviewArtifactPathInsideRoots,
     testCompileScopeDrift,
     testReviewArtifacts,
     type CompileScopeDriftResult,
@@ -150,6 +152,17 @@ function readCurrentTaskSummary(repoRoot: string, taskId: string, fallbackTaskSu
         }
     }
     return null;
+}
+
+function failPreflightPathEscapedRepo(preflightPath: string): { outputLines: string[]; exitCode: number } {
+    return {
+        outputLines: [
+            'REVIEW_GATE_FAILED',
+            'Violations:',
+            `- PreflightPath must resolve inside repo root without symlink or junction escape: ${gateHelpers.normalizePath(preflightPath)}`
+        ],
+        exitCode: EXIT_GATE_FAILURE
+    };
 }
 
 export function runDocImpactGateCommand(options: DocImpactGateCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -236,6 +249,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         gateHelpers.resolvePathInsideRepo(String(options.preflightPath || '').trim(), repoRoot),
         'PreflightPath'
     );
+    if (!gateHelpers.isPathRealpathInsideRoot(resolvedPreflightPath, repoRoot)) {
+        return failPreflightPathEscapedRepo(resolvedPreflightPath);
+    }
     const validatedBase = validatePreflightForReview(resolvedPreflightPath, String(options.taskId || ''));
     const preflight = isPlainObject(validatedBase.preflight) ? validatedBase.preflight : {};
     const preflightMetrics = isPlainObject(preflight.metrics) ? preflight.metrics : null;
@@ -349,6 +365,9 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
             break;
         case 'EVIDENCE_FILE_MISSING':
             errors.push(`Compile gate evidence missing: file not found at '${compileGateEvidence.evidence_path}'. Run compile-gate first.`);
+            break;
+        case 'EVIDENCE_PATH_OUTSIDE_REPO':
+            errors.push(`Compile gate evidence path must resolve inside repo root without symlink or junction escape: ${compileGateEvidence.evidence_path}.`);
             break;
         case 'EVIDENCE_INVALID_JSON':
             errors.push(`Compile gate evidence is invalid JSON at '${compileGateEvidence.evidence_path}'. Re-run compile-gate.`);
@@ -482,24 +501,38 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         artifactSha256?: string | null;
         receipt?: ReviewReceipt | null;
     }> = {};
+    const artifactReviewsRoot = artifactEvidence.reviews_root ? path.resolve(artifactEvidence.reviews_root) : '';
     for (const entry of artifactEvidence.checked) {
         if (entry.present && entry.path) {
             try {
                 let reviewContext: Record<string, unknown> | undefined;
                 let reviewContextPath: string | null = null;
-                const artifactSha256 = gateHelpers.fileSha256(entry.path);
-                const receiptPath = entry.path.replace(/\.md$/, '-receipt.json');
+                const artifactPath = path.resolve(entry.path);
+                if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, artifactPath)) {
+                    errors.push(formatReviewArtifactPathEscapeViolation('Review artifact path', artifactPath));
+                    continue;
+                }
+                const artifactSha256 = gateHelpers.fileSha256(artifactPath);
+                const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
                 let receipt: ReviewReceipt | null = null;
                 if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
-                    try {
-                        receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
-                    } catch {
-                        receipt = null;
+                    if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, receiptPath)) {
+                        errors.push(formatReviewArtifactPathEscapeViolation('Review receipt path', receiptPath));
+                        continue;
+                    } else {
+                        try {
+                            receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
+                        } catch {
+                            receipt = null;
+                        }
                     }
                 }
                 if (entry.review_context_present && entry.review_context_path) {
                     reviewContextPath = path.resolve(entry.review_context_path);
-                    if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
+                    if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, reviewContextPath)) {
+                        errors.push(formatReviewArtifactPathEscapeViolation('Review context artifact path', reviewContextPath));
+                        reviewContextPath = null;
+                    } else if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
                         const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
                         if (isPlainObject(parsedReviewContext)) {
                             reviewContext = parsedReviewContext;
@@ -507,8 +540,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                     }
                 }
                 reviewArtifactsMap[entry.review] = {
-                    path: entry.path,
-                    content: fs.readFileSync(entry.path, 'utf8'),
+                    path: artifactPath,
+                    content: fs.readFileSync(artifactPath, 'utf8'),
                     reviewContext,
                     reviewContextPath,
                     reviewContextSha256: reviewContextPath && fs.existsSync(reviewContextPath)

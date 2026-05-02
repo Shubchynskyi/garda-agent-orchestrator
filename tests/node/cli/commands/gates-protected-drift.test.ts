@@ -14,7 +14,13 @@ import {
     runRequiredReviewsCheckCommand
 } from '../../../../src/cli/commands/gates';
 import { runCompletionGate } from '../../../../src/gates/completion';
+import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
 import {
+    computeCodeReviewScopeFingerprint,
+    computeReviewContextReuseHash
+} from '../../../../src/gates/review-reuse';
+import {
+    buildReviewReceipt,
     buildReviewReceiptReviewerInvocationProvenance,
     buildReviewReceiptReviewerProvenance
 } from '../../../../src/gate-runtime/review-context';
@@ -314,6 +320,14 @@ function buildReviewContextTaskScopeFixture(preflight: Record<string, unknown>):
     };
 }
 
+function resolveReviewTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
+    const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    const treeStateSha256 = String(treeState?.tree_state_sha256 || treeState?.treeStateSha256 || '').trim().toLowerCase();
+    return treeStateSha256 || null;
+}
+
 function writeReceiptBackedReviewArtifact(
     repoRoot: string,
     taskId: string,
@@ -344,6 +358,28 @@ function writeReceiptBackedReviewArtifact(
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
     const preflightFixture = readReviewPreflightFixture(repoRoot, taskId);
+    const crypto = require('node:crypto');
+    const promptArtifactPath = reviewContextPath.replace(/\.json$/, '.md');
+    const promptArtifactText = [
+        `# ${reviewKey} review fixture`,
+        '',
+        `Fixture prompt artifact for ${taskId}/${reviewKey}.`
+    ].join('\n');
+    fs.writeFileSync(promptArtifactPath, promptArtifactText, 'utf8');
+    const promptArtifactSha256 = crypto.createHash('sha256').update(promptArtifactText).digest('hex');
+    const changedFiles = Array.isArray(preflightFixture.preflight.changed_files)
+        ? preflightFixture.preflight.changed_files.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean)
+        : [];
+    const metrics = preflightFixture.preflight.metrics && typeof preflightFixture.preflight.metrics === 'object' && !Array.isArray(preflightFixture.preflight.metrics)
+        ? preflightFixture.preflight.metrics as Record<string, unknown>
+        : {};
+    const reviewTreeState = buildReviewTreeState({
+        repoRoot,
+        detectionSource: preflightFixture.preflight.detection_source || 'explicit_changed_files',
+        includeUntracked: preflightFixture.preflight.include_untracked !== false,
+        changedFiles,
+        metrics
+    });
     const reviewContext = {
         task_id: taskId,
         review_type: reviewKey,
@@ -355,33 +391,51 @@ function writeReceiptBackedReviewArtifact(
             metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`).replace(/\\/g, '/'),
             metadata: null
         },
+        tree_state: reviewTreeState,
+        rule_context: {
+            artifact_path: promptArtifactPath.replace(/\\/g, '/'),
+            preferred_prompt_artifact: promptArtifactPath.replace(/\\/g, '/'),
+            artifact_sha256: promptArtifactSha256,
+            token_economy_active: false
+        },
         reviewer_routing: createReviewerRoutingFixture('Codex', 'provider_entrypoint', {
             actual_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,
             fallback_reason: execution.reviewerFallbackReason
         })
     };
-    const reviewContextText = JSON.stringify(reviewContext, null, 2);
+    const reviewContextText = `${JSON.stringify(reviewContext, null, 2)}\n`;
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
+    const reviewTreeStateSha256 = resolveReviewTreeStateSha256(reviewContext);
 
     // Authenticity hardening: write a verifiable receipt.
-    const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
     let reviewerProvenance: ReturnType<typeof buildReviewReceiptReviewerProvenance> | null = null;
-    fs.writeFileSync(receiptPath, JSON.stringify({
-        schema_version: 2,
-        task_id: taskId,
-        review_type: reviewKey,
-        review_artifact_sha256: artifactHash,
-        review_context_sha256: reviewContextHash,
-        reviewer_execution_mode: execution.reviewerExecutionMode,
-        reviewer_identity: execution.reviewerIdentity,
-        reviewer_fallback_reason: execution.reviewerFallbackReason,
-        reviewer_provenance: reviewerProvenance,
-        trust_level: execution.trustLevel
-    }));
+    const writeReceipt = () => {
+        const scopeSha256 = String((preflightFixture.preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null;
+        const codeScopeSha256 = reviewKey === 'code' && preflightFixture.preflightSha256
+            ? computeCodeReviewScopeFingerprint(preflightFixture.preflight, repoRoot).code_scope_sha256
+            : null;
+        fs.writeFileSync(receiptPath, JSON.stringify(buildReviewReceipt({
+            taskId,
+            reviewType: reviewKey,
+            preflightSha256: preflightFixture.preflightSha256,
+            scopeSha256,
+            codeScopeSha256,
+            reviewContextSha256: reviewContextHash,
+            reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
+            reviewTreeStateSha256,
+            reviewArtifactSha256: artifactHash,
+            reviewerExecutionMode: execution.reviewerExecutionMode,
+            reviewerIdentity: execution.reviewerIdentity,
+            reviewerFallbackReason: execution.reviewerFallbackReason,
+            reviewerProvenance,
+            trustLevel: execution.trustLevel
+        }), null, 2) + '\n', 'utf8');
+    };
+    writeReceipt();
 
     // Emit mandatory telemetry for authenticity
     const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -422,18 +476,7 @@ function writeReceiptBackedReviewArtifact(
             invocationEvent?.integrity,
             invocationDetails
         );
-        fs.writeFileSync(receiptPath, JSON.stringify({
-            schema_version: 2,
-            task_id: taskId,
-            review_type: reviewKey,
-            review_artifact_sha256: artifactHash,
-            review_context_sha256: reviewContextHash,
-            reviewer_execution_mode: execution.reviewerExecutionMode,
-            reviewer_identity: execution.reviewerIdentity,
-            reviewer_fallback_reason: execution.reviewerFallbackReason,
-            reviewer_provenance: reviewerProvenance,
-            trust_level: execution.trustLevel
-        }));
+        writeReceipt();
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
 }

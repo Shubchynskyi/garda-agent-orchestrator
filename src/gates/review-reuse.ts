@@ -1,13 +1,12 @@
-import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 
 import { matchAnyRegex } from '../gate-runtime/text-utils';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from './classify-change';
 import {
-    fileSha256,
     normalizePath,
     stringSha256
 } from './helpers';
+import { getSafeWorktreePathState } from './worktree-path-state';
 
 export interface CodeReviewScopeFingerprint {
     all_changed_files: string[];
@@ -231,12 +230,50 @@ function getScopedContentFingerprint(
             return { fingerprint: null, missing: true };
         }
     }
-    const absolutePath = path.resolve(repoRoot, relativePath);
-    const hash = fileSha256(absolutePath);
-    return {
-        fingerprint: hash ? `worktree:${hash}` : null,
-        missing: !hash
-    };
+    const state = getSafeWorktreePathState(repoRoot, relativePath);
+    if (state.status === 'file') {
+        return {
+            fingerprint: state.sha256 ? `worktree:file:${state.sha256}` : null,
+            missing: !state.sha256
+        };
+    }
+    if (state.status === 'symbolic_link') {
+        return {
+            fingerprint: [
+                'worktree:symlink',
+                state.link_sha256 || 'UNHASHABLE',
+                state.target_status || 'unknown',
+                state.target_path || '',
+                state.target_mode ?? 0,
+                state.target_size ?? 0,
+                state.target_sha256 || 'UNHASHABLE'
+            ].join(':'),
+            missing: state.target_status === 'file' && !state.target_sha256
+        };
+    }
+    if (state.status === 'unreviewable_symlink') {
+        return {
+            fingerprint: [
+                'worktree:unreviewable_symlink',
+                state.link_sha256 || 'UNHASHABLE',
+                state.target_status || 'unknown',
+                state.target_path || '',
+                state.target_mode ?? 0,
+                state.target_size ?? 0
+            ].join(':'),
+            missing: false
+        };
+    }
+    if (state.status === 'outside_repo') {
+        return { fingerprint: 'worktree:outside_repo', missing: false };
+    }
+    if (state.status === 'directory') {
+        return { fingerprint: 'worktree:directory', missing: false };
+    }
+    if (state.status === 'special') {
+        return { fingerprint: `worktree:special:${state.mode ?? 0}:${state.size ?? 0}`, missing: false };
+    }
+    return { fingerprint: null, missing: true };
 }
 
 function computeCodeReviewScopeFingerprintInternal(

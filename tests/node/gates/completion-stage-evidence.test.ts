@@ -1921,6 +1921,8 @@ describe('gates/completion — stage and evidence validation', () => {
             const routingEventSha = '4'.repeat(64);
             const invocationEventSha = '5'.repeat(64);
             const artifactSha = '6'.repeat(64);
+            const originalTreeStateSha = '7'.repeat(64);
+            const currentTreeStateSha = '8'.repeat(64);
             const events = [
                 makeEvent('REVIEWER_INVOCATION_ATTESTED', 0, {
                     task_id: 'T-123',
@@ -1929,6 +1931,7 @@ describe('gates/completion — stage and evidence validation', () => {
                     reviewer_session_id: 'agent:code-reviewer',
                     reviewer_identity: 'agent:code-reviewer',
                     review_context_sha256: originalContextSha,
+                    review_tree_state_sha256: originalTreeStateSha,
                     routing_event_sha256: routingEventSha
                 }, {
                     schema_version: 1,
@@ -1948,10 +1951,12 @@ describe('gates/completion — stage and evidence validation', () => {
                     reused_existing_review: true,
                     receipt_path: '/reviews/T-123-code-receipt.json',
                     review_context_sha256: currentContextSha,
+                    review_tree_state_sha256: currentTreeStateSha,
                     review_artifact_sha256: artifactSha,
                     reused_from_receipt_path: '/reviews/T-123-code-receipt.json',
                     reused_from_review_context_sha256: originalContextSha,
-                    reused_from_review_context_reuse_sha256: contextReuseSha
+                    reused_from_review_context_reuse_sha256: contextReuseSha,
+                    reused_from_review_tree_state_sha256: originalTreeStateSha
                 }),
                 makeEvent('REVIEW_GATE_PASSED', 6)
             ];
@@ -1979,6 +1984,7 @@ describe('gates/completion — stage and evidence validation', () => {
                             preflight_sha256: null,
                             scope_sha256: null,
                             review_context_sha256: currentContextSha,
+                            review_tree_state_sha256: currentTreeStateSha,
                             review_context_reuse_sha256: contextReuseSha,
                             review_artifact_sha256: artifactSha,
                             reviewer_execution_mode: 'delegated_subagent',
@@ -2003,6 +2009,7 @@ describe('gates/completion — stage and evidence validation', () => {
                             reused_from_receipt_path: '/reviews/T-123-code-receipt.json',
                             reused_from_review_context_sha256: originalContextSha,
                             reused_from_review_context_reuse_sha256: contextReuseSha,
+                            reused_from_review_tree_state_sha256: originalTreeStateSha,
                             recorded_at_utc: '2026-01-01T00:00:00.000Z'
                         }
                     }

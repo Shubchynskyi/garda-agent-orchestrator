@@ -213,6 +213,10 @@ export function isTaskOwnedReviewTempPath(repoRoot: string, taskId: string, cand
     if (!resolvedCandidatePath || !isPathInsideRoot(resolvedCandidatePath, reviewTempRoot)) {
         return false;
     }
+    if (!gateHelpers.isPathRealpathInsideRoot(resolvedCandidatePath, repoRoot, { allowMissing: true })
+        || !gateHelpers.isPathRealpathInsideRoot(resolvedCandidatePath, reviewTempRoot, { allowMissing: true })) {
+        return false;
+    }
     return isReviewTempPathOwnedByTask(reviewTempRoot, resolvedCandidatePath, taskId);
 }
 

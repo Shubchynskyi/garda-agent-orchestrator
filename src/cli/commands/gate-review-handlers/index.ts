@@ -51,6 +51,12 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../gates/review-context-contract';
+import {
+    assertReviewTreeStateFresh
+} from '../../../gates/review-tree-state';
+import {
+    resolveReviewerPromptArtifactBinding
+} from '../../../gates/review-prompt-artifact';
 import { resolveReviewContextRoutingIdentity } from '../../../gates/review-context-routing';
 import { assertReviewLifecycleGuard } from '../../../gates/review-lifecycle-guard';
 import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
@@ -232,10 +238,12 @@ function resolveCanonicalReviewPaths(
         repoRoot,
         path.join('runtime', 'reviews', `${taskId}-preflight.json`)
     );
+    assertArtifactPathRealpathInsideRepo(repoRoot, canonicalPreflightPath, 'PreflightPath');
     const resolvedPreflightPath = gateHelpers.resolvePathInsideRepo(String(preflightPathValue || ''), repoRoot, { allowMissing: true });
     if (!resolvedPreflightPath) {
         throw new Error('PreflightPath is required.');
     }
+    assertArtifactPathRealpathInsideRepo(repoRoot, resolvedPreflightPath, 'PreflightPath');
     if (resolvedPreflightPath !== canonicalPreflightPath) {
         throw new Error(
             `PreflightPath must point to the canonical preflight artifact for '${taskId}': ` +
@@ -266,6 +274,24 @@ function resolveCanonicalReviewPaths(
         artifactPath,
         contextPath
     };
+}
+
+function assertArtifactPathRealpathInsideRepo(repoRoot: string, artifactPath: string, label: string): void {
+    if (!gateHelpers.isPathRealpathInsideRoot(artifactPath, repoRoot)) {
+        throw new Error(
+            `${label} must resolve inside repo root without symlink or junction escape: ` +
+            `${normalizePath(artifactPath)}.`
+        );
+    }
+}
+
+function resolveCanonicalPreflightArtifactPath(repoRoot: string, taskId: string): string {
+    const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
+    assertArtifactPathRealpathInsideRepo(repoRoot, preflightPath, 'PreflightPath');
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        throw new Error(`Preflight artifact not found: ${normalizePath(preflightPath)}.`);
+    }
+    return preflightPath;
 }
 
 function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequiredMessage: string): ParsedReviewerIdentity {
@@ -364,6 +390,23 @@ async function resolveReviewOutputInput(
         }
         if (!fs.existsSync(resolvedReviewOutputPath) || !fs.statSync(resolvedReviewOutputPath).isFile()) {
             throw new Error(`Review output not found: ${normalizePath(resolvedReviewOutputPath)}.`);
+        }
+        if (!gateHelpers.isPathRealpathInsideRoot(resolvedReviewOutputPath, repoRoot)) {
+            throw new Error(
+                `ReviewOutputPath must resolve inside repo root without symlink or junction escape: ` +
+                `${normalizePath(resolvedReviewOutputPath)}.`
+            );
+        }
+        const lexicalReviewOutputPath = path.resolve(resolvedReviewOutputPath);
+        const realReviewOutputPath = fs.realpathSync(resolvedReviewOutputPath);
+        if (
+            gateHelpers.normalizePath(lexicalReviewOutputPath).toLowerCase()
+            !== gateHelpers.normalizePath(realReviewOutputPath).toLowerCase()
+        ) {
+            throw new Error(
+                `ReviewOutputPath must not traverse symlinks or junctions: ` +
+                `${normalizePath(resolvedReviewOutputPath)}.`
+            );
         }
         const reviewTempRoot = path.resolve(repoRoot, '.review-temp');
         const relativeReviewTempPath = path.relative(reviewTempRoot, resolvedReviewOutputPath);
@@ -1112,24 +1155,36 @@ function resolveReviewerLaunchArtifactPathForWrite(options: {
     return artifactPath;
 }
 
-function resolveReviewerPromptPath(options: {
-    repoRoot: string;
-    contextPath: string;
-    reviewContext: Record<string, unknown>;
-}): string {
-    const ruleContext = options.reviewContext.rule_context
-        && typeof options.reviewContext.rule_context === 'object'
-        && !Array.isArray(options.reviewContext.rule_context)
-        ? options.reviewContext.rule_context as Record<string, unknown>
+function getReviewTreeStateSha256(reviewContext: Record<string, unknown>): string {
+    const treeState = reviewContext.tree_state
+        && typeof reviewContext.tree_state === 'object'
+        && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
         : null;
-    const preferredPromptPath = getStringField(ruleContext || {}, 'preferred_prompt_artifact', 'artifact_path');
-    if (preferredPromptPath) {
-        const resolvedPromptPath = gateHelpers.resolvePathInsideRepo(preferredPromptPath, options.repoRoot, { allowMissing: true });
-        if (resolvedPromptPath && fs.existsSync(resolvedPromptPath) && fs.statSync(resolvedPromptPath).isFile()) {
-            return resolvedPromptPath;
-        }
+    return treeState
+        ? getStringField(treeState, 'tree_state_sha256', 'treeStateSha256').toLowerCase()
+        : '';
+}
+
+function getReviewTreeStateLaunchSummary(reviewContext: Record<string, unknown>): Record<string, unknown> | null {
+    const treeState = reviewContext.tree_state
+        && typeof reviewContext.tree_state === 'object'
+        && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    if (!treeState) {
+        return null;
     }
-    return options.contextPath;
+    return {
+        tree_state_sha256: getStringField(treeState, 'tree_state_sha256', 'treeStateSha256').toLowerCase(),
+        detection_source: getStringField(treeState, 'detection_source', 'detectionSource'),
+        use_staged: treeState.use_staged === true,
+        include_untracked: treeState.include_untracked === true,
+        changed_files: Array.isArray(treeState.changed_files) ? treeState.changed_files : [],
+        stale_staged_snapshot_files: Array.isArray(treeState.stale_staged_snapshot_files)
+            ? treeState.stale_staged_snapshot_files
+            : []
+    };
 }
 
 function resolveProviderLaunchMetadata(runtimeIdentity: ReturnType<typeof resolveRuntimeReviewerIdentity>): {
@@ -1155,8 +1210,22 @@ function assertPreparedReviewerLaunchArtifact(options: {
     reviewerIdentity: string;
     reviewContextSha256: string;
     routingEventSha256: string;
+    reviewerPromptSha256?: string | null;
+    reviewTreeStateSha256?: string | null;
 }): void {
     const artifact = readJsonFile(options.artifactPath, 'Prepared reviewer launch artifact');
+    const launchBindingSha256 = getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
+    const expectedLaunchBindingSha256 = options.reviewerPromptSha256
+        ? buildReviewerLaunchBindingSha256({
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerExecutionMode: options.reviewerExecutionMode,
+            reviewerIdentity: options.reviewerIdentity,
+            reviewContextSha256: options.reviewContextSha256,
+            routingEventSha256: options.routingEventSha256,
+            reviewerPromptSha256: options.reviewerPromptSha256
+        })
+        : '';
     const violations: string[] = [];
     if (Number(artifact.schema_version) !== 1) {
         violations.push('schema_version must be 1');
@@ -1185,11 +1254,33 @@ function assertPreparedReviewerLaunchArtifact(options: {
     if (getStringField(artifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() !== options.routingEventSha256) {
         violations.push('routing_event_sha256 must match the current routing event');
     }
+    if (options.reviewerPromptSha256) {
+        const actualPromptSha256 = getStringField(
+            artifact,
+            'reviewer_prompt_sha256',
+            'reviewerPromptSha256'
+        ).toLowerCase();
+        if (actualPromptSha256 !== options.reviewerPromptSha256) {
+            violations.push('reviewer_prompt_sha256 must match the current review context prompt artifact');
+        }
+    }
+    if (options.reviewTreeStateSha256) {
+        const actualTreeStateSha256 = getStringField(
+            artifact,
+            'review_tree_state_sha256',
+            'reviewTreeStateSha256'
+        ).toLowerCase();
+        if (actualTreeStateSha256 !== options.reviewTreeStateSha256) {
+            violations.push('review_tree_state_sha256 must match the current review context tree_state');
+        }
+    }
     if (getStringField(artifact, 'attestation_source', 'attestationSource', 'source') !== PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE) {
         violations.push(`attestation_source must be '${PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE}'`);
     }
-    if (!getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256')) {
+    if (!launchBindingSha256) {
         violations.push('launch_binding_sha256 is required');
+    } else if (expectedLaunchBindingSha256 && launchBindingSha256 !== expectedLaunchBindingSha256) {
+        violations.push('launch_binding_sha256 must match the current prepared launch binding');
     }
     if (!getStringField(artifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256')) {
         violations.push('prepared_launch_event_sha256 is required');
@@ -1210,6 +1301,8 @@ function validateReviewerLaunchArtifact(options: {
     reviewerIdentity: string;
     reviewContextSha256: string;
     routingEventSha256: string;
+    reviewerPromptSha256?: string | null;
+    reviewTreeStateSha256?: string | null;
     routingEventSequence: number;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
     artifactPathValue: unknown;
@@ -1266,6 +1359,11 @@ function validateReviewerLaunchArtifact(options: {
     ).toLowerCase();
     const reviewerPromptSha256 = getStringField(artifact, 'reviewer_prompt_sha256', 'reviewerPromptSha256').toLowerCase();
     const launchBindingSha256 = getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
+    const reviewTreeStateSha256 = getStringField(
+        artifact,
+        'review_tree_state_sha256',
+        'reviewTreeStateSha256'
+    ).toLowerCase();
     const expectedLaunchBindingSha256 = buildReviewerLaunchBindingSha256({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -1273,7 +1371,7 @@ function validateReviewerLaunchArtifact(options: {
         reviewerIdentity: options.reviewerIdentity,
         reviewContextSha256: options.reviewContextSha256,
         routingEventSha256: options.routingEventSha256,
-        reviewerPromptSha256: reviewerPromptSha256 || null
+        reviewerPromptSha256: options.reviewerPromptSha256 || reviewerPromptSha256 || null
     });
     const freshContext = artifact.fresh_context === true
         || artifact.freshContext === true
@@ -1314,6 +1412,12 @@ function validateReviewerLaunchArtifact(options: {
     }
     if (routingEventSha256 !== options.routingEventSha256) {
         violations.push('routing_event_sha256 must match the current routing event');
+    }
+    if (options.reviewerPromptSha256 && reviewerPromptSha256 !== options.reviewerPromptSha256) {
+        violations.push('reviewer_prompt_sha256 must match the current review context prompt artifact');
+    }
+    if (options.reviewTreeStateSha256 && reviewTreeStateSha256 !== options.reviewTreeStateSha256) {
+        violations.push('review_tree_state_sha256 must match the current review context tree_state');
     }
     if (!launchBindingSha256) {
         violations.push('launch_binding_sha256 is required');
@@ -1460,6 +1564,18 @@ async function recordReviewReceiptFromArtifacts(options: {
         preflightPayload: preflight as Record<string, unknown>,
         requireStrictBindingMetadata: options.requireStrictBindingMetadata
     });
+    assertReviewTreeStateFresh({
+        repoRoot: options.repoRoot,
+        reviewContext: parsedReviewContext,
+        contextPath: options.contextPath,
+        gateName: 'record-review-receipt'
+    });
+    resolveReviewerPromptArtifactBinding({
+        repoRoot: options.repoRoot,
+        contextPath: options.contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'record-review-receipt'
+    });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
         && !Array.isArray(parsedReviewContext.reviewer_routing)
@@ -1579,6 +1695,7 @@ async function recordReviewReceiptFromArtifacts(options: {
             ? codeScopeFingerprint.code_scope_sha256
             : null,
         reviewContextSha256: contextSha256,
+        reviewTreeStateSha256: getReviewTreeStateSha256(parsedReviewContext) || null,
         reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),
         reviewArtifactSha256: artifactSha256,
         reviewerExecutionMode: options.reviewerExecutionMode,
@@ -1704,7 +1821,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
             'Remove --reviewer-fallback-reason and rerun the delegated reviewer flow.'
         );
     }
-    const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
+    const preflightPath = resolveCanonicalPreflightArtifactPath(repoRoot, taskId);
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
@@ -1819,10 +1936,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'prepare-reviewer-launch', 'review_phase');
-    const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
-    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
-        throw new Error(`Preflight artifact not found: ${normalizePath(preflightPath)}.`);
-    }
+    const preflightPath = resolveCanonicalPreflightArtifactPath(repoRoot, taskId);
     const reviewsRoot = path.dirname(preflightPath);
     const contextPath = resolveCanonicalReviewContextPath({
         reviewsRoot,
@@ -1850,6 +1964,12 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         preflightSha256,
         preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
+    });
+    assertReviewTreeStateFresh({
+        repoRoot,
+        reviewContext: parsedReviewContext,
+        contextPath,
+        gateName: 'prepare-reviewer-launch'
     });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
@@ -1931,13 +2051,17 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         );
     }
 
-    const promptPath = resolveReviewerPromptPath({
+    const promptBinding = resolveReviewerPromptArtifactBinding({
         repoRoot,
         contextPath,
-        reviewContext: parsedReviewContext
+        reviewContext: parsedReviewContext,
+        gateName: 'prepare-reviewer-launch'
     });
+    const promptPath = promptBinding.promptPath;
+    const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
+    const reviewTreeStateSummary = getReviewTreeStateLaunchSummary(parsedReviewContext);
     const providerLaunch = resolveProviderLaunchMetadata(runtimeIdentity);
-    const reviewerPromptSha256 = fileSha256(promptPath);
+    const reviewerPromptSha256 = promptBinding.reviewerPromptSha256;
     const launchBindingSha256 = buildReviewerLaunchBindingSha256({
         taskId,
         reviewType,
@@ -1970,6 +2094,8 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         routing_event_task_sequence: routingEventProvenance.task_sequence,
         reviewer_prompt_path: normalizePath(promptPath),
         reviewer_prompt_sha256: reviewerPromptSha256,
+        review_tree_state_sha256: reviewTreeStateSha256 || null,
+        review_tree_state: reviewTreeStateSummary,
         launch_binding_sha256: launchBindingSha256,
         provider: providerLaunch.provider,
         launch_tool: providerLaunch.launchTool,
@@ -1992,6 +2118,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             'review_context_sha256',
             'routing_event_sha256',
             'reviewer_prompt_sha256',
+            'review_tree_state_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
             'prepared_launch_event_task_sequence'
@@ -2047,7 +2174,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewerExecutionMode,
         reviewerIdentity,
         reviewContextSha256: contextSha256,
-        routingEventSha256: routingEventProvenance.event_sha256
+        routingEventSha256: routingEventProvenance.event_sha256,
+        reviewerPromptSha256,
+        reviewTreeStateSha256
     });
     const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
 
@@ -2059,6 +2188,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
     console.log(`PreparedLaunchEventSha256: ${preparedLaunchEventSha256}`);
     console.log(`ReviewerPromptPath: ${normalizePath(promptPath)}`);
+    if (reviewTreeStateSha256) {
+        console.log(`ReviewTreeStateSha256: ${reviewTreeStateSha256}`);
+    }
     console.log(`ReviewerLaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
     console.log(`ReviewerLaunchArtifactSha256: ${launchArtifactSha256}`);
     console.log('AttestationState: prepared');
@@ -2066,7 +2198,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`LaunchInstruction: ${providerLaunch.launchInstruction}`);
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
     console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
-    console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
+    console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, review_tree_state_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     console.log('NextAction: launch the delegated reviewer, update after_launch_required_updates, then run RecordInvocationCommand.');
 }
@@ -2097,10 +2229,7 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'complete-reviewer-launch', 'review_phase');
-    const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
-    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
-        throw new Error(`Preflight artifact not found: ${normalizePath(preflightPath)}.`);
-    }
+    const preflightPath = resolveCanonicalPreflightArtifactPath(repoRoot, taskId);
     const reviewsRoot = path.dirname(preflightPath);
     const contextPath = resolveCanonicalReviewContextPath({
         reviewsRoot,
@@ -2166,6 +2295,20 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     if (!contextSha256) {
         throw new Error(`Reviewer launch completion requires a hashable review-context artifact: ${normalizePath(contextPath)}.`);
     }
+    const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    assertReviewTreeStateFresh({
+        repoRoot,
+        reviewContext: parsedReviewContext,
+        contextPath,
+        gateName: 'complete-reviewer-launch'
+    });
+    const promptBinding = resolveReviewerPromptArtifactBinding({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'complete-reviewer-launch'
+    });
+    const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
     const routingEvent = findMatchingRoutingEvent(timelineEvents, reviewType, reviewerExecutionMode, reviewerIdentity, null);
@@ -2188,7 +2331,9 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         reviewerExecutionMode,
         reviewerIdentity,
         reviewContextSha256: contextSha256,
-        routingEventSha256: routingEventProvenance.event_sha256
+        routingEventSha256: routingEventProvenance.event_sha256,
+        reviewerPromptSha256: promptBinding.reviewerPromptSha256,
+        reviewTreeStateSha256
     });
 
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
@@ -2251,10 +2396,7 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
 
     const repoRoot = normalizePathValue(options.repoRoot || '.');
     assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-invocation', 'review_phase');
-    const preflightPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-preflight.json`));
-    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
-        throw new Error(`Preflight artifact not found: ${normalizePath(preflightPath)}.`);
-    }
+    const preflightPath = resolveCanonicalPreflightArtifactPath(repoRoot, taskId);
     const reviewsRoot = path.dirname(preflightPath);
     const contextPath = resolveCanonicalReviewContextPath({
         reviewsRoot,
@@ -2282,6 +2424,18 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         preflightSha256,
         preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
+    });
+    assertReviewTreeStateFresh({
+        repoRoot,
+        reviewContext: parsedReviewContext,
+        contextPath,
+        gateName: 'record-review-invocation'
+    });
+    const promptBinding = resolveReviewerPromptArtifactBinding({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'record-review-invocation'
     });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
@@ -2348,6 +2502,8 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         reviewerIdentity,
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
+        reviewerPromptSha256: promptBinding.reviewerPromptSha256,
+        reviewTreeStateSha256: getReviewTreeStateSha256(parsedReviewContext),
         routingEventSequence: routingEvent.sequence,
         timelineEvents,
         artifactPathValue: options.reviewerLaunchArtifactPath
@@ -2367,7 +2523,8 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
                 reviewer_launch_attestation_source: launchArtifact.attestationSource,
                 reviewer_launch_tool: launchArtifact.launchTool,
                 provider_invocation_id: launchArtifact.providerInvocationId,
-                launched_at_utc: launchArtifact.launchedAtUtc
+                launched_at_utc: launchArtifact.launchedAtUtc,
+                review_tree_state_sha256: getReviewTreeStateSha256(parsedReviewContext) || null
             }
         }
     );
@@ -2505,6 +2662,18 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         preflightSha256,
         preflightPayload,
         requireStrictBindingMetadata: !!options.reviewContextPath
+    });
+    assertReviewTreeStateFresh({
+        repoRoot,
+        reviewContext: parsedReviewContext,
+        contextPath,
+        gateName: 'record-review-result'
+    });
+    resolveReviewerPromptArtifactBinding({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'record-review-result'
     });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'

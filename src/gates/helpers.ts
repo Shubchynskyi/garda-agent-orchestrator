@@ -15,6 +15,8 @@ export {
     resolveProjectRoot,
     joinOrchestratorPath,
     orchestratorRelativePath,
+    isPathInsideRoot,
+    isPathRealpathInsideRoot,
     resolvePathInsideRepo,
     resolveTaskId,
     normalizeRootPrefixes,

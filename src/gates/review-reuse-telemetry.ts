@@ -15,6 +15,7 @@ export interface ReviewReuseTelemetryMatchInput {
     receiptPath: string;
     reviewContextSha256?: string | null;
     reviewContextReuseSha256?: string | null;
+    reviewTreeStateSha256?: string | null;
     reviewScopeSha256?: string | null;
     codeScopeSha256?: string | null;
     reviewArtifactSha256?: string | null;
@@ -22,6 +23,7 @@ export interface ReviewReuseTelemetryMatchInput {
     reusedFromReceiptSha256?: string | null;
     reusedFromReviewContextSha256?: string | null;
     reusedFromReviewContextReuseSha256?: string | null;
+    reusedFromReviewTreeStateSha256?: string | null;
     reusedFromReviewScopeSha256?: string | null;
     reusedFromCodeScopeSha256?: string | null;
     minTaskSequenceExclusive?: number | null;
@@ -41,6 +43,7 @@ export interface ReviewReuseTelemetryDetails {
     receiptPath: string;
     reviewContextSha256: string;
     reviewContextReuseSha256: string;
+    reviewTreeStateSha256: string;
     reviewScopeSha256: string;
     codeScopeSha256: string;
     reviewArtifactSha256: string;
@@ -49,6 +52,7 @@ export interface ReviewReuseTelemetryDetails {
     reusedFromReceiptSha256: string;
     reusedFromReviewContextSha256: string;
     reusedFromReviewContextReuseSha256: string;
+    reusedFromReviewTreeStateSha256: string;
     reusedFromReviewScopeSha256: string;
     reusedFromCodeScopeSha256: string;
 }
@@ -61,9 +65,17 @@ export interface HistoricalReviewRecordedTelemetryMatchInput {
     receiptPath: string;
     reviewContextSha256: string | null;
     reviewContextReuseSha256?: string | null;
+    reviewTreeStateSha256?: string | null;
     reviewScopeSha256?: string | null;
     codeScopeSha256?: string | null;
     reviewArtifactSha256: string | null;
+    reusedFromReceiptPath?: string | null;
+    reusedFromReceiptSha256?: string | null;
+    reusedFromReviewContextSha256?: string | null;
+    reusedFromReviewContextReuseSha256?: string | null;
+    reusedFromReviewTreeStateSha256?: string | null;
+    reusedFromReviewScopeSha256?: string | null;
+    reusedFromCodeScopeSha256?: string | null;
     reviewerExecutionMode?: string | null;
     reviewerIdentity?: string | null;
     reviewerProvenance?: Record<string, unknown> | null;
@@ -110,6 +122,7 @@ export function getReviewReuseTelemetryDetails(details: unknown): ReviewReuseTel
         receiptPath: normalizePath(record.receipt_path ?? record.receiptPath ?? '').toLowerCase(),
         reviewContextSha256: normalizeLowerString(record.review_context_sha256 ?? record.reviewContextSha256),
         reviewContextReuseSha256: normalizeLowerString(record.review_context_reuse_sha256 ?? record.reviewContextReuseSha256),
+        reviewTreeStateSha256: normalizeLowerString(record.review_tree_state_sha256 ?? record.reviewTreeStateSha256),
         reviewScopeSha256: normalizeLowerString(record.review_scope_sha256 ?? record.reviewScopeSha256),
         codeScopeSha256: normalizeLowerString(record.code_scope_sha256 ?? record.codeScopeSha256),
         reviewArtifactSha256: normalizeLowerString(record.review_artifact_sha256 ?? record.reviewArtifactSha256),
@@ -121,6 +134,9 @@ export function getReviewReuseTelemetryDetails(details: unknown): ReviewReuseTel
         ),
         reusedFromReviewContextReuseSha256: normalizeLowerString(
             record.reused_from_review_context_reuse_sha256 ?? record.reusedFromReviewContextReuseSha256
+        ),
+        reusedFromReviewTreeStateSha256: normalizeLowerString(
+            record.reused_from_review_tree_state_sha256 ?? record.reusedFromReviewTreeStateSha256
         ),
         reusedFromReviewScopeSha256: normalizeLowerString(
             record.reused_from_review_scope_sha256 ?? record.reusedFromReviewScopeSha256
@@ -165,6 +181,7 @@ export function validateHistoricalReviewRecordedTelemetryEventMatch(
     const expectedReceiptPath = normalizePath(input.receiptPath).toLowerCase();
     const expectedReviewContextSha256 = normalizeLowerString(input.reviewContextSha256);
     const expectedReviewContextReuseSha256 = normalizeLowerString(input.reviewContextReuseSha256);
+    const expectedReviewTreeStateSha256 = normalizeLowerString(input.reviewTreeStateSha256);
     const expectedReviewScopeSha256 = normalizeLowerString(input.reviewScopeSha256);
     const expectedCodeScopeSha256 = normalizeLowerString(input.codeScopeSha256);
     const expectedReviewArtifactSha256 = normalizeLowerString(input.reviewArtifactSha256);
@@ -183,6 +200,13 @@ export function validateHistoricalReviewRecordedTelemetryEventMatch(
     const expectedProvenance = isPlainRecord(input.reviewerProvenance)
         ? input.reviewerProvenance
         : null;
+    const expectedReusedFromReceiptPath = normalizePath(input.reusedFromReceiptPath || '').toLowerCase();
+    const expectedReusedFromReceiptSha256 = normalizeLowerString(input.reusedFromReceiptSha256);
+    const expectedReusedFromReviewContextSha256 = normalizeLowerString(input.reusedFromReviewContextSha256);
+    const expectedReusedFromReviewContextReuseSha256 = normalizeLowerString(input.reusedFromReviewContextReuseSha256);
+    const expectedReusedFromReviewTreeStateSha256 = normalizeLowerString(input.reusedFromReviewTreeStateSha256);
+    const expectedReusedFromReviewScopeSha256 = normalizeLowerString(input.reusedFromReviewScopeSha256);
+    const expectedReusedFromCodeScopeSha256 = normalizeLowerString(input.reusedFromCodeScopeSha256);
 
     if (
         (expectedTaskId && eventTaskId !== expectedTaskId)
@@ -191,11 +215,27 @@ export function validateHistoricalReviewRecordedTelemetryEventMatch(
         || normalizeLowerString(details.review_context_sha256 ?? details.reviewContextSha256) !== expectedReviewContextSha256
         || (input.reviewContextReuseSha256 !== undefined
             && normalizeLowerString(details.review_context_reuse_sha256 ?? details.reviewContextReuseSha256) !== expectedReviewContextReuseSha256)
+        || (input.reviewTreeStateSha256 !== undefined
+            && normalizeLowerString(details.review_tree_state_sha256 ?? details.reviewTreeStateSha256) !== expectedReviewTreeStateSha256)
         || (input.reviewScopeSha256 !== undefined
             && normalizeLowerString(details.review_scope_sha256 ?? details.reviewScopeSha256) !== expectedReviewScopeSha256)
         || (input.codeScopeSha256 !== undefined
             && normalizeLowerString(details.code_scope_sha256 ?? details.codeScopeSha256) !== expectedCodeScopeSha256)
         || normalizeLowerString(details.review_artifact_sha256 ?? details.reviewArtifactSha256) !== expectedReviewArtifactSha256
+        || (expectedReusedFromReceiptPath
+            && normalizePath(details.reused_from_receipt_path ?? details.reusedFromReceiptPath ?? '').toLowerCase() !== expectedReusedFromReceiptPath)
+        || (input.reusedFromReceiptSha256 !== undefined
+            && normalizeLowerString(details.reused_from_receipt_sha256 ?? details.reusedFromReceiptSha256) !== expectedReusedFromReceiptSha256)
+        || (expectedReusedFromReviewContextSha256
+            && normalizeLowerString(details.reused_from_review_context_sha256 ?? details.reusedFromReviewContextSha256) !== expectedReusedFromReviewContextSha256)
+        || (expectedReusedFromReviewContextReuseSha256
+            && normalizeLowerString(details.reused_from_review_context_reuse_sha256 ?? details.reusedFromReviewContextReuseSha256) !== expectedReusedFromReviewContextReuseSha256)
+        || (expectedReusedFromReviewTreeStateSha256
+            && normalizeLowerString(details.reused_from_review_tree_state_sha256 ?? details.reusedFromReviewTreeStateSha256) !== expectedReusedFromReviewTreeStateSha256)
+        || (input.reusedFromReviewScopeSha256 !== undefined
+            && normalizeLowerString(details.reused_from_review_scope_sha256 ?? details.reusedFromReviewScopeSha256) !== expectedReusedFromReviewScopeSha256)
+        || (input.reusedFromCodeScopeSha256 !== undefined
+            && normalizeLowerString(details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256) !== expectedReusedFromCodeScopeSha256)
         || (expectedExecutionMode && normalizeLowerString(details.reviewer_execution_mode ?? details.reviewerExecutionMode) !== expectedExecutionMode)
         || (expectedReviewerIdentity && eventReviewerIdentity !== expectedReviewerIdentity)
     ) {
@@ -258,6 +298,7 @@ export function validateReviewReuseRecordedEventMatch(
     const expectedReceiptPath = normalizePath(input.receiptPath).toLowerCase();
     const expectedReviewContextSha256 = normalizeLowerString(input.reviewContextSha256);
     const expectedReviewContextReuseSha256 = normalizeLowerString(input.reviewContextReuseSha256);
+    const expectedReviewTreeStateSha256 = normalizeLowerString(input.reviewTreeStateSha256);
     const expectedReviewScopeSha256 = normalizeLowerString(input.reviewScopeSha256);
     const expectedCodeScopeSha256 = normalizeLowerString(input.codeScopeSha256);
     const expectedReviewArtifactSha256 = normalizeLowerString(input.reviewArtifactSha256);
@@ -265,6 +306,7 @@ export function validateReviewReuseRecordedEventMatch(
     const expectedReusedFromReceiptSha256 = normalizeLowerString(input.reusedFromReceiptSha256);
     const expectedReusedFromReviewContextSha256 = normalizeLowerString(input.reusedFromReviewContextSha256);
     const expectedReusedFromReviewContextReuseSha256 = normalizeLowerString(input.reusedFromReviewContextReuseSha256);
+    const expectedReusedFromReviewTreeStateSha256 = normalizeLowerString(input.reusedFromReviewTreeStateSha256);
     const expectedReusedFromReviewScopeSha256 = normalizeLowerString(input.reusedFromReviewScopeSha256);
     const expectedReusedFromCodeScopeSha256 = normalizeLowerString(input.reusedFromCodeScopeSha256);
 
@@ -274,6 +316,7 @@ export function validateReviewReuseRecordedEventMatch(
         || actual.receiptPath !== expectedReceiptPath
         || (expectedReviewContextSha256 && actual.reviewContextSha256 !== expectedReviewContextSha256)
         || (input.reviewContextReuseSha256 !== undefined && actual.reviewContextReuseSha256 !== expectedReviewContextReuseSha256)
+        || (input.reviewTreeStateSha256 !== undefined && actual.reviewTreeStateSha256 !== expectedReviewTreeStateSha256)
         || (input.reviewScopeSha256 !== undefined && actual.reviewScopeSha256 !== expectedReviewScopeSha256)
         || (input.codeScopeSha256 !== undefined && actual.codeScopeSha256 !== expectedCodeScopeSha256)
         || (expectedReviewArtifactSha256 && actual.reviewArtifactSha256 !== expectedReviewArtifactSha256)
@@ -281,6 +324,7 @@ export function validateReviewReuseRecordedEventMatch(
         || (input.reusedFromReceiptSha256 !== undefined && actual.reusedFromReceiptSha256 !== expectedReusedFromReceiptSha256)
         || (expectedReusedFromReviewContextSha256 && actual.reusedFromReviewContextSha256 !== expectedReusedFromReviewContextSha256)
         || (expectedReusedFromReviewContextReuseSha256 && actual.reusedFromReviewContextReuseSha256 !== expectedReusedFromReviewContextReuseSha256)
+        || (expectedReusedFromReviewTreeStateSha256 && actual.reusedFromReviewTreeStateSha256 !== expectedReusedFromReviewTreeStateSha256)
         || (input.reusedFromReviewScopeSha256 !== undefined
             && actual.reusedFromReviewScopeSha256 !== expectedReusedFromReviewScopeSha256)
         || (input.reusedFromCodeScopeSha256 !== undefined

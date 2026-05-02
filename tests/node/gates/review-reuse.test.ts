@@ -102,6 +102,36 @@ describe('gates/review-reuse', () => {
         }
     });
 
+    it('does not fingerprint review reuse scope from files reached through symlinked directories outside repo', (t) => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-dir-symlink-'));
+        const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-outside-'));
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(outsideRoot, 'secret.ts'), 'export const secret = "alpha";\n', 'utf8');
+            const linkedDirPath = path.join(repoRoot, 'src', 'linked-outside');
+            try {
+                fs.symlinkSync(outsideRoot, linkedDirPath, process.platform === 'win32' ? 'junction' : 'dir');
+            } catch (error) {
+                t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                changed_files: ['src/linked-outside/secret.ts']
+            };
+
+            const alphaScope = computeCodeReviewScopeFingerprint(preflight, repoRoot);
+            fs.writeFileSync(path.join(outsideRoot, 'secret.ts'), 'export const secret = "bravo";\n', 'utf8');
+            const bravoScope = computeCodeReviewScopeFingerprint(preflight, repoRoot);
+
+            assert.equal(bravoScope.code_scope_sha256, alphaScope.code_scope_sha256);
+            assert.deepEqual(bravoScope.missing_non_test_files, []);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
+        }
+    });
+
     it('limits code-review reuse scope to non-performance code while keeping performance scope complete', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-code-perf-support-'));
         try {

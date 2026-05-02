@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { normalizePath, resolvePathInsideRepo } from './helpers';
+import { isPathRealpathInsideRoot, normalizePath, resolvePathInsideRepo } from './helpers';
 
 function isFile(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
@@ -30,6 +30,25 @@ function materializeCanonicalCopyFromLegacy(canonicalPath: string, legacyPath: s
     return canonicalPath;
 }
 
+function assertReviewContextPathRealpathSafe(options: {
+    candidatePath: string;
+    reviewsRoot: string;
+    repoRoot?: string | null | undefined;
+    allowMissing?: boolean;
+}): string {
+    const resolvedPath = path.resolve(options.candidatePath);
+    if (!isPathRealpathInsideRoot(resolvedPath, options.reviewsRoot, { allowMissing: options.allowMissing === true })) {
+        throw new Error(`Review context path must resolve inside reviews root: ${normalizePath(resolvedPath)}.`);
+    }
+    if (
+        options.repoRoot
+        && !isPathRealpathInsideRoot(resolvedPath, String(options.repoRoot), { allowMissing: options.allowMissing === true })
+    ) {
+        throw new Error(`Review context path must resolve inside repo root: ${normalizePath(resolvedPath)}.`);
+    }
+    return resolvedPath;
+}
+
 export function resolveCanonicalReviewContextPath(options: {
     reviewsRoot: string;
     taskId: string | null;
@@ -42,12 +61,32 @@ export function resolveCanonicalReviewContextPath(options: {
     const rawExplicitPath = String(options.explicitPath || '').trim();
     if (!rawExplicitPath) {
         if (isFile(canonicalPath)) {
-            return canonicalPath;
+            return assertReviewContextPathRealpathSafe({
+                candidatePath: canonicalPath,
+                reviewsRoot: options.reviewsRoot,
+                repoRoot: options.repoRoot
+            });
         }
         if (isFile(legacyPath)) {
-            return materializeCanonicalCopyFromLegacy(canonicalPath, legacyPath);
+            const safeLegacyPath = assertReviewContextPathRealpathSafe({
+                candidatePath: legacyPath,
+                reviewsRoot: options.reviewsRoot,
+                repoRoot: options.repoRoot
+            });
+            const safeCanonicalPath = assertReviewContextPathRealpathSafe({
+                candidatePath: canonicalPath,
+                reviewsRoot: options.reviewsRoot,
+                repoRoot: options.repoRoot,
+                allowMissing: true
+            });
+            return materializeCanonicalCopyFromLegacy(safeCanonicalPath, safeLegacyPath);
         }
-        return canonicalPath;
+        return assertReviewContextPathRealpathSafe({
+            candidatePath: canonicalPath,
+            reviewsRoot: options.reviewsRoot,
+            repoRoot: options.repoRoot,
+            allowMissing: true
+        });
     }
 
     const resolvedExplicitPath = options.repoRoot
@@ -57,8 +96,20 @@ export function resolveCanonicalReviewContextPath(options: {
         return canonicalPath;
     }
 
-    if (normalizePath(resolvedExplicitPath) === normalizePath(legacyPath)) {
-        return materializeCanonicalCopyFromLegacy(canonicalPath, legacyPath);
+    const safeExplicitPath = assertReviewContextPathRealpathSafe({
+        candidatePath: resolvedExplicitPath,
+        reviewsRoot: options.reviewsRoot,
+        repoRoot: options.repoRoot,
+        allowMissing: true
+    });
+    if (normalizePath(safeExplicitPath) === normalizePath(legacyPath)) {
+        const safeCanonicalPath = assertReviewContextPathRealpathSafe({
+            candidatePath: canonicalPath,
+            reviewsRoot: options.reviewsRoot,
+            repoRoot: options.repoRoot,
+            allowMissing: true
+        });
+        return materializeCanonicalCopyFromLegacy(safeCanonicalPath, safeExplicitPath);
     }
-    return resolvedExplicitPath;
+    return safeExplicitPath;
 }

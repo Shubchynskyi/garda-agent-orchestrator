@@ -358,6 +358,7 @@ export interface ReviewReceipt {
     review_scope_sha256?: string | null;
     code_scope_sha256?: string | null;
     review_context_sha256: string | null;
+    review_tree_state_sha256?: string | null;
     review_context_reuse_sha256?: string | null;
     review_artifact_sha256: string | null;
     reviewer_execution_mode: string | null;
@@ -370,6 +371,7 @@ export interface ReviewReceipt {
     reused_from_receipt_sha256?: string | null;
     reused_from_review_context_sha256?: string | null;
     reused_from_review_context_reuse_sha256?: string | null;
+    reused_from_review_tree_state_sha256?: string | null;
     reused_from_review_scope_sha256?: string | null;
     reused_from_code_scope_sha256?: string | null;
     recorded_at_utc: string;
@@ -801,6 +803,7 @@ export function buildReviewReceipt(options: {
     reviewScopeSha256?: string | null;
     codeScopeSha256?: string | null;
     reviewContextSha256: string | null;
+    reviewTreeStateSha256?: string | null;
     reviewContextReuseSha256?: string | null;
     reviewArtifactSha256: string | null;
     reviewerExecutionMode?: string | null;
@@ -813,6 +816,7 @@ export function buildReviewReceipt(options: {
     reusedFromReceiptSha256?: string | null;
     reusedFromReviewContextSha256?: string | null;
     reusedFromReviewContextReuseSha256?: string | null;
+    reusedFromReviewTreeStateSha256?: string | null;
     reusedFromReviewScopeSha256?: string | null;
     reusedFromCodeScopeSha256?: string | null;
 }): ReviewReceipt {
@@ -825,6 +829,7 @@ export function buildReviewReceipt(options: {
         review_scope_sha256: options.reviewScopeSha256 ?? null,
         code_scope_sha256: options.codeScopeSha256 ?? null,
         review_context_sha256: options.reviewContextSha256,
+        review_tree_state_sha256: options.reviewTreeStateSha256 ?? null,
         review_context_reuse_sha256: options.reviewContextReuseSha256 ?? null,
         review_artifact_sha256: options.reviewArtifactSha256,
         reviewer_execution_mode: options.reviewerExecutionMode ?? null,
@@ -837,6 +842,7 @@ export function buildReviewReceipt(options: {
         reused_from_receipt_sha256: options.reusedFromReceiptSha256 ?? null,
         reused_from_review_context_sha256: options.reusedFromReviewContextSha256 ?? null,
         reused_from_review_context_reuse_sha256: options.reusedFromReviewContextReuseSha256 ?? null,
+        reused_from_review_tree_state_sha256: options.reusedFromReviewTreeStateSha256 ?? null,
         reused_from_review_scope_sha256: options.reusedFromReviewScopeSha256 ?? null,
         reused_from_code_scope_sha256: options.reusedFromCodeScopeSha256 ?? null,
         recorded_at_utc: new Date().toISOString()

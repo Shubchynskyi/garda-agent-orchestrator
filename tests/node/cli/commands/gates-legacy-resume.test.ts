@@ -393,6 +393,8 @@ function seedReusableReviewEvidence(
         fs.writeFileSync(reviewContextPath, JSON.stringify(legacyReviewContext, null, 2) + '\n', 'utf8');
     }
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
+    const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
+    const reviewTreeStateSha256 = resolveReviewTreeStateSha256(reviewContext);
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const artifactHash = crypto.createHash('sha256').update(artifactText).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
@@ -441,7 +443,8 @@ function seedReusableReviewEvidence(
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
         reviewContextSha256: reviewContextHash,
-        reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
+        reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
+        reviewTreeStateSha256,
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,
@@ -581,6 +584,14 @@ function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<
         .split('\n')
         .filter(Boolean)
         .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function resolveReviewTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
+    const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    const treeStateSha256 = String(treeState?.tree_state_sha256 || treeState?.treeStateSha256 || '').trim().toLowerCase();
+    return treeStateSha256 || null;
 }
 
 function refreshReviewReceiptProvenance(

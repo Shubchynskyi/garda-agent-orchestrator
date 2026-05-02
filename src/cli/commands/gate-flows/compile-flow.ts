@@ -251,7 +251,7 @@ function getClassificationRenameCount(repoRoot: string, detectionSource: string,
         return 0;
     }
 
-    const args = ['-C', repoRoot, 'diff', '--name-status', '--diff-filter=ACMRTUXB'];
+    const args = ['-C', repoRoot, 'diff', '--name-status', '--diff-filter=ACDMRTUXB'];
     if (detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked') {
         args.push('--cached');
     } else {

@@ -9,13 +9,19 @@ import {
 } from '../gate-runtime/review-context';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getReviewArtifactFindingsEvidence, isTrivialReview } from './completion';
-import { fileSha256, normalizePath, toPlainRecord } from './helpers';
+import { fileSha256, isPathRealpathInsideRoot, normalizePath, toPlainRecord } from './helpers';
 import { getNoOpEvidence } from './no-op';
 import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from './review-context-contract';
 import { resolveReviewContextRoutingIdentity } from './review-context-routing';
+import { resolveReviewerPromptArtifactBinding } from './review-prompt-artifact';
+import {
+    assertReviewTreeStateFresh,
+    createReviewTreeStateFreshnessCache,
+    type ReviewTreeStateFreshnessCache
+} from './review-tree-state';
 import { type ReviewDependencyTimelineEvent } from './review-dependencies';
 import {
     findMatchingHistoricalReviewRecordedTelemetryEvent,
@@ -100,6 +106,16 @@ function resolvePreflightPayloadForReviewValidation(options: {
 }): Record<string, unknown> | null {
     return toPlainRecord(options.preflightPayload)
         ?? readPreflightPayloadForReviewValidation(options.preflightPath);
+}
+
+function normalizeSha256String(value: unknown): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized || null;
+}
+
+function resolveReviewContextTreeStateSha256(reviewContext?: Record<string, unknown>): string | null {
+    const treeState = toPlainRecord(reviewContext?.tree_state);
+    return normalizeSha256String(treeState?.tree_state_sha256);
 }
 
 export function testExpectedVerdict(errors: string[], label: string, required: boolean, skippedByOverride: boolean, actualVerdict: string, passVerdict: string): void {
@@ -195,6 +211,27 @@ interface ReviewArtifactEntry {
     reviewContextSha256?: string | null;
     artifactSha256?: string | null;
     receipt?: ReviewReceipt | null;
+}
+
+function validateDerivedReviewReceiptPath(options: {
+    reviewKey: string;
+    artifactPath: string;
+    receiptPath: string;
+    repoRoot: string | null;
+}): string | null {
+    if (!options.repoRoot) {
+        return null;
+    }
+    const receiptPath = path.resolve(options.receiptPath);
+    const repoRoot = path.resolve(options.repoRoot);
+    const artifactDir = path.dirname(path.resolve(options.artifactPath));
+    if (
+        !isPathRealpathInsideRoot(receiptPath, repoRoot, { allowMissing: true })
+        || !isPathRealpathInsideRoot(receiptPath, artifactDir, { allowMissing: true })
+    ) {
+        return `Review receipt path for '${options.reviewKey}' must resolve inside repo root and review artifact directory without symlink or junction escape: ${normalizePath(receiptPath)}.`;
+    }
+    return null;
 }
 
 export interface ReviewArtifactGateEligibilityResult {
@@ -352,6 +389,7 @@ function findMatchingInvocationAttestationEvent(
         reviewerExecutionMode: string;
         reviewerIdentity: string;
         reviewContextSha256: string | null;
+        reviewTreeStateSha256?: string | null;
         routingEventSha256: string | null;
         reviewerProvenance: NonNullable<ReturnType<typeof normalizeReviewReceiptReviewerProvenance>>;
     }
@@ -362,6 +400,7 @@ function findMatchingInvocationAttestationEvent(
     const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
     const normalizedTaskId = String(options.taskId || '').trim();
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
+    const normalizedReviewTreeStateSha256 = normalizeSha256String(options.reviewTreeStateSha256);
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
     if (
         options.reviewerProvenance.task_id !== normalizedTaskId
@@ -381,6 +420,9 @@ function findMatchingInvocationAttestationEvent(
         const detailsReviewContextSha256 = String(details?.review_context_sha256 || details?.reviewContextSha256 || '')
             .trim()
             .toLowerCase();
+        const detailsReviewTreeStateSha256 = normalizeSha256String(
+            details?.review_tree_state_sha256 ?? details?.reviewTreeStateSha256
+        );
         const detailsRoutingEventSha256 = String(details?.routing_event_sha256 || details?.routingEventSha256 || '')
             .trim()
             .toLowerCase();
@@ -391,6 +433,7 @@ function findMatchingInvocationAttestationEvent(
             && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === options.reviewerExecutionMode
             && String((details?.reviewer_session_id ?? details?.reviewerSessionId ?? details?.reviewer_identity ?? details?.reviewerIdentity) || '').trim() === options.reviewerIdentity
             && detailsReviewContextSha256 === normalizedReviewContextSha256
+            && (!normalizedReviewTreeStateSha256 || detailsReviewTreeStateSha256 === normalizedReviewTreeStateSha256)
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
             && entry.integrity
             && entry.integrity.task_sequence === options.reviewerProvenance.task_sequence
@@ -412,6 +455,7 @@ function findMatchingReviewReuseRecordedEvent(
         receiptPath: string;
         reviewContextSha256: string | null;
         reviewContextReuseSha256?: string | null;
+        reviewTreeStateSha256?: string | null;
         reviewScopeSha256?: string | null;
         codeScopeSha256?: string | null;
         reviewArtifactSha256: string | null;
@@ -419,6 +463,7 @@ function findMatchingReviewReuseRecordedEvent(
         reusedFromReceiptSha256?: string | null;
         reusedFromReviewContextSha256: string | null;
         reusedFromReviewContextReuseSha256: string | null;
+        reusedFromReviewTreeStateSha256?: string | null;
         reusedFromReviewScopeSha256?: string | null;
         reusedFromCodeScopeSha256?: string | null;
     }
@@ -435,6 +480,7 @@ function findMatchingReviewReuseRecordedEvent(
         receiptPath: options.receiptPath,
         reviewContextSha256: options.reviewContextSha256,
         reviewContextReuseSha256: options.reviewContextReuseSha256,
+        reviewTreeStateSha256: options.reviewTreeStateSha256,
         reviewScopeSha256: options.reviewScopeSha256,
         codeScopeSha256: options.codeScopeSha256,
         reviewArtifactSha256: options.reviewArtifactSha256,
@@ -442,6 +488,7 @@ function findMatchingReviewReuseRecordedEvent(
         reusedFromReceiptSha256: options.reusedFromReceiptSha256,
         reusedFromReviewContextSha256: options.reusedFromReviewContextSha256,
         reusedFromReviewContextReuseSha256: options.reusedFromReviewContextReuseSha256,
+        reusedFromReviewTreeStateSha256: options.reusedFromReviewTreeStateSha256,
         reusedFromReviewScopeSha256: options.reusedFromReviewScopeSha256,
         reusedFromCodeScopeSha256: options.reusedFromCodeScopeSha256,
         minEventSequenceExclusive: latestCompilePassSequence
@@ -464,12 +511,14 @@ export function validateReviewArtifactGateEligibility(options: {
     executionProviderSource?: string | null;
     allowLegacyReviewContextIdentityFallback?: boolean;
     timelineEvents?: readonly ReviewDependencyTimelineEvent[];
+    treeStateFreshnessCache?: ReviewTreeStateFreshnessCache | null;
 }): ReviewArtifactGateEligibilityResult {
     const { resolvedTaskId, reviewKey, required, skippedByOverride, reviewArtifact } = options;
     const errors: string[] = [];
     const artifactPath = reviewArtifact.path;
     const artifactContent = reviewArtifact.content;
     const reviewContext = reviewArtifact.reviewContext;
+    const reviewContextTreeStateSha256 = resolveReviewContextTreeStateSha256(reviewContext);
     const routingMetadata = toPlainRecord(reviewContext?.reviewer_routing);
     const contextExecutionMode = normalizeCompatibilityReviewerExecutionMode(routingMetadata?.actual_execution_mode);
     const contextReviewerSessionId = typeof routingMetadata?.reviewer_session_id === 'string'
@@ -525,6 +574,7 @@ export function validateReviewArtifactGateEligibility(options: {
     let validatedReceipt: ReviewReceipt | null = null;
     let currentArtifactSha256: string | null = null;
     let reusedExistingReview = false;
+    let reusedFromReviewTreeStateSha256: string | null = null;
     let trivialReview = false;
     let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
 
@@ -567,6 +617,35 @@ export function validateReviewArtifactGateEligibility(options: {
                 requirePreflightSha256: true,
                 ...diffExpectations
             }));
+            if (reviewContext && !reviewContextTreeStateSha256) {
+                errors.push(
+                    `Required review '${reviewKey}' review-context is missing tree_state.tree_state_sha256.`
+                );
+            }
+            if (repoRoot && reviewContext) {
+                const contextPath = reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json');
+                try {
+                    assertReviewTreeStateFresh({
+                        repoRoot,
+                        reviewContext,
+                        contextPath,
+                        gateName: 'required-reviews-check',
+                        freshnessCache: options.treeStateFreshnessCache
+                    });
+                } catch (exc: unknown) {
+                    errors.push(exc instanceof Error ? exc.message : String(exc));
+                }
+                try {
+                    resolveReviewerPromptArtifactBinding({
+                        repoRoot,
+                        reviewContext,
+                        contextPath,
+                        gateName: 'required-reviews-check'
+                    });
+                } catch (exc: unknown) {
+                    errors.push(exc instanceof Error ? exc.message : String(exc));
+                }
+            }
             if (routingMetadata?.actual_execution_mode && !contextExecutionMode) {
                 errors.push(
                     `Review '${reviewKey}' review-context has invalid reviewer_routing.actual_execution_mode ` +
@@ -617,7 +696,15 @@ export function validateReviewArtifactGateEligibility(options: {
         }
 
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-        if (reviewArtifact.receipt || fs.existsSync(receiptPath)) {
+        const receiptPathViolation = validateDerivedReviewReceiptPath({
+            reviewKey,
+            artifactPath,
+            receiptPath,
+            repoRoot
+        });
+        if (receiptPathViolation) {
+            errors.push(receiptPathViolation);
+        } else if (reviewArtifact.receipt || fs.existsSync(receiptPath)) {
             try {
                 const receipt = reviewArtifact.receipt ?? JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
                 validatedReceipt = receipt;
@@ -635,6 +722,17 @@ export function validateReviewArtifactGateEligibility(options: {
                     errors.push(`Review receipt for '${reviewKey}' is missing review_context_sha256.`);
                 } else if (reviewArtifact.reviewContextSha256 && receipt.review_context_sha256 !== reviewArtifact.reviewContextSha256) {
                     errors.push(`Review context hash mismatch for '${reviewKey}'. Review-context artifact was modified after receipt was issued.`);
+                } else if (required && !skippedByOverride && reviewContextTreeStateSha256 && !normalizeSha256String(receipt.review_tree_state_sha256)) {
+                    errors.push(`Review receipt for '${reviewKey}' is missing review_tree_state_sha256.`);
+                } else if (
+                    reviewContextTreeStateSha256
+                    && normalizeSha256String(receipt.review_tree_state_sha256)
+                    && normalizeSha256String(receipt.review_tree_state_sha256) !== reviewContextTreeStateSha256
+                ) {
+                    errors.push(
+                        `Review tree-state hash mismatch for '${reviewKey}'. ` +
+                        'Review-context tree_state does not match the receipt binding.'
+                    );
                 } else {
                     receiptValid = true;
                 }
@@ -663,6 +761,10 @@ export function validateReviewArtifactGateEligibility(options: {
                     trustLevel = String(receipt.trust_level).trim().toUpperCase();
                 }
                 reusedExistingReview = receipt.reused_existing_review === true;
+                reusedFromReviewTreeStateSha256 = normalizeSha256String(receipt.reused_from_review_tree_state_sha256);
+                if (reusedExistingReview && !reusedFromReviewTreeStateSha256) {
+                    errors.push(`Review receipt for '${reviewKey}' is missing reused_from_review_tree_state_sha256 for reused evidence.`);
+                }
                 receiptReviewContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
             } catch {
                 errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
@@ -776,6 +878,7 @@ export function validateReviewArtifactGateEligibility(options: {
                             receiptPath,
                             reviewContextSha256: receiptReviewContextSha256,
                             reviewContextReuseSha256: validatedReceipt?.review_context_reuse_sha256,
+                            reviewTreeStateSha256: validatedReceipt?.review_tree_state_sha256,
                             reviewScopeSha256: validatedReceipt?.review_scope_sha256,
                             codeScopeSha256: validatedReceipt?.code_scope_sha256,
                             reviewArtifactSha256: currentArtifactSha256 ?? reviewArtifact.artifactSha256 ?? fileSha256(artifactPath),
@@ -791,6 +894,7 @@ export function validateReviewArtifactGateEligibility(options: {
                             reusedFromReviewContextReuseSha256: typeof validatedReceipt?.reused_from_review_context_reuse_sha256 === 'string'
                                 ? validatedReceipt.reused_from_review_context_reuse_sha256
                                 : null,
+                            reusedFromReviewTreeStateSha256,
                             reusedFromReviewScopeSha256: typeof validatedReceipt?.reused_from_review_scope_sha256 === 'string'
                                 ? validatedReceipt.reused_from_review_scope_sha256
                                 : null,
@@ -821,6 +925,7 @@ export function validateReviewArtifactGateEligibility(options: {
                                 reviewerExecutionMode,
                                 reviewerIdentity,
                                 reviewContextSha256: reviewerProvenance.review_context_sha256,
+                                reviewTreeStateSha256: reusedFromReviewTreeStateSha256,
                                 routingEventSha256: reviewerProvenance.routing_event_sha256,
                                 reviewerProvenance
                             }
@@ -838,6 +943,7 @@ export function validateReviewArtifactGateEligibility(options: {
                                 : receiptPath,
                             reviewContextSha256: validatedReceipt?.reused_from_review_context_sha256 || reviewerProvenance.review_context_sha256,
                             reviewContextReuseSha256: validatedReceipt?.reused_from_review_context_reuse_sha256,
+                            reviewTreeStateSha256: reusedFromReviewTreeStateSha256,
                             reviewScopeSha256: validatedReceipt?.reused_from_review_scope_sha256,
                             codeScopeSha256: validatedReceipt?.reused_from_code_scope_sha256,
                             reviewArtifactSha256: currentArtifactSha256 ?? reviewArtifact.artifactSha256 ?? fileSha256(artifactPath),
@@ -990,6 +1096,9 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
     }
 
     const reviewChecks: Record<string, unknown> = {};
+    const treeStateFreshnessCache = options.repoRoot
+        ? createReviewTreeStateFreshnessCache()
+        : null;
     for (const [reviewKey, passToken] of REVIEW_CONTRACTS) {
         const required = !!requiredReviews[reviewKey];
         const skippedByOverride = skipReviews.includes(reviewKey);
@@ -1021,7 +1130,8 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 executionProviderSource: options.executionProviderSource,
                 allowLegacyReviewContextIdentityFallback,
                 timelineEvents,
-                repoRoot: options.repoRoot || null
+                repoRoot: options.repoRoot || null,
+                treeStateFreshnessCache
             });
             compactionAudit = validation.compactionAudit;
             receiptValid = validation.receiptValid;

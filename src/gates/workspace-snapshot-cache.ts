@@ -1,9 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
-import { stringSha256, joinOrchestratorPath, normalizePath } from './helpers';
+import { isPathRealpathInsideRoot, stringSha256, joinOrchestratorPath, normalizePath } from './helpers';
 import { getWorkspaceSnapshot } from './compile-gate';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
+import { getSafeWorktreePathState } from './worktree-path-state';
 
 const CACHE_VERSION = 1;
 const CACHE_RELATIVE_PATH = path.join('runtime', 'cache', 'workspace-snapshot.json');
@@ -99,31 +100,30 @@ function computeParamsHash(
 
 /**
  * Read git porcelain status lines for the repo.
- * Returns an empty list on any failure so the caller falls back to a more
- * conservative cache key instead of breaking the gate.
+ * Throws on probe failure so cache fingerprinting never treats an unreadable
+ * working tree as an empty working tree and reuses stale snapshots.
  */
 function readGitStatusLines(repoRoot: string, includeUntracked: boolean): string[] {
-    try {
-        const result = spawnSyncWithTimeout('git', [
-            '-C',
-            String(repoRoot),
-            'status',
-            '--porcelain=v1',
-            `--untracked-files=${includeUntracked ? 'all' : 'no'}`
-        ], {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
-            maxBuffer: 10 * 1024 * 1024
-        });
-        if (result.status !== 0 || result.timedOut || result.error) return [];
-        return String(result.stdout || '')
-            .split('\n')
-            .map((line: string) => line.trimEnd())
-            .filter(Boolean);
-    } catch {
-        return [];
+    const args = [
+        '-C',
+        String(repoRoot),
+        'status',
+        '--porcelain=v1',
+        `--untracked-files=${includeUntracked ? 'all' : 'no'}`
+    ];
+    const result = spawnSyncWithTimeout('git', args, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+        maxBuffer: 10 * 1024 * 1024
+    });
+    if (result.status !== 0 || result.timedOut || result.error) {
+        throw new Error(formatGitFingerprintProbeFailure(repoRoot, args, result));
     }
+    return String(result.stdout || '')
+        .split('\n')
+        .map((line: string) => line.trimEnd())
+        .filter(Boolean);
 }
 
 interface GitStatusEntry {
@@ -181,38 +181,105 @@ function isInternalSnapshotCachePath(repoRoot: string, relativePath: string | nu
 function buildPathStateToken(repoRoot: string, relativePath: string): string {
     const normalized = normalizePath(relativePath);
     if (!normalized) return 'missing';
-    const fullPath = path.join(repoRoot, normalized);
-    try {
-        const stat = fs.statSync(fullPath);
-        const kind = stat.isFile() ? 'file' : (stat.isDirectory() ? 'dir' : 'other');
-        return `${kind}|${stat.size}|${stat.mtimeMs}`;
-    } catch {
-        return 'missing';
+    const state = getSafeWorktreePathState(repoRoot, normalized);
+    if (state.status === 'file') {
+        return `file|${state.size ?? 0}|${state.sha256 || ''}`;
     }
+    if (state.status === 'symbolic_link') {
+        return [
+            'symlink',
+            state.size ?? 0,
+            state.link_sha256 || '',
+            state.target_status || 'unknown',
+            state.target_path || '',
+            state.target_mode ?? 0,
+            state.target_size ?? 0,
+            state.target_sha256 || ''
+        ].join('|');
+    }
+    if (state.status === 'unreviewable_symlink') {
+        return [
+            'unreviewable_symlink',
+            state.size ?? 0,
+            state.link_sha256 || '',
+            state.target_status || 'unknown',
+            state.target_path || '',
+            state.target_mode ?? 0,
+            state.target_size ?? 0
+        ].join('|');
+    }
+    if (state.status === 'directory') {
+        try {
+            const fullPath = path.join(repoRoot, normalized);
+            const entries = fs.readdirSync(fullPath, { withFileTypes: true })
+                .map((entry) => `${entry.isDirectory() ? 'dir' : entry.isFile() ? 'file' : entry.isSymbolicLink() ? 'symlink' : 'other'}:${entry.name}`)
+                .sort();
+            return `dir|${stringSha256(entries.join('\n')) || ''}`;
+        } catch {
+            return 'missing';
+        }
+    }
+    if (state.status === 'special') {
+        return `other|${state.mode ?? 0}|${state.size ?? 0}`;
+    }
+    return state.status;
+}
+
+function formatGitFingerprintProbeFailure(repoRoot: string, args: string[], result: ReturnType<typeof spawnSyncWithTimeout>): string {
+    const reason = result.timedOut
+        ? `timed out after ${DEFAULT_GIT_TIMEOUT_MS}ms`
+        : result.error
+            ? String(result.error)
+            : String(result.stderr || result.stdout || `exit status ${result.status}`).trim();
+    return `Unable to compute workspace snapshot cache fingerprint: git ${args.join(' ')} failed in '${normalizePath(repoRoot)}' (${reason}).`;
 }
 
 function readGitCachedRawDiff(repoRoot: string): string {
-    try {
-        const result = spawnSyncWithTimeout('git', [
-            '-C',
-            String(repoRoot),
-            'diff',
-            '--cached',
-            '--raw',
-            '--find-renames',
-            '--abbrev=40',
-            '--diff-filter=ACMRTUXB'
-        ], {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
-            maxBuffer: 10 * 1024 * 1024
-        });
-        if (result.status !== 0 || result.timedOut || result.error) return '';
-        return String(result.stdout || '').trimEnd();
-    } catch {
-        return '';
+    const args = [
+        '-C',
+        String(repoRoot),
+        'diff',
+        '--cached',
+        '--raw',
+        '--find-renames',
+        '--abbrev=40',
+        '--diff-filter=ACDMRTUXB'
+    ];
+    const result = spawnSyncWithTimeout('git', args, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+        maxBuffer: 10 * 1024 * 1024
+    });
+    if (result.status !== 0 || result.timedOut || result.error) {
+        throw new Error(formatGitFingerprintProbeFailure(repoRoot, args, result));
     }
+    return String(result.stdout || '').trimEnd();
+}
+
+function readGitCachedDeletedPaths(repoRoot: string): string[] {
+    const args = [
+        '-C',
+        String(repoRoot),
+        'diff',
+        '--cached',
+        '--name-only',
+        '--diff-filter=D'
+    ];
+    const result = spawnSyncWithTimeout('git', args, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+        maxBuffer: 10 * 1024 * 1024
+    });
+    if (result.status !== 0 || result.timedOut || result.error) {
+        throw new Error(formatGitFingerprintProbeFailure(repoRoot, args, result));
+    }
+    return String(result.stdout || '')
+        .split('\n')
+        .map((line: string) => normalizePath(line))
+        .filter((line: string) => !!line && !isInternalSnapshotCachePath(repoRoot, line))
+        .sort();
 }
 
 function buildUntrackedFingerprintDescriptors(repoRoot: string): string[] {
@@ -235,9 +302,12 @@ function buildGitStatusFingerprintHash(
     const stagedOnly = normalizedSource === 'git_staged_only' || normalizedSource === 'git_staged_plus_untracked';
 
     if (stagedOnly) {
-        const descriptors = [readGitCachedRawDiff(repoRoot)];
-        if (includeUntracked) {
-            descriptors.push(...buildUntrackedFingerprintDescriptors(repoRoot));
+        const descriptors = includeUntracked
+            ? buildUntrackedFingerprintDescriptors(repoRoot)
+            : [];
+        descriptors.unshift(readGitCachedRawDiff(repoRoot));
+        for (const deletedPath of readGitCachedDeletedPaths(repoRoot)) {
+            descriptors.push(`D|${deletedPath}|${buildPathStateToken(repoRoot, deletedPath)}`);
         }
         return stringSha256(descriptors.join('\n')) || '';
     }
@@ -330,6 +400,12 @@ export function resolveSnapshotCachePath(repoRoot: string): string {
     return joinOrchestratorPath(repoRoot, CACHE_RELATIVE_PATH);
 }
 
+function isSnapshotCachePathSafe(repoRoot: string, cachePath: string): boolean {
+    const cacheRoot = path.dirname(resolveSnapshotCachePath(repoRoot));
+    return isPathRealpathInsideRoot(cachePath, repoRoot, { allowMissing: true })
+        && isPathRealpathInsideRoot(cachePath, cacheRoot, { allowMissing: true });
+}
+
 /**
  * Read the persisted snapshot cache from disk.
  * Returns null if the file is missing, corrupt, or schema-incompatible.
@@ -365,6 +441,9 @@ export function writeSnapshotCache(cachePath: string, entry: WorkspaceSnapshotCa
 export function invalidateSnapshotCache(repoRoot: string): boolean {
     try {
         const cachePath = resolveSnapshotCachePath(repoRoot);
+        if (!isSnapshotCachePathSafe(repoRoot, cachePath)) {
+            return false;
+        }
         if (fs.existsSync(cachePath)) {
             fs.unlinkSync(cachePath);
             return true;
@@ -403,10 +482,11 @@ export function getWorkspaceSnapshotCached(
     }
 
     const cachePath = resolveSnapshotCachePath(repoRoot);
+    const cachePathSafe = isSnapshotCachePathSafe(repoRoot, cachePath);
     const fp = computeSnapshotFingerprint(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
 
     // Attempt cache hit
-    const cached = readSnapshotCache(cachePath);
+    const cached = cachePathSafe ? readSnapshotCache(cachePath) : null;
     if (cached && cached.fingerprint === fp.fingerprint) {
         return { ...cached.snapshot, cache_hit: true };
     }
@@ -414,7 +494,7 @@ export function getWorkspaceSnapshotCached(
     // Cache miss — compute fresh
     const fresh = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, explicitChangedFiles);
 
-    if (!options.readOnly) {
+    if (!options.readOnly && cachePathSafe) {
         const normalizedExplicit = [...new Set(
             (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
         )].sort();

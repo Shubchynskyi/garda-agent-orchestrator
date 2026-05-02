@@ -9,7 +9,14 @@ import {
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../gate-runtime/reviewer-session-contract';
-import { fileSha256, normalizePath, parseBool, resolvePathInsideRepo, toStringArray } from './helpers';
+import {
+    fileSha256,
+    isPathRealpathInsideRoot,
+    normalizePath,
+    parseBool,
+    resolvePathInsideRepo,
+    toStringArray
+} from './helpers';
 import { resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { getCanonicalReviewContextPath } from './review-context-paths';
 import {
@@ -23,6 +30,11 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations,
 } from './review-context-contract';
+import {
+    buildReviewTreeState,
+    getReviewTreeStateBlockingViolations,
+    type ReviewTreeState
+} from './review-tree-state';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 import { getReviewSkillCandidates, hasSkillEntrypoint } from '../core/review-capabilities';
@@ -151,6 +163,7 @@ function buildTaskScopeMarkdown(options: {
     requiredReviews: string[];
     activeTriggers: string[];
     gitDiff: GitDiffSummary;
+    treeState: ReviewTreeState | null;
 }): string {
     const lines: string[] = [];
     const fullDiffText = options.gitDiff.diff || '';
@@ -180,6 +193,18 @@ function buildTaskScopeMarkdown(options: {
         for (const changedFile of options.changedFiles) {
             lines.push(`- ${changedFile}`);
         }
+    }
+    lines.push('');
+    lines.push('## Review Tree State');
+    if (options.treeState) {
+        lines.push(`- Detection source: ${options.treeState.detection_source}`);
+        lines.push(`- Use staged snapshot: ${options.treeState.use_staged}`);
+        lines.push(`- Include untracked files: ${options.treeState.include_untracked}`);
+        lines.push(`- Tree state sha256: ${options.treeState.tree_state_sha256 || 'unknown'}`);
+        lines.push(`- Scope sha256: ${options.treeState.scope_sha256 || 'unknown'}`);
+        lines.push(`- Stale staged snapshot files: ${options.treeState.stale_staged_snapshot_files.length > 0 ? options.treeState.stale_staged_snapshot_files.join(', ') : 'none'}`);
+    } else {
+        lines.push('- unavailable');
     }
     lines.push('');
     lines.push('## Current Diff Stat');
@@ -229,6 +254,19 @@ function buildMarkdownFence(content: string, info: string): { open: string; clos
     };
 }
 
+function shouldIncludeUntrackedForReviewTreeState(preflight: Record<string, unknown>): boolean {
+    const detectionSource = String(preflight.detection_source || '').trim().toLowerCase();
+    return detectionSource === 'git_staged_plus_untracked'
+        || detectionSource === 'git_auto'
+        || detectionSource === 'explicit_changed_files';
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
 export interface TokenEconomyConfig {
     enabled?: unknown;
     enabled_depths?: unknown;
@@ -256,6 +294,17 @@ export interface BuildReviewContextOptions {
     ruleFileContentCache?: Map<string, string> | null;
 }
 
+function assertArtifactRealpathInsideRepo(
+    repoRoot: string,
+    artifactPath: string,
+    label: string,
+    options: { allowMissing?: boolean } = {}
+): void {
+    if (!isPathRealpathInsideRoot(artifactPath, repoRoot, { allowMissing: options.allowMissing === true })) {
+        throw new Error(`${label} must resolve inside repo root without symlink or junction escape: ${normalizePath(artifactPath)}.`);
+    }
+}
+
 function buildRuleContextSectionsCacheKey(
     selectedRulePaths: readonly string[],
     stripExamples: boolean,
@@ -280,6 +329,15 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const scopedDiffMetadataPath = options.scopedDiffMetadataPath;
     const outputPath = options.outputPath;
     const repoRoot = options.repoRoot;
+
+    assertArtifactRealpathInsideRepo(repoRoot, preflightPath, 'PreflightPath');
+    assertArtifactRealpathInsideRepo(repoRoot, outputPath, 'OutputPath', { allowMissing: true });
+    if (scopedDiffMetadataPath) {
+        assertArtifactRealpathInsideRepo(repoRoot, scopedDiffMetadataPath, 'ScopedDiffMetadataPath', { allowMissing: true });
+    }
+    if (tokenEconomyConfigPath) {
+        assertArtifactRealpathInsideRepo(repoRoot, tokenEconomyConfigPath, 'TokenEconomyConfigPath', { allowMissing: true });
+    }
 
     const preflight = options.preflightPayload ?? JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
     let tokenConfig: TokenEconomyConfig = options.tokenEconomyConfigData || {};
@@ -426,6 +484,21 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
     const tokenEconomyOmissionReason = (omittedSections.length > 0 || omittedRulePaths.length > 0) ? 'token_economy_compaction' : 'none';
     const requiredReviewTypes = summarizeBooleanRecord(preflight.required_reviews);
     const activeTriggers = summarizeBooleanRecord(preflight.triggers);
+    const preflightMetrics = asPlainRecord(preflight.metrics);
+    const treeState = buildReviewTreeState({
+        repoRoot,
+        detectionSource: preflight.detection_source,
+        includeUntracked: shouldIncludeUntrackedForReviewTreeState(preflight),
+        changedFiles,
+        metrics: preflightMetrics
+    });
+    const treeStateViolations = getReviewTreeStateBlockingViolations(treeState);
+    if (treeStateViolations.length > 0) {
+        throw new Error(
+            `Review context cannot be built because reviewer-visible tree state is incoherent. ` +
+            treeStateViolations.join(' ')
+        );
+    }
     const gitDiff = buildGitDiffSummary(repoRoot, changedFiles, preflight, preflightPath);
     const preflightSha256 = fileSha256(preflightPath);
     const taskScopeMarkdown = buildTaskScopeMarkdown({
@@ -438,10 +511,12 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         changedFiles,
         requiredReviews: requiredReviewTypes,
         activeTriggers,
-        gitDiff
+        gitDiff,
+        treeState
     });
 
     const ruleContextArtifactPath = outputPath.replace(/\.json$/, '.md');
+    assertArtifactRealpathInsideRepo(repoRoot, ruleContextArtifactPath, 'RuleContextArtifactPath', { allowMissing: true });
     const readFileCallback = (rulePath: string): string => {
         if (options.ruleFileContentCache?.has(rulePath)) {
             return String(options.ruleFileContentCache.get(rulePath) || '');
@@ -543,9 +618,11 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
                 command_status: gitDiff.command_status,
                 error: gitDiff.error,
                 cache_path: gitDiff.cache_path,
-                cached: gitDiff.cached
+                cached: gitDiff.cached,
+                diff_sha256: stringSha256(gitDiff.diff || '') || null
             }
         },
+        tree_state: treeState,
         scoped_diff: {
             expected: !!scopedDiffExpected,
             metadata_path: normalizePath(scopedDiffMetadataPath),

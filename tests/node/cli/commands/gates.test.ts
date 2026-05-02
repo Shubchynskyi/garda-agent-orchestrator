@@ -29,6 +29,9 @@ import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
 import { runCompletionGate } from '../../../../src/gates/completion';
+import { buildReviewContext, getRulePack } from '../../../../src/gates/build-review-context';
+import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
+import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
 import {
     applyReviewerRoutingMetadata
 } from '../../../../src/gate-runtime/review-context';
@@ -140,12 +143,66 @@ function manualReviewContextBindingFixture(repoRoot: string, taskId: string, rev
     const preflightSha256 = fs.existsSync(preflightPath)
         ? createHash('sha256').update(fs.readFileSync(preflightPath)).digest('hex')
         : null;
+    const treeState = manualReviewContextTreeStateFixture(repoRoot, taskId);
     return {
+        ...(treeState ? { schema_version: 2, tree_state: treeState } : {}),
         task_id: taskId,
         review_type: reviewType,
         preflight_path: preflightPath.replace(/\\/g, '/'),
-        preflight_sha256: preflightSha256
+        preflight_sha256: preflightSha256,
+        rule_context: manualReviewContextRuleContextFixture(repoRoot, taskId, reviewType)
     };
+}
+
+function manualReviewContextRuleContextFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.md`);
+    let artifactText: string;
+    if (fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile()) {
+        artifactText = fs.readFileSync(artifactPath, 'utf8');
+    } else {
+        artifactText = [
+            `# ${reviewType} Review Context`,
+            '',
+            `Fixture prompt artifact for ${taskId}.`,
+            '',
+            '## Task Scope',
+            '- src/app.ts'
+        ].join('\n');
+        fs.writeFileSync(artifactPath, `${artifactText}\n`, 'utf8');
+        artifactText = `${artifactText}\n`;
+    }
+    return {
+        artifact_path: artifactPath.replace(/\\/g, '/'),
+        artifact_sha256: createHash('sha256').update(artifactText, 'utf8').digest('hex'),
+        preferred_prompt_artifact: artifactPath.replace(/\\/g, '/')
+    };
+}
+
+function manualReviewContextTreeStateFixture(repoRoot: string, taskId: string): Record<string, unknown> | null {
+    const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        return null;
+    }
+    try {
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const changedFiles = Array.isArray(preflight.changed_files)
+            ? preflight.changed_files.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean)
+            : ['src/app.ts'];
+        const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+            ? preflight.metrics as Record<string, unknown>
+            : null;
+        return buildReviewTreeState({
+            repoRoot,
+            detectionSource: preflight.detection_source || 'explicit_changed_files',
+            includeUntracked: preflight.include_untracked !== false,
+            changedFiles,
+            metrics
+        }) as unknown as Record<string, unknown>;
+    } catch {
+        return null;
+    }
 }
 
 function reviewContextScopedDiffFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
@@ -265,14 +322,30 @@ async function seedRoutedReviewerLaunchFixture(options: {
     const reviewsRoot = getReviewsRoot(options.repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
     const reviewerPromptPath = path.join(reviewsRoot, `${options.taskId}-${reviewType}-review-context.md`);
-    fs.writeFileSync(reviewerPromptPath, 'reviewer prompt payload\n', 'utf8');
+    const reviewerPromptContent = 'reviewer prompt payload\n';
+    fs.writeFileSync(reviewerPromptPath, reviewerPromptContent, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${options.taskId}-${reviewType}-review-context.json`);
+    const reviewSnapshot = getWorkspaceSnapshot(options.repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const reviewTreeState = buildReviewTreeState({
+        repoRoot: options.repoRoot,
+        detectionSource: 'explicit_changed_files',
+        includeUntracked: true,
+        changedFiles: ['src/app.ts'],
+        metrics: {
+            changed_files_sha256: reviewSnapshot.changed_files_sha256,
+            scope_content_sha256: reviewSnapshot.scope_content_sha256,
+            scope_sha256: reviewSnapshot.scope_sha256
+        }
+    });
     fs.writeFileSync(reviewContextPath, JSON.stringify({
         ...manualReviewContextBindingFixture(options.repoRoot, options.taskId, reviewType),
         task_scope: manualReviewContextTaskScopeFixture(options.repoRoot, options.taskId),
+        tree_state: reviewTreeState,
         scoped_diff: reviewContextScopedDiffFixture(options.repoRoot, options.taskId, reviewType),
         rule_context: {
-            artifact_path: reviewerPromptPath.replace(/\\/g, '/')
+            artifact_path: reviewerPromptPath.replace(/\\/g, '/'),
+            artifact_sha256: createHash('sha256').update(reviewerPromptContent, 'utf8').digest('hex'),
+            preferred_prompt_artifact: reviewerPromptPath.replace(/\\/g, '/')
         },
         reviewer_routing: createReviewerRoutingFixture(provider, {
             capability_level: 'delegation_capable'
@@ -312,8 +385,120 @@ async function seedRoutedReviewerLaunchFixture(options: {
         reviewerPromptPath,
         reviewContextPath,
         reviewContextSha256,
+        reviewTreeStateSha256: reviewTreeState.tree_state_sha256,
         routingEventSha256: String(routingIntegrity.event_sha256)
     };
+}
+
+async function seedPromptBoundReviewFixture(options: {
+    repoRoot: string;
+    taskId: string;
+    provider?: string;
+    reviewerIdentity?: string;
+}) {
+    const provider = options.provider || 'Codex';
+    const reviewerIdentity = options.reviewerIdentity || `agent:${options.taskId}-reviewer`;
+    seedTaskQueue(options.repoRoot, options.taskId);
+    seedInitAnswers(options.repoRoot, provider);
+    initializeGitRepo(options.repoRoot);
+    fs.writeFileSync(path.join(options.repoRoot, 'src', 'app.ts'), 'const promptBoundValue = 2;\n', 'utf8');
+    const snapshot = getWorkspaceSnapshot(options.repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const preflightPath = writePreflight(options.repoRoot, options.taskId, {
+        detection_source: 'explicit_changed_files',
+        scope_category: 'code',
+        changed_files: ['src/app.ts'],
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        },
+        required_reviews: {
+            code: true,
+            db: false,
+            security: false,
+            refactor: false,
+            api: false,
+            test: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        },
+        triggers: { runtime_changed: true, runtime_code_changed: true }
+    });
+    prepareCurrentReviewPhase(options.repoRoot, options.taskId, preflightPath, provider);
+
+    const reviewsRoot = getReviewsRoot(options.repoRoot);
+    const reviewContextPath = path.join(reviewsRoot, `${options.taskId}-code-review-context.json`);
+    buildReviewContext({
+        reviewType: 'code',
+        depth: 2,
+        preflightPath,
+        tokenEconomyConfigPath: path.join(options.repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json'),
+        scopedDiffMetadataPath: path.join(reviewsRoot, `${options.taskId}-code-scoped.json`),
+        outputPath: reviewContextPath,
+        repoRoot: options.repoRoot
+    });
+
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const ruleContext = reviewContext.rule_context as Record<string, unknown>;
+    const rawReviewerPromptPath = String(ruleContext.artifact_path || ruleContext.preferred_prompt_artifact || '');
+    const reviewerPromptPath = path.isAbsolute(rawReviewerPromptPath)
+        ? rawReviewerPromptPath
+        : path.resolve(options.repoRoot, rawReviewerPromptPath);
+    const routing = await runCliWithCapturedOutput([
+        'gate',
+        'record-review-routing',
+        '--task-id', options.taskId,
+        '--review-type', 'code',
+        '--repo-root', options.repoRoot,
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', reviewerIdentity
+    ], { cwd: options.repoRoot });
+    assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+
+    return {
+        preflightPath,
+        reviewsRoot,
+        reviewType: 'code',
+        reviewerIdentity,
+        reviewerPromptPath,
+        reviewContextPath,
+        launchArtifactPath: path.join(options.repoRoot, '.review-temp', options.taskId, 'code', 'reviewer-launch.json')
+    };
+}
+
+async function prepareReviewerLaunchForTest(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewerIdentity: string;
+    launchArtifactPath: string;
+}): Promise<void> {
+    const prepare = await runCliWithCapturedOutput([
+        'gate',
+        'prepare-reviewer-launch',
+        '--task-id', options.taskId,
+        '--review-type', 'code',
+        '--repo-root', options.repoRoot,
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', options.reviewerIdentity,
+        '--reviewer-launch-artifact-path', options.launchArtifactPath
+    ], { cwd: options.repoRoot });
+    assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+}
+
+function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void {
+    const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+    fs.writeFileSync(launchArtifactPath, JSON.stringify({
+        ...preparedArtifact,
+        evidence_type: 'delegated_reviewer_launch',
+        attestation_state: 'launched',
+        attestation_source: 'test_provider_controller',
+        launch_tool: 'test-subagent-spawn',
+        provider_invocation_id: 'test-invocation-265',
+        launched_at_utc: '2026-04-28T00:00:00.000Z',
+        fork_context: false
+    }, null, 2) + '\n', 'utf8');
 }
 
 function seedNodeBackendOptionalSkillFixture(repoRoot: string, policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory') {
@@ -2239,6 +2424,116 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('fails required reviews gate when receipt tree-state binding is missing or tampered', async () => {
+        for (const scenario of [
+            {
+                taskId: 'T-903-tree-state-receipt-missing',
+                mutateReceipt(receipt: Record<string, unknown>): void {
+                    delete receipt.review_tree_state_sha256;
+                },
+                expectedMessage: "Review receipt for 'code' is missing review_tree_state_sha256."
+            },
+            {
+                taskId: 'T-903-tree-state-receipt-mismatch',
+                mutateReceipt(receipt: Record<string, unknown>): void {
+                    receipt.review_tree_state_sha256 = '0'.repeat(64);
+                },
+                expectedMessage: "Review tree-state hash mismatch for 'code'."
+            }
+        ]) {
+            const repoRoot = createTempRepo();
+            try {
+                seedTaskQueue(repoRoot, scenario.taskId);
+                seedInitAnswers(repoRoot);
+                const preflightPath = writePreflight(repoRoot, scenario.taskId, {
+                    required_reviews: {
+                        code: true,
+                        db: false,
+                        security: false,
+                        refactor: false,
+                        api: false,
+                        test: false,
+                        performance: false,
+                        infra: false,
+                        dependency: false
+                    }
+                });
+                const commandsPath = path.join(repoRoot, 'commands-tree-state-receipt.md');
+                const outputFiltersPath = path.resolve('live/config/output-filters.json');
+                fs.writeFileSync(commandsPath, [
+                    '### Compile Gate (Mandatory)',
+                    '```bash',
+                    'node -e "console.log(\'build ok\')"',
+                    '```'
+                ].join('\n'), 'utf8');
+
+                runEnterTaskMode({
+                    repoRoot,
+                    taskId: scenario.taskId,
+                    taskSummary: 'Reject review receipt tree-state binding drift'
+                });
+                loadTaskEntryRulePack(repoRoot, scenario.taskId);
+                runHandshakeForTask(repoRoot, scenario.taskId);
+                runShellSmokeForTask(repoRoot, scenario.taskId);
+                loadPostPreflightRulePack(repoRoot, scenario.taskId, preflightPath);
+
+                await runCompileGateCommand({
+                    repoRoot,
+                    taskId: scenario.taskId,
+                    preflightPath,
+                    commandsPath,
+                    outputFiltersPath,
+                    emitMetrics: false
+                });
+
+                writeReceiptBackedReviewArtifact(
+                    repoRoot,
+                    scenario.taskId,
+                    'code',
+                    'REVIEW PASSED',
+                    [
+                        '# Review',
+                        '',
+                        'Validated `src/gates/required-reviews-check.ts` against the review tree-state receipt binding so this fixture proves the required-review gate rejects stale or tampered receipt metadata instead of trusting only the review-context artifact hash.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ]
+                );
+
+                const receiptPath = path.join(getReviewsRoot(repoRoot), `${scenario.taskId}-code-receipt.json`);
+                const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+                assert.equal(typeof receipt.review_tree_state_sha256, 'string');
+                scenario.mutateReceipt(receipt);
+                fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+
+                const result = runRequiredReviewsCheckCommand({
+                    repoRoot,
+                    taskId: scenario.taskId,
+                    preflightPath,
+                    codeReviewVerdict: 'REVIEW PASSED',
+                    outputFiltersPath,
+                    emitMetrics: false
+                });
+
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+                assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+                assert.ok(
+                    result.outputLines.some((line) => line.includes(scenario.expectedMessage)),
+                    result.outputLines.join('\n')
+                );
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        }
+    });
+
     it('applies budget tiers to review gate telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-budget';
@@ -2712,6 +3007,59 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('prepare-reviewer-launch rejects schema-less review contexts without tree_state binding', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-schema-less-tree-state-bypass';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const preflightSha256 = createHash('sha256').update(fs.readFileSync(preflightPath)).digest('hex');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            task_id: taskId,
+            review_type: 'code',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: preflightSha256,
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Codex')
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewerIdentity = 'agent:test-schema-less-tree-state-reviewer';
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json')
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('prepare-reviewer-launch requires review context tree_state binding')),
+            prepare.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('prepare-reviewer-launch writes current prepared launch metadata without attesting invocation', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-prepare-launch';
@@ -2755,6 +3103,8 @@ describe('cli/commands/gates', () => {
         assert.equal(launchArtifact.review_type, 'code');
         assert.equal(launchArtifact.reviewer_identity, fixture.reviewerIdentity);
         assert.equal(launchArtifact.review_context_sha256, fixture.reviewContextSha256);
+        assert.equal(launchArtifact.review_tree_state_sha256, fixture.reviewTreeStateSha256);
+        assert.equal(launchArtifact.review_tree_state.tree_state_sha256, fixture.reviewTreeStateSha256);
         assert.equal(launchArtifact.routing_event_sha256, fixture.routingEventSha256);
         assert.equal(launchArtifact.reviewer_prompt_path, fixture.reviewerPromptPath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.attestation_source, 'garda_prepare_reviewer_launch');
@@ -2777,6 +3127,7 @@ describe('cli/commands/gates', () => {
             'review_context_sha256',
             'routing_event_sha256',
             'reviewer_prompt_sha256',
+            'review_tree_state_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
             'prepared_launch_event_task_sequence'
@@ -2790,6 +3141,7 @@ describe('cli/commands/gates', () => {
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
         assert.ok(capturedLogs.some((line) => line.includes('REVIEWER_LAUNCH_PREPARED: code')));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewTreeStateSha256: ${fixture.reviewTreeStateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`RoutingEventSha256: ${fixture.routingEventSha256}`)));
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
@@ -2800,6 +3152,982 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects stale staged review contexts after MM drift', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-staged-launch-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        initializeGitRepo(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_staged_only',
+            scope_category: 'code',
+            changed_files: ['src/app.ts'],
+            metrics: {
+                changed_lines_total: stagedSnapshot.changed_lines_total,
+                changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                scope_sha256: stagedSnapshot.scope_sha256
+            },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            triggers: { runtime_changed: true, runtime_code_changed: true }
+        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const tokenConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        buildReviewContext({
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            tokenEconomyConfigPath: tokenConfigPath,
+            scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-code-scoped.json`),
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+
+        const reviewerIdentity = 'agent:test-staged-drift-reviewer';
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 3;\n', 'utf8');
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json')
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('prepare-reviewer-launch cannot continue because the current reviewer-visible tree state is stale')),
+            prepare.errors.join('\n')
+        );
+        assert.ok(
+            prepare.errors.some((line) => line.includes('Staged review scope is stale: src/app.ts has unstaged working-tree changes')),
+            prepare.errors.join('\n')
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects review contexts after full workspace scope drift', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-launch-scope-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 2;\n', 'utf8');
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        assert.deepEqual(snapshot.changed_files, ['src/app.ts']);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_auto',
+            scope_category: 'code',
+            changed_files: snapshot.changed_files,
+            metrics: {
+                changed_lines_total: snapshot.changed_lines_total,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            triggers: { runtime_changed: true, runtime_code_changed: true }
+        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const tokenConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        buildReviewContext({
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            tokenEconomyConfigPath: tokenConfigPath,
+            scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-code-scoped.json`),
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+
+        const reviewerIdentity = 'agent:test-scope-drift-reviewer';
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'new-file.ts'), 'export const next = true;\n', 'utf8');
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json')
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('prepare-reviewer-launch cannot continue because review context scope is stale')),
+            prepare.errors.join('\n')
+        );
+        assert.ok(
+            prepare.errors.some((line) => line.includes('Missing from review context: [src/new-file.ts]')),
+            prepare.errors.join('\n')
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects stale reviewer prompt artifacts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-stale-prompt-prepare';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+
+        fs.writeFileSync(fixture.reviewerPromptPath, 'stale reviewer prompt payload\n', 'utf8');
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('prepare-reviewer-launch cannot continue because reviewer prompt artifact is stale')),
+            prepare.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects prompt artifacts without a context hash binding', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-missing-prompt-binding';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const ruleContext = reviewContext.rule_context as Record<string, unknown>;
+        delete ruleContext.artifact_sha256;
+        fs.writeFileSync(fixture.reviewContextPath, JSON.stringify(reviewContext, null, 2) + '\n', 'utf8');
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('prepare-reviewer-launch requires review context rule_context.artifact_sha256')),
+            prepare.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects prompt artifacts outside the repo root', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-prompt-outside-repo';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        const externalPromptPath = path.join(path.dirname(repoRoot), `${taskId}-outside-prompt.md`);
+        const externalPromptContent = 'external reviewer prompt payload\n';
+        fs.writeFileSync(externalPromptPath, externalPromptContent, 'utf8');
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const ruleContext = reviewContext.rule_context as Record<string, unknown>;
+        ruleContext.artifact_path = externalPromptPath.replace(/\\/g, '/');
+        ruleContext.preferred_prompt_artifact = externalPromptPath.replace(/\\/g, '/');
+        ruleContext.artifact_sha256 = createHash('sha256').update(externalPromptContent, 'utf8').digest('hex');
+        fs.writeFileSync(fixture.reviewContextPath, JSON.stringify(reviewContext, null, 2) + '\n', 'utf8');
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('Path must stay inside repo root')),
+            prepare.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+        fs.rmSync(externalPromptPath, { force: true });
+    });
+
+    it('prepare-reviewer-launch rejects review contexts without an explicit prompt artifact path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-missing-prompt-path';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const ruleContext = reviewContext.rule_context as Record<string, unknown>;
+        delete ruleContext.artifact_path;
+        delete ruleContext.preferred_prompt_artifact;
+        fs.writeFileSync(fixture.reviewContextPath, JSON.stringify(reviewContext, null, 2) + '\n', 'utf8');
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('requires review context rule_context.preferred_prompt_artifact or rule_context.artifact_path')),
+            prepare.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch rejects stale reviewer prompt artifacts after preparation', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-stale-prompt-complete';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+
+        fs.writeFileSync(fixture.reviewerPromptPath, 'stale reviewer prompt payload before completion\n', 'utf8');
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-265-complete',
+            '--launched-at-utc', '2026-04-28T00:00:00.000Z',
+            '--attestation-source', 'test_provider_controller',
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(complete.exitCode, 0);
+        assert.ok(
+            complete.errors.some((line) => line.includes('complete-reviewer-launch cannot continue because reviewer prompt artifact is stale')),
+            complete.errors.join('\n')
+        );
+        const launchArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(launchArtifact.attestation_state, 'prepared');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects stale reviewer prompt artifacts after preparation', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-stale-prompt-invocation';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        completeReviewerLaunchArtifactForTest(fixture.launchArtifactPath);
+
+        fs.writeFileSync(fixture.reviewerPromptPath, 'stale reviewer prompt payload before invocation\n', 'utf8');
+        const invocation = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(invocation.exitCode, 0);
+        assert.ok(
+            invocation.errors.some((line) => line.includes('record-review-invocation cannot continue because reviewer prompt artifact is stale')),
+            invocation.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects review contexts without tree_state binding after preparation', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-invocation-no-tree-state';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        completeReviewerLaunchArtifactForTest(fixture.launchArtifactPath);
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
+        delete reviewContext.tree_state;
+        delete reviewContext.schema_version;
+        fs.writeFileSync(fixture.reviewContextPath, JSON.stringify(reviewContext, null, 2) + '\n', 'utf8');
+
+        const invocation = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(invocation.exitCode, 0);
+        assert.ok(
+            invocation.errors.some((line) => line.includes('record-review-invocation requires review context tree_state binding')),
+            invocation.errors.join('\n')
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects stale staged review contexts after reviewer-visible tree drift', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-staged-result-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        initializeGitRepo(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_staged_only',
+            scope_category: 'code',
+            changed_files: ['src/app.ts'],
+            metrics: {
+                changed_lines_total: stagedSnapshot.changed_lines_total,
+                changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                scope_sha256: stagedSnapshot.scope_sha256
+            },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            triggers: { runtime_changed: true, runtime_code_changed: true }
+        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const tokenConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        buildReviewContext({
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            tokenEconomyConfigPath: tokenConfigPath,
+            scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-code-scoped.json`),
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+
+        const reviewerIdentity = 'agent:test-staged-result-drift-reviewer';
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity
+        });
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 3;\n', 'utf8');
+        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated the staged review snapshot and current reviewer launch telemetry for `src/app.ts` after the delegated reviewer finished.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(
+            result.errors.some((line) => line.includes('record-review-result cannot continue because the current reviewer-visible tree state is stale')),
+            result.errors.join('\n')
+        );
+        assert.ok(
+            result.errors.some((line) => line.includes('Staged review scope is stale: src/app.ts has unstaged working-tree changes')),
+            result.errors.join('\n')
+        );
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code.md`)), false);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects review output paths that escape through symlinked directories', async (t) => {
+        const repoRoot = createTempRepo();
+        const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-output-outside-'));
+        const taskId = 'T-265-review-output-link';
+        try {
+            const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: fixture.reviewContextPath,
+                reviewerIdentity: fixture.reviewerIdentity
+            });
+            const linkedDirPath = path.join(repoRoot, 'linked-review-output');
+            try {
+                fs.symlinkSync(outsideRoot, linkedDirPath, process.platform === 'win32' ? 'junction' : 'dir');
+            } catch (error) {
+                t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+            fs.writeFileSync(path.join(outsideRoot, 'review-output.md'), [
+                '# Review',
+                '',
+                'External reviewer output must not be materialized through a repo-looking symlink path.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', fixture.preflightPath,
+                '--review-output-path', path.join(linkedDirPath, 'review-output.md'),
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ], { cwd: repoRoot });
+
+            assert.notEqual(result.exitCode, 0);
+            assert.ok(
+                result.errors.some((line) => line.includes('ReviewOutputPath must resolve inside repo root without symlink or junction escape')),
+                result.errors.join('\n')
+            );
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('record-review-result rejects repo-local aliases into another task review-temp output', async (t) => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-review-output-alias';
+        try {
+            const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: fixture.reviewContextPath,
+                reviewerIdentity: fixture.reviewerIdentity
+            });
+            const foreignOutputDir = path.join(repoRoot, '.review-temp', 'T-265-foreign-output', 'code');
+            fs.mkdirSync(foreignOutputDir, { recursive: true });
+            fs.writeFileSync(path.join(foreignOutputDir, 'review-output.md'), [
+                '# Review',
+                '',
+                'Foreign task reviewer output must not be materialized through a repo-local alias.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+            const aliasDirPath = path.join(repoRoot, 'review-output-alias');
+            try {
+                fs.symlinkSync(foreignOutputDir, aliasDirPath, process.platform === 'win32' ? 'junction' : 'dir');
+            } catch (error) {
+                t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+
+            const result = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', fixture.preflightPath,
+                '--review-output-path', path.join(aliasDirPath, 'review-output.md'),
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ], { cwd: repoRoot });
+
+            assert.notEqual(result.exitCode, 0);
+            assert.ok(
+                result.errors.some((line) => line.includes('ReviewOutputPath must not traverse symlinks or junctions')),
+                result.errors.join('\n')
+            );
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('required-reviews-check rejects preflight paths that escape through symlinked directories', (t) => {
+        const repoRoot = createTempRepo();
+        const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-preflight-outside-'));
+        const taskId = 'T-265-required-preflight-link';
+        try {
+            const linkedDirPath = path.join(repoRoot, 'linked-preflight');
+            try {
+                fs.symlinkSync(outsideRoot, linkedDirPath, process.platform === 'win32' ? 'junction' : 'dir');
+            } catch (error) {
+                t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+            const preflightPath = path.join(linkedDirPath, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: taskId,
+                mode: 'FULL_PATH',
+                metrics: { changed_lines_total: 1 },
+                required_reviews: {
+                    code: true,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                },
+                changed_files: ['src/app.ts']
+            }, null, 2), 'utf8');
+
+            const result = runRequiredReviewsCheckCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                emitMetrics: false
+            });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+            assert.equal(result.outputLines[0], 'REVIEW_GATE_FAILED');
+            assert.ok(
+                result.outputLines.some((line) => line.includes('PreflightPath must resolve inside repo root without symlink or junction escape')),
+                result.outputLines.join('\n')
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+            fs.rmSync(outsideRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('record-review-result rejects stale reviewer prompt artifacts before materializing review output', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-stale-prompt-result';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated the reviewer prompt binding path, the invocation telemetry dependency, and the review context rule_context artifact hash before writing the final review artifact for src/app.ts. This content is intentionally specific enough to pass the review materialization guard so the test reaches the prompt freshness check.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        fs.writeFileSync(fixture.reviewerPromptPath, 'stale reviewer prompt payload before result recording\n', 'utf8');
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(
+            result.errors.some((line) => line.includes('record-review-result cannot continue because reviewer prompt artifact is stale')),
+            result.errors.join('\n')
+        );
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-receipt rejects stale reviewer prompt artifacts before writing receipts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-stale-prompt-receipt';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+
+        const artifactPath = path.join(fixture.reviewsRoot, `${taskId}-code.md`);
+        fs.writeFileSync(artifactPath, [
+            '# Code Review',
+            '',
+            'Validated the reviewer prompt binding path and current invocation telemetry before writing the receipt artifact.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        fs.writeFileSync(fixture.reviewerPromptPath, 'stale reviewer prompt payload before receipt recording\n', 'utf8');
+        const receipt = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-receipt',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(receipt.exitCode, 0);
+        assert.ok(
+            receipt.errors.some((line) => line.includes('record-review-receipt cannot continue because reviewer prompt artifact is stale')),
+            receipt.errors.join('\n')
+        );
+        assert.equal(fs.existsSync(artifactPath.replace(/\.md$/, '-receipt.json')), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects stale reviewer prompt artifacts after receipt recording', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-stale-prompt-required-check';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated reviewer prompt binding, receipt provenance, and required review gate enforcement for `src/app.ts` before intentionally mutating the prompt artifact after receipt recording.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const recordResult = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(recordResult.exitCode, 0, recordResult.errors.join('\n'));
+
+        fs.writeFileSync(fixture.reviewerPromptPath, 'stale reviewer prompt payload after receipt recording\n', 'utf8');
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath: fixture.preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath: path.resolve('live/config/output-filters.json'),
+            emitMetrics: false
+        });
+
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(
+            reviewResult.outputLines.some((line) => line.includes('required-reviews-check cannot continue because reviewer prompt artifact is stale')),
+            reviewResult.outputLines.join('\n')
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('required-reviews-check rejects passed staged receipts after same-path MM drift', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-staged-required-review-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        initializeGitRepo(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_staged_only',
+            scope_category: 'code',
+            changed_files: ['src/app.ts'],
+            metrics: {
+                changed_lines_total: stagedSnapshot.changed_lines_total,
+                changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                scope_sha256: stagedSnapshot.scope_sha256
+            },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            triggers: { runtime_changed: true, runtime_code_changed: true }
+        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const tokenConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        buildReviewContext({
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            tokenEconomyConfigPath: tokenConfigPath,
+            scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-code-scoped.json`),
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+
+        const reviewerIdentity = 'agent:test-staged-required-review-drift-reviewer';
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity
+        });
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated the staged review snapshot and current required-review receipt binding for `src/app.ts` before any later workspace drift occurs.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const recordResult = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(recordResult.exitCode, 0, recordResult.errors.join('\n'));
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 3;\n', 'utf8');
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath: path.resolve('live/config/output-filters.json'),
+            emitMetrics: false
+        });
+
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(
+            reviewResult.outputLines.some((line) => line.includes('required-reviews-check cannot continue because the current reviewer-visible tree state is stale')),
+            reviewResult.outputLines.join('\n')
+        );
+        assert.ok(
+            reviewResult.outputLines.some((line) => line.includes('Staged review scope is stale: src/app.ts has unstaged working-tree changes')),
+            reviewResult.outputLines.join('\n')
+        );
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_GATE_PASSED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -3288,6 +4616,49 @@ describe('cli/commands/gates', () => {
         assert.equal(observedInvokeExitCode, 0, `record-review-invocation should accept the completed artifact, got exit code ${observedInvokeExitCode}`);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch rejects tampered prepared launch bindings and leaves artifact unchanged', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-265-complete-launch-binding-tamper';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        const preparedArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        fs.writeFileSync(fixture.launchArtifactPath, JSON.stringify({
+            ...preparedArtifact,
+            launch_binding_sha256: '0'.repeat(64)
+        }, null, 2) + '\n', 'utf8');
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-265-binding',
+            '--launched-at-utc', '2026-04-28T00:00:00.000Z',
+            '--attestation-source', 'test_provider_controller',
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(complete.exitCode, 0);
+        assert.ok(
+            complete.errors.some((line) => line.includes('launch_binding_sha256 must match the current prepared launch binding')),
+            complete.errors.join('\n')
+        );
+        const artifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(artifact.attestation_state, 'prepared');
+        assert.equal(artifact.provider_invocation_id, undefined);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -4336,12 +5707,25 @@ describe('cli/commands/gates', () => {
         const crypto = require('node:crypto');
         const preflightText = fs.readFileSync(preflightPath, 'utf8');
         const preflightSha256 = crypto.createHash('sha256').update(preflightText).digest('hex');
+        const reviewSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+        const reviewTreeState = buildReviewTreeState({
+            repoRoot,
+            detectionSource: 'explicit_changed_files',
+            includeUntracked: true,
+            changedFiles: ['src/app.ts'],
+            metrics: {
+                changed_files_sha256: reviewSnapshot.changed_files_sha256,
+                scope_content_sha256: reviewSnapshot.scope_content_sha256,
+                scope_sha256: reviewSnapshot.scope_sha256
+            }
+        });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             schema_version: 2,
             task_id: taskId,
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            tree_state: reviewTreeState,
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             preflight_path: preflightPath.replace(/\\/g, '/'),
             preflight_sha256: preflightSha256,
@@ -5914,7 +7298,7 @@ describe('cli/commands/gates', () => {
         const artifactText = [
             '# Review',
             '',
-            'Validated the manual artifact bypass path for required reviews with enough concrete detail to prove this fixture represents a realistic delegated review result, while intentionally omitting the separate reviewer invocation attestation event from the task timeline.',
+            'Validated the manual artifact bypass path for required reviews with concrete implementation detail across `src/gates/required-reviews-check.ts`, delegated routing telemetry, receipt provenance, and the review-context tree-state binding. This fixture intentionally omits only the separate reviewer invocation attestation event from the task timeline so the required-review gate must fail for missing launch telemetry after all artifact and receipt bindings remain otherwise valid.',
             '',
             '## Findings by Severity',
             'none',
@@ -5930,7 +7314,7 @@ describe('cli/commands/gates', () => {
 
         const preflightText = fs.readFileSync(preflightPath, 'utf8');
         const preflightSha256 = createHash('sha256').update(preflightText).digest('hex');
-        const reviewContext = {
+        const reviewContext: Record<string, unknown> = {
             schema_version: 2,
             task_id: taskId,
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
@@ -5983,6 +7367,7 @@ describe('cli/commands/gates', () => {
             review_scope_sha256: null,
             code_scope_sha256: null,
             review_context_sha256: reviewContextSha256,
+            review_tree_state_sha256: String((reviewContext.tree_state as Record<string, unknown> | undefined)?.tree_state_sha256 || '').trim() || null,
             review_context_reuse_sha256: null,
             review_artifact_sha256: createHash('sha256').update(artifactText).digest('hex'),
             reviewer_execution_mode: 'delegated_subagent',
@@ -7601,6 +8986,7 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         const artifactPath = path.join(reviewsRoot, `${taskId}-test.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        prepareReviewDiffFixture(repoRoot, preflightPath);
         fs.writeFileSync(artifactPath, [
             '# Test Review',
             '',
@@ -9685,6 +11071,7 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        prepareReviewDiffFixture(repoRoot, preflightPath);
         fs.writeFileSync(artifactPath, [
             '# Code Review',
             '',

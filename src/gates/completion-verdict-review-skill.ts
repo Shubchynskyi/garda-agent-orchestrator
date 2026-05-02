@@ -437,6 +437,7 @@ export function validateReviewSkillEvidence(
                     const receiptReviewerIdentity = normalizeTimelineDetailString(receipt.reviewer_identity);
                     const receiptFallbackReason = normalizeTimelineDetailString(receipt.reviewer_fallback_reason);
                     const receiptTrustLevel = normalizeTimelineDetailString(receipt.trust_level)?.toUpperCase() ?? null;
+                    const reusedFromReviewTreeStateSha256 = normalizeTimelineDetailString(receipt.reused_from_review_tree_state_sha256);
                     const receiptReviewerProvenance = receipt.reviewer_provenance == null
                         ? null
                         : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
@@ -472,6 +473,8 @@ export function validateReviewSkillEvidence(
                                 && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === receiptExecutionMode
                                 && detailsReviewerIdentity === receiptReviewerIdentity
                                 && normalizeTimelineDetailString(details?.review_context_sha256 ?? details?.reviewContextSha256) === receiptReviewerProvenance.review_context_sha256
+                                && (!reusedExistingReview || !reusedFromReviewTreeStateSha256
+                                    || normalizeTimelineDetailString(details?.review_tree_state_sha256 ?? details?.reviewTreeStateSha256) === reusedFromReviewTreeStateSha256)
                                 && normalizeTimelineDetailString(details?.routing_event_sha256 ?? details?.routingEventSha256) === receiptReviewerProvenance.routing_event_sha256
                                 && entry.integrity?.task_sequence === receiptReviewerProvenance.task_sequence
                                 && normalizeTimelineDetailString(entry.integrity?.event_sha256) === receiptReviewerProvenance.event_sha256
@@ -523,6 +526,7 @@ export function validateReviewSkillEvidence(
                             receiptPath: expectedReceiptPath,
                             reviewContextSha256: receipt.review_context_sha256,
                             reviewContextReuseSha256: receipt.review_context_reuse_sha256,
+                            reviewTreeStateSha256: receipt.review_tree_state_sha256,
                             reviewScopeSha256: receipt.review_scope_sha256,
                             codeScopeSha256: receipt.code_scope_sha256,
                             reviewArtifactSha256: receipt.review_artifact_sha256,
@@ -530,12 +534,17 @@ export function validateReviewSkillEvidence(
                             reusedFromReceiptSha256: receipt.reused_from_receipt_sha256 || null,
                             reusedFromReviewContextSha256: receipt.reused_from_review_context_sha256 || null,
                             reusedFromReviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256 || null,
+                            reusedFromReviewTreeStateSha256: reusedFromReviewTreeStateSha256 || null,
                             reusedFromReviewScopeSha256: receipt.reused_from_review_scope_sha256 || null,
                             reusedFromCodeScopeSha256: receipt.reused_from_code_scope_sha256 || null
                         });
                         if (!recordEvent || recordEvent.details?.reused_existing_review !== true) {
                             result.violations.push(
                                 `Required review '${key}' reused receipt is missing REVIEW_RECORDED reuse telemetry.`
+                            );
+                        } else if (!reusedFromReviewTreeStateSha256) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt is missing reused_from_review_tree_state_sha256.`
                             );
                         } else if (!reuseTelemetryMatch.hasIntegrity) {
                             result.violations.push(
@@ -576,6 +585,7 @@ export function validateReviewSkillEvidence(
                             receiptPath: receipt.reused_from_receipt_path || expectedReceiptPath,
                             reviewContextSha256: receipt.reused_from_review_context_sha256 || receiptReviewerProvenance.review_context_sha256,
                             reviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256,
+                            reviewTreeStateSha256: reusedFromReviewTreeStateSha256 || null,
                             reviewScopeSha256: receipt.reused_from_review_scope_sha256,
                             codeScopeSha256: receipt.reused_from_code_scope_sha256,
                             reviewArtifactSha256: receipt.review_artifact_sha256,

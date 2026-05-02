@@ -264,6 +264,31 @@ describe('gates/workspace-snapshot-cache', () => {
             assert.equal(fs.existsSync(cachePath), false);
         });
 
+        it('does not read or write cache files through symlinked cache directories outside repo', (t) => {
+            const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-snap-cache-outside-'));
+            try {
+                const cachePath = resolveSnapshotCachePath(repoRoot);
+                fs.rmSync(path.dirname(cachePath), { recursive: true, force: true });
+                fs.mkdirSync(path.dirname(path.dirname(cachePath)), { recursive: true });
+                try {
+                    fs.symlinkSync(outsideRoot, path.dirname(cachePath), process.platform === 'win32' ? 'junction' : 'dir');
+                } catch (error) {
+                    t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                    return;
+                }
+                fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+
+                const first = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);
+                const second = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);
+
+                assert.equal(first.cache_hit, false);
+                assert.equal(second.cache_hit, false);
+                assert.equal(fs.existsSync(path.join(outsideRoot, 'workspace-snapshot.json')), false);
+            } finally {
+                fs.rmSync(outsideRoot, { recursive: true, force: true });
+            }
+        });
+
         it('includes untracked files when requested', () => {
             fs.writeFileSync(path.join(repoRoot, 'untracked.ts'), 'export const u = 1;\n', 'utf8');
             const result = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
@@ -318,6 +343,23 @@ describe('gates/workspace-snapshot-cache', () => {
             const second = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
             assert.equal(second.cache_hit, false);
             assert.equal(second.changed_lines_total, first.changed_lines_total);
+            assert.equal(second.changed_files_sha256, first.changed_files_sha256);
+            assert.notEqual(second.scope_content_sha256, first.scope_content_sha256);
+            assert.notEqual(second.scope_sha256, first.scope_sha256);
+        });
+
+        it('invalidates explicit_changed_files cache when same-size content changes with restored mtime', () => {
+            const filePath = path.join(repoRoot, 'file.ts');
+            fs.writeFileSync(filePath, 'export const a = 2;\n', 'utf8');
+            const first = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
+            assert.equal(first.cache_hit, false);
+            const stat = fs.statSync(filePath);
+
+            fs.writeFileSync(filePath, 'export const b = 2;\n', 'utf8');
+            fs.utimesSync(filePath, stat.atime, stat.mtime);
+
+            const second = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', false, ['file.ts']);
+            assert.equal(second.cache_hit, false);
             assert.equal(second.changed_files_sha256, first.changed_files_sha256);
             assert.notEqual(second.scope_content_sha256, first.scope_content_sha256);
             assert.notEqual(second.scope_sha256, first.scope_sha256);
@@ -408,6 +450,44 @@ describe('gates/workspace-snapshot-cache', () => {
 
             const cached = getWorkspaceSnapshotCached(repoRoot, 'git_staged_only', false, []);
             assert.equal(cached.cache_hit, true);
+        });
+
+        it('invalidates staged-only cache for staged deletions when the path is recreated untracked', () => {
+            const clean = getWorkspaceSnapshotCached(repoRoot, 'git_staged_only', false, []);
+            assert.equal(clean.changed_files_count, 0);
+
+            execFileSync('git', ['-C', repoRoot, 'rm', 'file.ts'], { stdio: 'ignore' });
+            const deleted = getWorkspaceSnapshotCached(repoRoot, 'git_staged_only', false, []);
+            assert.equal(deleted.cache_hit, false);
+            assert.deepEqual(deleted.changed_files, ['file.ts']);
+            assert.equal(deleted.additions_total, 0);
+            assert.equal(deleted.deletions_total, 1);
+
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+
+            const result = getWorkspaceSnapshotCached(repoRoot, 'git_staged_only', false, []);
+            assert.equal(result.cache_hit, false);
+            assert.deepEqual(result.changed_files, ['file.ts']);
+            assert.equal(result.additions_total, 0);
+            assert.equal(result.deletions_total, 1);
+
+            const cached = getWorkspaceSnapshotCached(repoRoot, 'git_staged_only', false, []);
+            assert.equal(cached.cache_hit, true);
+            assert.deepEqual(cached.changed_files, ['file.ts']);
+        });
+
+        it('fails closed when staged-plus-untracked cache status fingerprint git probes fail', () => {
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+            execFileSync('git', ['-C', repoRoot, 'add', 'file.ts'], { stdio: 'ignore' });
+            const first = getWorkspaceSnapshotCached(repoRoot, 'git_staged_plus_untracked', true, []);
+            assert.equal(first.cache_hit, false);
+
+            fs.writeFileSync(path.join(repoRoot, 'untracked.ts'), 'export const u = 1;\n', 'utf8');
+            fs.renameSync(path.join(repoRoot, '.git'), path.join(repoRoot, '.git-offline'));
+            assert.throws(
+                () => getWorkspaceSnapshotCached(repoRoot, 'git_staged_plus_untracked', true, []),
+                /Unable to compute workspace snapshot cache fingerprint: git -C .* status --porcelain=v1 --untracked-files=all/
+            );
         });
 
         it('keeps staged-only cache hit when only unstaged tracked changes appear later', () => {

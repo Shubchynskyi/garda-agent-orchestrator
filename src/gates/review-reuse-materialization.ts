@@ -31,15 +31,18 @@ export interface MaterializeReusedReviewEvidenceOptions {
     reviewScopeFingerprint: ReturnType<typeof computeReviewRelevantScopeFingerprint>;
     currentPreflightHash: string | null;
     currentReviewContextSha256: string | null;
+    currentReviewTreeStateSha256: string | null;
     currentContextReuseSha256: string | null;
     candidate: HistoricalReviewReuseCandidate;
-    sourceReceiptSha256: string | null;
+    reusedFromReceiptPath: string | null;
+    reusedFromReceiptSha256: string | null;
     receipt: ReviewReceipt;
     reviewerExecutionMode: string;
     reviewerIdentity: string;
     historicalReviewerProvenance: NonNullable<ReturnType<typeof normalizeReviewReceiptReviewerProvenance>>;
     expectedContextSha256: string | null;
     expectedContextReuseSha256: string | null;
+    expectedReviewTreeStateSha256: string | null;
     expectedReviewScopeSha256: string | null;
     expectedCodeScopeSha256: string | null;
     historicalReviewArtifactSha256: string;
@@ -123,6 +126,7 @@ function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOption
             ? String(options.codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null
             : null,
         reviewContextSha256: options.currentReviewContextSha256,
+        reviewTreeStateSha256: options.currentReviewTreeStateSha256,
         reviewContextReuseSha256: options.currentContextReuseSha256,
         reviewArtifactSha256: options.historicalReviewArtifactSha256,
         reviewerExecutionMode: options.reviewerExecutionMode,
@@ -131,10 +135,11 @@ function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOption
         reviewerProvenance: options.historicalReviewerProvenance,
         trustLevel: 'INDEPENDENT_AUDITED',
         reusedExistingReview: true,
-        reusedFromReceiptPath: gateHelpers.normalizePath(options.candidate.telemetryReceiptPath),
-        reusedFromReceiptSha256: options.sourceReceiptSha256,
+        reusedFromReceiptPath: options.reusedFromReceiptPath,
+        reusedFromReceiptSha256: options.reusedFromReceiptSha256,
         reusedFromReviewContextSha256: options.expectedContextSha256,
         reusedFromReviewContextReuseSha256: options.expectedContextReuseSha256,
+        reusedFromReviewTreeStateSha256: options.expectedReviewTreeStateSha256,
         reusedFromReviewScopeSha256: options.expectedReviewScopeSha256,
         reusedFromCodeScopeSha256: options.expectedCodeScopeSha256
     });
@@ -151,10 +156,11 @@ function buildReuseRecordedEventDetails(input: {
         ...input.refreshedReceipt,
         reused_existing_review: true,
         reuse_event_type: 'REVIEW_EVIDENCE_REUSED',
-        reused_from_receipt_path: gateHelpers.normalizePath(input.options.candidate.telemetryReceiptPath),
-        reused_from_receipt_sha256: input.options.sourceReceiptSha256,
+        reused_from_receipt_path: input.options.reusedFromReceiptPath,
+        reused_from_receipt_sha256: input.options.reusedFromReceiptSha256,
         reused_from_review_context_sha256: input.options.expectedContextSha256,
         reused_from_review_context_reuse_sha256: input.options.expectedContextReuseSha256,
+        reused_from_review_tree_state_sha256: input.options.expectedReviewTreeStateSha256,
         reused_from_review_scope_sha256: input.options.expectedReviewScopeSha256,
         reused_from_code_scope_sha256: input.options.expectedCodeScopeSha256,
         receipt_path: gateHelpers.normalizePath(input.options.receiptPath),

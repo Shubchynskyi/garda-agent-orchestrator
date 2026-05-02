@@ -428,6 +428,14 @@ function buildReceiptBackedReviewContextFixture(
     };
 }
 
+function resolveFixtureReviewTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
+    const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    const treeStateSha256 = String(treeState?.tree_state_sha256 || '').trim().toLowerCase();
+    return treeStateSha256 || null;
+}
+
 export function appendPreflightClassifiedEvent(repoRoot: string, taskId: string, preflightPath: string): void {
     const normalizedPreflightPath = preflightPath.replace(/\\/g, '/');
     const existingEvents = readTaskTimelineEvents(repoRoot, taskId);
@@ -651,6 +659,7 @@ export function writeReceiptBackedReviewArtifact(
         scopeSha256,
         codeScopeSha256,
         reviewContextSha256: reviewContextHash,
+        reviewTreeStateSha256: resolveFixtureReviewTreeStateSha256(reviewContext),
         reviewContextReuseSha256,
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: reviewerEvidence.executionMode,
@@ -785,6 +794,7 @@ export function seedReusableReviewEvidence(
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
         reviewContextSha256: reviewContextHash,
+        reviewTreeStateSha256: resolveFixtureReviewTreeStateSha256(JSON.parse(reviewContextText) as Record<string, unknown>),
         reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: executionMode,

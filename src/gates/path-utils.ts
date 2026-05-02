@@ -7,6 +7,7 @@ import {
 
 export interface ResolvePathOptions {
     allowMissing?: boolean;
+    enforceInside?: boolean;
 }
 
 /**
@@ -89,11 +90,60 @@ export function orchestratorRelativePath(repoRoot: string, relativePath: string)
     return toPosix(joinOrchestratorPath(repoRoot, relativePath));
 }
 
+export function isPathInsideRoot(pathValue: string, rootPath: string): boolean {
+    const resolvedRoot = path.resolve(rootPath);
+    const resolvedPath = path.resolve(pathValue);
+    const relativePath = path.relative(resolvedRoot, resolvedPath);
+    return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+export function isPathRealpathInsideRoot(
+    pathValue: string,
+    rootPath: string,
+    options: { allowMissing?: boolean } = {}
+): boolean {
+    const resolvedRoot = path.resolve(rootPath);
+    const resolvedPath = path.resolve(pathValue);
+    if (!isPathInsideRoot(resolvedPath, resolvedRoot)) {
+        return false;
+    }
+    if (!fs.existsSync(resolvedRoot)) {
+        return options.allowMissing === true && !fs.existsSync(resolvedPath);
+    }
+    let rootRealPath: string;
+    try {
+        rootRealPath = fs.realpathSync(resolvedRoot);
+    } catch {
+        return false;
+    }
+    let probePath = resolvedPath;
+    while (!fs.existsSync(probePath)) {
+        if (options.allowMissing !== true) {
+            return false;
+        }
+        if (path.resolve(probePath) === resolvedRoot) {
+            return true;
+        }
+        const parentPath = path.dirname(probePath);
+        if (parentPath === probePath) {
+            return false;
+        }
+        probePath = parentPath;
+    }
+    try {
+        return isPathInsideRoot(fs.realpathSync(probePath), rootRealPath);
+    } catch {
+        return false;
+    }
+}
+
 /**
- * Resolve a path inside the repo root. If relative, resolve against repoRoot.
+ * Resolve a path relative to the repo root. If relative, resolve against repoRoot.
+ * Pass enforceInside for paths that cross a trust boundary and must remain in the repo.
  */
 export function resolvePathInsideRepo(pathValue: string, repoRoot: string, options: ResolvePathOptions = {}): string | null {
     const allowMissing = options.allowMissing || false;
+    const enforceInside = options.enforceInside || false;
     const text = String(pathValue).trim();
     if (!text) return null;
 
@@ -102,6 +152,10 @@ export function resolvePathInsideRepo(pathValue: string, repoRoot: string, optio
         resolved = path.resolve(text);
     } else {
         resolved = path.resolve(repoRoot, text);
+    }
+
+    if (enforceInside && !isPathInsideRoot(resolved, repoRoot)) {
+        throw new Error(`Path must stay inside repo root: ${resolved}`);
     }
 
     if (!allowMissing && !fs.existsSync(resolved)) {

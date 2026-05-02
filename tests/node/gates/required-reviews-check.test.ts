@@ -291,6 +291,74 @@ describe('gates/required-reviews-check', () => {
     });
 
     describe('validateReviewArtifactGateEligibility', () => {
+        it('rejects unsafe derived receipt paths before fallback reading receipt JSON', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-receipt-root-'));
+            const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-receipt-outside-'));
+            try {
+                const artifactPath = path.join(outsideRoot, 'T-265-code.md');
+                const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+                fs.writeFileSync(artifactPath, 'outside artifact\n', 'utf8');
+                fs.writeFileSync(receiptPath, '{not-valid-json', 'utf8');
+
+                const result = validateReviewArtifactGateEligibility({
+                    resolvedTaskId: 'T-265',
+                    reviewKey: 'code',
+                    required: true,
+                    skippedByOverride: false,
+                    repoRoot,
+                    canonicalSourceOfTruth: 'Codex',
+                    executionProvider: 'Codex',
+                    executionProviderSource: 'provider_entrypoint',
+                    reviewArtifact: {
+                        path: artifactPath,
+                        content: [
+                            '# Review',
+                            '',
+                            'Validated the required receipt path hardening with concrete implementation detail.',
+                            '',
+                            '## Findings by Severity',
+                            'none',
+                            '',
+                            '## Residual Risks',
+                            'none',
+                            '',
+                            '## Verdict',
+                            'REVIEW PASSED'
+                        ].join('\n'),
+                        reviewContextPath: path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-265-code-review-context.json'),
+                        reviewContext: {
+                            schema_version: 2,
+                            task_id: 'T-265',
+                            review_type: 'code',
+                            reviewer_routing: {
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                execution_provider_source: 'provider_entrypoint',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:T-265'
+                            }
+                        },
+                        reviewContextSha256: 'ctx',
+                        artifactSha256: 'artifact'
+                    }
+                });
+
+                assert.ok(
+                    result.violations.some((line) => line.includes("Review receipt path for 'code' must resolve inside repo root")),
+                    result.violations.join('\n')
+                );
+                assert.equal(
+                    result.violations.some((line) => line.includes("Review receipt for 'code' is invalid JSON")),
+                    false,
+                    result.violations.join('\n')
+                );
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+                fs.rmSync(outsideRoot, { recursive: true, force: true });
+            }
+        });
+
         it('loads preflight payload from path before validating required diff material', () => {
             const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-eligibility-preflight-'));
             const preflightPath = path.join(tempRoot, 'T-272-preflight.json');
@@ -873,6 +941,9 @@ describe('gates/required-reviews-check', () => {
                         review_type: 'code',
                         preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-105-preflight.json',
                         preflight_sha256: 'abc123',
+                        tree_state: {
+                            tree_state_sha256: 'a'.repeat(64)
+                        },
                         reviewer_routing: {
                             source_of_truth: 'Codex',
                             actual_execution_mode: 'delegated_subagent',
@@ -888,6 +959,7 @@ describe('gates/required-reviews-check', () => {
                         preflight_sha256: 'abc123',
                         scope_sha256: null,
                         review_context_sha256: 'ctx',
+                        review_tree_state_sha256: 'a'.repeat(64),
                         review_artifact_sha256: 'artifact',
                         reviewer_execution_mode: 'delegated_subagent',
                         reviewer_identity: 'agent:T-105',

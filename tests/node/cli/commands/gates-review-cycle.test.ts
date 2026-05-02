@@ -18,6 +18,7 @@ import {
 import { formatCompletionGateResult, runCompletionGate } from '../../../../src/gates/completion';
 import { serializeTaskPlan, validateTaskPlan } from '../../../../src/schemas/task-plan';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
+import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
@@ -461,6 +462,14 @@ function buildReviewContextTaskScopeFixture(preflight: Record<string, unknown>):
     };
 }
 
+function resolveReviewTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
+    const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    const treeStateSha256 = String(treeState?.tree_state_sha256 || treeState?.treeStateSha256 || '').trim().toLowerCase();
+    return treeStateSha256 || null;
+}
+
 function prepareReviewDiffFixture(repoRoot: string, preflightPath: string): void {
     const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const changedFiles = Array.isArray(preflight.changed_files)
@@ -535,6 +544,28 @@ function writeReceiptBackedReviewArtifact(
     const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
     const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth);
     const preflightFixture = readReviewPreflightFixture(repoRoot, taskId);
+    const crypto = require('node:crypto');
+    const promptArtifactPath = reviewContextPath.replace(/\.json$/, '.md');
+    const promptArtifactText = [
+        `# ${reviewKey} review fixture`,
+        '',
+        `Fixture prompt artifact for ${taskId}/${reviewKey}.`
+    ].join('\n');
+    fs.writeFileSync(promptArtifactPath, promptArtifactText, 'utf8');
+    const promptArtifactSha256 = crypto.createHash('sha256').update(promptArtifactText).digest('hex');
+    const changedFiles = Array.isArray(preflightFixture.preflight.changed_files)
+        ? preflightFixture.preflight.changed_files.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean)
+        : [];
+    const metrics = preflightFixture.preflight.metrics && typeof preflightFixture.preflight.metrics === 'object' && !Array.isArray(preflightFixture.preflight.metrics)
+        ? preflightFixture.preflight.metrics as Record<string, unknown>
+        : {};
+    const reviewTreeState = buildReviewTreeState({
+        repoRoot,
+        detectionSource: preflightFixture.preflight.detection_source || 'explicit_changed_files',
+        includeUntracked: preflightFixture.preflight.include_untracked !== false,
+        changedFiles,
+        metrics
+    });
     const reviewContext = {
         task_id: taskId,
         review_type: reviewKey,
@@ -546,17 +577,24 @@ function writeReceiptBackedReviewArtifact(
             metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`).replace(/\\/g, '/'),
             metadata: null
         },
+        tree_state: reviewTreeState,
+        rule_context: {
+            artifact_path: promptArtifactPath.replace(/\\/g, '/'),
+            preferred_prompt_artifact: promptArtifactPath.replace(/\\/g, '/'),
+            artifact_sha256: promptArtifactSha256,
+            token_economy_active: false
+        },
         reviewer_routing: createReviewerRoutingFixture(sourceOfTruth, {
             actual_execution_mode: execution.reviewerExecutionMode,
             reviewer_session_id: execution.reviewerIdentity,
             fallback_reason: execution.reviewerFallbackReason
         })
     };
-    const reviewContextText = JSON.stringify(reviewContext, null, 2);
+    const reviewContextText = `${JSON.stringify(reviewContext, null, 2)}\n`;
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
+    const reviewTreeStateSha256 = resolveReviewTreeStateSha256(reviewContext);
 
     // Authenticity hardening: write a verifiable receipt with attested routing provenance.
-    const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -582,6 +620,7 @@ function writeReceiptBackedReviewArtifact(
             reviewer_session_id: execution.reviewerIdentity,
             reviewer_identity: execution.reviewerIdentity,
             review_context_sha256: reviewContextHash,
+            review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routedEvent?.integrity?.event_sha256
         };
         const invocationEvent = appendTaskEvent(
@@ -601,18 +640,26 @@ function writeReceiptBackedReviewArtifact(
         appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
     }
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-    fs.writeFileSync(receiptPath, JSON.stringify({
-        schema_version: 2,
-        task_id: taskId,
-        review_type: reviewKey,
-        review_artifact_sha256: artifactHash,
-        review_context_sha256: reviewContextHash,
-        reviewer_execution_mode: execution.reviewerExecutionMode,
-        reviewer_identity: execution.reviewerIdentity,
-        reviewer_fallback_reason: execution.reviewerFallbackReason,
-        reviewer_provenance: reviewerProvenance,
-        trust_level: execution.trustLevel
-    }));
+    const scopeSha256 = String((preflightFixture.preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null;
+    const codeScopeSha256 = isNonTestReviewScope(reviewKey) && preflightFixture.preflightSha256
+        ? computeCodeReviewScopeFingerprint(preflightFixture.preflight, repoRoot).code_scope_sha256
+        : null;
+    fs.writeFileSync(receiptPath, JSON.stringify(buildReviewReceipt({
+        taskId,
+        reviewType: reviewKey,
+        preflightSha256: preflightFixture.preflightSha256,
+        scopeSha256,
+        codeScopeSha256,
+        reviewContextSha256: reviewContextHash,
+        reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
+        reviewTreeStateSha256,
+        reviewArtifactSha256: artifactHash,
+        reviewerExecutionMode: execution.reviewerExecutionMode,
+        reviewerIdentity: execution.reviewerIdentity,
+        reviewerFallbackReason: execution.reviewerFallbackReason,
+        reviewerProvenance,
+        trustLevel: execution.trustLevel
+    }), null, 2) + '\n', 'utf8');
 }
 
 function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
@@ -688,6 +735,8 @@ function seedReusableReviewEvidence(
         fs.writeFileSync(reviewContextPath, JSON.stringify(legacyReviewContext, null, 2) + '\n', 'utf8');
     }
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
+    const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
+    const reviewTreeStateSha256 = resolveReviewTreeStateSha256(reviewContext);
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const artifactHash = crypto.createHash('sha256').update(artifactText).digest('hex');
     const artifactSnapshotPath = artifactPath.replace(/\.md$/, `-artifact-${artifactHash}.md`);
@@ -717,6 +766,7 @@ function seedReusableReviewEvidence(
         reviewer_session_id: execution.reviewerIdentity,
         reviewer_identity: execution.reviewerIdentity,
         review_context_sha256: reviewContextHash,
+        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256
     };
     const invocationEvent = appendTaskEvent(
@@ -738,7 +788,8 @@ function seedReusableReviewEvidence(
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
         reviewContextSha256: reviewContextHash,
-        reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
+        reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
+        reviewTreeStateSha256,
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: execution.reviewerExecutionMode,
         reviewerIdentity: execution.reviewerIdentity,

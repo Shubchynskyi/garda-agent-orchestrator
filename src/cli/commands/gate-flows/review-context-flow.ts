@@ -174,6 +174,18 @@ function normalizeLowerText(value: unknown): string {
     return String(value || '').trim().toLowerCase();
 }
 
+function getReviewTreeStateSha256FromContext(reviewContext: Record<string, unknown>): string | null {
+    if (!isRecord(reviewContext.tree_state)) {
+        return null;
+    }
+    const normalized = String(
+        reviewContext.tree_state.tree_state_sha256
+        || reviewContext.tree_state.treeStateSha256
+        || ''
+    ).trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+}
+
 function resolveHistoricalArtifactPath(repoRoot: string, rawPath: unknown, fallbackPath: string): string {
     const text = String(rawPath || '').trim();
     if (!text) {
@@ -362,6 +374,7 @@ async function tryReuseReviewEvidence(options: {
     const hasCurrentReviewScope = reviewScopeFingerprint.review_relevant_changed_files.length > 0;
     const currentReviewContext = JSON.parse(fs.readFileSync(options.reviewContextPath, 'utf8')) as Record<string, unknown>;
     const currentReviewContextSha256 = String(gateHelpers.fileSha256(options.reviewContextPath) || '').trim().toLowerCase() || null;
+    const currentReviewTreeStateSha256 = getReviewTreeStateSha256FromContext(currentReviewContext);
     const currentContextReuseSha256 = String(computeReviewContextReuseHash(currentReviewContext) || '').trim().toLowerCase() || null;
 
     const candidateRejections: string[] = [];
@@ -401,15 +414,18 @@ async function tryReuseReviewEvidence(options: {
             reviewScopeFingerprint,
             currentPreflightHash,
             currentReviewContextSha256,
+            currentReviewTreeStateSha256,
             currentContextReuseSha256,
             candidate,
-            sourceReceiptSha256: evidence.sourceReceiptSha256,
+            reusedFromReceiptPath: evidence.reusedFromReceiptPath,
+            reusedFromReceiptSha256: evidence.reusedFromReceiptSha256,
             receipt: evidence.receipt,
             reviewerExecutionMode: evidence.reviewerExecutionMode,
             reviewerIdentity: evidence.reviewerIdentity,
             historicalReviewerProvenance: evidence.historicalReviewerProvenance,
             expectedContextSha256: evidence.expectedContextSha256,
             expectedContextReuseSha256: evidence.expectedContextReuseSha256,
+            expectedReviewTreeStateSha256: evidence.expectedReviewTreeStateSha256,
             expectedReviewScopeSha256: evidence.expectedReviewScopeSha256,
             expectedCodeScopeSha256: evidence.expectedCodeScopeSha256,
             historicalReviewArtifactSha256: evidence.historicalReviewArtifactSha256,
@@ -496,6 +512,12 @@ export async function runBuildReviewContextCommand(
         gateHelpers.resolvePathInsideRepo(parseRequiredText(options.preflightPath, 'PreflightPath'), repoRoot),
         'PreflightPath'
     );
+    if (!gateHelpers.isPathRealpathInsideRoot(preflightPath, repoRoot)) {
+        throw new Error(
+            `PreflightPath must resolve inside repo root without symlink or junction escape: ` +
+            `${gateHelpers.normalizePath(preflightPath)}.`
+        );
+    }
     const preflightPayload = (
         options.preflightPayload
         && typeof options.preflightPayload === 'object'

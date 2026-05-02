@@ -355,7 +355,8 @@ export function buildChangedFileFingerprintEntries(
             if (stat.isFile()) {
                 return {
                     ...base,
-                    status: 'file'
+                    status: 'file',
+                    sha256: fileSha256(absolutePath) || null
                 };
             }
             if (stat.isDirectory()) {

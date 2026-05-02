@@ -57,6 +57,25 @@ export interface ReviewArtifactsAuditResult {
     compaction_warning_count: number;
 }
 
+export function isReviewArtifactPathInsideRoots(
+    repoRoot: string,
+    reviewsRoot: string,
+    artifactPath: string,
+    options: { allowMissing?: boolean } = {}
+): boolean {
+    return gateHelpers.isPathRealpathInsideRoot(reviewsRoot, repoRoot, { allowMissing: true })
+        && gateHelpers.isPathRealpathInsideRoot(artifactPath, repoRoot, options)
+        && gateHelpers.isPathRealpathInsideRoot(artifactPath, reviewsRoot, options);
+}
+
+export function formatReviewArtifactRootEscapeViolation(reviewsRoot: string): string {
+    return `ReviewsRoot must resolve inside repo root without symlink or junction escape: ${gateHelpers.normalizePath(reviewsRoot)}`;
+}
+
+export function formatReviewArtifactPathEscapeViolation(label: string, artifactPath: string): string {
+    return `${label} must resolve inside repo root and reviews root without symlink or junction escape: ${gateHelpers.normalizePath(artifactPath)}`;
+}
+
 export interface CompileGateEvidenceResult {
     task_id: string | null;
     evidence_path: string | null;
@@ -109,6 +128,11 @@ export function testReviewArtifacts(
         compaction_warnings: [],
         compaction_warning_count: 0
     };
+    if (!gateHelpers.isPathRealpathInsideRoot(reviewsRoot, repoRoot, { allowMissing: true })) {
+        result.violations.push(formatReviewArtifactRootEscapeViolation(reviewsRoot));
+        return result;
+    }
+
     const skipSet = new Set(skipReviewsList.map(function (item: string) { return String(item || '').toLowerCase(); }));
 
     for (const [reviewKey, passToken] of reviewContracts) {
@@ -134,6 +158,12 @@ export function testReviewArtifacts(
             compaction_audit: null
         };
 
+        if (!isReviewArtifactPathInsideRoots(repoRoot, reviewsRoot, artifactPath, { allowMissing: true })) {
+            result.violations.push(formatReviewArtifactPathEscapeViolation('Review artifact path', artifactPath));
+            result.checked.push(entry);
+            continue;
+        }
+
         if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
             result.violations.push(`Review artifact not found for claimed '${passToken}': ${entry.path}`);
             result.checked.push(entry);
@@ -153,10 +183,23 @@ export function testReviewArtifacts(
             );
         }
 
-        const reviewContextPath = resolveReviewContextPath(reviewsRoot, resolvedTaskId, reviewKey);
-        entry.review_context_path = gateHelpers.normalizePath(reviewContextPath);
+        let reviewContextPath: string | null = null;
+        let reviewContextPathSafe = true;
+        try {
+            reviewContextPath = resolveReviewContextPath(reviewsRoot, resolvedTaskId, reviewKey);
+            entry.review_context_path = gateHelpers.normalizePath(reviewContextPath);
+            reviewContextPathSafe = isReviewArtifactPathInsideRoots(repoRoot, reviewsRoot, reviewContextPath, { allowMissing: true });
+            if (!reviewContextPathSafe) {
+                result.violations.push(formatReviewArtifactPathEscapeViolation('Review context artifact path', reviewContextPath));
+            }
+        } catch (error) {
+            reviewContextPathSafe = false;
+            result.violations.push(
+                `Review context artifact path is invalid for claimed '${passToken}': ${getErrorMessage(error)}`
+            );
+        }
         let reviewContext: Record<string, unknown> | undefined;
-        if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
+        if (reviewContextPath && reviewContextPathSafe && fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
             entry.review_context_present = true;
             try {
                 const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
@@ -168,7 +211,7 @@ export function testReviewArtifacts(
                 );
             }
         }
-        if (!entry.review_context_present) {
+        if (reviewContextPathSafe && !entry.review_context_present) {
             result.violations.push(
                 `Review context artifact not found for claimed '${passToken}': ${entry.review_context_path}`
             );
@@ -235,6 +278,11 @@ export function getCompileGateEvidence(
         )
         : resolveDefaultReviewsPath(repoRoot, `${resolvedTaskId}-compile-gate.json`);
     result.evidence_path = gateHelpers.normalizePath(resolvedEvidencePath);
+
+    if (!gateHelpers.isPathRealpathInsideRoot(resolvedEvidencePath, repoRoot, { allowMissing: true })) {
+        result.status = 'EVIDENCE_PATH_OUTSIDE_REPO';
+        return result;
+    }
 
     if (!fs.existsSync(resolvedEvidencePath) || !fs.statSync(resolvedEvidencePath).isFile()) {
         result.status = 'EVIDENCE_FILE_MISSING';
@@ -322,7 +370,8 @@ export function testCompileScopeDrift(
         repoRoot,
         compileEvidence.evidence_scope_detection_source,
         !!compileEvidence.evidence_scope_include_untracked,
-        compileEvidence.evidence_scope_changed_files
+        compileEvidence.evidence_scope_changed_files,
+        { noCache: true }
     );
     result.status = 'PASS';
     result.detection_source = compileEvidence.evidence_scope_detection_source;

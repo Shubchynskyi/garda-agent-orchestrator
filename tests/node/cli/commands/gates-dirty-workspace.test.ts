@@ -399,6 +399,50 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('keeps staged deletion paths in classify-change --use-staged when the path is recreated untracked', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900dirty-staged-delete-recreate';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        runGit(repoRoot, ['rm', 'src/app.ts']);
+        fs.mkdirSync(path.dirname(appPath), { recursive: true });
+        fs.writeFileSync(appPath, 'const replacement = 42;\nconsole.log(replacement);\n', 'utf8');
+        backdateFileMtime(appPath);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep staged deletion in staged-only preflight scope'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const outputPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: 'Keep staged deletion in staged-only preflight scope',
+            useStaged: true,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        const preflight = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+        assert.equal(payload.task_id, taskId);
+        assert.equal(payload.detection_source, 'git_staged_only');
+        assert.deepEqual(payload.changed_files, ['src/app.ts']);
+        assert.deepEqual(preflight.changed_files, ['src/app.ts']);
+        assert.equal(preflight.triggers.dirty_workspace_protected_files.length, 0);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('keeps pre-existing unrelated untracked files protected when isolate scope uses --use-staged', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900dirty-staged-untracked';

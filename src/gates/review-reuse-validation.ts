@@ -32,12 +32,14 @@ export interface AcceptedReviewReuseCandidateEvidence {
     candidate: HistoricalReviewReuseCandidate;
     verifiedReceiptPath: string | null;
     receipt: ReviewReceipt;
-    sourceReceiptSha256: string | null;
+    reusedFromReceiptPath: string | null;
+    reusedFromReceiptSha256: string | null;
     reviewerExecutionMode: string;
     reviewerIdentity: string;
     historicalReviewerProvenance: NonNullable<ReturnType<typeof normalizeReviewReceiptReviewerProvenance>>;
     expectedContextSha256: string | null;
     expectedContextReuseSha256: string | null;
+    expectedReviewTreeStateSha256: string | null;
     expectedReviewScopeSha256: string | null;
     expectedCodeScopeSha256: string | null;
     historicalReviewArtifactSha256: string;
@@ -320,24 +322,53 @@ export function validateHistoricalReviewReuseCandidate(options: {
         ? null
         : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
     const historicalTrustLevel = String(receipt.trust_level || '').trim().toUpperCase();
-    const expectedContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
+    const sourceReceiptContextSha256 = normalizeReceiptSha256(receipt.review_context_sha256);
+    const sourceReceiptContextReuseSha256 = normalizeReceiptSha256(receipt.review_context_reuse_sha256)
+        || normalizeReceiptSha256(options.previousReviewContextReuseSha256);
+    const sourceReceiptReviewScopeSha256 = normalizeReceiptSha256(receipt.review_scope_sha256);
+    const sourceReceiptCodeScopeSha256 = normalizeReceiptSha256(receipt.code_scope_sha256);
     const historicalProvenanceContextSha256 = historicalReviewerProvenance?.attestation_type === 'reviewer_invocation_attestation'
         ? historicalReviewerProvenance.review_context_sha256
         : null;
-    const historicalReviewContextSha256 = normalizeReceiptSha256(receipt.reused_existing_review === true
-        ? receipt.reused_from_review_context_sha256 || historicalProvenanceContextSha256
-        : expectedContextSha256);
-    const expectedContextReuseSha256 = String(
-        receipt.review_context_reuse_sha256 || options.previousReviewContextReuseSha256 || ''
-    ).trim().toLowerCase() || null;
-    const expectedReviewScopeSha256 = String(receipt.review_scope_sha256 || '').trim().toLowerCase() || null;
-    const expectedCodeScopeSha256 = normalizeReceiptSha256(receipt.code_scope_sha256);
+    const sourceReceiptReviewTreeStateSha256 = normalizeReceiptSha256(receipt.review_tree_state_sha256);
+    const sourceReceiptPath = gateHelpers.normalizePath(options.candidate.telemetryReceiptPath);
+    const reusedFromReceiptPath = receipt.reused_existing_review === true && receipt.reused_from_receipt_path
+        ? gateHelpers.normalizePath(receipt.reused_from_receipt_path)
+        : sourceReceiptPath;
+    const reusedFromReceiptSha256 = receipt.reused_existing_review === true
+        ? normalizeReceiptSha256(receipt.reused_from_receipt_sha256) || sourceReceiptSha256
+        : sourceReceiptSha256;
+    const reusedFromReviewTreeStateSha256 = normalizeReceiptSha256(receipt.reused_from_review_tree_state_sha256);
+    const expectedContextSha256 = receipt.reused_existing_review === true
+        ? normalizeReceiptSha256(receipt.reused_from_review_context_sha256) || historicalProvenanceContextSha256
+        : sourceReceiptContextSha256;
+    const expectedContextReuseSha256 = receipt.reused_existing_review === true
+        ? normalizeReceiptSha256(receipt.reused_from_review_context_reuse_sha256) || sourceReceiptContextReuseSha256
+        : sourceReceiptContextReuseSha256;
+    const expectedReviewTreeStateSha256 = receipt.reused_existing_review === true
+        ? reusedFromReviewTreeStateSha256
+        : sourceReceiptReviewTreeStateSha256;
+    const expectedReviewScopeSha256 = receipt.reused_existing_review === true
+        ? normalizeReceiptSha256(receipt.reused_from_review_scope_sha256) || sourceReceiptReviewScopeSha256
+        : sourceReceiptReviewScopeSha256;
+    const expectedCodeScopeSha256 = receipt.reused_existing_review === true
+        ? normalizeReceiptSha256(receipt.reused_from_code_scope_sha256) || sourceReceiptCodeScopeSha256
+        : sourceReceiptCodeScopeSha256;
 
     if (receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
         return { accepted: false, reason: 'prior review receipt task id or review type does not match current request' };
     }
-    if (!reviewerExecutionMode || !reviewerIdentity || !expectedContextSha256) {
+    if (!reviewerExecutionMode || !reviewerIdentity || !sourceReceiptContextSha256 || !expectedContextSha256) {
         return { accepted: false, reason: 'prior review receipt is missing reviewer identity or review-context hash' };
+    }
+    if (!sourceReceiptReviewTreeStateSha256) {
+        return { accepted: false, reason: 'prior review receipt is missing review_tree_state_sha256' };
+    }
+    if (!expectedReviewTreeStateSha256) {
+        return { accepted: false, reason: 'prior review receipt is missing historical review-tree-state hash' };
+    }
+    if (receipt.reused_existing_review === true && !reusedFromReviewTreeStateSha256) {
+        return { accepted: false, reason: 'prior reused review receipt is missing reused_from_review_tree_state_sha256' };
     }
     if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
         return { accepted: false, reason: 'prior review receipt is not delegated-subagent evidence with historical provenance' };
@@ -349,7 +380,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
         || historicalReviewerProvenance.review_type !== options.reviewType
         || historicalReviewerProvenance.reviewer_execution_mode !== reviewerExecutionMode
         || historicalReviewerProvenance.reviewer_identity !== reviewerIdentity
-        || historicalReviewerProvenance.review_context_sha256 !== historicalReviewContextSha256
+        || historicalReviewerProvenance.review_context_sha256 !== expectedContextSha256
     ) {
         return { accepted: false, reason: 'prior review provenance does not bind to the prior delegated reviewer invocation' };
     }
@@ -419,7 +450,8 @@ export function validateHistoricalReviewReuseCandidate(options: {
             String(entry.details?.reviewer_identity || entry.details?.reviewerIdentity || '').trim()
             || String(entry.details?.reviewer_session_id || entry.details?.reviewerSessionId || '').trim()
         ) === reviewerIdentity
-        && String(entry.details?.review_context_sha256 || entry.details?.reviewContextSha256 || '').trim().toLowerCase() === historicalReviewContextSha256
+        && String(entry.details?.review_context_sha256 || entry.details?.reviewContextSha256 || '').trim().toLowerCase() === expectedContextSha256
+        && String(entry.details?.review_tree_state_sha256 || entry.details?.reviewTreeStateSha256 || '').trim().toLowerCase() === expectedReviewTreeStateSha256
         && String(entry.details?.routing_event_sha256 || entry.details?.routingEventSha256 || '').trim().toLowerCase() === historicalReviewerProvenance.routing_event_sha256
     ));
     if (!historicalInvocationEvent) {
@@ -435,11 +467,19 @@ export function validateHistoricalReviewReuseCandidate(options: {
         taskId: options.taskId,
         reviewType: options.reviewType,
         receiptPath: options.candidate.telemetryReceiptPath,
-        reviewContextSha256: expectedContextSha256,
-        reviewContextReuseSha256: expectedContextReuseSha256,
-        reviewScopeSha256: expectedReviewScopeSha256,
-        codeScopeSha256: expectedCodeScopeSha256,
+        reviewContextSha256: sourceReceiptContextSha256,
+        reviewContextReuseSha256: sourceReceiptContextReuseSha256,
+        reviewTreeStateSha256: sourceReceiptReviewTreeStateSha256,
+        reviewScopeSha256: sourceReceiptReviewScopeSha256,
+        codeScopeSha256: sourceReceiptCodeScopeSha256,
         reviewArtifactSha256: historicalReviewArtifactSha256,
+        reusedFromReceiptPath: receipt.reused_existing_review === true ? reusedFromReceiptPath : undefined,
+        reusedFromReceiptSha256: receipt.reused_existing_review === true ? reusedFromReceiptSha256 : undefined,
+        reusedFromReviewContextSha256: receipt.reused_existing_review === true ? expectedContextSha256 : undefined,
+        reusedFromReviewContextReuseSha256: receipt.reused_existing_review === true ? expectedContextReuseSha256 : undefined,
+        reusedFromReviewTreeStateSha256: receipt.reused_existing_review === true ? expectedReviewTreeStateSha256 : undefined,
+        reusedFromReviewScopeSha256: receipt.reused_existing_review === true ? expectedReviewScopeSha256 : undefined,
+        reusedFromCodeScopeSha256: receipt.reused_existing_review === true ? expectedCodeScopeSha256 : undefined,
         reviewerExecutionMode,
         reviewerIdentity,
         reviewerProvenance: historicalReviewerProvenance as unknown as Record<string, unknown>,
@@ -472,12 +512,14 @@ export function validateHistoricalReviewReuseCandidate(options: {
             candidate: options.candidate,
             verifiedReceiptPath: verifiedReceipt.receiptPath,
             receipt,
-            sourceReceiptSha256,
+            reusedFromReceiptPath,
+            reusedFromReceiptSha256,
             reviewerExecutionMode,
             reviewerIdentity,
             historicalReviewerProvenance,
             expectedContextSha256,
             expectedContextReuseSha256,
+            expectedReviewTreeStateSha256,
             expectedReviewScopeSha256,
             expectedCodeScopeSha256,
             historicalReviewArtifactSha256,

@@ -1,8 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { stringSha256, fileSha256, normalizePath, joinOrchestratorPath } from './helpers';
+import { stringSha256, normalizePath, joinOrchestratorPath } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 import { isGeneratedOrchestratorLockPath } from './generated-lock-paths';
+import { getSafeWorktreePathState } from './worktree-path-state';
 
 /**
  * Detect the compile command profile (kind/strategy/label/failure/success profiles).
@@ -179,15 +180,40 @@ function getWorktreeContentFingerprint(repoRoot: string, relativePath: string): 
     if (!normalized) {
         return 'missing';
     }
-    const candidate = path.join(repoRoot, normalized);
-    try {
-        const stat = fs.statSync(candidate);
-        if (!stat.isFile()) {
-            return stat.isDirectory() ? 'worktree:dir' : 'worktree:other';
-        }
-        return `worktree:file:${stat.size}:${fileSha256(candidate) || 'UNHASHABLE'}`;
-    } catch {
-        return 'missing';
+    const state = getSafeWorktreePathState(repoRoot, normalized);
+    switch (state.status) {
+        case 'file':
+            return `worktree:file:${state.size ?? 0}:${state.sha256 || 'UNHASHABLE'}`;
+        case 'directory':
+            return 'worktree:dir';
+        case 'symbolic_link':
+            return [
+                'worktree:symlink',
+                state.size ?? 0,
+                state.link_sha256 || 'UNHASHABLE',
+                state.target_status || 'unknown',
+                state.target_path || '',
+                state.target_mode ?? 0,
+                state.target_size ?? 0,
+                state.target_sha256 || 'UNHASHABLE'
+            ].join(':');
+        case 'unreviewable_symlink':
+            return [
+                'worktree:unreviewable_symlink',
+                state.size ?? 0,
+                state.link_sha256 || 'UNHASHABLE',
+                state.target_status || 'unknown',
+                state.target_path || '',
+                state.target_mode ?? 0,
+                state.target_size ?? 0
+            ].join(':');
+        case 'outside_repo':
+            return 'outside_repo';
+        case 'special':
+            return 'worktree:other';
+        case 'missing':
+        default:
+            return 'missing';
     }
 }
 
@@ -253,7 +279,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         const numstatRows: Record<string, { additions: string; deletions: string }> = {};
         if (normalizedExplicit.length > 0) {
             try {
-                for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
+                for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACDMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
                     const parts = line.split('\t');
                     if (parts.length >= 3) {
                         const key = normalizePath(parts[2]);
@@ -271,10 +297,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
                 if (/^\d+$/.test(row.deletions)) deletionsTotal += parseInt(row.deletions, 10);
                 continue;
             }
-            const candidate = path.join(repoRoot, item);
-            if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-                additionsTotal += countFileLines(candidate);
-            }
+            additionsTotal += countWorktreeFileLines(repoRoot, item);
         }
         const changedLinesTotal = additionsTotal + deletionsTotal;
         const filesFingerprint = stringSha256(normalizedExplicit.join('\n'));
@@ -294,7 +317,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         };
     }
 
-    const diffArgs = ['diff', '--numstat', '--diff-filter=ACMRTUXB'];
+    const diffArgs = ['diff', '--numstat', '--diff-filter=ACDMRTUXB'];
     diffArgs.push(useStaged ? '--cached' : 'HEAD');
     const numstatOutput = gitLines(diffArgs, 'Failed to collect changed files snapshot.');
 
@@ -327,7 +350,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     if (includeUntracked) {
         for (const item of untracked) {
-            additionsTotal += countFileLines(path.join(repoRoot, item));
+            additionsTotal += countWorktreeFileLines(repoRoot, item);
         }
     }
 
@@ -349,9 +372,13 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     };
 }
 
-function countFileLines(filePath: string): number {
+function countWorktreeFileLines(repoRoot: string, relativePath: string): number {
+    const normalized = normalizePath(relativePath);
+    if (!normalized || getSafeWorktreePathState(repoRoot, normalized).status !== 'file') {
+        return 0;
+    }
+    const filePath = path.join(repoRoot, normalized);
     try {
-        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return 0;
         let count = 0;
         const content = fs.readFileSync(filePath, 'utf8');
         for (const line of content.split('\n')) {

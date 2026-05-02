@@ -7,7 +7,9 @@ import * as childProcess from 'node:child_process';
 
 import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
 import { buildReviewContext, getRulePack, toNonNegativeInt, resolveContextOutputPath, resolveScopedDiffMetadataPath } from '../../../src/gates/build-review-context';
+import { getWorkspaceSnapshot } from '../../../src/gates/compile-gate';
 import { buildChangedFileFingerprintEntries } from '../../../src/gates/review-context-diff';
+import { buildReviewTreeState } from '../../../src/gates/review-tree-state';
 import {
     getCanonicalReviewContextPath,
     getLegacyDefaultReviewContextPath,
@@ -166,6 +168,34 @@ describe('gates/build-review-context', () => {
             );
 
             fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('rejects explicit review-context paths that escape the repo through symlinked directories', (t) => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-paths-link-'));
+            const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-context-paths-outside-'));
+            try {
+                const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+                fs.mkdirSync(reviewsRoot, { recursive: true });
+                fs.writeFileSync(path.join(outsideRoot, 'context.json'), '{}\n', 'utf8');
+                const linkedDirPath = path.join(reviewsRoot, 'linked-outside');
+                try {
+                    fs.symlinkSync(outsideRoot, linkedDirPath, process.platform === 'win32' ? 'junction' : 'dir');
+                } catch (error) {
+                    t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                    return;
+                }
+
+                assert.throws(() => resolveCanonicalReviewContextPath({
+                    reviewsRoot,
+                    taskId: 'T-001',
+                    reviewType: 'code',
+                    explicitPath: path.join(linkedDirPath, 'context.json'),
+                    repoRoot
+                }), /Review context path must resolve inside (reviews|repo) root/);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+                fs.rmSync(outsideRoot, { recursive: true, force: true });
+            }
         });
     });
 
@@ -566,12 +596,18 @@ describe('gates/build-review-context', () => {
                 runtimeIdentityStatus: 'resolved'
             });
             const preflightPath = path.join(reviewsRoot, 'T-901-staged-preflight.json');
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
             fs.writeFileSync(preflightPath, JSON.stringify({
                 task_id: 'T-901-staged',
                 detection_source: 'git_staged_only',
                 mode: 'FULL_PATH',
                 scope_category: 'code',
                 changed_files: ['src/staged.md'],
+                metrics: {
+                    changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                    scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                    scope_sha256: stagedSnapshot.scope_sha256
+                },
                 required_reviews: { code: true },
                 triggers: { runtime_changed: true, runtime_code_changed: true }
             }, null, 2), 'utf8');
@@ -589,12 +625,16 @@ describe('gates/build-review-context', () => {
             const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
             assert.ok(promptArtifact.includes('+export const staged = true;'));
             assert.ok(promptArtifact.includes('````diff'));
+            assert.ok(promptArtifact.includes('## Review Tree State'));
+            assert.ok(promptArtifact.includes('Use staged snapshot: true'));
             assert.equal(result.task_scope.diff.source, 'git_diff_cached');
+            assert.match(String(result.tree_state.tree_state_sha256), /^[0-9a-f]{64}$/);
+            assert.equal(result.tree_state.use_staged, true);
+            assert.deepEqual(result.tree_state.stale_staged_snapshot_files, []);
             const stagedFingerprints = buildChangedFileFingerprintEntries(repoRoot, ['src/staged.md'], { stagedScope: true });
             assert.equal(stagedFingerprints[0].status, 'staged');
             assert.equal(Object.prototype.hasOwnProperty.call(stagedFingerprints[0], 'sha256'), false);
 
-            fs.writeFileSync(path.join(repoRoot, 'src', 'staged.md'), '```ts\nexport const dirty = true;\n```\n', 'utf8');
             const cachedResult = buildReviewContext({
                 reviewType: 'security',
                 depth: 2,
@@ -607,7 +647,172 @@ describe('gates/build-review-context', () => {
             const cachedPromptArtifact = fs.readFileSync(cachedResult.rule_context.artifact_path, 'utf8');
             assert.equal(cachedResult.task_scope.diff.cached, true);
             assert.ok(cachedPromptArtifact.includes('+export const staged = true;'));
-            assert.equal(cachedPromptArtifact.includes('+export const dirty = true;'), false);
+
+            fs.writeFileSync(path.join(repoRoot, 'src', 'staged.md'), '```ts\nexport const dirty = true;\n```\n', 'utf8');
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'refactor',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-staged-refactor-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-staged-refactor-review-context.json'),
+                    repoRoot
+                }),
+                /Staged review scope is stale: src\/staged\.md has unstaged working-tree changes/
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('fails closed when review tree-state git probes cannot be read', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-tree-state-probe-fail-'));
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+
+            assert.throws(
+                () => buildReviewTreeState({
+                    repoRoot,
+                    detectionSource: 'git_staged_only',
+                    includeUntracked: false,
+                    changedFiles: ['src/app.ts']
+                }),
+                /Unable to collect review tree state: git status .* failed/
+            );
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('rejects staged delete snapshots when the same path is recreated before review', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-staged-delete-recreate-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            runGit(repoRoot, ['config', 'status.showUntrackedFiles', 'no']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-staged-delete-recreate', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            runGit(repoRoot, ['rm', 'src/app.ts']);
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+            assert.deepEqual(stagedSnapshot.changed_files, ['src/app.ts']);
+            const preflightPath = path.join(reviewsRoot, 'T-901-staged-delete-recreate-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-staged-delete-recreate',
+                detection_source: 'git_staged_only',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: stagedSnapshot.changed_files,
+                metrics: {
+                    changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                    scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                    scope_sha256: stagedSnapshot.scope_sha256
+                },
+                required_reviews: { code: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-staged-delete-recreate-code-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-staged-delete-recreate-code-review-context.json'),
+                    repoRoot
+                }),
+                /Staged review scope is stale: src\/app\.ts has unstaged working-tree changes/
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('binds unstaged working-tree review contexts to file hashes without requiring staged scope', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-unstaged-tree-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            runGit(repoRoot, ['add', 'garda-agent-orchestrator/live']);
+            runGit(repoRoot, ['commit', '-m', 'rules']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-unstaged-tree', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-unstaged-tree-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-unstaged-tree',
+                detection_source: 'git_auto',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: snapshot.changed_files,
+                metrics: {
+                    changed_files_sha256: snapshot.changed_files_sha256,
+                    scope_content_sha256: snapshot.scope_content_sha256,
+                    scope_sha256: snapshot.scope_sha256
+                },
+                required_reviews: { code: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-unstaged-tree-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-unstaged-tree-code-review-context.json'),
+                repoRoot
+            });
+
+            assert.equal(result.tree_state.use_staged, false);
+            assert.deepEqual(result.tree_state.changed_files, ['src/app.ts']);
+            assert.match(String(result.tree_state.tree_state_sha256), /^[0-9a-f]{64}$/);
+            assert.equal(result.tree_state.entries[0].worktree.status, 'file');
+            assert.match(String(result.tree_state.entries[0].worktree.sha256), /^[0-9a-f]{64}$/);
+            assert.equal(result.task_scope.diff.source, 'git_diff_head_plus_untracked');
+            assert.match(String(result.task_scope.diff.diff_sha256), /^[0-9a-f]{64}$/);
+            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
+            assert.ok(promptArtifact.includes('Use staged snapshot: false'));
+            assert.ok(promptArtifact.includes('Tree state sha256:'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
@@ -1058,7 +1263,44 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
-        it('does not dereference untracked symlinks into reviewer prompt artifacts', (t) => {
+        it('rejects preflight artifacts that escape the repo through symlinked review directories', (t) => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-preflight-link-'));
+            const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-preflight-outside-'));
+            try {
+                const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+                const runtimeRoot = path.join(orchestratorRoot, 'runtime');
+                const reviewsRoot = path.join(runtimeRoot, 'reviews');
+                fs.mkdirSync(runtimeRoot, { recursive: true });
+                try {
+                    fs.symlinkSync(outsideRoot, reviewsRoot, process.platform === 'win32' ? 'junction' : 'dir');
+                } catch (error) {
+                    t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                    return;
+                }
+                const preflightPath = path.join(reviewsRoot, 'T-901-preflight-link-preflight.json');
+                fs.writeFileSync(preflightPath, JSON.stringify({
+                    task_id: 'T-901-preflight-link',
+                    detection_source: 'explicit_changed_files',
+                    changed_files: ['src/app.ts'],
+                    required_reviews: { code: true }
+                }), 'utf8');
+
+                assert.throws(() => buildReviewContext({
+                    reviewType: 'code',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-preflight-link-code-scoped.json'),
+                    outputPath: path.join(reviewsRoot, 'T-901-preflight-link-code-review-context.json'),
+                    repoRoot
+                }), /PreflightPath must resolve inside repo root/);
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+                fs.rmSync(outsideRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('rejects untracked symlinks that resolve outside the repo before building reviewer prompt artifacts', (t) => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-untracked-symlink-'));
             const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-outside-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -1105,7 +1347,7 @@ describe('gates/build-review-context', () => {
                 triggers: { runtime_changed: true, runtime_code_changed: true }
             }, null, 2), 'utf8');
 
-            const result = buildReviewContext({
+            assert.throws(() => buildReviewContext({
                 reviewType: 'code',
                 depth: 2,
                 preflightPath,
@@ -1113,17 +1355,12 @@ describe('gates/build-review-context', () => {
                 scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-untracked-symlink-code-scoped.json'),
                 outputPath: path.join(reviewsRoot, 'T-901-untracked-symlink-code-review-context.json'),
                 repoRoot
-            });
-
-            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
-            assert.ok(promptArtifact.includes('[untracked file content omitted: symbolic_link]'));
-            assert.equal(promptArtifact.includes(secret), false);
-            assert.equal(result.task_scope.diff.available, true);
+            }), /Review scope contains paths that resolve outside the repo/);
             fs.rmSync(repoRoot, { recursive: true, force: true });
             fs.rmSync(outsideRoot, { recursive: true, force: true });
         });
 
-        it('does not dereference untracked files under symlinked directories into reviewer prompt artifacts', (t) => {
+        it('rejects untracked files under symlinked directories before building reviewer prompt artifacts', (t) => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-untracked-dir-symlink-'));
             const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-outside-dir-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
@@ -1170,7 +1407,27 @@ describe('gates/build-review-context', () => {
                 triggers: { runtime_changed: true, runtime_code_changed: true }
             }, null, 2), 'utf8');
 
-            const result = buildReviewContext({
+            const snapshotBeforeExternalChange = getWorkspaceSnapshot(
+                repoRoot,
+                'explicit_changed_files',
+                true,
+                ['src/linked-outside/secret.txt']
+            );
+            fs.writeFileSync(outsideSecretPath, `${secret}-changed\nsecond-outside-line\n`, 'utf8');
+            const snapshotAfterExternalChange = getWorkspaceSnapshot(
+                repoRoot,
+                'explicit_changed_files',
+                true,
+                ['src/linked-outside/secret.txt']
+            );
+            assert.equal(snapshotAfterExternalChange.scope_content_sha256, snapshotBeforeExternalChange.scope_content_sha256);
+            assert.equal(snapshotAfterExternalChange.changed_lines_total, snapshotBeforeExternalChange.changed_lines_total);
+
+            const fingerprintEntries = buildChangedFileFingerprintEntries(repoRoot, ['src/linked-outside/secret.txt']);
+            assert.equal(fingerprintEntries[0].status, 'outside_repo');
+            assert.equal(Object.prototype.hasOwnProperty.call(fingerprintEntries[0], 'sha256'), false);
+
+            assert.throws(() => buildReviewContext({
                 reviewType: 'code',
                 depth: 2,
                 preflightPath,
@@ -1178,14 +1435,7 @@ describe('gates/build-review-context', () => {
                 scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-untracked-dir-symlink-code-scoped.json'),
                 outputPath: path.join(reviewsRoot, 'T-901-untracked-dir-symlink-code-review-context.json'),
                 repoRoot
-            });
-
-            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
-            assert.equal(promptArtifact.includes(secret), false);
-            assert.ok(promptArtifact.includes('[untracked file content omitted: outside_repo]'));
-            const fingerprintEntries = buildChangedFileFingerprintEntries(repoRoot, ['src/linked-outside/secret.txt']);
-            assert.equal(fingerprintEntries[0].status, 'outside_repo');
-            assert.equal(Object.prototype.hasOwnProperty.call(fingerprintEntries[0], 'sha256'), false);
+            }), /Review scope contains paths that resolve outside the repo/);
 
             fs.rmSync(repoRoot, { recursive: true, force: true });
             fs.rmSync(outsideRoot, { recursive: true, force: true });
