@@ -416,6 +416,7 @@ function findMatchingReviewReuseRecordedEvent(
         codeScopeSha256?: string | null;
         reviewArtifactSha256: string | null;
         reusedFromReceiptPath: string | null;
+        reusedFromReceiptSha256?: string | null;
         reusedFromReviewContextSha256: string | null;
         reusedFromReviewContextReuseSha256: string | null;
         reusedFromReviewScopeSha256?: string | null;
@@ -438,6 +439,7 @@ function findMatchingReviewReuseRecordedEvent(
         codeScopeSha256: options.codeScopeSha256,
         reviewArtifactSha256: options.reviewArtifactSha256,
         reusedFromReceiptPath: options.reusedFromReceiptPath,
+        reusedFromReceiptSha256: options.reusedFromReceiptSha256,
         reusedFromReviewContextSha256: options.reusedFromReviewContextSha256,
         reusedFromReviewContextReuseSha256: options.reusedFromReviewContextReuseSha256,
         reusedFromReviewScopeSha256: options.reusedFromReviewScopeSha256,
@@ -455,6 +457,7 @@ export function validateReviewArtifactGateEligibility(options: {
     preflightPath?: string | null;
     preflightSha256?: string | null;
     preflightPayload?: Record<string, unknown> | null;
+    repoRoot?: string | null;
     sourceOfTruth?: string | null;
     canonicalSourceOfTruth?: string | null;
     executionProvider?: string | null;
@@ -476,6 +479,7 @@ export function validateReviewArtifactGateEligibility(options: {
         ? String(routingMetadata.fallback_reason).trim()
         : '';
     const canonicalSourceOfTruth = normalizeSourceOfTruthValue(options.canonicalSourceOfTruth);
+    const repoRoot = options.repoRoot || null;
     const currentExecutionProvider = normalizeSourceOfTruthValue(options.executionProvider);
     const resolvedRoutingIdentity = resolveReviewContextRoutingIdentity({
         reviewerRouting: routingMetadata,
@@ -778,6 +782,9 @@ export function validateReviewArtifactGateEligibility(options: {
                             reusedFromReceiptPath: typeof validatedReceipt?.reused_from_receipt_path === 'string'
                                 ? validatedReceipt.reused_from_receipt_path
                                 : null,
+                            reusedFromReceiptSha256: typeof validatedReceipt?.reused_from_receipt_sha256 === 'string'
+                                ? validatedReceipt.reused_from_receipt_sha256
+                                : null,
                             reusedFromReviewContextSha256: typeof validatedReceipt?.reused_from_review_context_sha256 === 'string'
                                 ? validatedReceipt.reused_from_review_context_sha256
                                 : null,
@@ -823,6 +830,7 @@ export function validateReviewArtifactGateEligibility(options: {
                                 `Review receipt for '${reviewKey}' reused historical reviewer_provenance that does not match REVIEWER_INVOCATION_ATTESTED telemetry.`
                             );
                         } else if (!findMatchingHistoricalReviewRecordedTelemetryEvent(options.timelineEvents, {
+                            repoRoot,
                             taskId: resolvedTaskId || '',
                             reviewType: reviewKey,
                             receiptPath: typeof validatedReceipt?.reused_from_receipt_path === 'string'
@@ -836,7 +844,8 @@ export function validateReviewArtifactGateEligibility(options: {
                             reviewerExecutionMode,
                             reviewerIdentity,
                             reviewerProvenance: reviewerProvenance as unknown as Record<string, unknown>,
-                            maxEventSequenceExclusive: latestCompilePassSequence
+                            maxEventSequenceExclusive: latestCompilePassSequence,
+                            verifyReceiptSnapshot: true
                         })) {
                             errors.push(
                                 `Review receipt for '${reviewKey}' reused historical reviewer_provenance that does not match historical REVIEW_RECORDED telemetry.`
@@ -933,6 +942,7 @@ export interface CheckRequiredReviewsOptions {
     executionProvider?: string | null;
     executionProviderSource?: string | null;
     allowLegacyReviewContextIdentityFallback?: boolean;
+    repoRoot?: string | null;
 }
 
 export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
@@ -1010,7 +1020,8 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
                 executionProvider,
                 executionProviderSource: options.executionProviderSource,
                 allowLegacyReviewContextIdentityFallback,
-                timelineEvents
+                timelineEvents,
+                repoRoot: options.repoRoot || null
             });
             compactionAudit = validation.compactionAudit;
             receiptValid = validation.receiptValid;

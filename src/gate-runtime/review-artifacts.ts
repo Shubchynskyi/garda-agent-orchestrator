@@ -36,6 +36,11 @@ export interface ReviewArtifactWriteResult {
     telemetry: ReviewArtifactLockTelemetry;
 }
 
+export interface ReviewArtifactRollbackState {
+    existed: boolean;
+    content: string | null;
+}
+
 export type ReviewArtifactLockStatus = 'ACTIVE' | 'STALE';
 
 export interface ReviewArtifactLockHealth {
@@ -369,4 +374,81 @@ export function writeReviewArtifactJson(
     options: ReviewArtifactLockOptions = {}
 ): ReviewArtifactWriteResult {
     return writeReviewArtifactText(artifactPath, `${JSON.stringify(payload, null, 2)}\n`, options);
+}
+
+export type ReviewArtifactTransactionalWrite =
+    | {
+        artifactPath: string;
+        contentType: 'json';
+        payload: unknown;
+        options?: ReviewArtifactLockOptions;
+    }
+    | {
+        artifactPath: string;
+        contentType: 'text';
+        content: string;
+        options?: ReviewArtifactLockOptions;
+    };
+
+export function captureReviewArtifactRollbackState(artifactPath: string): ReviewArtifactRollbackState {
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        return {
+            existed: false,
+            content: null
+        };
+    }
+    return {
+        existed: true,
+        content: fs.readFileSync(artifactPath, 'utf8')
+    };
+}
+
+export function restoreReviewArtifactFromRollbackState(
+    artifactPath: string,
+    rollbackState: ReviewArtifactRollbackState,
+    options: ReviewArtifactLockOptions & { ensureTrailingNewline?: boolean } = {}
+): void {
+    if (!rollbackState.existed) {
+        if (fs.existsSync(artifactPath)) {
+            fs.rmSync(artifactPath, { force: true });
+        }
+        return;
+    }
+    const content = rollbackState.content || '';
+    writeReviewArtifactText(
+        artifactPath,
+        options.ensureTrailingNewline && !content.endsWith('\n') ? `${content}\n` : content,
+        options
+    );
+}
+
+export async function writeReviewArtifactsWithRollback<T>(
+    writes: readonly ReviewArtifactTransactionalWrite[],
+    afterWrites: () => Promise<T>
+): Promise<T> {
+    const rollbackStates = writes.map((entry) => ({
+        artifactPath: entry.artifactPath,
+        rollbackState: captureReviewArtifactRollbackState(entry.artifactPath),
+        options: entry.options
+    }));
+    try {
+        for (const entry of writes) {
+            if (entry.contentType === 'json') {
+                writeReviewArtifactJson(entry.artifactPath, entry.payload, entry.options);
+            } else {
+                writeReviewArtifactText(entry.artifactPath, entry.content, entry.options);
+            }
+        }
+        return await afterWrites();
+    } catch (error: unknown) {
+        try {
+            for (let index = rollbackStates.length - 1; index >= 0; index -= 1) {
+                const entry = rollbackStates[index];
+                restoreReviewArtifactFromRollbackState(entry.artifactPath, entry.rollbackState, entry.options);
+            }
+        } catch {
+            // Preserve the original write or post-write failure.
+        }
+        throw error;
+    }
 }

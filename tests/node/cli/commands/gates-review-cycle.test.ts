@@ -690,6 +690,8 @@ function seedReusableReviewEvidence(
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const artifactHash = crypto.createHash('sha256').update(artifactText).digest('hex');
+    const artifactSnapshotPath = artifactPath.replace(/\.md$/, `-artifact-${artifactHash}.md`);
+    fs.writeFileSync(artifactSnapshotPath, artifactText, 'utf8');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
     const preflightText = fs.readFileSync(preflightPath, 'utf8');
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
@@ -748,11 +750,21 @@ function seedReusableReviewEvidence(
         ),
         trustLevel: execution.trustLevel
     });
-    fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+    const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
+    const receiptSha256 = crypto.createHash('sha256').update(receiptText).digest('hex');
+    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    const receiptSnapshotPath = artifactPath.replace(/\.md$/, `-receipt-${receiptSha256}.json`);
+    fs.writeFileSync(receiptPath, receiptText, 'utf8');
+    fs.writeFileSync(receiptSnapshotPath, receiptText, 'utf8');
     appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'historical review recorded', {
         ...receipt,
-        receipt_path: path.normalize(artifactPath.replace(/\.md$/, '-receipt.json')).replace(/\\/g, '/'),
+        receipt_path: path.normalize(receiptPath).replace(/\\/g, '/'),
+        receipt_sha256: receiptSha256,
+        receipt_snapshot_path: path.normalize(receiptSnapshotPath).replace(/\\/g, '/'),
+        receipt_snapshot_sha256: receiptSha256,
         review_artifact_path: path.normalize(artifactPath).replace(/\\/g, '/'),
+        review_artifact_snapshot_path: path.normalize(artifactSnapshotPath).replace(/\\/g, '/'),
+        review_artifact_snapshot_sha256: artifactHash,
         review_context_path: path.normalize(reviewContextPath).replace(/\\/g, '/')
     });
     return reviewContextPath;

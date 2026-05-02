@@ -1,4 +1,6 @@
-import { normalizePath } from './helpers';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileSha256, joinOrchestratorPath, normalizePath } from './helpers';
 
 export interface ReviewReuseTelemetryEventLike {
     event_type?: unknown;
@@ -17,6 +19,7 @@ export interface ReviewReuseTelemetryMatchInput {
     codeScopeSha256?: string | null;
     reviewArtifactSha256?: string | null;
     reusedFromReceiptPath?: string | null;
+    reusedFromReceiptSha256?: string | null;
     reusedFromReviewContextSha256?: string | null;
     reusedFromReviewContextReuseSha256?: string | null;
     reusedFromReviewScopeSha256?: string | null;
@@ -43,6 +46,7 @@ export interface ReviewReuseTelemetryDetails {
     reviewArtifactSha256: string;
     reusedExistingReview: boolean;
     reusedFromReceiptPath: string;
+    reusedFromReceiptSha256: string;
     reusedFromReviewContextSha256: string;
     reusedFromReviewContextReuseSha256: string;
     reusedFromReviewScopeSha256: string;
@@ -51,6 +55,7 @@ export interface ReviewReuseTelemetryDetails {
 
 export interface HistoricalReviewRecordedTelemetryMatchInput {
     event: ReviewReuseTelemetryEventLike | null | undefined;
+    repoRoot?: string | null;
     taskId?: string | null;
     reviewType: string;
     receiptPath: string;
@@ -63,7 +68,40 @@ export interface HistoricalReviewRecordedTelemetryMatchInput {
     reviewerIdentity?: string | null;
     reviewerProvenance?: Record<string, unknown> | null;
     maxEventSequenceExclusive?: number | null;
+    verifyReceiptSnapshot?: boolean;
 }
+
+export type HistoricalReviewRecordedSnapshotValidation =
+    | {
+        valid: true;
+        reason: null;
+        message: null;
+        resolvedPath: string;
+        expectedSha256: string;
+        actualSha256: string;
+    }
+    | {
+        valid: false;
+        reason: string;
+        message: string;
+        resolvedPath: string | null;
+        expectedSha256: string | null;
+        actualSha256: string | null;
+    };
+
+export type HistoricalReviewRecordedRuntimeReviewPathValidation =
+    | {
+        valid: true;
+        reason: null;
+        message: null;
+        resolvedPath: string;
+    }
+    | {
+        valid: false;
+        reason: string;
+        message: string;
+        resolvedPath: string | null;
+    };
 
 export function getReviewReuseTelemetryDetails(details: unknown): ReviewReuseTelemetryDetails {
     const record = isPlainRecord(details) ? details : {};
@@ -77,6 +115,7 @@ export function getReviewReuseTelemetryDetails(details: unknown): ReviewReuseTel
         reviewArtifactSha256: normalizeLowerString(record.review_artifact_sha256 ?? record.reviewArtifactSha256),
         reusedExistingReview: record.reused_existing_review === true,
         reusedFromReceiptPath: normalizePath(record.reused_from_receipt_path ?? record.reusedFromReceiptPath ?? '').toLowerCase(),
+        reusedFromReceiptSha256: normalizeLowerString(record.reused_from_receipt_sha256 ?? record.reusedFromReceiptSha256),
         reusedFromReviewContextSha256: normalizeLowerString(
             record.reused_from_review_context_sha256 ?? record.reusedFromReviewContextSha256
         ),
@@ -165,6 +204,22 @@ export function validateHistoricalReviewRecordedTelemetryEventMatch(
     if (expectedProvenance && !reviewerProvenanceMatches(eventProvenance, expectedProvenance)) {
         return { ...base, matched: false, reason: 'provenance_mismatch' };
     }
+    if (input.verifyReceiptSnapshot === true) {
+        const reviewArtifactValidation = validateHistoricalReviewRecordedReviewArtifactPath(details, input.repoRoot, {
+            taskId: expectedTaskId || eventTaskId,
+            reviewType: input.reviewType
+        });
+        if (!reviewArtifactValidation.valid) {
+            return { ...base, matched: false, reason: reviewArtifactValidation.reason };
+        }
+        const receiptSnapshotValidation = validateHistoricalReviewRecordedReceiptSnapshot(details, input.repoRoot, {
+            taskId: expectedTaskId || eventTaskId,
+            reviewType: input.reviewType
+        });
+        if (!receiptSnapshotValidation.valid) {
+            return { ...base, matched: false, reason: receiptSnapshotValidation.reason };
+        }
+    }
     return { ...base, matched: true, reason: null };
 }
 
@@ -207,6 +262,7 @@ export function validateReviewReuseRecordedEventMatch(
     const expectedCodeScopeSha256 = normalizeLowerString(input.codeScopeSha256);
     const expectedReviewArtifactSha256 = normalizeLowerString(input.reviewArtifactSha256);
     const expectedReusedFromReceiptPath = normalizePath(input.reusedFromReceiptPath || '').toLowerCase();
+    const expectedReusedFromReceiptSha256 = normalizeLowerString(input.reusedFromReceiptSha256);
     const expectedReusedFromReviewContextSha256 = normalizeLowerString(input.reusedFromReviewContextSha256);
     const expectedReusedFromReviewContextReuseSha256 = normalizeLowerString(input.reusedFromReviewContextReuseSha256);
     const expectedReusedFromReviewScopeSha256 = normalizeLowerString(input.reusedFromReviewScopeSha256);
@@ -222,6 +278,7 @@ export function validateReviewReuseRecordedEventMatch(
         || (input.codeScopeSha256 !== undefined && actual.codeScopeSha256 !== expectedCodeScopeSha256)
         || (expectedReviewArtifactSha256 && actual.reviewArtifactSha256 !== expectedReviewArtifactSha256)
         || (expectedReusedFromReceiptPath && actual.reusedFromReceiptPath !== expectedReusedFromReceiptPath)
+        || (input.reusedFromReceiptSha256 !== undefined && actual.reusedFromReceiptSha256 !== expectedReusedFromReceiptSha256)
         || (expectedReusedFromReviewContextSha256 && actual.reusedFromReviewContextSha256 !== expectedReusedFromReviewContextSha256)
         || (expectedReusedFromReviewContextReuseSha256 && actual.reusedFromReviewContextReuseSha256 !== expectedReusedFromReviewContextReuseSha256)
         || (input.reusedFromReviewScopeSha256 !== undefined
@@ -287,6 +344,296 @@ function normalizeTaskSequence(integrity: unknown): number | null {
 function normalizeEventSequence(value: unknown): number | null {
     const sequence = typeof value === 'number' ? value : Number(value);
     return Number.isInteger(sequence) ? sequence : null;
+}
+
+function normalizePathForComparison(value: string): string {
+    const resolved = path.resolve(value);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function pathsEqual(left: string, right: string): boolean {
+    return normalizePathForComparison(left) === normalizePathForComparison(right);
+}
+
+function pathIsInsideOrEqual(candidatePath: string, rootPath: string): boolean {
+    const normalizedCandidate = normalizePathForComparison(candidatePath);
+    const normalizedRoot = normalizePathForComparison(rootPath);
+    const relativePath = path.relative(normalizedRoot, normalizedCandidate);
+    return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function hasParentPathSegment(rawPath: string): boolean {
+    return rawPath.replace(/\\/g, '/').split('/').includes('..');
+}
+
+function normalizeArtifactSegment(value: unknown): string {
+    return String(value || '').trim();
+}
+
+function isSafeArtifactSegment(value: string): boolean {
+    return /^[A-Za-z0-9._-]+$/.test(value) && !value.includes('..');
+}
+
+export function validateHistoricalReviewRecordedRuntimeReviewPath(options: {
+    repoRoot?: string | null;
+    rawPath: unknown;
+    taskId?: string | null;
+    reviewType?: string | null;
+    expectedFileName: string;
+    artifactLabel: string;
+    missingReason: string;
+    hashForMessage?: string | null;
+}): HistoricalReviewRecordedRuntimeReviewPathValidation {
+    const rawPath = String(options.rawPath || '').trim();
+    const artifactLabel = String(options.artifactLabel || 'historical review artifact').trim();
+    const expectedFileName = String(options.expectedFileName || '').trim();
+    const taskId = normalizeArtifactSegment(options.taskId);
+    const reviewType = normalizeArtifactSegment(options.reviewType).toLowerCase();
+    if (!rawPath) {
+        return {
+            valid: false,
+            reason: options.missingReason,
+            message: `${artifactLabel} path is missing from REVIEW_RECORDED telemetry`,
+            resolvedPath: null
+        };
+    }
+    if (!isSafeArtifactSegment(taskId) || !isSafeArtifactSegment(reviewType) || !expectedFileName) {
+        return {
+            valid: false,
+            reason: `${options.missingReason}_expected_identity_invalid`,
+            message: `${artifactLabel} cannot be validated because task or review identity is invalid`,
+            resolvedPath: null
+        };
+    }
+    const root = String(options.repoRoot || '').trim();
+    if (!root) {
+        return {
+            valid: false,
+            reason: `${options.missingReason}_repo_root_missing`,
+            message: `${artifactLabel} path cannot be validated because repo root is unavailable`,
+            resolvedPath: null
+        };
+    }
+    if (hasParentPathSegment(rawPath)) {
+        return {
+            valid: false,
+            reason: `${options.missingReason}_path_traversal`,
+            message: `${artifactLabel} path must not contain parent-directory traversal segments`,
+            resolvedPath: null
+        };
+    }
+    const reviewsRoot = path.resolve(joinOrchestratorPath(root, path.join('runtime', 'reviews')));
+    const expectedPath = path.join(reviewsRoot, expectedFileName);
+    const resolvedPath = path.isAbsolute(rawPath)
+        ? path.resolve(rawPath)
+        : path.resolve(root, rawPath);
+    if (!pathsEqual(resolvedPath, expectedPath)) {
+        return {
+            valid: false,
+            reason: `${options.missingReason}_noncanonical_path`,
+            message: `${artifactLabel} path must reference canonical runtime review artifact ${normalizePath(expectedPath)}`,
+            resolvedPath
+        };
+    }
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        return {
+            valid: false,
+            reason: `${options.missingReason}_missing`,
+            message: `${artifactLabel} is missing at ${normalizePath(resolvedPath)}`,
+            resolvedPath
+        };
+    }
+    const realReviewsRoot = fs.existsSync(reviewsRoot)
+        ? fs.realpathSync.native(reviewsRoot)
+        : reviewsRoot;
+    const realResolvedPath = fs.realpathSync.native(resolvedPath);
+    if (!pathIsInsideOrEqual(realResolvedPath, realReviewsRoot)) {
+        return {
+            valid: false,
+            reason: `${options.missingReason}_realpath_escape`,
+            message: `${artifactLabel} real path escapes the runtime review artifacts directory`,
+            resolvedPath
+        };
+    }
+    return {
+        valid: true,
+        reason: null,
+        message: null,
+        resolvedPath
+    };
+}
+
+export function validateHistoricalReviewRecordedReviewArtifactPath(
+    details: Record<string, unknown>,
+    repoRoot?: string | null,
+    options: { taskId?: string | null; reviewType?: string | null } = {}
+): HistoricalReviewRecordedSnapshotValidation {
+    const taskId = normalizeArtifactSegment(options.taskId ?? details.task_id ?? details.taskId);
+    const reviewType = normalizeArtifactSegment(options.reviewType ?? details.review_type ?? details.reviewType).toLowerCase();
+    const artifactPathRaw = String(
+        details.review_artifact_snapshot_path
+            ?? details.reviewArtifactSnapshotPath
+            ?? ''
+    ).trim();
+    const expectedSha256 = normalizeLowerString(
+        details.review_artifact_snapshot_sha256
+            ?? details.reviewArtifactSnapshotSha256
+    );
+    if (!artifactPathRaw) {
+        return {
+            valid: false,
+            reason: 'review_artifact_snapshot_path_missing',
+            message: 'historical review artifact snapshot path is missing from REVIEW_RECORDED telemetry',
+            resolvedPath: null,
+            expectedSha256: expectedSha256 || null,
+            actualSha256: null
+        };
+    }
+    if (!expectedSha256) {
+        return {
+            valid: false,
+            reason: 'review_artifact_snapshot_hash_missing',
+            message: 'historical review artifact snapshot hash is missing from REVIEW_RECORDED telemetry',
+            resolvedPath: null,
+            expectedSha256: null,
+            actualSha256: null
+        };
+    }
+    if (!/^[0-9a-f]{64}$/.test(expectedSha256)) {
+        return {
+            valid: false,
+            reason: 'review_artifact_snapshot_hash_invalid',
+            message: `historical review artifact snapshot hash is invalid in REVIEW_RECORDED telemetry: ${expectedSha256}`,
+            resolvedPath: null,
+            expectedSha256,
+            actualSha256: null
+        };
+    }
+    const pathValidation = validateHistoricalReviewRecordedRuntimeReviewPath({
+        repoRoot,
+        rawPath: artifactPathRaw,
+        taskId,
+        reviewType,
+        expectedFileName: `${taskId}-${reviewType}-artifact-${expectedSha256}.md`,
+        artifactLabel: 'historical review artifact snapshot',
+        missingReason: 'review_artifact_snapshot_path'
+    });
+    if (!pathValidation.valid) {
+        return {
+            valid: false,
+            reason: pathValidation.reason,
+            message: pathValidation.message,
+            resolvedPath: pathValidation.resolvedPath,
+            expectedSha256,
+            actualSha256: null
+        };
+    }
+    const actualSha256 = normalizeLowerString(fileSha256(pathValidation.resolvedPath));
+    if (actualSha256 !== expectedSha256) {
+        return {
+            valid: false,
+            reason: 'review_artifact_snapshot_hash_mismatch',
+            message: `historical review artifact snapshot hash no longer matches telemetry (expected=${expectedSha256}, current=${actualSha256 || 'missing'})`,
+            resolvedPath: pathValidation.resolvedPath,
+            expectedSha256,
+            actualSha256: actualSha256 || null
+        };
+    }
+    return {
+        valid: true,
+        reason: null,
+        message: null,
+        resolvedPath: pathValidation.resolvedPath,
+        expectedSha256,
+        actualSha256
+    };
+}
+
+export function validateHistoricalReviewRecordedReceiptSnapshot(
+    details: Record<string, unknown>,
+    repoRoot?: string | null,
+    options: { taskId?: string | null; reviewType?: string | null } = {}
+): HistoricalReviewRecordedSnapshotValidation {
+    const receiptPathRaw = String(
+        details.receipt_snapshot_path
+            ?? details.receiptSnapshotPath
+            ?? ''
+    ).trim();
+    const expectedSha256 = normalizeLowerString(
+        details.receipt_snapshot_sha256
+            ?? details.receiptSnapshotSha256
+    );
+    if (!receiptPathRaw) {
+        return {
+            valid: false,
+            reason: 'receipt_snapshot_path_missing',
+            message: 'historical review receipt snapshot path is missing from REVIEW_RECORDED telemetry',
+            resolvedPath: null,
+            expectedSha256: expectedSha256 || null,
+            actualSha256: null
+        };
+    }
+    if (!expectedSha256) {
+        return {
+            valid: false,
+            reason: 'receipt_snapshot_hash_missing',
+            message: 'historical review receipt snapshot hash is missing from REVIEW_RECORDED telemetry',
+            resolvedPath: null,
+            expectedSha256: null,
+            actualSha256: null
+        };
+    }
+    if (!/^[0-9a-f]{64}$/.test(expectedSha256)) {
+        return {
+            valid: false,
+            reason: 'receipt_snapshot_hash_invalid',
+            message: `historical review receipt snapshot hash is invalid in REVIEW_RECORDED telemetry: ${expectedSha256}`,
+            resolvedPath: null,
+            expectedSha256,
+            actualSha256: null
+        };
+    }
+    const taskId = normalizeArtifactSegment(options.taskId ?? details.task_id ?? details.taskId);
+    const reviewType = normalizeArtifactSegment(options.reviewType ?? details.review_type ?? details.reviewType).toLowerCase();
+    const pathValidation = validateHistoricalReviewRecordedRuntimeReviewPath({
+        repoRoot,
+        rawPath: receiptPathRaw,
+        taskId,
+        reviewType,
+        expectedFileName: `${taskId}-${reviewType}-receipt-${expectedSha256}.json`,
+        artifactLabel: 'historical review receipt snapshot',
+        missingReason: 'receipt_snapshot_path'
+    });
+    if (!pathValidation.valid) {
+        return {
+            valid: false,
+            reason: pathValidation.reason,
+            message: pathValidation.message,
+            resolvedPath: pathValidation.resolvedPath,
+            expectedSha256,
+            actualSha256: null
+        };
+    }
+    const resolvedPath = pathValidation.resolvedPath;
+    const actualSha256 = normalizeLowerString(fileSha256(resolvedPath));
+    if (actualSha256 !== expectedSha256) {
+        return {
+            valid: false,
+            reason: 'receipt_snapshot_hash_mismatch',
+            message: `historical review receipt snapshot hash no longer matches telemetry (expected=${expectedSha256}, current=${actualSha256 || 'missing'})`,
+            resolvedPath,
+            expectedSha256,
+            actualSha256: actualSha256 || null
+        };
+    }
+    return {
+        valid: true,
+        reason: null,
+        message: null,
+        resolvedPath,
+        expectedSha256,
+        actualSha256
+    };
 }
 
 function reviewerProvenanceMatches(actual: unknown, expected: Record<string, unknown>): boolean {

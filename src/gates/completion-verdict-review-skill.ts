@@ -68,7 +68,8 @@ export function validateReviewSkillEvidence(
     canonicalSourceOfTruth: string | null = null,
     allowLegacyReviewContextIdentityFallback = false,
     executionProviderSource: string | null = null,
-    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
+    repoRoot: string | null = null
 ): { skill_ids: string[]; reference_paths: string[]; artifact_keys: string[]; reviewer_execution_modes: string[]; violations: string[] } {
     const result = {
         skill_ids: [] as string[],
@@ -526,6 +527,7 @@ export function validateReviewSkillEvidence(
                             codeScopeSha256: receipt.code_scope_sha256,
                             reviewArtifactSha256: receipt.review_artifact_sha256,
                             reusedFromReceiptPath: receipt.reused_from_receipt_path || null,
+                            reusedFromReceiptSha256: receipt.reused_from_receipt_sha256 || null,
                             reusedFromReviewContextSha256: receipt.reused_from_review_context_sha256 || null,
                             reusedFromReviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256 || null,
                             reusedFromReviewScopeSha256: receipt.reused_from_review_scope_sha256 || null,
@@ -568,6 +570,7 @@ export function validateReviewSkillEvidence(
                                 `Required review '${key}' reused receipt reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED telemetry.`
                             );
                         } else if (!findMatchingHistoricalReviewRecordedTelemetryEvent(events, {
+                            repoRoot,
                             taskId: receiptReviewerProvenance.task_id,
                             reviewType: key,
                             receiptPath: receipt.reused_from_receipt_path || expectedReceiptPath,
@@ -579,7 +582,8 @@ export function validateReviewSkillEvidence(
                             reviewerExecutionMode: receiptExecutionMode,
                             reviewerIdentity: receiptReviewerIdentity,
                             reviewerProvenance: receiptReviewerProvenance as unknown as Record<string, unknown>,
-                            maxEventSequenceExclusive: compilePassSequence
+                            maxEventSequenceExclusive: compilePassSequence,
+                            verifyReceiptSnapshot: true
                         })) {
                             result.violations.push(
                                 `Required review '${key}' reused receipt reviewer_provenance does not match historical REVIEW_RECORDED telemetry.`

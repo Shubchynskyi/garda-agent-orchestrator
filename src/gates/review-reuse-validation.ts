@@ -1,0 +1,489 @@
+import * as fs from 'node:fs';
+import {
+    buildReviewVerdictTokenSet,
+    extractReviewVerdictSectionTokenMatch,
+    normalizeReviewerExecutionMode,
+    normalizeReviewReceiptReviewerProvenance,
+    type ReviewReceipt
+} from '../gate-runtime/review-context';
+import * as gateHelpers from './helpers';
+import {
+    computeReviewReuseCodeScopeFingerprint,
+    computeReviewRelevantScopeFingerprint
+} from './review-reuse';
+import type { ReviewDependencyTimelineEvent } from './review-dependencies';
+import {
+    validateHistoricalReviewRecordedReceiptSnapshot,
+    validateHistoricalReviewRecordedReviewArtifactPath,
+    validateHistoricalReviewRecordedTelemetryEventMatch
+} from './review-reuse-telemetry';
+
+export interface HistoricalReviewReuseCandidate {
+    telemetryReceiptPath: string;
+    sourceReceiptPath: string;
+    sourceReceiptSha256: string | null;
+    sourceArtifactPath: string;
+    sourceKind: 'latest_receipt' | 'historical_review_recorded';
+    sourceEvent: ReviewDependencyTimelineEvent | null;
+    sourceDescription: string;
+}
+
+export interface AcceptedReviewReuseCandidateEvidence {
+    candidate: HistoricalReviewReuseCandidate;
+    verifiedReceiptPath: string | null;
+    receipt: ReviewReceipt;
+    sourceReceiptSha256: string | null;
+    reviewerExecutionMode: string;
+    reviewerIdentity: string;
+    historicalReviewerProvenance: NonNullable<ReturnType<typeof normalizeReviewReceiptReviewerProvenance>>;
+    expectedContextSha256: string | null;
+    expectedContextReuseSha256: string | null;
+    expectedReviewScopeSha256: string | null;
+    expectedCodeScopeSha256: string | null;
+    historicalReviewArtifactSha256: string;
+    artifactText: string;
+    contextHashMatches: boolean;
+    contextReuseHashMatches: boolean;
+}
+
+export function normalizeReceiptSha256(value: unknown): string | null {
+    const text = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(text) ? text : null;
+}
+
+export function describeHistoricalReviewRecordedSource(event: ReviewDependencyTimelineEvent): string {
+    const taskSequence = event.integrity?.task_sequence;
+    const eventSha256 = String(event.integrity?.event_sha256 || '').trim().toLowerCase();
+    return [
+        'historical REVIEW_RECORDED',
+        `seq=${event.sequence}`,
+        Number.isInteger(taskSequence) ? `task_sequence=${taskSequence}` : null,
+        eventSha256 ? `event_sha256=${eventSha256}` : null
+    ].filter(Boolean).join(' ');
+}
+
+function getReviewPassVerdict(reviewType: string): string {
+    const passVerdicts: Record<string, string> = {
+        code: 'REVIEW PASSED',
+        db: 'DB REVIEW PASSED',
+        security: 'SECURITY REVIEW PASSED',
+        refactor: 'REFACTOR REVIEW PASSED',
+        api: 'API REVIEW PASSED',
+        test: 'TEST REVIEW PASSED',
+        performance: 'PERFORMANCE REVIEW PASSED',
+        infra: 'INFRA REVIEW PASSED',
+        dependency: 'DEPENDENCY REVIEW PASSED'
+    };
+    return passVerdicts[String(reviewType || '').trim().toLowerCase()] || `${String(reviewType || '').trim().toUpperCase()} REVIEW PASSED`;
+}
+
+function artifactHasPassVerdict(reviewType: string, artifactText: string): boolean {
+    const tokenMatch = extractReviewVerdictSectionTokenMatch(
+        artifactText,
+        buildReviewVerdictTokenSet(reviewType, getReviewPassVerdict(reviewType))
+    );
+    return tokenMatch?.outcome === 'pass';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeLowerText(value: unknown): string {
+    return String(value || '').trim().toLowerCase();
+}
+
+function readVerifiedCandidateReceipt(
+    candidate: HistoricalReviewReuseCandidate,
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    sourceEventOverride: ReviewDependencyTimelineEvent | null = null
+): {
+    receipt: ReviewReceipt | null;
+    receiptPath: string | null;
+    receiptSha256: string | null;
+    reason: string | null;
+} {
+    let receiptPath = candidate.sourceReceiptPath;
+    const sourceEvent = sourceEventOverride || candidate.sourceEvent;
+    if (candidate.sourceKind === 'historical_review_recorded' || sourceEventOverride) {
+        const details = isRecord(sourceEvent?.details)
+            ? sourceEvent?.details as Record<string, unknown>
+            : null;
+        if (!details) {
+            return {
+                receipt: null,
+                receiptPath: null,
+                receiptSha256: null,
+                reason: 'historical REVIEW_RECORDED telemetry is missing receipt details'
+            };
+        }
+        const snapshotValidation = validateHistoricalReviewRecordedReceiptSnapshot(details, repoRoot, { taskId, reviewType });
+        if (!snapshotValidation.valid) {
+            return {
+                receipt: null,
+                receiptPath: null,
+                receiptSha256: null,
+                reason: snapshotValidation.message
+            };
+        }
+        receiptPath = snapshotValidation.resolvedPath;
+    } else if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
+        return {
+            receipt: null,
+            receiptPath: null,
+            receiptSha256: null,
+            reason: `latest mutable receipt is missing at ${gateHelpers.normalizePath(receiptPath)}`
+        };
+    }
+    try {
+        return {
+            receipt: JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt,
+            receiptPath,
+            receiptSha256: String(gateHelpers.fileSha256(receiptPath) || '').trim().toLowerCase() || null,
+            reason: null
+        };
+    } catch {
+        return {
+            receipt: null,
+            receiptPath: null,
+            receiptSha256: null,
+            reason: candidate.sourceKind === 'historical_review_recorded'
+                ? 'historical review receipt snapshot is not valid JSON'
+                : 'latest mutable receipt is not valid JSON'
+        };
+    }
+}
+
+function readVerifiedCandidateReviewArtifact(
+    candidate: HistoricalReviewReuseCandidate,
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    sourceEventOverride: ReviewDependencyTimelineEvent | null = null
+): { artifactPath: string | null; artifactText: string | null; reason: string | null } {
+    let artifactPath = candidate.sourceArtifactPath;
+    const sourceEvent = sourceEventOverride || candidate.sourceEvent;
+    if (candidate.sourceKind === 'historical_review_recorded' || sourceEventOverride) {
+        const details = isRecord(sourceEvent?.details)
+            ? sourceEvent?.details as Record<string, unknown>
+            : null;
+        if (!details) {
+            return {
+                artifactPath: null,
+                artifactText: null,
+                reason: 'historical REVIEW_RECORDED telemetry is missing review artifact details'
+            };
+        }
+        const artifactValidation = validateHistoricalReviewRecordedReviewArtifactPath(details, repoRoot, {
+            taskId,
+            reviewType
+        });
+        if (!artifactValidation.valid) {
+            return {
+                artifactPath: artifactValidation.resolvedPath,
+                artifactText: null,
+                reason: artifactValidation.message
+            };
+        }
+        artifactPath = artifactValidation.resolvedPath;
+    }
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        return {
+            artifactPath,
+            artifactText: null,
+            reason: `prior review artifact is missing at ${gateHelpers.normalizePath(artifactPath)}`
+        };
+    }
+    return {
+        artifactPath,
+        artifactText: fs.readFileSync(artifactPath, 'utf8'),
+        reason: null
+    };
+}
+
+function findHistoricalReviewRecordedEventForLatestReceiptCandidate(options: {
+    candidate: HistoricalReviewReuseCandidate;
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
+    latestCompilePassSequence: number;
+}): { event: ReviewDependencyTimelineEvent | null; reason: string | null } {
+    const receiptSha256 = normalizeReceiptSha256(options.candidate.sourceReceiptSha256);
+    if (!receiptSha256) {
+        return {
+            event: null,
+            reason: 'latest mutable receipt hash is unavailable'
+        };
+    }
+    const expectedReceiptPath = gateHelpers.normalizePath(options.candidate.telemetryReceiptPath).toLowerCase();
+    for (let index = options.timelineEvents.length - 1; index >= 0; index -= 1) {
+        const event = options.timelineEvents[index];
+        if (
+            event.sequence >= options.latestCompilePassSequence
+            || event.event_type !== 'REVIEW_RECORDED'
+            || !isRecord(event.details)
+        ) {
+            continue;
+        }
+        const details = event.details;
+        if (
+            normalizeLowerText(details.review_type ?? details.reviewType) !== normalizeLowerText(options.reviewType)
+            || (String(details.task_id ?? details.taskId ?? '').trim()
+                && String(details.task_id ?? details.taskId).trim() !== options.taskId)
+            || gateHelpers.normalizePath(details.receipt_path ?? details.receiptPath ?? '').toLowerCase() !== expectedReceiptPath
+        ) {
+            continue;
+        }
+        const recordedReceiptSha256 = normalizeReceiptSha256(details.receipt_sha256 ?? details.receiptSha256);
+        if (recordedReceiptSha256 !== receiptSha256) {
+            continue;
+        }
+        const snapshotValidation = validateHistoricalReviewRecordedReceiptSnapshot(details, options.repoRoot, {
+            taskId: options.taskId,
+            reviewType: options.reviewType
+        });
+        if (!snapshotValidation.valid) {
+            return {
+                event: null,
+                reason: snapshotValidation.message
+            };
+        }
+        return { event, reason: null };
+    }
+    return {
+        event: null,
+        reason: 'latest mutable receipt hash does not match historical REVIEW_RECORDED telemetry'
+    };
+}
+
+export function validateHistoricalReviewReuseCandidate(options: {
+    candidate: HistoricalReviewReuseCandidate;
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    previousReviewContextReuseSha256?: string | null;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
+    latestCompilePassSequence: number;
+    nonTestReviewScope: boolean;
+    codeScopeFingerprint: ReturnType<typeof computeReviewReuseCodeScopeFingerprint>;
+    reviewScopeFingerprint: ReturnType<typeof computeReviewRelevantScopeFingerprint>;
+    hasCurrentCodeScope: boolean;
+    hasCurrentReviewScope: boolean;
+    currentCodeScopeSha256: string | null;
+    currentReviewContextSha256: string | null;
+    currentContextReuseSha256: string | null;
+}): { accepted: true; evidence: AcceptedReviewReuseCandidateEvidence } | { accepted: false; reason: string } {
+    const sourceEventResolution = options.candidate.sourceKind === 'latest_receipt'
+        ? findHistoricalReviewRecordedEventForLatestReceiptCandidate({
+            candidate: options.candidate,
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            timelineEvents: options.timelineEvents,
+            latestCompilePassSequence: options.latestCompilePassSequence
+        })
+        : {
+            event: options.candidate.sourceEvent,
+            reason: null
+        };
+    if (!sourceEventResolution.event) {
+        return {
+            accepted: false,
+            reason: sourceEventResolution.reason || 'historical REVIEW_RECORDED telemetry is missing for this receipt'
+        };
+    }
+
+    const verifiedReceipt = readVerifiedCandidateReceipt(
+        options.candidate,
+        options.repoRoot,
+        options.taskId,
+        options.reviewType,
+        sourceEventResolution.event
+    );
+    if (!verifiedReceipt.receipt) {
+        return {
+            accepted: false,
+            reason: verifiedReceipt.reason || 'historical review receipt could not be verified'
+        };
+    }
+
+    const receipt = verifiedReceipt.receipt;
+    const sourceReceiptSha256 = normalizeReceiptSha256(
+        verifiedReceipt.receiptSha256 || options.candidate.sourceReceiptSha256
+    );
+    const reviewerExecutionMode = normalizeReviewerExecutionMode(receipt.reviewer_execution_mode);
+    const reviewerIdentity = String(receipt.reviewer_identity || '').trim() || null;
+    const historicalReviewerProvenance = receipt.reviewer_provenance == null
+        ? null
+        : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+    const historicalTrustLevel = String(receipt.trust_level || '').trim().toUpperCase();
+    const expectedContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
+    const historicalProvenanceContextSha256 = historicalReviewerProvenance?.attestation_type === 'reviewer_invocation_attestation'
+        ? historicalReviewerProvenance.review_context_sha256
+        : null;
+    const historicalReviewContextSha256 = normalizeReceiptSha256(receipt.reused_existing_review === true
+        ? receipt.reused_from_review_context_sha256 || historicalProvenanceContextSha256
+        : expectedContextSha256);
+    const expectedContextReuseSha256 = String(
+        receipt.review_context_reuse_sha256 || options.previousReviewContextReuseSha256 || ''
+    ).trim().toLowerCase() || null;
+    const expectedReviewScopeSha256 = String(receipt.review_scope_sha256 || '').trim().toLowerCase() || null;
+    const expectedCodeScopeSha256 = normalizeReceiptSha256(receipt.code_scope_sha256);
+
+    if (receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
+        return { accepted: false, reason: 'prior review receipt task id or review type does not match current request' };
+    }
+    if (!reviewerExecutionMode || !reviewerIdentity || !expectedContextSha256) {
+        return { accepted: false, reason: 'prior review receipt is missing reviewer identity or review-context hash' };
+    }
+    if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
+        return { accepted: false, reason: 'prior review receipt is not delegated-subagent evidence with historical provenance' };
+    }
+    if (
+        historicalTrustLevel !== 'INDEPENDENT_AUDITED'
+        || historicalReviewerProvenance.attestation_type !== 'reviewer_invocation_attestation'
+        || historicalReviewerProvenance.task_id !== options.taskId
+        || historicalReviewerProvenance.review_type !== options.reviewType
+        || historicalReviewerProvenance.reviewer_execution_mode !== reviewerExecutionMode
+        || historicalReviewerProvenance.reviewer_identity !== reviewerIdentity
+        || historicalReviewerProvenance.review_context_sha256 !== historicalReviewContextSha256
+    ) {
+        return { accepted: false, reason: 'prior review provenance does not bind to the prior delegated reviewer invocation' };
+    }
+
+    const verifiedArtifact = readVerifiedCandidateReviewArtifact(
+        options.candidate,
+        options.repoRoot,
+        options.taskId,
+        options.reviewType,
+        sourceEventResolution.event
+    );
+    if (!verifiedArtifact.artifactPath || verifiedArtifact.artifactText == null) {
+        return {
+            accepted: false,
+            reason: verifiedArtifact.reason || 'prior review artifact could not be verified'
+        };
+    }
+    const artifactText = verifiedArtifact.artifactText;
+    if (!artifactHasPassVerdict(options.reviewType, artifactText)) {
+        return { accepted: false, reason: 'prior review artifact is not a PASS verdict' };
+    }
+    const historicalReviewArtifactSha256 = String(gateHelpers.fileSha256(verifiedArtifact.artifactPath) || '')
+        .trim()
+        .toLowerCase();
+    if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== historicalReviewArtifactSha256) {
+        return { accepted: false, reason: 'prior review artifact hash no longer matches the receipt' };
+    }
+    if (
+        options.nonTestReviewScope
+        && options.hasCurrentCodeScope
+        && (!expectedCodeScopeSha256 || expectedCodeScopeSha256 !== options.currentCodeScopeSha256)
+    ) {
+        return {
+            accepted: false,
+            reason:
+                `non-test scope changed since the prior review (expected code_scope_sha256=${expectedCodeScopeSha256 || 'missing'}, ` +
+                `current=${options.currentCodeScopeSha256 || 'missing'})`
+        };
+    }
+    if (
+        !options.nonTestReviewScope
+        && options.hasCurrentReviewScope
+        && (!expectedReviewScopeSha256
+            || expectedReviewScopeSha256 !== String(options.reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase())
+    ) {
+        return {
+            accepted: false,
+            reason:
+                `review-relevant scope changed since the prior review (expected review_scope_sha256=${expectedReviewScopeSha256 || 'missing'}, ` +
+                `current=${String(options.reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || 'missing'})`
+        };
+    }
+
+    const historicalInvocationEvent = options.timelineEvents.find((entry) => (
+        entry.sequence < options.latestCompilePassSequence
+        && entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+        && entry.integrity
+        && entry.integrity.task_sequence === historicalReviewerProvenance.task_sequence
+        && String(entry.integrity.event_sha256 || '').trim().toLowerCase() === historicalReviewerProvenance.event_sha256
+        && (entry.integrity.prev_event_sha256 == null
+            ? null
+            : String(entry.integrity.prev_event_sha256).trim().toLowerCase() || null) === historicalReviewerProvenance.prev_event_sha256
+        && String(entry.details?.task_id || entry.details?.taskId || '').trim() === options.taskId
+        && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === options.reviewType
+        && String(entry.details?.reviewer_execution_mode || entry.details?.reviewerExecutionMode || '').trim() === reviewerExecutionMode
+        && (
+            String(entry.details?.reviewer_identity || entry.details?.reviewerIdentity || '').trim()
+            || String(entry.details?.reviewer_session_id || entry.details?.reviewerSessionId || '').trim()
+        ) === reviewerIdentity
+        && String(entry.details?.review_context_sha256 || entry.details?.reviewContextSha256 || '').trim().toLowerCase() === historicalReviewContextSha256
+        && String(entry.details?.routing_event_sha256 || entry.details?.routingEventSha256 || '').trim().toLowerCase() === historicalReviewerProvenance.routing_event_sha256
+    ));
+    if (!historicalInvocationEvent) {
+        return {
+            accepted: false,
+            reason: 'historical delegated reviewer invocation telemetry is missing or does not match the receipt'
+        };
+    }
+
+    const historicalRecordedEvent = validateHistoricalReviewRecordedTelemetryEventMatch({
+        event: sourceEventResolution.event,
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        receiptPath: options.candidate.telemetryReceiptPath,
+        reviewContextSha256: expectedContextSha256,
+        reviewContextReuseSha256: expectedContextReuseSha256,
+        reviewScopeSha256: expectedReviewScopeSha256,
+        codeScopeSha256: expectedCodeScopeSha256,
+        reviewArtifactSha256: historicalReviewArtifactSha256,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewerProvenance: historicalReviewerProvenance as unknown as Record<string, unknown>,
+        maxEventSequenceExclusive: options.latestCompilePassSequence,
+        verifyReceiptSnapshot: true
+    }).matched;
+    if (!historicalRecordedEvent) {
+        return { accepted: false, reason: 'historical REVIEW_RECORDED telemetry does not match the prior receipt' };
+    }
+
+    const acceptableContextReuseHashes = [
+        expectedContextReuseSha256,
+        String(options.previousReviewContextReuseSha256 || '').trim().toLowerCase() || null
+    ].filter((value): value is string => !!value);
+    const contextHashMatches = !!expectedContextSha256 && expectedContextSha256 === options.currentReviewContextSha256;
+    const contextReuseHashMatches = !!options.currentContextReuseSha256
+        && acceptableContextReuseHashes.includes(options.currentContextReuseSha256);
+    if (!contextHashMatches && !contextReuseHashMatches) {
+        return {
+            accepted: false,
+            reason:
+                `review context inputs changed (context_sha256_match=${contextHashMatches}; ` +
+                `reuse_sha256_match=${contextReuseHashMatches})`
+        };
+    }
+
+    return {
+        accepted: true,
+        evidence: {
+            candidate: options.candidate,
+            verifiedReceiptPath: verifiedReceipt.receiptPath,
+            receipt,
+            sourceReceiptSha256,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            historicalReviewerProvenance,
+            expectedContextSha256,
+            expectedContextReuseSha256,
+            expectedReviewScopeSha256,
+            expectedCodeScopeSha256,
+            historicalReviewArtifactSha256,
+            artifactText,
+            contextHashMatches,
+            contextReuseHashMatches
+        }
+    };
+}

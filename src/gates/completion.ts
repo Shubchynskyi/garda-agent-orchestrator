@@ -451,7 +451,8 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         runtimeIdentity.canonical_source_of_truth,
         runtimeIdentity.task_mode_identity_backfilled,
         runtimeIdentity.execution_provider_source,
-        resolveReviewExecutionPolicyModeFromPreflight(preflight)
+        resolveReviewExecutionPolicyModeFromPreflight(preflight),
+        repoRoot
     );
     errors.push(...reviewSkillEvidence.violations);
 

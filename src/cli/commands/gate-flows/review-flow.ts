@@ -545,7 +545,8 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         canonicalSourceOfTruth: runtimeIdentity.canonical_source_of_truth,
         executionProvider: runtimeIdentity.execution_provider,
         executionProviderSource: runtimeIdentity.execution_provider_source,
-        allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled
+        allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled,
+        repoRoot
     });
     const allViolations = [...baseResult.violations, ...artifactEvidence.violations];
     const status = allViolations.length > 0 ? 'FAILED' : 'PASSED';

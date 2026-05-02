@@ -26,7 +26,13 @@ import {
     emitReviewerInvocationAttestedEventAsync,
     emitReviewRecordedEventAsync
 } from '../../../gate-runtime/lifecycle-events';
-import { writeReviewArtifactJson, writeReviewArtifactText } from '../../../gate-runtime/review-artifacts';
+import {
+    captureReviewArtifactRollbackState,
+    restoreReviewArtifactFromRollbackState,
+    writeReviewArtifactJson,
+    writeReviewArtifactText,
+    writeReviewArtifactsWithRollback
+} from '../../../gate-runtime/review-artifacts';
 import * as gateHelpers from '../../../gates/helpers';
 import { normalizePath } from '../../../gates/helpers';
 import { REVIEW_CONTRACTS } from '../../../gates/required-reviews-check';
@@ -78,11 +84,6 @@ interface ParsedReviewerIdentity {
     reviewerExecutionMode: 'delegated_subagent';
     reviewerIdentity: string;
     reviewerFallbackReason: string | null;
-}
-
-interface ReviewArtifactRollbackState {
-    existed: boolean;
-    content: string | null;
 }
 
 interface ResolvedReviewOutputInput {
@@ -395,31 +396,6 @@ async function resolveReviewOutputInput(
             ? reviewOutputSourcePath
             : null
     };
-}
-
-function captureReviewArtifactRollbackState(artifactPath: string): ReviewArtifactRollbackState {
-    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
-        return {
-            existed: false,
-            content: null
-        };
-    }
-    return {
-        existed: true,
-        content: fs.readFileSync(artifactPath, 'utf8')
-    };
-}
-
-function restoreReviewArtifactFromRollbackState(
-    artifactPath: string,
-    rollbackState: ReviewArtifactRollbackState
-): void {
-    if (!rollbackState.existed) {
-        removeArtifactIfExists(artifactPath);
-        return;
-    }
-    const content = rollbackState.content || '';
-    writeReviewArtifactText(artifactPath, content.endsWith('\n') ? content : `${content}\n`);
 }
 
 function getReviewHeading(reviewType: string): string {
@@ -1617,15 +1593,40 @@ async function recordReviewReceiptFromArtifacts(options: {
     (receipt as unknown as Record<string, unknown>).review_output_sha256 = options.rawReviewOutputSha256 || null;
     (receipt as unknown as Record<string, unknown>).review_materialization_fidelity = options.reviewMaterializationFidelity || 'exact';
 
+    const receiptPayloadSha256 = createHash('sha256')
+        .update(`${JSON.stringify(receipt, null, 2)}\n`)
+        .digest('hex');
     const receiptPath = options.artifactPath.replace(/\.md$/, '-receipt.json');
-    writeReviewArtifactJson(receiptPath, receipt);
+    const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${receiptPayloadSha256}.json`);
+    const artifactSnapshotPath = options.artifactPath.replace(/\.md$/, `-artifact-${artifactSha256}.md`);
 
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
-    try {
+    await writeReviewArtifactsWithRollback([
+        {
+            artifactPath: receiptPath,
+            contentType: 'json',
+            payload: receipt
+        },
+        {
+            artifactPath: receiptSnapshotPath,
+            contentType: 'json',
+            payload: receipt
+        },
+        {
+            artifactPath: artifactSnapshotPath,
+            contentType: 'text',
+            content: fs.readFileSync(options.artifactPath, 'utf8')
+        }
+    ], async () => {
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
             ...receipt,
             receipt_path: normalizePath(receiptPath),
+            receipt_sha256: receiptPayloadSha256,
+            receipt_snapshot_path: normalizePath(receiptSnapshotPath),
+            receipt_snapshot_sha256: receiptPayloadSha256,
             review_artifact_path: normalizePath(options.artifactPath),
+            review_artifact_snapshot_path: normalizePath(artifactSnapshotPath),
+            review_artifact_snapshot_sha256: artifactSha256,
             review_context_path: normalizePath(options.contextPath)
         });
         if (!recordedEvent || taskEventAppendHasBlockingFailure(recordedEvent, false)) {
@@ -1634,10 +1635,7 @@ async function recordReviewReceiptFromArtifacts(options: {
                 'The lifecycle event could not be persisted.'
             );
         }
-    } catch (error: unknown) {
-        removeArtifactIfExists(receiptPath);
-        throw error;
-    }
+    });
     return receiptPath;
 }
 
@@ -2593,7 +2591,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             // Best-effort rollback only.
         }
         try {
-            restoreReviewArtifactFromRollbackState(artifactPath, artifactRollbackState);
+            restoreReviewArtifactFromRollbackState(artifactPath, artifactRollbackState, { ensureTrailingNewline: true });
         } catch {
             // Best-effort rollback only.
         }

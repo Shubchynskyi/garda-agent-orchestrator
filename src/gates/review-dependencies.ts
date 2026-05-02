@@ -278,7 +278,8 @@ export function assessUpstreamReviewDependencyStatus(options: {
             receipt
         },
         allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled,
-        timelineEvents: options.timelineEvents
+        timelineEvents: options.timelineEvents,
+        repoRoot
     });
     if (validation.violations.length > 0) {
         return {

@@ -367,6 +367,7 @@ export interface ReviewReceipt {
     trust_level?: string;
     reused_existing_review?: boolean;
     reused_from_receipt_path?: string | null;
+    reused_from_receipt_sha256?: string | null;
     reused_from_review_context_sha256?: string | null;
     reused_from_review_context_reuse_sha256?: string | null;
     reused_from_review_scope_sha256?: string | null;
@@ -809,6 +810,7 @@ export function buildReviewReceipt(options: {
     trustLevel?: string;
     reusedExistingReview?: boolean;
     reusedFromReceiptPath?: string | null;
+    reusedFromReceiptSha256?: string | null;
     reusedFromReviewContextSha256?: string | null;
     reusedFromReviewContextReuseSha256?: string | null;
     reusedFromReviewScopeSha256?: string | null;
@@ -832,6 +834,7 @@ export function buildReviewReceipt(options: {
         trust_level: options.trustLevel || 'LOCAL_ASSERTED',
         reused_existing_review: options.reusedExistingReview === true,
         reused_from_receipt_path: options.reusedFromReceiptPath ?? null,
+        reused_from_receipt_sha256: options.reusedFromReceiptSha256 ?? null,
         reused_from_review_context_sha256: options.reusedFromReviewContextSha256 ?? null,
         reused_from_review_context_reuse_sha256: options.reusedFromReviewContextReuseSha256 ?? null,
         reused_from_review_scope_sha256: options.reusedFromReviewScopeSha256 ?? null,
