@@ -11,6 +11,7 @@ import {
     assertReviewTreeStateFresh,
     buildReviewTreeState,
     createReviewTreeStateFreshnessCache,
+    getReviewTreeStateBlockingViolations,
     getReviewTreeStateFreshnessCacheStats
 } from '../../../src/gates/review-tree-state';
 import { computeSnapshotFingerprint } from '../../../src/gates/workspace-snapshot-cache';
@@ -24,7 +25,97 @@ function runGit(repoRoot: string, args: string[]): void {
     assert.equal(result.status, 0, String(result.stderr || result.error || 'git command failed'));
 }
 
+function findTreeEntry(treeState: ReturnType<typeof buildReviewTreeState>, filePath: string) {
+    const entry = treeState.entries.find((candidate) => candidate.path === filePath);
+    assert.ok(entry, `expected tree-state entry for ${filePath}`);
+    return entry;
+}
+
 describe('gates/review-tree-state', () => {
+    it('captures staged-only, unstaged-only, mixed MM, and untracked path states', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-status-'));
+        try {
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'staged.ts'), 'export const staged = 1;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'unstaged.ts'), 'export const unstaged = 1;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'mixed.ts'), 'export const mixed = 1;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/staged.ts', 'src/unstaged.ts', 'src/mixed.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+
+            fs.writeFileSync(path.join(repoRoot, 'src', 'staged.ts'), 'export const staged = 2;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/staged.ts']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'unstaged.ts'), 'export const unstaged = 2;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'mixed.ts'), 'export const mixed = 2;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/mixed.ts']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'mixed.ts'), 'export const mixed = 3;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'untracked.ts'), 'export const untracked = 1;\n', 'utf8');
+
+            const treeState = buildReviewTreeState({
+                repoRoot,
+                detectionSource: 'git_staged_plus_untracked',
+                includeUntracked: true,
+                changedFiles: [
+                    'src/staged.ts',
+                    'src/unstaged.ts',
+                    'src/mixed.ts',
+                    'src/untracked.ts'
+                ],
+                metrics: {
+                    changed_files_sha256: 'changed-files-hash',
+                    scope_content_sha256: 'scope-content-hash',
+                    scope_sha256: 'scope-hash'
+                }
+            });
+
+            const staged = findTreeEntry(treeState, 'src/staged.ts');
+            assert.equal(staged.index_status, 'M');
+            assert.equal(staged.worktree_status, ' ');
+            assert.equal(staged.has_staged_change, true);
+            assert.equal(staged.has_unstaged_change, false);
+            assert.equal(staged.stale_staged_snapshot_risk, false);
+            assert.match(String(staged.staged?.object_id || ''), /^[0-9a-f]{40,64}$/);
+            assert.equal(staged.worktree.status, 'file');
+            assert.match(String(staged.worktree.sha256 || ''), /^[0-9a-f]{64}$/);
+
+            const unstaged = findTreeEntry(treeState, 'src/unstaged.ts');
+            assert.equal(unstaged.index_status, ' ');
+            assert.equal(unstaged.worktree_status, 'M');
+            assert.equal(unstaged.has_staged_change, false);
+            assert.equal(unstaged.has_unstaged_change, true);
+            assert.equal(unstaged.stale_staged_snapshot_risk, true);
+            assert.match(String(unstaged.staged?.object_id || ''), /^[0-9a-f]{40,64}$/);
+
+            const mixed = findTreeEntry(treeState, 'src/mixed.ts');
+            assert.equal(mixed.index_status, 'M');
+            assert.equal(mixed.worktree_status, 'M');
+            assert.equal(mixed.has_staged_change, true);
+            assert.equal(mixed.has_unstaged_change, true);
+            assert.equal(mixed.stale_staged_snapshot_risk, true);
+            assert.match(String(mixed.staged?.object_id || ''), /^[0-9a-f]{40,64}$/);
+
+            const untracked = findTreeEntry(treeState, 'src/untracked.ts');
+            assert.equal(untracked.index_status, '?');
+            assert.equal(untracked.worktree_status, '?');
+            assert.equal(untracked.has_staged_change, false);
+            assert.equal(untracked.has_unstaged_change, false);
+            assert.equal(untracked.staged, null);
+            assert.equal(untracked.worktree.status, 'file');
+            assert.match(String(untracked.worktree.sha256 || ''), /^[0-9a-f]{64}$/);
+
+            assert.deepEqual(treeState.stale_staged_snapshot_files, [
+                'src/mixed.ts',
+                'src/unstaged.ts'
+            ]);
+            assert.deepEqual(treeState.mixed_staged_worktree_files, ['src/mixed.ts']);
+            assert.match(treeState.tree_state_sha256, /^[0-9a-f]{64}$/);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('shares current freshness snapshots across repeated review artifact checks', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-cache-'));
         try {
@@ -153,6 +244,88 @@ describe('gates/review-tree-state', () => {
             assert.notEqual(bravoSnapshot.scope_content_sha256, alphaSnapshot.scope_content_sha256);
             assert.notEqual(bravoCacheFingerprint.fingerprint, alphaCacheFingerprint.fingerprint);
             assert.notEqual(bravoReuseScope.code_scope_sha256, alphaReuseScope.code_scope_sha256);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('captures broken symlinks as link-text-only reviewable entries', (t) => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-broken-symlink-'));
+        try {
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            const linkPath = path.join(repoRoot, 'src', 'broken-link.ts');
+            try {
+                fs.symlinkSync('missing-target.ts', linkPath, 'file');
+            } catch (error) {
+                t.skip(`file symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+
+            const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/broken-link.ts']);
+            const treeState = buildReviewTreeState({
+                repoRoot,
+                detectionSource: 'explicit_changed_files',
+                includeUntracked: true,
+                changedFiles: snapshot.changed_files,
+                metrics: {
+                    changed_files_sha256: snapshot.changed_files_sha256,
+                    scope_content_sha256: snapshot.scope_content_sha256,
+                    scope_sha256: snapshot.scope_sha256
+                }
+            });
+
+            const entry = findTreeEntry(treeState, 'src/broken-link.ts');
+            assert.equal(entry.worktree.status, 'symbolic_link');
+            assert.equal(entry.worktree.target_status, 'missing');
+            assert.equal(entry.worktree.link_target, 'missing-target.ts');
+            assert.match(String(entry.worktree.link_sha256 || ''), /^[0-9a-f]{64}$/);
+            assert.deepEqual(getReviewTreeStateBlockingViolations(treeState), []);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fails closed for symlinks to directories because reviewer-visible file content is unreviewable', (t) => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-directory-symlink-'));
+        try {
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.mkdirSync(path.join(repoRoot, 'src', 'target-dir'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'target-dir', 'value.ts'), 'export const value = 1;\n', 'utf8');
+            const linkPath = path.join(repoRoot, 'src', 'dir-link');
+            try {
+                fs.symlinkSync(path.join(repoRoot, 'src', 'target-dir'), linkPath, 'dir');
+            } catch (error) {
+                t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+
+            const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/dir-link']);
+            const treeState = buildReviewTreeState({
+                repoRoot,
+                detectionSource: 'explicit_changed_files',
+                includeUntracked: true,
+                changedFiles: snapshot.changed_files,
+                metrics: {
+                    changed_files_sha256: snapshot.changed_files_sha256,
+                    scope_content_sha256: snapshot.scope_content_sha256,
+                    scope_sha256: snapshot.scope_sha256
+                }
+            });
+
+            const entry = findTreeEntry(treeState, 'src/dir-link');
+            assert.equal(entry.worktree.status, 'unreviewable_symlink');
+            assert.equal(entry.worktree.target_status, 'directory');
+            assert.equal(entry.worktree.target_path, 'src/target-dir');
+            assert.match(String(entry.worktree.link_sha256 || ''), /^[0-9a-f]{64}$/);
+            assert.match(
+                getReviewTreeStateBlockingViolations(treeState).join('\n'),
+                /symlinks or junctions that do not resolve to regular in-repo files: src\/dir-link/
+            );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
