@@ -15,6 +15,12 @@ import { runInstall } from '../materialization/install';
 import { runVerify } from '../validators/verify';
 import { validateManifest } from '../validators/validate-manifest';
 import { createAgentInitState, readAgentInitStateSafe, writeAgentInitState } from '../runtime/agent-init-state';
+import {
+    DEFAULT_ORDINARY_DOC_PATHS,
+    ORDINARY_DOC_PATHS_CONFIG_KEY,
+    normalizeOrdinaryDocPathPatterns,
+    parseOrdinaryDocPathList
+} from '../core/ordinary-doc-paths';
 
 interface AgentInitState {
     OrchestratorVersion: string | null;
@@ -24,6 +30,8 @@ interface AgentInitState {
     ActiveAgentFilesConfirmed: boolean;
     ProjectRulesUpdated: boolean;
     SkillsPromptCompleted: boolean;
+    OrdinaryDocPathsConfirmed: boolean;
+    OrdinaryDocPaths: string[];
     VerificationPassed: boolean;
     ManifestValidationPassed: boolean;
     ActiveAgentFiles: string[];
@@ -57,6 +65,7 @@ interface RunAgentInitOptions {
     activeAgentFiles: string | string[] | null | undefined;
     projectRulesUpdated: unknown;
     skillsPrompted: unknown;
+    ordinaryDocPaths?: unknown;
     installRunner?: (options: AgentInitInstallOptions) => void;
     verifyRunner?: (options: AgentInitVerifyOptions) => { passed: boolean };
     manifestRunner?: (manifestPath: string) => { passed: boolean };
@@ -73,6 +82,13 @@ export interface AgentInitResult {
     verifyPassed: boolean;
     manifestPassed: boolean;
     readyForTasks: boolean;
+    ordinaryDocPaths: string[];
+    ordinaryDocPathsDiscovered: string[];
+    ordinaryDocPathsConfirmed: boolean;
+    ordinaryDocPathsNeedsConfirmation: boolean;
+    ordinaryDocPathsPersisted: boolean;
+    ordinaryDocPathsConfigPath: string;
+    ordinaryDocPathsEditHint: string;
     verifyResult: { passed: boolean };
     manifestResult: { passed: boolean };
     state: AgentInitState;
@@ -130,6 +146,96 @@ function resolvePathInsideTarget(targetRoot: string, relativeOrAbsolutePath: str
         : path.resolve(targetRoot, relativeOrAbsolutePath);
 }
 
+function discoverOrdinaryDocPathCandidates(targetRoot: string): string[] {
+    const candidates = [
+        ...DEFAULT_ORDINARY_DOC_PATHS,
+        'docs/plan.md',
+        'docs/planning.md',
+        'docs/roadmap.md',
+        'docs/todo.md',
+        'docs/backlog.md',
+        'PLAN.md',
+        'ROADMAP.md',
+        'TODO.md',
+        'BACKLOG.md',
+        'NOTES.md'
+    ];
+    const discovered = candidates.filter((candidate) => (
+        DEFAULT_ORDINARY_DOC_PATHS.includes(candidate)
+        || pathExists(path.join(targetRoot, candidate))
+    ));
+    return normalizeOrdinaryDocPathPatterns(discovered, ORDINARY_DOC_PATHS_CONFIG_KEY);
+}
+
+function readPathsConfig(pathsConfigPath: string): Record<string, unknown> {
+    if (!pathExists(pathsConfigPath)) {
+        return {};
+    }
+    const parsed = readJsonFile(pathsConfigPath);
+    return isPlainObject(parsed) ? parsed as Record<string, unknown> : {};
+}
+
+function syncOrdinaryDocPathsConfig(
+    targetRoot: string,
+    bundleRoot: string,
+    ordinaryDocPathsOption: unknown,
+    previousState: AgentInitState | null
+): {
+    paths: string[];
+    discovered: string[];
+    confirmed: boolean;
+    needsConfirmation: boolean;
+    persisted: boolean;
+    configPath: string;
+    editHint: string;
+} {
+    const pathsConfigPath = path.join(bundleRoot, 'live', 'config', 'paths.json');
+    const discovered = discoverOrdinaryDocPathCandidates(targetRoot);
+    const rawConfig = readPathsConfig(pathsConfigPath);
+    const hasConfirmedOption = ordinaryDocPathsOption !== undefined && ordinaryDocPathsOption !== null;
+    const hasConfiguredKey = rawConfig[ORDINARY_DOC_PATHS_CONFIG_KEY] !== undefined;
+    const previousConfirmed = previousState?.OrdinaryDocPathsConfirmed === true;
+    const existingPaths = rawConfig[ORDINARY_DOC_PATHS_CONFIG_KEY] === undefined
+        ? []
+        : normalizeOrdinaryDocPathPatterns(
+            rawConfig[ORDINARY_DOC_PATHS_CONFIG_KEY],
+            `paths.${ORDINARY_DOC_PATHS_CONFIG_KEY}`,
+            { allowScalar: true }
+        );
+    let paths: string[];
+    if (hasConfirmedOption) {
+        paths = parseOrdinaryDocPathList(ordinaryDocPathsOption, ORDINARY_DOC_PATHS_CONFIG_KEY);
+    } else if (previousConfirmed && hasConfiguredKey) {
+        paths = existingPaths;
+    } else if (previousConfirmed) {
+        paths = previousState!.OrdinaryDocPaths;
+    } else {
+        paths = hasConfiguredKey ? existingPaths : discovered;
+    }
+
+    const confirmed = hasConfirmedOption || previousConfirmed;
+    const needsConfirmation = !confirmed;
+
+    let persisted = false;
+    if (hasConfirmedOption || (previousConfirmed && !hasConfiguredKey)) {
+        writeJsonFile(pathsConfigPath, {
+            ...rawConfig,
+            [ORDINARY_DOC_PATHS_CONFIG_KEY]: paths
+        });
+        persisted = true;
+    }
+
+    return {
+        paths,
+        discovered,
+        confirmed,
+        needsConfirmation,
+        persisted,
+        configPath: pathsConfigPath,
+        editHint: `Edit ${path.join('garda-agent-orchestrator', 'live', 'config', 'paths.json')} field ${ORDINARY_DOC_PATHS_CONFIG_KEY}.`
+    };
+}
+
 function parseBooleanYesNo(value: unknown, fieldName: string): boolean {
     if (value === true || value === false) {
         return value;
@@ -153,6 +259,7 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         activeAgentFiles,
         projectRulesUpdated,
         skillsPrompted,
+        ordinaryDocPaths,
         installRunner = runInstall,
         verifyRunner = runVerify,
         manifestRunner = validateManifest
@@ -206,6 +313,12 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         normalizedBundleRoot,
         previousState
     );
+    const ordinaryDocPathsResult = syncOrdinaryDocPathsConfig(
+        normalizedTargetRoot,
+        normalizedBundleRoot,
+        ordinaryDocPaths,
+        previousState
+    );
 
     const verifyResult = verifyRunner({
         targetRoot: normalizedTargetRoot,
@@ -222,6 +335,8 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         ActiveAgentFilesConfirmed: true,
         ProjectRulesUpdated: parseBooleanYesNo(projectRulesUpdated, 'ProjectRulesUpdated'),
         SkillsPromptCompleted: parseBooleanYesNo(skillsPrompted, 'SkillsPrompted'),
+        OrdinaryDocPathsConfirmed: ordinaryDocPathsResult.confirmed,
+        OrdinaryDocPaths: ordinaryDocPathsResult.confirmed ? ordinaryDocPathsResult.paths : [],
         VerificationPassed: verifyResult.passed,
         ManifestValidationPassed: manifestResult.passed,
         ActiveAgentFiles: normalizedActiveFiles,
@@ -239,11 +354,19 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         skillsPromptCompleted: state.SkillsPromptCompleted,
         verifyPassed: verifyResult.passed,
         manifestPassed: manifestResult.passed,
+        ordinaryDocPaths: ordinaryDocPathsResult.paths,
+        ordinaryDocPathsDiscovered: ordinaryDocPathsResult.discovered,
+        ordinaryDocPathsConfirmed: ordinaryDocPathsResult.confirmed,
+        ordinaryDocPathsNeedsConfirmation: ordinaryDocPathsResult.needsConfirmation,
+        ordinaryDocPathsPersisted: ordinaryDocPathsResult.persisted,
+        ordinaryDocPathsConfigPath: ordinaryDocPathsResult.configPath,
+        ordinaryDocPathsEditHint: ordinaryDocPathsResult.editHint,
         readyForTasks: (
             state.AssistantLanguageConfirmed
             && state.ActiveAgentFilesConfirmed
             && state.ProjectRulesUpdated
             && state.SkillsPromptCompleted
+            && state.OrdinaryDocPathsConfirmed
             && state.VerificationPassed
             && state.ManifestValidationPassed
         ),

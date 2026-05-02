@@ -231,7 +231,8 @@ describe('full local lifecycle', () => {
                 initAnswersPath: 'garda-agent-orchestrator/runtime/init-answers.json',
                 activeAgentFiles: 'AGENTS.md, CLAUDE.md',
                 projectRulesUpdated: 'yes',
-                skillsPrompted: 'yes'
+                skillsPrompted: 'yes',
+                ordinaryDocPaths: 'CHANGELOG.md'
             });
 
             assert.equal(agentInitResult.readyForTasks, true);

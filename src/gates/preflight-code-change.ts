@@ -81,7 +81,16 @@ export function detectCodeChanged(preflight: Record<string, unknown> | null, rep
         const fallbackScope = classifyScopeCategory(
             changedFiles,
             classificationConfig.code_like_regexes,
-            classificationConfig.runtime_roots
+            classificationConfig.runtime_roots,
+            {
+                ordinaryDocPaths: classificationConfig.ordinary_doc_paths,
+                protectedControlPlaneRoots: classificationConfig.protected_control_plane_roots,
+                sqlOrMigrationRegexes: classificationConfig.sql_or_migration_regexes,
+                dbTriggerRegexes: classificationConfig.db_trigger_regexes,
+                securityTriggerRegexes: classificationConfig.security_trigger_regexes,
+                apiTriggerRegexes: classificationConfig.api_trigger_regexes,
+                dependencyTriggerRegexes: classificationConfig.dependency_trigger_regexes
+            }
         ).category;
         if (fallbackScope === 'docs-only'
             || fallbackScope === 'config-only'

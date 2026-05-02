@@ -642,7 +642,8 @@ function makeTestConfig() {
         test_trigger_regexes: defaults.triggers.test,
         performance_trigger_regexes: defaults.triggers.performance,
         code_like_regexes: defaults.code_like_regexes,
-        protected_control_plane_roots: [] as string[]
+        protected_control_plane_roots: [] as string[],
+        ordinary_doc_paths: defaults.ordinary_doc_paths
     };
 }
 

@@ -412,11 +412,11 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
     'agent-init': Object.freeze({
         summary: 'Finalize mandatory agent onboarding after AGENT_INIT_PROMPT work is complete.',
         usage: Object.freeze([
-            `${PRIMARY_CLI_NAME} agent-init --active-agent-files "<file1>,<file2>" --project-rules-updated true|false --skills-prompted true|false [--target-root PATH] [--bundle-root PATH] [--init-answers-path PATH]`,
+            `${PRIMARY_CLI_NAME} agent-init --active-agent-files "<file1>,<file2>" --project-rules-updated true|false --skills-prompted true|false [--ordinary-doc-paths "<path-or-glob,...>"] [--target-root PATH] [--bundle-root PATH] [--init-answers-path PATH]`,
             `${PRIMARY_CLI_NAME} status`
         ]),
         examples: Object.freeze([
-            `${PRIMARY_CLI_NAME} agent-init --active-agent-files "AGENTS.md,AGENT_INIT_PROMPT.md" --project-rules-updated true --skills-prompted true`
+            `${PRIMARY_CLI_NAME} agent-init --active-agent-files "AGENTS.md,AGENT_INIT_PROMPT.md" --project-rules-updated true --skills-prompted true --ordinary-doc-paths "CHANGELOG.md,docs/plan.md"`
         ]),
         hints: Object.freeze([
             'This command has no subcommands and requires explicit completion flags.',

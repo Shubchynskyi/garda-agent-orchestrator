@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 
 import { matchAnyRegex } from '../gate-runtime/text-utils';
-import { getClassificationConfig, isDocumentationLikePath, isRuntimeCodeLikePath } from './classify-change';
+import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from './classify-change';
 import {
     fileSha256,
     normalizePath,
@@ -253,8 +253,7 @@ function computeCodeReviewScopeFingerprintInternal(
         caseInsensitive: true
     }));
     const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
-        isDocumentationLikePath(filePath)
-        && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
+        isSafeOrdinaryDocumentationPath(filePath, classificationConfig)
     ));
     const performanceSupportChangedFiles = allChangedFiles.filter((filePath) => (
         isNonRuntimePerformanceSupportPath(filePath, classificationConfig)
@@ -316,8 +315,7 @@ export function computeReviewRelevantScopeFingerprint(
         ? preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
     const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
-        isDocumentationLikePath(filePath)
-        && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
+        isSafeOrdinaryDocumentationPath(filePath, classificationConfig)
     ));
     const docsOnlySet = new Set(docsOnlyChangedFiles);
     const reviewRelevantFiles = allChangedFiles.filter((filePath) => !docsOnlySet.has(filePath));

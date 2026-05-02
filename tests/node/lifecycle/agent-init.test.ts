@@ -64,6 +64,7 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
             activeAgentFiles: 'AGENTS.md, CLAUDE.md',
             projectRulesUpdated: 'yes',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };
@@ -87,11 +88,289 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         assert.equal(persistedState.ActiveAgentFilesConfirmed, true);
         assert.equal(persistedState.ProjectRulesUpdated, true);
         assert.equal(persistedState.SkillsPromptCompleted, true);
+        assert.equal(persistedState.OrdinaryDocPathsConfirmed, true);
+        assert.deepEqual(persistedState.OrdinaryDocPaths, ['CHANGELOG.md']);
         assert.equal(persistedState.VerificationPassed, true);
         assert.equal(persistedState.ManifestValidationPassed, true);
         assert.deepEqual(persistedState.ActiveAgentFiles, ['CLAUDE.md', 'AGENTS.md']);
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit persists confirmed ordinary doc paths and reports edit guidance', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-ordinary-docs-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeText(path.join(workspaceRoot, 'docs', 'plan.md'), '# Plan\n');
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md, docs/plan.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.ordinaryDocPathsConfirmed, true);
+        assert.deepEqual(result.ordinaryDocPaths, ['CHANGELOG.md', 'docs/plan.md']);
+        assert.deepEqual(result.ordinaryDocPathsDiscovered, ['CHANGELOG.md', 'docs/plan.md']);
+        assert.ok(result.ordinaryDocPathsEditHint.includes('ordinary_doc_paths'));
+        const pathsConfig = JSON.parse(
+            fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'paths.json'), 'utf8')
+        );
+        assert.deepEqual(pathsConfig.ordinary_doc_paths, ['CHANGELOG.md', 'docs/plan.md']);
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.OrdinaryDocPathsConfirmed, true);
+        assert.deepEqual(persistedState.OrdinaryDocPaths, ['CHANGELOG.md', 'docs/plan.md']);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit requires ordinary doc path confirmation before seeding a missing config key', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-ordinary-docs-missing-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+    const pathsConfigPath = path.join(bundleRoot, 'live', 'config', 'paths.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeJson(pathsConfigPath, {
+            metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
+            runtime_roots: ['src/'],
+            fast_path_roots: ['src/'],
+            triggers: { test: ['(^|/)tests?/'] }
+        });
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.readyForTasks, false);
+        assert.equal(result.ordinaryDocPathsConfirmed, false);
+        assert.equal(result.ordinaryDocPathsNeedsConfirmation, true);
+        assert.equal(result.ordinaryDocPathsPersisted, false);
+        const pathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8'));
+        assert.equal(Object.prototype.hasOwnProperty.call(pathsConfig, 'ordinary_doc_paths'), false);
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.OrdinaryDocPathsConfirmed, false);
+        assert.deepEqual(persistedState.OrdinaryDocPaths, []);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit requires ordinary doc path confirmation even when config key already exists', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-ordinary-docs-configured-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+    const pathsConfigPath = path.join(bundleRoot, 'live', 'config', 'paths.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeJson(pathsConfigPath, {
+            metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
+            ordinary_doc_paths: ['CHANGELOG.md'],
+            runtime_roots: ['src/'],
+            fast_path_roots: ['src/'],
+            triggers: { test: ['(^|/)tests?/'] }
+        });
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.readyForTasks, false);
+        assert.equal(result.ordinaryDocPathsConfirmed, false);
+        assert.equal(result.ordinaryDocPathsNeedsConfirmation, true);
+        assert.equal(result.ordinaryDocPathsPersisted, false);
+        assert.deepEqual(result.ordinaryDocPaths, ['CHANGELOG.md']);
+        const pathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8'));
+        assert.deepEqual(pathsConfig.ordinary_doc_paths, ['CHANGELOG.md']);
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.OrdinaryDocPathsConfirmed, false);
+        assert.deepEqual(persistedState.OrdinaryDocPaths, []);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit preserves an explicit empty ordinary doc path list', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-ordinary-docs-empty-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+    const pathsConfigPath = path.join(bundleRoot, 'live', 'config', 'paths.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        writeJson(pathsConfigPath, {
+            ordinary_doc_paths: [],
+            metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
+            runtime_roots: ['src/'],
+            fast_path_roots: ['src/'],
+            triggers: { test: ['(^|/)tests?/'] }
+        });
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: '',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.readyForTasks, true);
+        assert.equal(result.ordinaryDocPathsConfirmed, true);
+        assert.equal(result.ordinaryDocPathsNeedsConfirmation, false);
+        assert.deepEqual(result.ordinaryDocPaths, []);
+        const pathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8'));
+        assert.deepEqual(pathsConfig.ordinary_doc_paths, []);
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.OrdinaryDocPathsConfirmed, true);
+        assert.deepEqual(persistedState.OrdinaryDocPaths, []);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit rejects invalid confirmed ordinary doc paths before persistence', () => {
+    const invalidCases = [
+        { value: '/tmp/notes.md', expectedMessage: /relative repository path/ },
+        { value: 'C:/tmp/notes.md', expectedMessage: /relative repository path/ },
+        { value: '../plan.md', expectedMessage: /must not contain '\.\.' path segments/ },
+        { value: '**/*.md', expectedMessage: /repository-wide wildcard/ }
+    ];
+
+    for (const invalidCase of invalidCases) {
+        const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-ordinary-docs-invalid-'));
+        const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+        const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+        const pathsConfigPath = path.join(bundleRoot, 'live', 'config', 'paths.json');
+
+        try {
+            writeJson(initAnswersPath, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Codex',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_INTERACTIVE',
+                ActiveAgentFiles: 'AGENTS.md'
+            });
+            writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+            writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+            writeJson(pathsConfigPath, {
+                ordinary_doc_paths: ['CHANGELOG.md'],
+                metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
+                runtime_roots: ['src/'],
+                fast_path_roots: ['src/'],
+                triggers: { test: ['(^|/)tests?/'] }
+            });
+
+            assert.throws(() => runAgentInit({
+                targetRoot: workspaceRoot,
+                activeAgentFiles: 'AGENTS.md',
+                projectRulesUpdated: 'yes',
+                skillsPrompted: 'yes',
+                ordinaryDocPaths: invalidCase.value,
+                installRunner: function () {},
+                verifyRunner: function () {
+                    return { passed: true };
+                },
+                manifestRunner: function () {
+                    return { passed: true };
+                }
+            }), invalidCase.expectedMessage);
+
+            const pathsConfig = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8'));
+            assert.deepEqual(pathsConfig.ordinary_doc_paths, ['CHANGELOG.md']);
+            assert.equal(fs.existsSync(path.join(bundleRoot, 'runtime', 'agent-init-state.json')), false);
+        } finally {
+            fs.rmSync(workspaceRoot, { recursive: true, force: true });
+        }
     }
 });
 
@@ -150,6 +429,7 @@ test('setup/status/agent-init handoff keeps ActiveAgentFiles as a single pending
             activeAgentFiles: 'AGENTS.md, CLAUDE.md',
             projectRulesUpdated: 'yes',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };
@@ -193,6 +473,7 @@ test('runAgentInit keeps workspace not-ready when required checkpoints are marke
             activeAgentFiles: 'AGENTS.md',
             projectRulesUpdated: 'no',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };
@@ -244,6 +525,7 @@ test('runAgentInit seeds workflow-config full-suite command from project stack w
             activeAgentFiles: 'AGENTS.md',
             projectRulesUpdated: 'yes',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };
@@ -292,6 +574,7 @@ test('runAgentInit preserves legacy-compatible workflow-config omission when the
             activeAgentFiles: 'AGENTS.md',
             projectRulesUpdated: 'yes',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };
@@ -361,6 +644,7 @@ test('runAgentInit preserves manual full-suite command overrides when they diffe
             activeAgentFiles: 'AGENTS.md',
             projectRulesUpdated: 'yes',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };
@@ -438,6 +722,7 @@ test('runAgentInit preserves manual full-suite command overrides across later de
             activeAgentFiles: 'AGENTS.md',
             projectRulesUpdated: 'yes',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };
@@ -498,6 +783,7 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
             activeAgentFiles: 'AGENTS.md',
             projectRulesUpdated: 'yes',
             skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
             installRunner: function () {},
             verifyRunner: function () {
                 return { passed: true };

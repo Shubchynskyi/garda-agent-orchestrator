@@ -111,9 +111,15 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
     }
 
     if (options.agentInitState) {
+        const agentInitState = {
+            OrdinaryDocPathsConfirmed: true,
+            OrdinaryDocPaths: ['CHANGELOG.md'],
+            LastSeededFullSuiteCommand: null,
+            ...options.agentInitState
+        };
         writeStatusFixtureFile(
             path.join(runtimePath, 'agent-init-state.json'),
-            JSON.stringify(options.agentInitState)
+            JSON.stringify(agentInitState)
         );
     }
 }
@@ -277,6 +283,8 @@ test('getStatusSnapshot prefers confirmed agent-init language while still exposi
                 ActiveAgentFilesConfirmed: true,
                 ProjectRulesUpdated: true,
                 SkillsPromptCompleted: true,
+                OrdinaryDocPathsConfirmed: true,
+                OrdinaryDocPaths: ['CHANGELOG.md'],
                 VerificationPassed: true,
                 ManifestValidationPassed: true,
                 ActiveAgentFiles: ['AGENTS.md']
@@ -323,6 +331,8 @@ test('buildAgentInitOutput renders compact report labels in English while preser
                 ActiveAgentFilesConfirmed: true,
                 ProjectRulesUpdated: true,
                 SkillsPromptCompleted: true,
+                OrdinaryDocPathsConfirmed: true,
+                OrdinaryDocPaths: ['CHANGELOG.md', 'docs/plan.md'],
                 VerificationPassed: true,
                 ManifestValidationPassed: true,
                 ActiveAgentFiles: ['AGENTS.md']
@@ -337,6 +347,13 @@ test('buildAgentInitOutput renders compact report labels in English while preser
             skillsPromptCompleted: true,
             verifyPassed: true,
             manifestPassed: true,
+            ordinaryDocPaths: ['CHANGELOG.md', 'docs/plan.md'],
+            ordinaryDocPathsDiscovered: ['CHANGELOG.md', 'docs/plan.md'],
+            ordinaryDocPathsConfirmed: true,
+            ordinaryDocPathsNeedsConfirmation: false,
+            ordinaryDocPathsPersisted: true,
+            ordinaryDocPathsConfigPath: path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'paths.json'),
+            ordinaryDocPathsEditHint: 'Edit garda-agent-orchestrator/live/config/paths.json field ordinary_doc_paths.',
             verifyResult: { passed: true },
             manifestResult: { passed: true },
             activeAgentFiles: ['AGENTS.md'],
@@ -359,6 +376,9 @@ test('buildAgentInitOutput renders compact report labels in English while preser
         assert.ok(output.includes('Agent-init summary'));
         assert.ok(output.includes('Language: Russian (normalized)'));
         assert.ok(output.includes('Next command: Next: resolve blockers and rerun agent-init ()'));
+        assert.ok(output.includes('OrdinaryDocPaths: CHANGELOG.md, docs/plan.md'));
+        assert.ok(output.includes('OrdinaryDocPathsNeedsConfirmation: False'));
+        assert.ok(output.includes('OrdinaryDocPathsEdit: Edit garda-agent-orchestrator/live/config/paths.json field ordinary_doc_paths.'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -422,6 +442,37 @@ test('getStatusSnapshot marks workspace ready only after AGENT_INIT_PROMPT initi
         assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.agentInitializationPendingReason, null);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot blocks ready while ordinary document paths are unconfirmed', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                OrdinaryDocPathsConfirmed: false,
+                OrdinaryDocPaths: [],
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'ORDINARY_DOC_PATHS_PENDING');
+        assert.equal(snapshot.agentInitializationComplete, false);
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Confirm ordinary document paths'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

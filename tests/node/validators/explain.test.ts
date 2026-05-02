@@ -56,6 +56,7 @@ test('explainFailure handles all required failure IDs', () => {
         'COMPLETION_GATE_FAILED',
         'TIMELINE_INCOMPLETE',
         'TIMELINE_INTEGRITY_FAILED',
+        'ORDINARY_DOC_PATHS_PENDING',
         'DOC_IMPACT_MISSING'
     ];
 
@@ -64,6 +65,17 @@ test('explainFailure handles all required failure IDs', () => {
         assert.equal(result.found, true, `Expected to find remediation for ID: ${id}`);
         assert.ok(result.entry!.remediation.length > 0, `Expected non-empty remediation for: ${id}`);
     }
+});
+
+test('explainFailure renders ordinary doc paths pending remediation', () => {
+    const result = explainFailure('ORDINARY_DOC_PATHS_PENDING');
+    const output = formatExplainResult(result);
+
+    assert.equal(result.found, true);
+    assert.equal(result.failureId, 'ORDINARY_DOC_PATHS_PENDING');
+    assert.ok(output.includes('ExplainFailure: ORDINARY_DOC_PATHS_PENDING'));
+    assert.ok(output.includes('--ordinary-doc-paths'));
+    assert.ok(output.includes('ordinary document paths'));
 });
 
 // ── listExplainIds ────────────────────────────────────────────────────────────

@@ -123,6 +123,16 @@ function getExplainDatabase(): readonly ExplainEntry[] {
         ]
     },
     {
+        id: 'ORDINARY_DOC_PATHS_PENDING',
+        title: 'Ordinary document paths not confirmed',
+        description: 'The agent-init flow has not confirmed which ordinary document paths may skip code/test review.',
+        remediation: [
+            "Review the ordinary document paths proposed in AGENT_INIT_PROMPT.md.",
+            `Then run '${PRIMARY_CLI_NAME} agent-init --ordinary-doc-paths "<comma-separated paths>"'.`,
+            "Use an empty value if no ordinary document path exceptions should be persisted."
+        ]
+    },
+    {
         id: 'PROJECT_COMMANDS_PENDING',
         title: 'Project commands section is incomplete',
         description: 'The 40-commands.md file still contains placeholder project commands that need to be filled in.',

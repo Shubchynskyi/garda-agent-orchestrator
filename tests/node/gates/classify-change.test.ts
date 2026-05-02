@@ -11,6 +11,10 @@ import {
     getClassificationConfig,
     getReviewCapabilities
 } from '../../../src/gates/classify-change';
+import {
+    matchOrdinaryDocPathPattern,
+    normalizeOrdinaryDocPathPatterns
+} from '../../../src/core/ordinary-doc-paths';
 
 function makeConfig(overrides: Record<string, unknown> = {}) {
     const defaults = getDefaultClassificationConfig('/repo');
@@ -32,7 +36,8 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
         test_trigger_regexes: defaults.triggers.test,
         performance_trigger_regexes: defaults.triggers.performance,
         code_like_regexes: defaults.code_like_regexes,
-        protected_control_plane_roots: defaults.protected_control_plane_roots
+        protected_control_plane_roots: defaults.protected_control_plane_roots,
+        ordinary_doc_paths: defaults.ordinary_doc_paths
     };
     return { ...base, ...overrides };
 }
@@ -54,6 +59,36 @@ describe('gates/classify-change', () => {
         });
     });
 
+    describe('ordinary doc path validation', () => {
+        it('rejects repository-wide ordinary doc wildcard globs', () => {
+            assert.throws(
+                () => normalizeOrdinaryDocPathPatterns(['**/*.md'], 'paths.ordinary_doc_paths'),
+                /repository-wide wildcard/
+            );
+            assert.throws(
+                () => normalizeOrdinaryDocPathPatterns(['*/README.md'], 'paths.ordinary_doc_paths'),
+                /repository-wide wildcard/
+            );
+        });
+
+        it('allows ordinary doc globs anchored under a concrete path segment', () => {
+            assert.deepEqual(
+                normalizeOrdinaryDocPathPatterns(['docs/**/*.md'], 'paths.ordinary_doc_paths'),
+                ['docs/**/*.md']
+            );
+        });
+
+        it('does not reuse stale matchers when a pattern array is mutated', () => {
+            const patterns = ['docs/plan.md'];
+
+            assert.equal(matchOrdinaryDocPathPattern('docs/plan.md', patterns), 'docs/plan.md');
+            patterns[0] = 'CHANGELOG.md';
+
+            assert.equal(matchOrdinaryDocPathPattern('docs/plan.md', patterns), null);
+            assert.equal(matchOrdinaryDocPathPattern('CHANGELOG.md', patterns), 'CHANGELOG.md');
+        });
+    });
+
     describe('classifyChange', () => {
         it('returns FAST_PATH for small frontend change', () => {
             const result = classifyChange({
@@ -70,6 +105,172 @@ describe('gates/classify-change', () => {
             assert.equal(result.mode, 'FAST_PATH');
             assert.equal(result.triggers.fast_path_eligible, true);
             assert.equal(result.required_reviews.code, false);
+        });
+
+        it('keeps default CHANGELOG.md as an ordinary doc path with auditable match evidence', () => {
+            const result = classifyChange({
+                normalizedFiles: ['CHANGELOG.md'],
+                taskIntent: 'Update release notes',
+                changedLinesTotal: 4,
+                additionsTotal: 4,
+                deletionsTotal: 0,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.scope_category, 'docs-only');
+            assert.equal(result.required_reviews.code, false);
+            assert.equal(result.required_reviews.test, false);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, ['CHANGELOG.md']);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matches, [
+                { path: 'CHANGELOG.md', pattern: 'CHANGELOG.md' }
+            ]);
+        });
+
+        it('accepts a user-configured docs/plan.md ordinary doc path without code or test review', () => {
+            const result = classifyChange({
+                normalizedFiles: ['docs/plan.md'],
+                taskIntent: 'Update planning note',
+                changedLinesTotal: 6,
+                additionsTotal: 5,
+                deletionsTotal: 1,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    ordinary_doc_paths: ['CHANGELOG.md', 'docs/plan.md']
+                }),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'docs-only');
+            assert.equal(result.required_reviews.code, false);
+            assert.equal(result.required_reviews.test, false);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, ['docs/plan.md']);
+        });
+
+        it('suppresses test review for safe ordinary docs under test-like paths', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/plan.md'],
+                taskIntent: 'Update test planning note',
+                changedLinesTotal: 5,
+                additionsTotal: 5,
+                deletionsTotal: 0,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    ordinary_doc_paths: ['tests/plan.md']
+                }),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'docs-only');
+            assert.equal(result.triggers.test, false);
+            assert.equal(result.required_reviews.test, false);
+            assert.deepEqual((result.triggers as Record<string, unknown>).test_ordinary_doc_suppressed_files, ['tests/plan.md']);
+        });
+
+        it('keeps test review for unconfigured docs under test-like paths', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/README.md'],
+                taskIntent: 'Update test documentation',
+                changedLinesTotal: 5,
+                additionsTotal: 5,
+                deletionsTotal: 0,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'docs-only');
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.required_reviews.test, true);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+            assert.deepEqual((result.triggers as Record<string, unknown>).test_ordinary_doc_suppressed_files, []);
+        });
+
+        it('rejects protected control-plane docs as ordinary docs even when a configured glob matches', () => {
+            const result = classifyChange({
+                normalizedFiles: ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
+                taskIntent: 'Update protected rule docs',
+                changedLinesTotal: 8,
+                additionsTotal: 6,
+                deletionsTotal: 2,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    ordinary_doc_paths: ['garda-agent-orchestrator/live/docs/agent-rules/**']
+                }),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.scope_category, 'audit-only');
+            assert.equal(result.triggers.protected_control_plane_changed, true);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+        });
+
+        it('rejects sensitive review trigger paths as ordinary docs even when configured', () => {
+            const result = classifyChange({
+                normalizedFiles: [
+                    'requirements.txt',
+                    'docs/security.md',
+                    'docs/graphql.md',
+                    'database/README.md'
+                ],
+                taskIntent: 'Update dependency, security, API, and database notes',
+                changedLinesTotal: 12,
+                additionsTotal: 8,
+                deletionsTotal: 4,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    ordinary_doc_paths: [
+                        'requirements.txt',
+                        'docs/security.md',
+                        'docs/graphql.md',
+                        'database/README.md'
+                    ]
+                }),
+                reviewCapabilities: {
+                    ...defaultCapabilities,
+                    db: true,
+                    security: true,
+                    api: true,
+                    dependency: true
+                }
+            });
+
+            assert.equal(result.triggers.db, true);
+            assert.equal(result.triggers.security, true);
+            assert.equal(result.triggers.api, true);
+            assert.equal(result.triggers.dependency, true);
+            assert.equal(result.required_reviews.db, true);
+            assert.equal(result.required_reviews.security, true);
+            assert.equal(result.required_reviews.api, true);
+            assert.equal(result.required_reviews.dependency, true);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+        });
+
+        it('keeps mixed ordinary docs plus runtime source changes on the code review path', () => {
+            const result = classifyChange({
+                normalizedFiles: ['docs/plan.md', 'src/app.ts'],
+                taskIntent: 'Update planning note and runtime behavior',
+                changedLinesTotal: 30,
+                additionsTotal: 20,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    ordinary_doc_paths: ['docs/plan.md']
+                }),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.scope_category, 'mixed');
+            assert.equal(result.required_reviews.code, true);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, ['docs/plan.md']);
         });
 
         it('returns FULL_PATH for large backend change', () => {

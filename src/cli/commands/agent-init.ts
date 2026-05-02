@@ -24,7 +24,8 @@ export const AGENT_INIT_DEFINITIONS = {
     '--init-answers-path': { key: 'initAnswersPath', type: 'string' },
     '--active-agent-files': { key: 'activeAgentFiles', type: 'string' },
     '--project-rules-updated': { key: 'projectRulesUpdated', type: 'string' },
-    '--skills-prompted': { key: 'skillsPrompted', type: 'string' }
+    '--skills-prompted': { key: 'skillsPrompted', type: 'string' },
+    '--ordinary-doc-paths': { key: 'ordinaryDocPaths', type: 'string' }
 };
 
 export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): string {
@@ -41,8 +42,8 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
             ? reportMessages.summaries.confirmedDuringAgentInit
             : reportMessages.summaries.pendingDuringAgentInit,
         mandatoryFullSuiteEnabled: snapshot.mandatoryFullSuiteEnabled,
-        nextCommand: snapshot.readyForTasks ? null : buildAgentInitNextStep(result),
-        nextTaskPrompt: snapshot.readyForTasks ? snapshot.recommendedNextCommand : null,
+        nextCommand: result.readyForTasks ? null : buildAgentInitNextStep(result),
+        nextTaskPrompt: result.readyForTasks ? snapshot.recommendedNextCommand : null,
         latestUpdateNotice: snapshot.latestUpdateNotice
     }));
     lines.push('');
@@ -50,6 +51,12 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
     lines.push(`ManifestValidation: ${result.manifestPassed ? 'PASS' : 'FAIL'}`);
     lines.push(`ProjectRulesUpdated: ${result.projectRulesUpdated ? 'True' : 'False'}`);
     lines.push(`SkillsPromptCompleted: ${result.skillsPromptCompleted ? 'True' : 'False'}`);
+    lines.push(`OrdinaryDocPaths: ${result.ordinaryDocPaths.length > 0 ? result.ordinaryDocPaths.join(', ') : 'none'}`);
+    lines.push(`OrdinaryDocPathsDiscovered: ${result.ordinaryDocPathsDiscovered.length > 0 ? result.ordinaryDocPathsDiscovered.join(', ') : 'none'}`);
+    lines.push(`OrdinaryDocPathsConfirmed: ${result.ordinaryDocPathsConfirmed ? 'True' : 'False'}`);
+    lines.push(`OrdinaryDocPathsNeedsConfirmation: ${result.ordinaryDocPathsNeedsConfirmation ? 'True' : 'False'}`);
+    lines.push(`OrdinaryDocPathsConfig: ${result.ordinaryDocPathsConfigPath}`);
+    lines.push(`OrdinaryDocPathsEdit: ${result.ordinaryDocPathsEditHint}`);
     lines.push(`ActiveAgentFiles: ${result.activeAgentFiles.join(', ')}`);
     lines.push(`AgentInitStatePath: ${result.agentInitStatePath}`);
     lines.push(`AgentInit: ${result.readyForTasks ? 'PASS' : 'FAIL'}`);
@@ -67,6 +74,9 @@ export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>):
     }
     if (!result.skillsPromptCompleted) {
         blockers.push('specialist skills question is not marked as completed');
+    }
+    if (result.ordinaryDocPathsNeedsConfirmation) {
+        blockers.push('ordinary document paths are not confirmed; rerun agent-init with --ordinary-doc-paths after user confirmation');
     }
     if (!result.verifyPassed) {
         blockers.push('verify failed');
@@ -113,7 +123,8 @@ export function handleAgentInit(commandArgv: string[], packageJson: PackageJsonL
         initAnswersPath,
         activeAgentFiles: options.activeAgentFiles,
         projectRulesUpdated: options.projectRulesUpdated,
-        skillsPrompted: options.skillsPrompted
+        skillsPrompted: options.skillsPrompted,
+        ordinaryDocPaths: options.ordinaryDocPaths
     });
 
     console.log(buildAgentInitOutput(result));

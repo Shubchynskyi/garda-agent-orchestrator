@@ -778,6 +778,53 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('TokenBudget: total~1800; effective~1170; token_economy_active=true'));
     });
 
+    it('names configured ordinary doc paths skipped for code/test review in next-step diagnostics', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'plan.md'), '# Plan\n\n- Update rollout notes.\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['docs/plan.md']);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            scope_category: 'docs-only',
+            scope_category_reasons: ['doc_only_files=1'],
+            metrics: {
+                changed_lines_total: snapshot.changed_lines_total,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            triggers: {
+                ordinary_doc_path_matches: [
+                    { path: 'docs/plan.md', pattern: 'docs/plan.md' }
+                ],
+                ordinary_doc_path_matched_files: ['docs/plan.md'],
+                ordinary_doc_path_patterns: ['CHANGELOG.md', 'docs/plan.md']
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS },
+            changed_files: ['docs/plan.md'],
+            review_execution_policy: {
+                mode: 'code_first_optional',
+                visible_summary_line: 'Review execution policy: code_first_optional'
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.ok(text.includes('RequiredReviews: none'));
+        assert.ok(text.includes('OrdinaryDocReviewSkips: docs/plan.md (matched docs/plan.md)'));
+    });
+
     it('routes task-mode-only runs to TASK_ENTRY rule-pack loading', () => {
         const repoRoot = makeTempRepo();
         seedTaskModeOnly(repoRoot, TASK_ID);
@@ -1892,6 +1939,53 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'classify-change');
         assert.ok(result.reason.includes('stale preflight file set'));
         assert.ok(result.reason.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
+    });
+
+    it('routes back to preflight when configured ordinary docs match config/dependency drift', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json'), {
+            ordinary_doc_paths: ['package.json']
+        });
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'fixture' }, null, 2), 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'fixture', version: '1.0.0' }, null, 2),
+            'utf8'
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('stale preflight file set'));
+        assert.ok(result.reason.includes('package.json'));
+    });
+
+    it('routes back to preflight when configured ordinary docs match dependency text drift', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json'), {
+            ordinary_doc_paths: ['requirements.txt']
+        });
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'requirements.txt'), 'pytest==8.0.0\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('stale preflight file set'));
+        assert.ok(result.reason.includes('requirements.txt'));
     });
 
     it('routes back to preflight when post-review drift includes an undeclared source file', () => {

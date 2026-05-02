@@ -12,6 +12,10 @@ import { REVIEW_CAPABILITY_KEYS } from '../core/review-capabilities';
 import {
     normalizeReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
+import {
+    ORDINARY_DOC_PATHS_CONFIG_KEY,
+    normalizeOrdinaryDocPathPatterns
+} from '../core/ordinary-doc-paths';
 
 interface IntegerArrayOptions {
     allowScalar?: boolean;
@@ -65,7 +69,8 @@ export function validatePathsConfig(input: unknown): Record<string, unknown> {
         'fast_path_sensitive_regexes',
         'sql_or_migration_regexes',
         'triggers',
-        'code_like_regexes'
+        'code_like_regexes',
+        ORDINARY_DOC_PATHS_CONFIG_KEY
     ]);
     const normalized = cloneUnknownProperties(raw, knownKeys);
 
@@ -87,6 +92,14 @@ export function validatePathsConfig(input: unknown): Record<string, unknown> {
 
     if (raw.code_like_regexes !== undefined) {
         normalized.code_like_regexes = normalizeStringArray(raw.code_like_regexes, 'paths.code_like_regexes', { allowScalar: true });
+    }
+
+    if (raw[ORDINARY_DOC_PATHS_CONFIG_KEY] !== undefined) {
+        normalized[ORDINARY_DOC_PATHS_CONFIG_KEY] = normalizeOrdinaryDocPathPatterns(
+            raw[ORDINARY_DOC_PATHS_CONFIG_KEY],
+            `paths.${ORDINARY_DOC_PATHS_CONFIG_KEY}`,
+            { allowScalar: true }
+        );
     }
 
     const triggers = ensurePlainObject(raw.triggers, 'paths.triggers');

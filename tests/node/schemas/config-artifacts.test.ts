@@ -8,6 +8,7 @@ import {
     validateManagedConfigByName,
     validateOptionalSkillSelectionPolicyConfig,
     validateOutputFiltersConfig,
+    validatePathsConfig,
     validateTokenEconomyConfig,
     validateProfilesConfig,
     validateReviewArtifactStorageConfig
@@ -51,6 +52,29 @@ test('validateOutputFiltersConfig accepts context-driven parser controls from th
     assert.equal(
         profiles.compile_failure_console.parser.tail_count.context_key,
         'fail_tail_lines'
+    );
+});
+
+test('validatePathsConfig rejects invalid ordinary doc path patterns', () => {
+    const makeConfig = (ordinaryDocPaths: string[]) => ({
+        metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
+        runtime_roots: ['src/'],
+        fast_path_roots: ['src/'],
+        triggers: { test: ['(^|/)tests?/'] },
+        ordinary_doc_paths: ordinaryDocPaths
+    });
+
+    assert.throws(
+        () => validatePathsConfig(makeConfig(['/tmp/notes.md'])),
+        /relative repository path/
+    );
+    assert.throws(
+        () => validatePathsConfig(makeConfig(['../plan.md'])),
+        /must not contain '\.\.' path segments/
+    );
+    assert.throws(
+        () => validatePathsConfig(makeConfig(['**/*.md'])),
+        /repository-wide wildcard/
     );
 });
 

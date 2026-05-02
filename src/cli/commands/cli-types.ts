@@ -43,6 +43,7 @@ export interface StatusSnapshot {
         | 'AGENT_STATE_STALE'
         | 'PROJECT_RULES_PENDING'
         | 'SKILLS_PROMPT_PENDING'
+        | 'ORDINARY_DOC_PATHS_PENDING'
         | 'VALIDATION_PENDING'
         | 'AGENT_STATE_INVALID'
         | 'PROJECT_COMMANDS_PENDING'

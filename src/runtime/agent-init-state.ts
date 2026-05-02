@@ -15,6 +15,8 @@ export interface AgentInitState {
     ActiveAgentFilesConfirmed: boolean;
     ProjectRulesUpdated: boolean;
     SkillsPromptCompleted: boolean;
+    OrdinaryDocPathsConfirmed: boolean;
+    OrdinaryDocPaths: string[];
     VerificationPassed: boolean;
     ManifestValidationPassed: boolean;
     ActiveAgentFiles: string[];
@@ -112,6 +114,10 @@ export function validateAgentInitState(input: unknown): AgentInitState {
         ActiveAgentFilesConfirmed: normalizeBoolean(raw.ActiveAgentFilesConfirmed, 'ActiveAgentFilesConfirmed'),
         ProjectRulesUpdated: normalizeBoolean(raw.ProjectRulesUpdated, 'ProjectRulesUpdated'),
         SkillsPromptCompleted: normalizeBoolean(raw.SkillsPromptCompleted, 'SkillsPromptCompleted'),
+        OrdinaryDocPathsConfirmed: raw.OrdinaryDocPathsConfirmed === undefined
+            ? false
+            : normalizeBoolean(raw.OrdinaryDocPathsConfirmed, 'OrdinaryDocPathsConfirmed'),
+        OrdinaryDocPaths: normalizeOptionalStringArray(raw.OrdinaryDocPaths, 'OrdinaryDocPaths'),
         VerificationPassed: normalizeBoolean(raw.VerificationPassed, 'VerificationPassed'),
         ManifestValidationPassed: normalizeBoolean(raw.ManifestValidationPassed, 'ManifestValidationPassed'),
         ActiveAgentFiles: normalizeOptionalStringArray(raw.ActiveAgentFiles, 'ActiveAgentFiles'),
@@ -130,6 +136,8 @@ export function createAgentInitState(overrides: Partial<AgentInitState> = {}): A
         ActiveAgentFilesConfirmed: false,
         ProjectRulesUpdated: false,
         SkillsPromptCompleted: false,
+        OrdinaryDocPathsConfirmed: false,
+        OrdinaryDocPaths: [],
         VerificationPassed: false,
         ManifestValidationPassed: false,
         ActiveAgentFiles: [],
@@ -169,6 +177,12 @@ export function buildRefreshAgentInitState(options: BuildRefreshAgentInitStateOp
         SkillsPromptCompleted: canPreserve
             ? (autoConfirmPrompts ? true : preservedState!.SkillsPromptCompleted)
             : false,
+        OrdinaryDocPathsConfirmed: canPreserve
+            ? preservedState!.OrdinaryDocPathsConfirmed
+            : false,
+        OrdinaryDocPaths: canPreserve
+            ? preservedState!.OrdinaryDocPaths
+            : [],
         VerificationPassed: canPreserve
             ? (verificationPassed === null ? preservedState!.VerificationPassed : verificationPassed)
             : false,

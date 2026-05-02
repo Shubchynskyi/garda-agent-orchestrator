@@ -101,6 +101,16 @@ function writeWorkflowConfig(
     );
 }
 
+function writePathsConfig(repoRoot: string, data: Record<string, unknown>): void {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(configDir, 'paths.json'),
+        JSON.stringify(data, null, 2),
+        'utf8'
+    );
+}
+
 function writePassedLifecycle(eventsDir: string, taskId: string): void {
     const now = Date.parse('2026-04-29T00:00:00.000Z');
     [
@@ -485,6 +495,95 @@ describe('gates/task-audit-summary', () => {
             assert.ok(rendered.includes('ChangedFiles: 3 (7 lines)'));
             assert.ok(rendered.includes('  - docs/cli-reference.md'));
             assert.ok(rendered.includes('  - CHANGELOG.md'));
+        });
+
+        it('accepts configured extensionless ordinary docs in final changed-files summaries', () => {
+            const now = new Date().toISOString();
+            writePathsConfig(tmpDir, {
+                ordinary_doc_paths: ['BACKLOG']
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/doc-impact.ts'],
+                metrics: { changed_lines_total: 7 },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'DOCS_UPDATED',
+                behavior_changed: true,
+                changelog_updated: false,
+                docs_updated: [
+                    'BACKLOG'
+                ]
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'PASS');
+            assert.deepEqual(result.changed_files, [
+                'src/gates/doc-impact.ts',
+                'BACKLOG'
+            ]);
+            assert.equal(result.changed_files_count, 2);
+        });
+
+        it('blocks configured dependency paths in final changed-files summaries', () => {
+            const now = new Date().toISOString();
+            writePathsConfig(tmpDir, {
+                ordinary_doc_paths: ['requirements.txt']
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/doc-impact.ts'],
+                metrics: { changed_lines_total: 7 },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'DOCS_UPDATED',
+                behavior_changed: true,
+                changelog_updated: false,
+                docs_updated: [
+                    'requirements.txt'
+                ]
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'BLOCKED');
+            assert.equal(result.final_report_contract.status, 'NOT_READY');
+            assert.deepEqual(result.changed_files, ['src/gates/doc-impact.ts']);
+            assert.ok(result.blockers.some((blocker) =>
+                blocker.gate === 'doc-impact-gate'
+                && blocker.reason.includes("docs_updated contains non-documentation path 'requirements.txt'")
+            ));
         });
 
         it('blocks final changed-files summaries when docs_updated declares new non-doc paths', () => {

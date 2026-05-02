@@ -15,7 +15,7 @@ import {
 } from './task-events-summary';
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
 import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
-import { getClassificationConfig, isDocumentationLikePath, isRuntimeCodeLikePath } from './classify-change';
+import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from './classify-change';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
 import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
@@ -481,12 +481,7 @@ function buildAuditedChangedFiles(
                 appendPath(normalized);
                 continue;
             }
-            const isAcceptedDocPath = isDocumentationLikePath(normalized)
-                && !isRuntimeCodeLikePath(
-                    normalized,
-                    classificationConfig.code_like_regexes,
-                    classificationConfig.runtime_roots
-                );
+            const isAcceptedDocPath = isSafeOrdinaryDocumentationPath(normalized, classificationConfig);
             if (isAcceptedDocPath) {
                 appendPath(normalized);
                 continue;

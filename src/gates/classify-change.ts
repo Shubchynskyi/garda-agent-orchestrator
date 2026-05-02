@@ -21,6 +21,14 @@ import {
     buildReviewExecutionPolicySummaryLine,
     type EffectiveReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
+import {
+    DEFAULT_ORDINARY_DOC_PATHS,
+    ORDINARY_DOC_PATHS_CONFIG_KEY,
+    collectOrdinaryDocPathMatches,
+    matchOrdinaryDocPathPattern,
+    normalizeOrdinaryDocPathPatterns,
+    type OrdinaryDocPathMatch
+} from '../core/ordinary-doc-paths';
 
 interface TriggerConfig {
     db: string[];
@@ -42,9 +50,10 @@ interface ClassificationConfig {
     triggers: TriggerConfig;
     code_like_regexes: string[];
     protected_control_plane_roots: string[];
+    ordinary_doc_paths: string[];
 }
 
-interface ResolvedClassificationConfig {
+export interface ResolvedClassificationConfig {
     source: string;
     config_path: string;
     metrics_path: string;
@@ -62,6 +71,7 @@ interface ResolvedClassificationConfig {
     performance_trigger_regexes: string[];
     code_like_regexes: string[];
     protected_control_plane_roots: string[];
+    ordinary_doc_paths: string[];
 }
 
 interface MatchConfiguredRootOptions {
@@ -241,7 +251,8 @@ export function getDefaultClassificationConfig(repoRoot: string): Classification
             ]
         },
         code_like_regexes: ['\\.(java|kt|kts|groovy|ts|tsx|js|jsx|cjs|mjs|cs|go|py|rb|php|rs)$'],
-        protected_control_plane_roots: getProtectedControlPlaneRoots(repoRoot)
+        protected_control_plane_roots: getProtectedControlPlaneRoots(repoRoot),
+        ordinary_doc_paths: [...DEFAULT_ORDINARY_DOC_PATHS]
     };
 }
 
@@ -259,7 +270,8 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
             for (const key of [
                 'metrics_path', 'runtime_roots', 'fast_path_roots',
                 'fast_path_allowed_regexes', 'fast_path_sensitive_regexes',
-                'sql_or_migration_regexes', 'code_like_regexes', 'protected_control_plane_roots'
+                'sql_or_migration_regexes', 'code_like_regexes', 'protected_control_plane_roots',
+                ORDINARY_DOC_PATHS_CONFIG_KEY
             ] as const) {
                 if (key in raw) (defaults as unknown as Record<string, unknown>)[key] = raw[key];
             }
@@ -276,6 +288,12 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
             source = 'defaults_with_config_parse_error';
         }
     }
+
+    const ordinaryDocPaths = normalizeOrdinaryDocPathPatterns(
+        defaults.ordinary_doc_paths,
+        `paths.${ORDINARY_DOC_PATHS_CONFIG_KEY}`,
+        { allowScalar: true }
+    );
 
     return {
         source,
@@ -294,7 +312,8 @@ export function getClassificationConfig(repoRoot: string): ResolvedClassificatio
         test_trigger_regexes: toStringArray(defaults.triggers.test),
         performance_trigger_regexes: toStringArray(defaults.triggers.performance),
         code_like_regexes: toStringArray(defaults.code_like_regexes),
-        protected_control_plane_roots: normalizeProtectedControlPlaneRoots(toStringArray(defaults.protected_control_plane_roots))
+        protected_control_plane_roots: normalizeProtectedControlPlaneRoots(toStringArray(defaults.protected_control_plane_roots)),
+        ordinary_doc_paths: ordinaryDocPaths
     };
 }
 
@@ -533,8 +552,10 @@ function isOrdinaryOrchestratorCacheMaintenancePath(pathValue: string): boolean 
         || normalizedPath === 'src/gates/protected-hash-cache.ts';
 }
 
-export function isDocumentationLikePath(pathValue: string): boolean {
-    return testPrecompiled(normalizePath(pathValue), DOC_LIKE_COMPILED);
+export function isDocumentationLikePath(pathValue: string, ordinaryDocPaths: string[] = []): boolean {
+    const normalizedPath = normalizePath(pathValue);
+    return testPrecompiled(normalizedPath, DOC_LIKE_COMPILED)
+        || matchOrdinaryDocPathPattern(normalizedPath, ordinaryDocPaths) !== null;
 }
 
 export function isRuntimeCodeLikePath(pathValue: string, codeLikeRegexes: string[], runtimeRoots: string[]): boolean {
@@ -546,6 +567,28 @@ export function isRuntimeCodeLikePath(pathValue: string, codeLikeRegexes: string
 }
 
 export type ScopeCategory = 'code' | 'docs-only' | 'config-only' | 'audit-only' | 'mixed' | 'empty';
+
+interface ScopeCategoryOptions {
+    ordinaryDocPaths?: string[];
+    protectedControlPlaneRoots?: string[];
+    sqlOrMigrationRegexes?: string[];
+    dbTriggerRegexes?: string[];
+    securityTriggerRegexes?: string[];
+    apiTriggerRegexes?: string[];
+    dependencyTriggerRegexes?: string[];
+}
+
+interface SafeOrdinaryDocumentationPathConfig {
+    code_like_regexes: string[];
+    runtime_roots: string[];
+    protected_control_plane_roots: string[];
+    ordinary_doc_paths: string[];
+    sql_or_migration_regexes?: string[];
+    db_trigger_regexes?: string[];
+    security_trigger_regexes?: string[];
+    api_trigger_regexes?: string[];
+    dependency_trigger_regexes?: string[];
+}
 
 /**
  * Classify the scope category from changed files.
@@ -561,7 +604,8 @@ export type ScopeCategory = 'code' | 'docs-only' | 'config-only' | 'audit-only' 
 export function classifyScopeCategory(
     normalizedFiles: string[],
     codeLikeRegexes: string[],
-    runtimeRoots: string[]
+    runtimeRoots: string[],
+    options: ScopeCategoryOptions = {}
 ): { category: ScopeCategory; reasons: string[] } {
     if (normalizedFiles.length === 0) {
         return { category: 'empty', reasons: ['no_changed_files'] };
@@ -574,15 +618,36 @@ export function classifyScopeCategory(
 
     for (const file of normalizedFiles) {
         const isCode = isRuntimeCodeLikePath(file, codeLikeRegexes, runtimeRoots);
-        const isDoc = isDocumentationLikePath(file);
         const isConfig = testPrecompiled(file, CONFIG_LIKE_COMPILED);
         const isAudit = testPrecompiled(file, AUDIT_ONLY_COMPILED);
-
-        if (isCode) codeCount++;
-        else if (isAudit) auditCount++;
-        else if (isDoc) docCount++;
-        else if (isConfig) configCount++;
-        else codeCount++; // unknown files default to code for safety
+        const isProtectedControlPlane = testPathPrefix(file, options.protectedControlPlaneRoots || []);
+        if (isCode) {
+            codeCount++;
+            continue;
+        }
+        if (isAudit || isProtectedControlPlane) {
+            auditCount++;
+            continue;
+        }
+        if (isConfig) {
+            configCount++;
+            continue;
+        }
+        if (isSafeOrdinaryDocumentationPath(file, {
+            code_like_regexes: codeLikeRegexes,
+            runtime_roots: runtimeRoots,
+            protected_control_plane_roots: options.protectedControlPlaneRoots || [],
+            ordinary_doc_paths: options.ordinaryDocPaths || [],
+            sql_or_migration_regexes: options.sqlOrMigrationRegexes || [],
+            db_trigger_regexes: options.dbTriggerRegexes || [],
+            security_trigger_regexes: options.securityTriggerRegexes || [],
+            api_trigger_regexes: options.apiTriggerRegexes || [],
+            dependency_trigger_regexes: options.dependencyTriggerRegexes || []
+        })) {
+            docCount++;
+            continue;
+        }
+        codeCount++; // unknown files default to code for safety
     }
 
     const total = normalizedFiles.length;
@@ -617,6 +682,66 @@ export function classifyScopeCategory(
     if (configCount > 0) reasons.push(`config=${configCount}`);
     if (auditCount > 0) reasons.push(`audit=${auditCount}`);
     return { category: 'docs-only', reasons: [...reasons, 'all_non_code'] };
+}
+
+function matchesSensitiveOrdinaryDocTrigger(
+    filePath: string,
+    config: SafeOrdinaryDocumentationPathConfig
+): boolean {
+    const triggerRegexes = [
+        ...(config.sql_or_migration_regexes || []),
+        ...(config.db_trigger_regexes || []),
+        ...(config.security_trigger_regexes || []),
+        ...(config.api_trigger_regexes || []),
+        ...(config.dependency_trigger_regexes || [])
+    ];
+    if (triggerRegexes.length === 0) {
+        return false;
+    }
+    return matchAnyRegex(filePath, triggerRegexes, {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    });
+}
+
+export function isSafeOrdinaryDocumentationPath(
+    filePath: string,
+    config: SafeOrdinaryDocumentationPathConfig
+): boolean {
+    const normalizedPath = normalizePath(filePath);
+    if (isRuntimeCodeLikePath(normalizedPath, config.code_like_regexes, config.runtime_roots)
+        || testPrecompiled(normalizedPath, AUDIT_ONLY_COMPILED)
+        || testPathPrefix(normalizedPath, config.protected_control_plane_roots)
+        || testPrecompiled(normalizedPath, CONFIG_LIKE_COMPILED)
+        || matchesSensitiveOrdinaryDocTrigger(normalizedPath, config)
+    ) {
+        return false;
+    }
+    return testPrecompiled(normalizedPath, DOC_LIKE_COMPILED)
+        || matchOrdinaryDocPathPattern(normalizedPath, config.ordinary_doc_paths) !== null;
+}
+
+function getSafeOrdinaryDocPathMatches(
+    normalizedFiles: string[],
+    classificationConfig: ResolvedClassificationConfig
+): OrdinaryDocPathMatch[] {
+    const candidateFiles = normalizedFiles.filter((filePath) => {
+        const normalizedPath = normalizePath(filePath);
+        return !isRuntimeCodeLikePath(
+            normalizedPath,
+            classificationConfig.code_like_regexes,
+            classificationConfig.runtime_roots
+        )
+            && !testPrecompiled(normalizedPath, AUDIT_ONLY_COMPILED)
+            && !testPathPrefix(normalizedPath, classificationConfig.protected_control_plane_roots)
+            && !testPrecompiled(normalizedPath, CONFIG_LIKE_COMPILED)
+            && !matchesSensitiveOrdinaryDocTrigger(normalizedPath, classificationConfig);
+    });
+    return collectOrdinaryDocPathMatches(
+        candidateFiles,
+        classificationConfig.ordinary_doc_paths
+    )
+        .filter((match) => isSafeOrdinaryDocumentationPath(match.path, classificationConfig));
 }
 
 /**
@@ -674,7 +799,14 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const apiTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.api_trigger_regexes));
     const dependencyTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.dependency_trigger_regexes));
     const infraTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.infra_trigger_regexes));
-    const testTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.test_trigger_regexes));
+    const ordinaryDocPathMatches = getSafeOrdinaryDocPathMatches(normalizedFiles, classificationConfig);
+    const ordinaryDocPathMatchedFiles = [...new Set(ordinaryDocPathMatches.map((entry) => entry.path))].sort();
+    const safeOrdinaryDocFiles = ordinaryDocPathMatchedFiles;
+    const testOrdinaryDocSuppressedFiles = safeOrdinaryDocFiles.filter((p: string) => testMatch(p, classificationConfig.test_trigger_regexes));
+    const testTriggered = normalizedFiles.some((p: string) => (
+        testMatch(p, classificationConfig.test_trigger_regexes)
+        && !safeOrdinaryDocFiles.includes(p)
+    ));
     const performancePathMatchedFiles = normalizedFiles.filter((p: string) => testMatch(p, classificationConfig.performance_trigger_regexes));
     const ordinaryCacheMaintenanceFiles = performancePathMatchedFiles.filter(isOrdinaryOrchestratorCacheMaintenancePath);
     const performanceCacheIntent = ordinaryCacheMaintenanceFiles.length > 0 && hasPerformanceSensitiveCacheIntent(taskIntent);
@@ -750,7 +882,15 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const requiredDependencyReview = dependencyTriggered && !!reviewCapabilities.dependency;
     const zeroDiffDetected = normalizedFiles.length === 0 && changedLinesTotal === 0;
 
-    const scopeClassification = classifyScopeCategory(normalizedFiles, codeLike, runtimeRoots);
+    const scopeClassification = classifyScopeCategory(normalizedFiles, codeLike, runtimeRoots, {
+        ordinaryDocPaths: classificationConfig.ordinary_doc_paths,
+        protectedControlPlaneRoots: classificationConfig.protected_control_plane_roots,
+        sqlOrMigrationRegexes: classificationConfig.sql_or_migration_regexes,
+        dbTriggerRegexes: classificationConfig.db_trigger_regexes,
+        securityTriggerRegexes: classificationConfig.security_trigger_regexes,
+        apiTriggerRegexes: classificationConfig.api_trigger_regexes,
+        dependencyTriggerRegexes: classificationConfig.dependency_trigger_regexes
+    });
 
     return {
         detection_source: detectionSource,
@@ -791,6 +931,10 @@ export function classifyChange(options: ClassifyChangeOptions) {
             refactor_intent: refactorIntentTriggered,
             refactor_heuristic: refactorHeuristicTriggered,
             refactor_heuristic_reasons: refactorHeuristicReasons,
+            ordinary_doc_path_matches: ordinaryDocPathMatches,
+            ordinary_doc_path_matched_files: ordinaryDocPathMatchedFiles,
+            ordinary_doc_path_patterns: classificationConfig.ordinary_doc_paths,
+            test_ordinary_doc_suppressed_files: testOrdinaryDocSuppressedFiles,
             performance_path_changed_files: performancePathTriggeredFiles,
             performance_cache_candidate_files: ordinaryCacheMaintenanceFiles,
             performance_cache_intent: performanceCacheIntent,

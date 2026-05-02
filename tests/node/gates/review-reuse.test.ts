@@ -21,6 +21,12 @@ function runGit(repoRoot: string, args: string[]): void {
     assert.equal(result.status, 0, String(result.stderr || result.error || 'git command failed'));
 }
 
+function writePathsConfig(repoRoot: string, config: Record<string, unknown>): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+}
+
 describe('gates/review-reuse', () => {
     it('fingerprints staged scope from the index instead of the dirty working tree', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-staged-scope-'));
@@ -124,6 +130,61 @@ describe('gates/review-reuse', () => {
                 performanceReuseScope.non_test_changed_files,
                 ['apps/shop/perf/cache.ts', 'benchmark/reviewed.ts', 'src/app.ts']
             );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('treats configured ordinary docs as docs-only review reuse scope', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-ordinary-docs-'));
+        try {
+            writePathsConfig(repoRoot, {
+                ordinary_doc_paths: ['docs/plan.md']
+            });
+            fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'docs', 'plan.md'), '# Plan\n', 'utf8');
+
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                changed_files: ['docs/plan.md']
+            };
+
+            const codeScope = computeCodeReviewScopeFingerprint(preflight, repoRoot);
+            const reviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            assert.deepEqual(codeScope.non_test_changed_files, []);
+            assert.deepEqual(codeScope.docs_only_changed_files, ['docs/plan.md']);
+            assert.equal(codeScope.docs_only, true);
+            assert.deepEqual(reviewScope.review_relevant_changed_files, []);
+            assert.deepEqual(reviewScope.docs_only_changed_files, ['docs/plan.md']);
+            assert.equal(reviewScope.docs_only, true);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps configured dependency paths inside review reuse scope', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-sensitive-docs-'));
+        try {
+            writePathsConfig(repoRoot, {
+                ordinary_doc_paths: ['requirements.txt']
+            });
+            fs.writeFileSync(path.join(repoRoot, 'requirements.txt'), 'pytest==8.0.0\n', 'utf8');
+
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                changed_files: ['requirements.txt']
+            };
+
+            const codeScope = computeCodeReviewScopeFingerprint(preflight, repoRoot);
+            const reviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            assert.deepEqual(codeScope.non_test_changed_files, ['requirements.txt']);
+            assert.deepEqual(codeScope.docs_only_changed_files, []);
+            assert.equal(codeScope.docs_only, false);
+            assert.deepEqual(reviewScope.review_relevant_changed_files, ['requirements.txt']);
+            assert.deepEqual(reviewScope.docs_only_changed_files, []);
+            assert.equal(reviewScope.docs_only, false);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

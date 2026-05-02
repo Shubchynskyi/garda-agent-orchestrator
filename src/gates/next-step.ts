@@ -44,8 +44,7 @@ import {
 import {
     fileSha256,
     normalizePath,
-    resolvePathInsideRepo,
-    testPathPrefix
+    resolvePathInsideRepo
 } from './helpers';
 import {
     resolveBundleNameForTarget
@@ -70,7 +69,9 @@ import {
 import {
     getClassificationConfig,
     isDocumentationLikePath,
-    isRuntimeCodeLikePath
+    isRuntimeCodeLikePath,
+    isSafeOrdinaryDocumentationPath,
+    type ResolvedClassificationConfig
 } from './classify-change';
 import {
     getPostPreflightSequenceEvidence,
@@ -137,6 +138,7 @@ export interface NextStepReviewSummary {
     review_execution_policy_source: 'preflight' | 'workflow_config_fallback';
     next_review_type: string | null;
     blocked_review_dependencies: string[];
+    ordinary_doc_review_skips: { path: string; pattern: string }[];
     trust: ReviewTrustSummary | null;
     trust_note: string | null;
 }
@@ -1465,11 +1467,9 @@ function isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSou
 
 function isOrdinaryDocumentationDeltaPath(
     filePath: string,
-    classificationConfig: ReturnType<typeof getClassificationConfig>
+    classificationConfig: ResolvedClassificationConfig
 ): boolean {
-    return isDocumentationLikePath(filePath)
-        && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
-        && !testPathPrefix(filePath, classificationConfig.protected_control_plane_roots);
+    return isSafeOrdinaryDocumentationPath(filePath, classificationConfig);
 }
 
 function buildDocsOnlyDeltaReadiness(
@@ -2202,7 +2202,7 @@ function getDocImpactChangedFiles(
 ): string[] {
     const classificationConfig = getClassificationConfig(repoRoot);
     return getPreflightChangedFiles(preflight).filter((filePath) => (
-        isDocumentationLikePath(filePath)
+        isDocumentationLikePath(filePath, classificationConfig.ordinary_doc_paths)
         && !isRuntimeCodeLikePath(filePath, classificationConfig.code_like_regexes, classificationConfig.runtime_roots)
     ));
 }
@@ -2369,6 +2369,25 @@ function preflightTouchesProtectedControlPlane(preflight: Record<string, unknown
         return true;
     }
     return Array.isArray(triggers.changed_protected_files) && triggers.changed_protected_files.length > 0;
+}
+
+function getOrdinaryDocReviewSkips(preflight: Record<string, unknown> | null): { path: string; pattern: string }[] {
+    const triggers = getPreflightTriggers(preflight);
+    const matches = Array.isArray(triggers.ordinary_doc_path_matches)
+        ? triggers.ordinary_doc_path_matches
+        : [];
+    return matches
+        .map((entry) => {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                return null;
+            }
+            const raw = entry as Record<string, unknown>;
+            const matchedPath = normalizePath(raw.path);
+            const pattern = normalizePath(raw.pattern);
+            return matchedPath && pattern ? { path: matchedPath, pattern } : null;
+        })
+        .filter((entry): entry is { path: string; pattern: string } => entry !== null)
+        .sort((left, right) => left.path.localeCompare(right.path) || left.pattern.localeCompare(right.pattern));
 }
 
 function buildResult(params: {
@@ -2623,6 +2642,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         review_execution_policy_source: reviewPolicy.source,
         next_review_type: nextReview.reviewType,
         blocked_review_dependencies: nextReview.blockedDependencies,
+        ordinary_doc_review_skips: getOrdinaryDocReviewSkips(preflight),
         trust: reviewTrust,
         trust_note: reviewTrust?.visible_summary_line || (
             requiredReviewTypes.length > 0
@@ -3385,6 +3405,12 @@ export function formatNextStepText(result: NextStepResult): string {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);
     } else {
         lines.push('RequiredReviews: none');
+    }
+    if (result.review.ordinary_doc_review_skips.length > 0 && result.review.required_reviews.length === 0) {
+        const skipped = result.review.ordinary_doc_review_skips
+            .map((entry) => `${entry.path} (matched ${entry.pattern})`)
+            .join('; ');
+        lines.push(`OrdinaryDocReviewSkips: ${skipped}`);
     }
     if (result.review.next_review_type) {
         lines.push(`NextReview: ${result.review.next_review_type}`);
