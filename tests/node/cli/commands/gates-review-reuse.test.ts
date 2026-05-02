@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 
 import {
+    EXIT_GENERAL_FAILURE,
     EXIT_GATE_FAILURE
 } from '../../../../src/cli/exit-codes';
 import { runBuildReviewContextCommand } from '../../../../src/cli/commands/gate-build-handlers';
@@ -791,6 +792,31 @@ function tamperLatestHistoricalReceiptSnapshot(repoRoot: string, taskId: string,
     return snapshotPath;
 }
 
+function tamperLatestHistoricalArtifactSnapshot(repoRoot: string, taskId: string, reviewType: string): string {
+    const historicalReviewRecorded = readTaskTimelineEvents(repoRoot, taskId)
+        .reverse()
+        .find((event) => {
+            const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                ? event.details as Record<string, unknown>
+                : null;
+            return (
+                event.event_type === 'REVIEW_RECORDED'
+                && details
+                && String(details.review_type || details.reviewType || '').trim().toLowerCase() === reviewType
+                && details.reused_existing_review !== true
+            );
+        });
+    assert.ok(historicalReviewRecorded);
+    const details = historicalReviewRecorded.details as Record<string, unknown>;
+    const snapshotPathRaw = String(details.review_artifact_snapshot_path || details.reviewArtifactSnapshotPath || '').trim();
+    assert.ok(snapshotPathRaw);
+    const snapshotPath = path.isAbsolute(snapshotPathRaw)
+        ? snapshotPathRaw
+        : path.resolve(repoRoot, snapshotPathRaw);
+    fs.appendFileSync(snapshotPath, '\nTampered historical artifact snapshot after reuse telemetry was recorded.\n', 'utf8');
+    return snapshotPath;
+}
+
 function stripLatestHistoricalReceiptSnapshotTelemetry(repoRoot: string, taskId: string, reviewType: string): void {
     const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
     const lines = fs.readFileSync(timelinePath, 'utf8')
@@ -1372,7 +1398,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('reuses matching historical code-review evidence when the latest mutable receipt and artifact were overwritten by polluted scope', async () => {
+    it('reuses matching historical code-review evidence when later mutable and recorded receipts were overwritten by polluted scope', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-historical-reuse-after-receipt-overwrite';
         seedTaskQueue(repoRoot, taskId);
@@ -1406,6 +1432,19 @@ describe('cli/commands/gates – review-reuse suites', () => {
         const originalArtifactText = fs.readFileSync(artifactPath, 'utf8');
         const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
         const originalReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const originalHistoricalReviewRecorded = readTaskTimelineEvents(repoRoot, taskId)
+            .reverse()
+            .find((event) => (
+                event.event_type === 'REVIEW_RECORDED'
+                && typeof event.details === 'object'
+                && event.details !== null
+                && !Array.isArray(event.details)
+                && String((event.details as Record<string, unknown>).review_type || '').trim() === 'code'
+            ));
+        assert.ok(originalHistoricalReviewRecorded);
+        const originalHistoricalDetails = originalHistoricalReviewRecorded.details as Record<string, unknown>;
+        const originalReceiptSnapshotSha256 = String(originalHistoricalDetails.receipt_snapshot_sha256 || '').trim();
+        assert.ok(originalReceiptSnapshotSha256);
         fs.mkdirSync(path.join(repoRoot, 'scratch'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'scratch', 'foreign.ts'), 'export const unrelated = true;\n', 'utf8');
         const pollutedPreflightPath = writePreflight(repoRoot, taskId, {
@@ -1439,10 +1478,13 @@ describe('cli/commands/gates – review-reuse suites', () => {
             'REVIEW PASSED'
         ].join('\n');
         fs.writeFileSync(artifactPath, pollutedArtifactText, 'utf8');
-        const pollutedArtifactHash = require('node:crypto')
+        const crypto = require('node:crypto');
+        const pollutedArtifactHash = crypto
             .createHash('sha256')
             .update(pollutedArtifactText)
             .digest('hex');
+        const pollutedArtifactSnapshotPath = artifactPath.replace(/\.md$/, `-artifact-${pollutedArtifactHash}.md`);
+        fs.writeFileSync(pollutedArtifactSnapshotPath, pollutedArtifactText, 'utf8');
         const overwrittenReceipt = {
             ...originalReceipt,
             review_artifact_sha256: pollutedArtifactHash,
@@ -1450,7 +1492,23 @@ describe('cli/commands/gates – review-reuse suites', () => {
             review_scope_sha256: computeReviewRelevantScopeFingerprint(pollutedPreflight, repoRoot).review_scope_sha256
         };
         assert.notEqual(overwrittenReceipt.code_scope_sha256, originalReceipt.code_scope_sha256);
-        fs.writeFileSync(receiptPath, JSON.stringify(overwrittenReceipt, null, 2) + '\n', 'utf8');
+        writeCompilePassEvidence(repoRoot, taskId, pollutedPreflightPath);
+        const pollutedReceiptText = JSON.stringify(overwrittenReceipt, null, 2) + '\n';
+        const pollutedReceiptHash = crypto.createHash('sha256').update(pollutedReceiptText).digest('hex');
+        const pollutedReceiptSnapshotPath = artifactPath.replace(/\.md$/, `-receipt-${pollutedReceiptHash}.json`);
+        fs.writeFileSync(receiptPath, pollutedReceiptText, 'utf8');
+        fs.writeFileSync(pollutedReceiptSnapshotPath, pollutedReceiptText, 'utf8');
+        appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_RECORDED', 'PASS', 'polluted review recorded', {
+            ...overwrittenReceipt,
+            receipt_path: path.normalize(receiptPath).replace(/\\/g, '/'),
+            receipt_sha256: pollutedReceiptHash,
+            receipt_snapshot_path: path.normalize(pollutedReceiptSnapshotPath).replace(/\\/g, '/'),
+            receipt_snapshot_sha256: pollutedReceiptHash,
+            review_artifact_path: path.normalize(artifactPath).replace(/\\/g, '/'),
+            review_artifact_snapshot_path: path.normalize(pollutedArtifactSnapshotPath).replace(/\\/g, '/'),
+            review_artifact_snapshot_sha256: pollutedArtifactHash,
+            review_context_path: path.normalize(reviewContextPath).replace(/\\/g, '/')
+        });
 
         const preflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['src/app.ts'],
@@ -1482,7 +1540,10 @@ describe('cli/commands/gates – review-reuse suites', () => {
         assert.ok(result.outputLines.some((line) => line.includes('rejected latest mutable receipt')));
         const refreshedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
         assert.equal(refreshedReceipt.reused_existing_review, true);
+        assert.equal(refreshedReceipt.reused_from_receipt_sha256, originalReceiptSnapshotSha256);
+        assert.notEqual(refreshedReceipt.reused_from_receipt_sha256, pollutedReceiptHash);
         assert.equal(refreshedReceipt.reused_from_code_scope_sha256, originalReceipt.code_scope_sha256);
+        assert.notEqual(refreshedReceipt.reused_from_code_scope_sha256, overwrittenReceipt.code_scope_sha256);
         assert.equal(refreshedReceipt.reused_from_review_scope_sha256, originalReceipt.review_scope_sha256);
         assert.equal(fs.readFileSync(artifactPath, 'utf8'), originalArtifactText);
 
@@ -3477,6 +3538,85 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('review gate rejects reused receipts when the historical source artifact snapshot is tampered after reuse telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-review-gate-rejects-tampered-source-artifact';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Review gate must verify historical source artifact snapshots for reused evidence'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+        tamperLatestHistoricalArtifactSnapshot(repoRoot, taskId, 'code');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
+        assert.ok(reviewResult.outputLines.some((line) => (
+            line.includes('historical REVIEW_RECORDED telemetry')
+        )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('completion review-skill evidence rejects reused receipts when the historical source receipt snapshot is tampered after reuse telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-completion-rejects-tampered-source-receipt';
@@ -3535,6 +3675,95 @@ describe('cli/commands/gates – review-reuse suites', () => {
         });
         assert.equal(codeBuild.reusedReviewEvidence, true);
         tamperLatestHistoricalReceiptSnapshot(repoRoot, taskId, 'code');
+
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+        const reviewSkillEvidence = validateReviewSkillEvidence(
+            readTaskTimelineEvents(repoRoot, taskId) as any,
+            { code: true },
+            {
+                code: {
+                    path: artifactPath,
+                    content: fs.readFileSync(artifactPath, 'utf8'),
+                    reviewContext: JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>,
+                    receipt: JSON.parse(fs.readFileSync(receiptPath, 'utf8'))
+                }
+            },
+            true,
+            timelinePath,
+            'Qwen',
+            'Qwen',
+            false,
+            'provider_entrypoint',
+            undefined,
+            repoRoot
+        );
+        assert.ok(reviewSkillEvidence.violations.some((line) => (
+            line.includes('historical REVIEW_RECORDED telemetry')
+        )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('completion review-skill evidence rejects reused receipts when the historical source artifact snapshot is tampered after reuse telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-completion-rejects-tampered-source-artifact';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Completion validation must verify historical source artifact snapshots for reused evidence'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+        tamperLatestHistoricalArtifactSnapshot(repoRoot, taskId, 'code');
 
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
@@ -4417,6 +4646,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
             process.exitCode = previousExitCode;
         }
 
+        assert.equal(observedExitCode, EXIT_GENERAL_FAILURE);
         const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
         const crypto = require('node:crypto');
         const priorPreflightSha = crypto.createHash('sha256').update(fs.readFileSync(priorPreflightPath, 'utf8')).digest('hex');
