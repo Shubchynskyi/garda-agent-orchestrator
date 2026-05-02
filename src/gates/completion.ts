@@ -340,6 +340,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const reviewArtifacts: Record<string, {
         path: string;
         content: string;
+        reviewContextPath: string;
         reviewContext: Record<string, unknown> | null;
         receipt: ReviewReceipt | null;
         findings_evidence: ReturnType<typeof getReviewArtifactFindingsEvidence>;
@@ -431,6 +432,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         reviewArtifacts[reviewKey] = {
             path: normalizePath(artifactPath),
             content: artifactContent,
+            reviewContextPath: normalizePath(reviewContextPath),
             reviewContext,
             receipt,
             findings_evidence: findingsEvidence

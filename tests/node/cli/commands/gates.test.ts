@@ -205,6 +205,22 @@ function manualReviewContextTreeStateFixture(repoRoot: string, taskId: string): 
     }
 }
 
+function readReviewTreeStateSha256FromContextPath(reviewContextPath: string): string | null {
+    if (!fs.existsSync(reviewContextPath) || !fs.statSync(reviewContextPath).isFile()) {
+        return null;
+    }
+    try {
+        const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
+            ? reviewContext.tree_state as Record<string, unknown>
+            : null;
+        const treeStateSha256 = String(treeState?.tree_state_sha256 || treeState?.treeStateSha256 || '').trim().toLowerCase();
+        return treeStateSha256 || null;
+    } catch {
+        return null;
+    }
+}
+
 function reviewContextScopedDiffFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
     return {
         expected: false,
@@ -286,11 +302,13 @@ function attestReviewerInvocationForTest(options: {
     const reviewContextSha256 = crypto.createHash('sha256')
         .update(fs.readFileSync(options.reviewContextPath))
         .digest('hex');
+    const reviewTreeStateSha256 = readReviewTreeStateSha256FromContextPath(options.reviewContextPath);
     if (events.some((event) => (
         event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
         && String((event.details as Record<string, unknown> | undefined)?.review_type || '').trim().toLowerCase() === options.reviewType
         && String((event.details as Record<string, unknown> | undefined)?.reviewer_session_id || '').trim() === options.reviewerIdentity
         && String((event.details as Record<string, unknown> | undefined)?.review_context_sha256 || '').trim().toLowerCase() === reviewContextSha256
+        && (!reviewTreeStateSha256 || String((event.details as Record<string, unknown> | undefined)?.review_tree_state_sha256 || '').trim().toLowerCase() === reviewTreeStateSha256)
         && String((event.details as Record<string, unknown> | undefined)?.routing_event_sha256 || '').trim().toLowerCase() === String(routedIntegrity.event_sha256).trim().toLowerCase()
     ))) {
         return;
@@ -302,6 +320,7 @@ function attestReviewerInvocationForTest(options: {
         reviewer_session_id: options.reviewerIdentity,
         reviewer_identity: options.reviewerIdentity,
         review_context_sha256: reviewContextSha256,
+        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedIntegrity.event_sha256
     });
 }

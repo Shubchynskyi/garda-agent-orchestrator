@@ -11,6 +11,7 @@ import { buildTaskModeArtifact, resolveTaskModeArtifactPath } from '../../../src
 import {
     handleCompleteReviewerLaunch,
     handlePrepareReviewerLaunch,
+    handleRecordReviewResult,
     handleRecordReviewInvocation,
     handleRecordReviewRouting
 } from '../../../src/cli/commands/gate-review-handlers';
@@ -164,6 +165,40 @@ async function completeLaunch(repoRoot: string, taskId: string, launchArtifactPa
     ]);
 }
 
+async function recordInvocation(repoRoot: string, taskId: string, launchArtifactPath: string): Promise<void> {
+    await handleRecordReviewInvocation([
+        '--task-id', taskId,
+        '--review-type', 'code',
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', REVIEWER_IDENTITY,
+        '--reviewer-launch-artifact-path', launchArtifactPath,
+        '--repo-root', repoRoot
+    ]);
+}
+
+function writeReviewOutput(repoRoot: string, taskId: string): string {
+    const outputPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'review-output.md');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, [
+        '# Code Review',
+        '',
+        'Reviewed `src/app.ts`, the staged review context, reviewer launch attestation, and receipt materialization path with enough concrete detail to satisfy review materialization while reporting no findings for this focused tree-state regression.',
+        '',
+        '## Findings by Severity',
+        'none',
+        '',
+        '## Deferred Findings',
+        'none',
+        '',
+        '## Residual Risks',
+        'none',
+        '',
+        '## Verdict',
+        'REVIEW PASSED'
+    ].join('\n'), 'utf8');
+    return outputPath;
+}
+
 function dirtyWorkingTree(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 3;\n', 'utf8');
 }
@@ -211,15 +246,36 @@ describe('reviewer launch tree-state freshness', () => {
             dirtyWorkingTree(fixture.repoRoot);
 
             await assert.rejects(
-                () => handleRecordReviewInvocation([
+                () => recordInvocation(fixture.repoRoot, taskId, fixture.launchArtifactPath),
+                /record-review-invocation cannot continue because the current reviewer-visible tree state is stale.*Staged review scope is stale: src\/app\.ts has unstaged working-tree changes/s
+            );
+        } finally {
+            fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks record-review-result when an attested staged review becomes MM before receipt materialization', async () => {
+        const taskId = 'T-901-review-result-mm';
+        const fixture = makeStagedReviewContextFixture(taskId);
+        try {
+            await recordRouting(fixture.repoRoot, taskId);
+            await prepareLaunch(fixture.repoRoot, taskId, fixture.launchArtifactPath);
+            await completeLaunch(fixture.repoRoot, taskId, fixture.launchArtifactPath);
+            await recordInvocation(fixture.repoRoot, taskId, fixture.launchArtifactPath);
+            const reviewOutputPath = writeReviewOutput(fixture.repoRoot, taskId);
+            dirtyWorkingTree(fixture.repoRoot);
+
+            await assert.rejects(
+                () => handleRecordReviewResult([
                     '--task-id', taskId,
                     '--review-type', 'code',
+                    '--preflight-path', path.join(fixture.reviewsRoot, `${taskId}-preflight.json`),
+                    '--review-output-path', reviewOutputPath,
                     '--reviewer-execution-mode', 'delegated_subagent',
                     '--reviewer-identity', REVIEWER_IDENTITY,
-                    '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
                     '--repo-root', fixture.repoRoot
                 ]),
-                /record-review-invocation cannot continue because the current reviewer-visible tree state is stale.*Staged review scope is stale: src\/app\.ts has unstaged working-tree changes/s
+                /record-review-result cannot continue because the current reviewer-visible tree state is stale.*Staged review scope is stale: src\/app\.ts has unstaged working-tree changes/s
             );
         } finally {
             fs.rmSync(fixture.repoRoot, { recursive: true, force: true });

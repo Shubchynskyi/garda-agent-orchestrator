@@ -423,6 +423,7 @@ function seedReusableReviewEvidence(
         reviewer_session_id: execution.reviewerIdentity,
         reviewer_identity: execution.reviewerIdentity,
         review_context_sha256: reviewContextHash,
+        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256
     };
     const invocationEvent = appendTaskEvent(
@@ -456,7 +457,25 @@ function seedReusableReviewEvidence(
         ),
         trustLevel: execution.trustLevel
     });
-    fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    const receiptPayload = `${JSON.stringify(receipt, null, 2)}\n`;
+    const receiptPayloadSha256 = crypto.createHash('sha256').update(receiptPayload).digest('hex');
+    const receiptSnapshotPath = artifactPath.replace(/\.md$/, `-receipt-${receiptPayloadSha256}.json`);
+    const artifactSnapshotPath = artifactPath.replace(/\.md$/, `-artifact-${artifactHash}.md`);
+    fs.writeFileSync(receiptPath, receiptPayload, 'utf8');
+    fs.writeFileSync(receiptSnapshotPath, receiptPayload, 'utf8');
+    fs.writeFileSync(artifactSnapshotPath, artifactText, 'utf8');
+    appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_RECORDED', 'PASS', 'historical review recorded', {
+        ...receipt,
+        receipt_path: receiptPath.replace(/\\/g, '/'),
+        receipt_sha256: receiptPayloadSha256,
+        receipt_snapshot_path: receiptSnapshotPath.replace(/\\/g, '/'),
+        receipt_snapshot_sha256: receiptPayloadSha256,
+        review_artifact_path: artifactPath.replace(/\\/g, '/'),
+        review_artifact_snapshot_path: artifactSnapshotPath.replace(/\\/g, '/'),
+        review_artifact_snapshot_sha256: artifactHash,
+        review_context_path: reviewContextPath.replace(/\\/g, '/')
+    });
     return reviewContextPath;
 }
 
@@ -627,6 +646,7 @@ function refreshReviewReceiptProvenance(
         reviewer_session_id: reviewerIdentity,
         reviewer_identity: reviewerIdentity,
         review_context_sha256: String(receipt.review_context_sha256 || '').trim(),
+        review_tree_state_sha256: String(receipt.review_tree_state_sha256 || '').trim() || null,
         routing_event_sha256: String(routedIntegrity.event_sha256 || '').trim()
     };
     const invocationEvent = appendTaskEvent(

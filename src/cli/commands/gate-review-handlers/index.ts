@@ -997,18 +997,23 @@ function findMatchingReviewerInvocationAttestationEvent(
         reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
         reviewerIdentity: string;
         reviewContextSha256: string;
+        reviewTreeStateSha256?: string | null;
         routingEventSha256: string;
     }
 ): ReviewDependencyTimelineEvent | null {
     const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
     const normalizedTaskId = String(options.taskId || '').trim();
     const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
+    const normalizedReviewTreeStateSha256 = String(options.reviewTreeStateSha256 || '').trim().toLowerCase();
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
     for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
         const entry = timelineEvents[index];
         const details = entry.details;
         const detailsTaskId = String(details?.task_id || details?.taskId || '').trim();
         const detailsReviewContextSha256 = String(details?.review_context_sha256 || details?.reviewContextSha256 || '')
+            .trim()
+            .toLowerCase();
+        const detailsReviewTreeStateSha256 = String(details?.review_tree_state_sha256 || details?.reviewTreeStateSha256 || '')
             .trim()
             .toLowerCase();
         const detailsRoutingEventSha256 = String(details?.routing_event_sha256 || details?.routingEventSha256 || '')
@@ -1024,6 +1029,7 @@ function findMatchingReviewerInvocationAttestationEvent(
             && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === options.reviewerExecutionMode
             && detailsReviewerIdentity === options.reviewerIdentity
             && detailsReviewContextSha256 === normalizedReviewContextSha256
+            && (!normalizedReviewTreeStateSha256 || detailsReviewTreeStateSha256 === normalizedReviewTreeStateSha256)
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
             && entry.integrity
         ) {
@@ -1666,6 +1672,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerExecutionMode: options.reviewerExecutionMode,
         reviewerIdentity: options.reviewerIdentity,
         reviewContextSha256: contextSha256,
+        reviewTreeStateSha256: getReviewTreeStateSha256(parsedReviewContext) || null,
         routingEventSha256: routingEventProvenance.event_sha256
     });
     const reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(

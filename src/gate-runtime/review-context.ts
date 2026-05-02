@@ -402,6 +402,7 @@ export interface ReviewerInvocationAttestationReviewReceiptReviewerProvenance {
     reviewer_execution_mode: 'delegated_subagent';
     reviewer_identity: string;
     review_context_sha256: string;
+    review_tree_state_sha256?: string | null;
     routing_event_sha256: string;
 }
 
@@ -482,6 +483,10 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
         const reviewerExecutionMode = normalizeProvenanceText(record.reviewer_execution_mode);
         const reviewerIdentity = normalizeProvenanceText(record.reviewer_identity);
         const reviewContextSha256 = normalizeProvenanceSha256(record.review_context_sha256);
+        const rawReviewTreeStateSha256 = record.review_tree_state_sha256 ?? record.reviewTreeStateSha256;
+        const reviewTreeStateSha256 = rawReviewTreeStateSha256 == null
+            ? null
+            : normalizeProvenanceSha256(rawReviewTreeStateSha256);
         const routingEventSha256 = normalizeProvenanceSha256(record.routing_event_sha256);
         if (
             schemaVersion !== 1
@@ -495,6 +500,7 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             || reviewerExecutionMode !== 'delegated_subagent'
             || !reviewerIdentity
             || !reviewContextSha256
+            || (rawReviewTreeStateSha256 != null && !reviewTreeStateSha256)
             || !routingEventSha256
         ) {
             return null;
@@ -511,6 +517,7 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             reviewer_execution_mode: 'delegated_subagent',
             reviewer_identity: reviewerIdentity,
             review_context_sha256: reviewContextSha256,
+            review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routingEventSha256
         };
     }
@@ -575,6 +582,7 @@ export function buildReviewReceiptReviewerInvocationProvenance(
         reviewer_execution_mode: record.reviewer_execution_mode ?? record.reviewerExecutionMode,
         reviewer_identity: record.reviewer_identity ?? record.reviewerIdentity ?? record.reviewer_session_id ?? record.reviewerSessionId,
         review_context_sha256: record.review_context_sha256 ?? record.reviewContextSha256,
+        review_tree_state_sha256: record.review_tree_state_sha256 ?? record.reviewTreeStateSha256,
         routing_event_sha256: record.routing_event_sha256 ?? record.routingEventSha256
     });
 }

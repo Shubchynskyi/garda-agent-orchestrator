@@ -598,6 +598,7 @@ export function writeReceiptBackedReviewArtifact(
     const crypto = require('node:crypto');
     const artifactHash = crypto.createHash('sha256').update(content).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
+    const reviewTreeStateSha256 = resolveFixtureReviewTreeStateSha256(reviewContext);
 
     const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
     const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
@@ -635,6 +636,7 @@ export function writeReceiptBackedReviewArtifact(
         reviewer_session_id: reviewerEvidence.reviewerIdentity,
         reviewer_identity: reviewerEvidence.reviewerIdentity,
         review_context_sha256: reviewContextHash,
+        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256
     };
     const invocationEvent = appendTaskEvent(
@@ -659,7 +661,7 @@ export function writeReceiptBackedReviewArtifact(
         scopeSha256,
         codeScopeSha256,
         reviewContextSha256: reviewContextHash,
-        reviewTreeStateSha256: resolveFixtureReviewTreeStateSha256(reviewContext),
+        reviewTreeStateSha256,
         reviewContextReuseSha256,
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: reviewerEvidence.executionMode,
@@ -669,9 +671,25 @@ export function writeReceiptBackedReviewArtifact(
         trustLevel: 'INDEPENDENT_AUDITED'
     });
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-    fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+    const receiptPayload = `${JSON.stringify(receipt, null, 2)}\n`;
+    const receiptPayloadSha256 = crypto.createHash('sha256').update(receiptPayload).digest('hex');
+    const receiptSnapshotPath = artifactPath.replace(/\.md$/, `-receipt-${receiptPayloadSha256}.json`);
+    const artifactSnapshotPath = artifactPath.replace(/\.md$/, `-artifact-${artifactHash}.md`);
+    fs.writeFileSync(receiptPath, receiptPayload, 'utf8');
+    fs.writeFileSync(receiptSnapshotPath, receiptPayload, 'utf8');
+    fs.writeFileSync(artifactSnapshotPath, content, 'utf8');
 
-    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', { review_type: reviewKey });
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', {
+        ...receipt,
+        receipt_path: receiptPath.replace(/\\/g, '/'),
+        receipt_sha256: receiptPayloadSha256,
+        receipt_snapshot_path: receiptSnapshotPath.replace(/\\/g, '/'),
+        receipt_snapshot_sha256: receiptPayloadSha256,
+        review_artifact_path: artifactPath.replace(/\\/g, '/'),
+        review_artifact_snapshot_path: artifactSnapshotPath.replace(/\\/g, '/'),
+        review_artifact_snapshot_sha256: artifactHash,
+        review_context_path: reviewContextPath.replace(/\\/g, '/')
+    });
 }
 
 export function writeCleanReviewArtifact(repoRoot: string, taskId: string, reviewKey: string, verdict: string): void {
@@ -748,6 +766,8 @@ export function seedReusableReviewEvidence(
         fs.writeFileSync(reviewContextPath, JSON.stringify(legacyReviewContext, null, 2) + '\n', 'utf8');
     }
     const reviewContextText = fs.readFileSync(reviewContextPath, 'utf8');
+    const reviewContext = JSON.parse(reviewContextText) as Record<string, unknown>;
+    const reviewTreeStateSha256 = resolveFixtureReviewTreeStateSha256(reviewContext);
     fs.writeFileSync(artifactPath, artifactText, 'utf8');
     const artifactHash = crypto.createHash('sha256').update(artifactText).digest('hex');
     const reviewContextHash = crypto.createHash('sha256').update(reviewContextText).digest('hex');
@@ -769,6 +789,7 @@ export function seedReusableReviewEvidence(
         reviewer_session_id: resolvedReviewerIdentity,
         reviewer_identity: resolvedReviewerIdentity,
         review_context_sha256: reviewContextHash,
+        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256
     };
     const invocationEvent = appendTaskEvent(
@@ -794,8 +815,8 @@ export function seedReusableReviewEvidence(
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
         reviewContextSha256: reviewContextHash,
-        reviewTreeStateSha256: resolveFixtureReviewTreeStateSha256(JSON.parse(reviewContextText) as Record<string, unknown>),
-        reviewContextReuseSha256: computeReviewContextReuseHash(JSON.parse(reviewContextText) as Record<string, unknown>),
+        reviewTreeStateSha256,
+        reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
         reviewArtifactSha256: artifactHash,
         reviewerExecutionMode: executionMode,
         reviewerIdentity: resolvedReviewerIdentity,
@@ -803,7 +824,25 @@ export function seedReusableReviewEvidence(
         reviewerProvenance,
         trustLevel: 'INDEPENDENT_AUDITED'
     });
-    fs.writeFileSync(artifactPath.replace(/\.md$/, '-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+    const receiptPayload = `${JSON.stringify(receipt, null, 2)}\n`;
+    const receiptPayloadSha256 = crypto.createHash('sha256').update(receiptPayload).digest('hex');
+    const receiptSnapshotPath = artifactPath.replace(/\.md$/, `-receipt-${receiptPayloadSha256}.json`);
+    const artifactSnapshotPath = artifactPath.replace(/\.md$/, `-artifact-${artifactHash}.md`);
+    fs.writeFileSync(receiptPath, receiptPayload, 'utf8');
+    fs.writeFileSync(receiptSnapshotPath, receiptPayload, 'utf8');
+    fs.writeFileSync(artifactSnapshotPath, artifactText, 'utf8');
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'reusable review recorded', {
+        ...receipt,
+        receipt_path: receiptPath.replace(/\\/g, '/'),
+        receipt_sha256: receiptPayloadSha256,
+        receipt_snapshot_path: receiptSnapshotPath.replace(/\\/g, '/'),
+        receipt_snapshot_sha256: receiptPayloadSha256,
+        review_artifact_path: artifactPath.replace(/\\/g, '/'),
+        review_artifact_snapshot_path: artifactSnapshotPath.replace(/\\/g, '/'),
+        review_artifact_snapshot_sha256: artifactHash,
+        review_context_path: reviewContextPath.replace(/\\/g, '/')
+    });
     return reviewContextPath;
 }
 

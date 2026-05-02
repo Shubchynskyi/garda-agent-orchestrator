@@ -24,8 +24,7 @@ import {
 } from './review-tree-state';
 import { type ReviewDependencyTimelineEvent } from './review-dependencies';
 import {
-    findMatchingHistoricalReviewRecordedTelemetryEvent,
-    findMatchingReviewReuseRecordedTelemetryEvent
+    validateStrictReusedReviewEvidence
 } from './review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from './review-trust-policy';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
@@ -408,6 +407,8 @@ function findMatchingInvocationAttestationEvent(
         || options.reviewerProvenance.reviewer_execution_mode !== options.reviewerExecutionMode
         || options.reviewerProvenance.reviewer_identity !== options.reviewerIdentity
         || options.reviewerProvenance.review_context_sha256 !== normalizedReviewContextSha256
+        || (normalizedReviewTreeStateSha256
+            && options.reviewerProvenance.review_tree_state_sha256 !== normalizedReviewTreeStateSha256)
         || options.reviewerProvenance.routing_event_sha256 !== normalizedRoutingEventSha256
     ) {
         return null;
@@ -446,53 +447,6 @@ function findMatchingInvocationAttestationEvent(
         }
     }
     return null;
-}
-
-function findMatchingReviewReuseRecordedEvent(
-    timelineEvents: readonly ReviewDependencyTimelineEvent[],
-    options: {
-        reviewType: string;
-        receiptPath: string;
-        reviewContextSha256: string | null;
-        reviewContextReuseSha256?: string | null;
-        reviewTreeStateSha256?: string | null;
-        reviewScopeSha256?: string | null;
-        codeScopeSha256?: string | null;
-        reviewArtifactSha256: string | null;
-        reusedFromReceiptPath: string | null;
-        reusedFromReceiptSha256?: string | null;
-        reusedFromReviewContextSha256: string | null;
-        reusedFromReviewContextReuseSha256: string | null;
-        reusedFromReviewTreeStateSha256?: string | null;
-        reusedFromReviewScopeSha256?: string | null;
-        reusedFromCodeScopeSha256?: string | null;
-    }
-): ReviewDependencyTimelineEvent | null {
-    const latestCompilePassSequence = findLatestTimelineSequence(
-        timelineEvents,
-        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
-    );
-    if (latestCompilePassSequence == null) {
-        return null;
-    }
-    return findMatchingReviewReuseRecordedTelemetryEvent(timelineEvents, {
-        reviewType: options.reviewType,
-        receiptPath: options.receiptPath,
-        reviewContextSha256: options.reviewContextSha256,
-        reviewContextReuseSha256: options.reviewContextReuseSha256,
-        reviewTreeStateSha256: options.reviewTreeStateSha256,
-        reviewScopeSha256: options.reviewScopeSha256,
-        codeScopeSha256: options.codeScopeSha256,
-        reviewArtifactSha256: options.reviewArtifactSha256,
-        reusedFromReceiptPath: options.reusedFromReceiptPath,
-        reusedFromReceiptSha256: options.reusedFromReceiptSha256,
-        reusedFromReviewContextSha256: options.reusedFromReviewContextSha256,
-        reusedFromReviewContextReuseSha256: options.reusedFromReviewContextReuseSha256,
-        reusedFromReviewTreeStateSha256: options.reusedFromReviewTreeStateSha256,
-        reusedFromReviewScopeSha256: options.reusedFromReviewScopeSha256,
-        reusedFromCodeScopeSha256: options.reusedFromCodeScopeSha256,
-        minEventSequenceExclusive: latestCompilePassSequence
-    });
 }
 
 export function validateReviewArtifactGateEligibility(options: {
@@ -871,14 +825,24 @@ export function validateReviewArtifactGateEligibility(options: {
                         options.timelineEvents,
                         (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
                     );
-                    const reuseRecordedEvent = findMatchingReviewReuseRecordedEvent(
-                        options.timelineEvents,
-                        {
+                    if (latestCompilePassSequence == null) {
+                        errors.push(
+                            `Review '${reviewKey}' cannot validate reused evidence because COMPILE_GATE_PASSED telemetry is missing.`
+                        );
+                    } else if (!repoRoot) {
+                        errors.push(
+                            `Review '${reviewKey}' cannot validate reused evidence because repo root is unavailable.`
+                        );
+                    } else {
+                        const strictReuseValidation = validateStrictReusedReviewEvidence({
+                            repoRoot,
+                            taskId: resolvedTaskId || '',
                             reviewType: reviewKey,
+                            events: options.timelineEvents,
                             receiptPath,
                             reviewContextSha256: receiptReviewContextSha256,
                             reviewContextReuseSha256: validatedReceipt?.review_context_reuse_sha256,
-                            reviewTreeStateSha256: validatedReceipt?.review_tree_state_sha256,
+                            reviewTreeStateSha256: validatedReceipt?.review_tree_state_sha256 || null,
                             reviewScopeSha256: validatedReceipt?.review_scope_sha256,
                             codeScopeSha256: validatedReceipt?.code_scope_sha256,
                             reviewArtifactSha256: currentArtifactSha256 ?? reviewArtifact.artifactSha256 ?? fileSha256(artifactPath),
@@ -900,61 +864,20 @@ export function validateReviewArtifactGateEligibility(options: {
                                 : null,
                             reusedFromCodeScopeSha256: typeof validatedReceipt?.reused_from_code_scope_sha256 === 'string'
                                 ? validatedReceipt.reused_from_code_scope_sha256
-                                : null
-                        }
-                    );
-                    if (!reuseRecordedEvent) {
-                        errors.push(
-                            `Review '${reviewKey}' is missing current-cycle REVIEW_RECORDED reuse telemetry.`
-                        );
-                    }
-                    if (!reviewerProvenance) {
-                        errors.push(
-                            `Review receipt for '${reviewKey}' is missing historical reviewer_provenance for delegated_subagent reuse.`
-                        );
-                    } else if (reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
-                        errors.push(
-                            `Review receipt for '${reviewKey}' reuse must preserve historical REVIEWER_INVOCATION_ATTESTED provenance.`
-                        );
-                    } else {
-                        const historicalInvocationEvent = findMatchingInvocationAttestationEvent(
-                            options.timelineEvents,
-                            {
-                                taskId: resolvedTaskId || '',
-                                reviewType: reviewKey,
-                                reviewerExecutionMode,
-                                reviewerIdentity,
-                                reviewContextSha256: reviewerProvenance.review_context_sha256,
-                                reviewTreeStateSha256: reusedFromReviewTreeStateSha256,
-                                routingEventSha256: reviewerProvenance.routing_event_sha256,
-                                reviewerProvenance
-                            }
-                        );
-                        if (!historicalInvocationEvent) {
-                            errors.push(
-                                `Review receipt for '${reviewKey}' reused historical reviewer_provenance that does not match REVIEWER_INVOCATION_ATTESTED telemetry.`
-                            );
-                        } else if (!findMatchingHistoricalReviewRecordedTelemetryEvent(options.timelineEvents, {
-                            repoRoot,
-                            taskId: resolvedTaskId || '',
-                            reviewType: reviewKey,
-                            receiptPath: typeof validatedReceipt?.reused_from_receipt_path === 'string'
-                                ? validatedReceipt.reused_from_receipt_path
-                                : receiptPath,
-                            reviewContextSha256: validatedReceipt?.reused_from_review_context_sha256 || reviewerProvenance.review_context_sha256,
-                            reviewContextReuseSha256: validatedReceipt?.reused_from_review_context_reuse_sha256,
-                            reviewTreeStateSha256: reusedFromReviewTreeStateSha256,
-                            reviewScopeSha256: validatedReceipt?.reused_from_review_scope_sha256,
-                            codeScopeSha256: validatedReceipt?.reused_from_code_scope_sha256,
-                            reviewArtifactSha256: currentArtifactSha256 ?? reviewArtifact.artifactSha256 ?? fileSha256(artifactPath),
+                                : null,
                             reviewerExecutionMode,
                             reviewerIdentity,
-                            reviewerProvenance: reviewerProvenance as unknown as Record<string, unknown>,
-                            maxEventSequenceExclusive: latestCompilePassSequence,
-                            verifyReceiptSnapshot: true
-                        })) {
+                            reviewerProvenance: reviewerProvenance as unknown as Record<string, unknown> | null,
+                            latestCompileEventSequence: latestCompilePassSequence
+                        });
+                        if (!strictReuseValidation.valid) {
+                            const strictReuseReason = strictReuseValidation.reason.includes('current-cycle REVIEW_RECORDED reuse telemetry')
+                                ? `Review '${reviewKey}' is missing current-cycle REVIEW_RECORDED reuse telemetry or it does not match strict reused evidence: ${strictReuseValidation.reason}.`
+                                : strictReuseValidation.reason.includes('historical REVIEW_RECORDED telemetry')
+                                    ? `Review receipt for '${reviewKey}' reused evidence is invalid: historical REVIEW_RECORDED telemetry validation failed: ${strictReuseValidation.reason}.`
+                                    : `Review receipt for '${reviewKey}' reused evidence is invalid: ${strictReuseValidation.reason}.`;
                             errors.push(
-                                `Review receipt for '${reviewKey}' reused historical reviewer_provenance that does not match historical REVIEW_RECORDED telemetry.`
+                                strictReuseReason
                             );
                         }
                     }
@@ -999,6 +922,7 @@ export function validateReviewArtifactGateEligibility(options: {
                                     reviewerExecutionMode,
                                     reviewerIdentity,
                                     reviewContextSha256: receiptReviewContextSha256,
+                                    reviewTreeStateSha256: reviewContextTreeStateSha256,
                                     routingEventSha256: String(routingEvent.integrity.event_sha256 || '').trim().toLowerCase(),
                                     reviewerProvenance
                                 }

@@ -330,6 +330,9 @@ export function validateHistoricalReviewReuseCandidate(options: {
     const historicalProvenanceContextSha256 = historicalReviewerProvenance?.attestation_type === 'reviewer_invocation_attestation'
         ? historicalReviewerProvenance.review_context_sha256
         : null;
+    const historicalProvenanceReviewTreeStateSha256 = historicalReviewerProvenance?.attestation_type === 'reviewer_invocation_attestation'
+        ? historicalReviewerProvenance.review_tree_state_sha256 || null
+        : null;
     const sourceReceiptReviewTreeStateSha256 = normalizeReceiptSha256(receipt.review_tree_state_sha256);
     const sourceReceiptPath = gateHelpers.normalizePath(options.candidate.telemetryReceiptPath);
     const reusedFromReceiptPath = receipt.reused_existing_review === true && receipt.reused_from_receipt_path
@@ -372,6 +375,12 @@ export function validateHistoricalReviewReuseCandidate(options: {
     }
     if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
         return { accepted: false, reason: 'prior review receipt is not delegated-subagent evidence with historical provenance' };
+    }
+    if (historicalProvenanceReviewTreeStateSha256 !== expectedReviewTreeStateSha256) {
+        return {
+            accepted: false,
+            reason: 'prior review provenance does not bind to the historical review-tree-state hash'
+        };
     }
     if (
         historicalTrustLevel !== 'INDEPENDENT_AUDITED'

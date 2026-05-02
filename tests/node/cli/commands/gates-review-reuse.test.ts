@@ -772,6 +772,37 @@ function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<
         .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+function insertTaskEventWithoutIntegrityBeforeLatest(
+    repoRoot: string,
+    taskId: string,
+    eventType: string,
+    outcome: string,
+    message: string,
+    details: Record<string, unknown>,
+    predicate: (event: Record<string, unknown>) => boolean
+): void {
+    const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+    const lines = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim().length > 0);
+    const insertBeforeIndex = findLastTimelineEventIndex(
+        lines.map((line) => JSON.parse(line) as Record<string, unknown>),
+        predicate
+    );
+    assert.notEqual(insertBeforeIndex, -1);
+    lines.splice(insertBeforeIndex, 0, JSON.stringify({
+        timestamp_utc: new Date().toISOString(),
+        task_id: taskId,
+        event_type: eventType,
+        outcome,
+        actor: 'test',
+        message,
+        details
+    }));
+    fs.writeFileSync(timelinePath, lines.join('\n') + '\n', 'utf8');
+}
+
 function findLastTimelineEventIndex(
     events: Array<Record<string, unknown>>,
     predicate: (event: Record<string, unknown>) => boolean
@@ -3414,7 +3445,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
 
         assert.equal(result.reusedReviewEvidence, false);
         assert.equal(result.reusedReceiptPath, null);
-        assert.ok(result.outputLines.some((line) => line.includes('historical delegated reviewer invocation telemetry is missing')));
+        assert.ok(result.outputLines.some((line) => line.includes('prior review provenance does not bind to the historical review-tree-state hash')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -3583,6 +3614,112 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('review gate does not report missing current-cycle reuse telemetry when a later valid event exists', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-review-gate-skips-earlier-invalid-reuse-event';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Review gate should use the latest valid strict reuse telemetry'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        insertTaskEventWithoutIntegrityBeforeLatest(
+            repoRoot,
+            taskId,
+            'REVIEW_RECORDED',
+            'PASS',
+            'stale current-cycle reuse event without integrity',
+            {
+                review_type: 'code',
+                reused_existing_review: true,
+                receipt_path: path.normalize(receiptPath).replace(/\\/g, '/')
+            },
+            (event) => {
+                const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                    ? event.details as Record<string, unknown>
+                    : {};
+                return (
+                    event.event_type === 'REVIEW_RECORDED'
+                    && details.reused_existing_review === true
+                    && String(details.review_type || details.reviewType || '').toLowerCase() === 'code'
+                );
+            }
+        );
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, EXIT_GATE_FAILURE, reviewResult.outputLines.join('\n'));
+        assert.equal(
+            reviewResult.outputLines.some((line) => line.includes("Review 'code' is missing current-cycle REVIEW_RECORDED reuse telemetry")),
+            false
+        );
+        assert.equal(
+            reviewResult.outputLines.some((line) => line.includes('Workspace changed after compile gate')),
+            true
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('review gate rejects reused receipts when the historical source receipt snapshot is tampered after reuse telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-review-gate-rejects-tampered-source-receipt';
@@ -3657,6 +3794,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
         assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
         assert.ok(reviewResult.outputLines.some((line) => (
             line.includes('historical REVIEW_RECORDED telemetry')
+            || line.includes('current-cycle REVIEW_RECORDED reuse telemetry')
         )));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3736,6 +3874,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
         assert.equal(reviewResult.outputLines[0], 'REVIEW_GATE_FAILED');
         assert.ok(reviewResult.outputLines.some((line) => (
             line.includes('historical REVIEW_RECORDED telemetry')
+            || line.includes('current-cycle REVIEW_RECORDED reuse telemetry')
         )));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3825,6 +3964,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
         );
         assert.ok(reviewSkillEvidence.violations.some((line) => (
             line.includes('historical REVIEW_RECORDED telemetry')
+            || line.includes('current-cycle REVIEW_RECORDED reuse telemetry')
         )));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3914,6 +4054,100 @@ describe('cli/commands/gates – review-reuse suites', () => {
         );
         assert.ok(reviewSkillEvidence.violations.some((line) => (
             line.includes('historical REVIEW_RECORDED telemetry')
+            || line.includes('current-cycle REVIEW_RECORDED reuse telemetry')
+        )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('completion review-skill evidence rejects reused receipts when the current review context file drifts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-completion-rejects-current-context-drift';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Completion validation must verify current reused review context files'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['tests/app.test.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: reviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+
+        const tamperedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        tamperedReviewContext.post_review_tamper = true;
+        fs.writeFileSync(reviewContextPath, JSON.stringify(tamperedReviewContext, null, 2) + '\n', 'utf8');
+
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
+        const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+        const reviewSkillEvidence = validateReviewSkillEvidence(
+            readTaskTimelineEvents(repoRoot, taskId) as any,
+            { code: true },
+            {
+                code: {
+                    path: artifactPath,
+                    content: fs.readFileSync(artifactPath, 'utf8'),
+                    reviewContextPath,
+                    reviewContext: tamperedReviewContext,
+                    receipt: JSON.parse(fs.readFileSync(receiptPath, 'utf8'))
+                }
+            },
+            true,
+            timelinePath,
+            'Qwen',
+            'Qwen',
+            false,
+            'provider_entrypoint',
+            undefined,
+            repoRoot
+        );
+        assert.ok(reviewSkillEvidence.violations.some((line) => (
+            line.includes('review_context_sha256 does not match the current review-context file')
         )));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

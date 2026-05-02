@@ -406,6 +406,16 @@ function buildReviewContextScopeFixture(repoRoot: string, taskId: string, review
         ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
     return {
+        tree_state: {
+            schema_version: 1,
+            detection_source: String(preflight.detection_source || 'explicit_changed_files'),
+            changed_files: changedFiles,
+            tree_state_sha256: sha256Text(JSON.stringify({
+                task_id: taskId,
+                review_type: reviewType,
+                changed_files: changedFiles
+            }))
+        },
         task_scope: {
             changed_files: changedFiles,
             diff: {
@@ -437,12 +447,15 @@ function writeReviewEvidence(
     const passToken = reviewType === 'code' ? 'REVIEW PASSED' : `${reviewType.toUpperCase()} REVIEW PASSED`;
     const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
     const verdictToken = options.verdict === 'fail' ? failToken : passToken;
+    const reviewContextScope = buildReviewContextScopeFixture(repoRoot, taskId, reviewType);
+    const reviewTreeState = reviewContextScope.tree_state as Record<string, unknown> | undefined;
+    const reviewTreeStateSha256 = String(reviewTreeState?.tree_state_sha256 || '').trim();
     const reviewContext = {
         task_id: taskId,
         review_type: reviewType,
         preflight_path: preflightPath,
         preflight_sha256: fileSha256(preflightPath),
-        ...buildReviewContextScopeFixture(repoRoot, taskId, reviewType),
+        ...reviewContextScope,
         reviewer_routing: {
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: `agent:${reviewType}-reviewer`
@@ -464,6 +477,7 @@ function writeReviewEvidence(
         reviewer_session_id: `agent:${reviewType}-reviewer`,
         reviewer_identity: `agent:${reviewType}-reviewer`,
         review_context_sha256: sha256Text(reviewContextText),
+        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routeIntegrity.event_sha256
     });
     writeJson(receiptPath, {
@@ -474,6 +488,7 @@ function writeReviewEvidence(
         reviewer_identity: `agent:${reviewType}-reviewer`,
         review_artifact_sha256: sha256Text(artifactText),
         review_context_sha256: sha256Text(reviewContextText),
+        review_tree_state_sha256: reviewTreeStateSha256,
         reviewer_provenance: {
             schema_version: 1,
             attestation_type: 'reviewer_invocation_attestation',
@@ -486,6 +501,7 @@ function writeReviewEvidence(
             reviewer_execution_mode: 'delegated_subagent',
             reviewer_identity: `agent:${reviewType}-reviewer`,
             review_context_sha256: sha256Text(reviewContextText),
+            review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routeIntegrity.event_sha256
         }
     });
@@ -505,6 +521,15 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
             reviewer_session_id: reviewerIdentity
         }
     });
+}
+
+function readReviewContextTreeStateSha256(repoRoot: string, taskId: string, reviewType: string): string {
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+    const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : {};
+    return String(treeState.tree_state_sha256 || '').trim();
 }
 
 function writeFreshReviewContextWithoutRouting(repoRoot: string, taskId: string, reviewType: string): string {
@@ -1870,6 +1895,7 @@ describe('gates/next-step', () => {
             reviewer_session_id: reviewerIdentity,
             reviewer_identity: reviewerIdentity,
             review_context_sha256: fileSha256(reviewContextPath),
+            review_tree_state_sha256: readReviewContextTreeStateSha256(repoRoot, TASK_ID, 'code'),
             routing_event_sha256: routeIntegrity.event_sha256
         });
 
@@ -1877,6 +1903,39 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-result');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
+    });
+
+    it('does not treat current context invocation telemetry without matching tree-state binding as attested', () => {
+        for (const reviewTreeStateSha256 of [undefined, 'f'.repeat(64)] as const) {
+            const repoRoot = makeTempRepo();
+            const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+            seedStartedTask(repoRoot, TASK_ID);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+            seedCompilePass(repoRoot, TASK_ID);
+            writeReviewEvidence(repoRoot, TASK_ID, 'code');
+            writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+            const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+            const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: reviewerIdentity
+            });
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_session_id: reviewerIdentity,
+                reviewer_identity: reviewerIdentity,
+                review_context_sha256: fileSha256(reviewContextPath),
+                ...(reviewTreeStateSha256 ? { review_tree_state_sha256: reviewTreeStateSha256 } : {}),
+                routing_event_sha256: routeIntegrity.event_sha256
+            });
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'prepare-reviewer-launch');
+            assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
+        }
     });
 
     it('routes fresh review contexts without routing telemetry to record-review-routing first', () => {
@@ -1978,6 +2037,151 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'record-review-result');
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('matching REVIEWER_INVOCATION_ATTESTED launch telemetry'));
+    });
+
+    it('blocks downstream review when current receipt provenance omits tree-state binding', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const provenance = receipt.reviewer_provenance as Record<string, unknown>;
+        delete provenance.review_tree_state_sha256;
+        receipt.reviewer_provenance = provenance;
+        writeJson(receiptPath, receipt);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.ok(result.reason.includes('reviewer_provenance is missing review_tree_state_sha256'));
+    });
+
+    it('blocks downstream review when current review context omits tree-state binding', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`);
+        const context = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+        const treeState = context.tree_state as Record<string, unknown>;
+        const originalTreeStateSha256 = String(treeState.tree_state_sha256 || '').trim();
+        delete context.tree_state;
+        const contextText = `${JSON.stringify(context, null, 2)}\n`;
+        fs.writeFileSync(contextPath, contextText, 'utf8');
+
+        const reviewerIdentity = 'agent:code-reviewer';
+        const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        const invocationIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: sha256Text(contextText),
+            review_tree_state_sha256: originalTreeStateSha256,
+            routing_event_sha256: routeIntegrity.event_sha256
+        });
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        receipt.review_context_sha256 = sha256Text(contextText);
+        receipt.review_tree_state_sha256 = originalTreeStateSha256;
+        receipt.reviewer_provenance = {
+            ...(receipt.reviewer_provenance as Record<string, unknown>),
+            task_sequence: invocationIntegrity.task_sequence,
+            prev_event_sha256: invocationIntegrity.prev_event_sha256,
+            event_sha256: invocationIntegrity.event_sha256,
+            review_context_sha256: sha256Text(contextText),
+            review_tree_state_sha256: originalTreeStateSha256,
+            routing_event_sha256: routeIntegrity.event_sha256
+        };
+        writeJson(receiptPath, receipt);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.ok(result.reason.includes('review context is missing tree_state.tree_state_sha256'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('blocks downstream review when reused review telemetry omits tree-state reuse binding', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`);
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code.md`);
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const historicalTreeStateSha = '8'.repeat(64);
+        receipt.reused_existing_review = true;
+        receipt.reused_from_receipt_path = receiptPath;
+        receipt.reused_from_review_context_sha256 = '6'.repeat(64);
+        receipt.reused_from_review_context_reuse_sha256 = '7'.repeat(64);
+        receipt.reused_from_review_tree_state_sha256 = historicalTreeStateSha;
+        receipt.reviewer_provenance = {
+            ...(receipt.reviewer_provenance as Record<string, unknown>),
+            task_sequence: 1,
+            prev_event_sha256: null,
+            event_sha256: '9'.repeat(64),
+            review_tree_state_sha256: historicalTreeStateSha
+        };
+        writeJson(receiptPath, receipt);
+        const { reused_from_review_tree_state_sha256, ...receiptWithoutReuseTreeState } = receipt;
+        void reused_from_review_tree_state_sha256;
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+            ...receiptWithoutReuseTreeState,
+            receipt_path: receiptPath,
+            review_artifact_path: artifactPath,
+            review_artifact_sha256: fileSha256(artifactPath),
+            review_context_path: contextPath,
+            review_context_sha256: fileSha256(contextPath),
+            review_context_reuse_sha256: receipt.reused_from_review_context_reuse_sha256,
+            review_tree_state_sha256: receipt.review_tree_state_sha256,
+            reused_existing_review: true,
+            reused_from_receipt_path: receiptPath,
+            reused_from_review_context_sha256: receipt.reused_from_review_context_sha256,
+            reused_from_review_context_reuse_sha256: receipt.reused_from_review_context_reuse_sha256
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
+        assert.equal(result.review.next_review_type, 'code');
+        assert.ok(result.reason.includes('current-cycle REVIEW_RECORDED reuse telemetry'), result.reason);
+    });
+
+    it('blocks reused review receipts even when preserved invocation provenance is otherwise valid', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const reviewerProvenance = receipt.reviewer_provenance as Record<string, unknown>;
+        receipt.reused_existing_review = true;
+        receipt.reused_from_receipt_path = receiptPath;
+        receipt.reused_from_review_context_sha256 = receipt.review_context_sha256;
+        receipt.reused_from_review_context_reuse_sha256 = '7'.repeat(64);
+        receipt.reused_from_review_tree_state_sha256 = reviewerProvenance.review_tree_state_sha256;
+        writeJson(receiptPath, receipt);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
+        assert.equal(result.review.next_review_type, 'code');
+        assert.ok(result.reason.includes('current-cycle REVIEW_RECORDED reuse telemetry'), result.reason);
     });
 
     it('routes to completion when full-suite validation is disabled after docs pass', () => {

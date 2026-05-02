@@ -10,7 +10,7 @@ import {
     type EffectiveReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
 import { getReviewSkillCandidates } from '../core/review-capabilities';
-import { normalizePath } from './helpers';
+import { fileSha256, normalizePath } from './helpers';
 import {
     normalizeTimelineDetailString,
     getTimelineSkillId,
@@ -25,8 +25,7 @@ import {
     normalizeRequiredReviewRecord
 } from './review-dependencies';
 import {
-    findMatchingHistoricalReviewRecordedTelemetryEvent,
-    validateReviewReuseRecordedEventMatch
+    validateStrictReusedReviewEvidence
 } from './review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from './review-trust-policy';
 import {
@@ -47,6 +46,13 @@ export const REVIEW_CONTRACTS = [
     ['dependency', 'DEPENDENCY REVIEW PASSED']
 ];
 
+function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown> | null | undefined): string | null {
+    const treeState = reviewContext?.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
+        ? reviewContext.tree_state as Record<string, unknown>
+        : null;
+    return normalizeTimelineDetailString(treeState?.tree_state_sha256 ?? treeState?.treeStateSha256);
+}
+
 /**
  * Validate review-skill evidence for code-changing tasks.
  * When code changed but the review-gate artifact does not carry evidence
@@ -59,6 +65,7 @@ export function validateReviewSkillEvidence(
     reviewArtifacts: Record<string, {
         path: string;
         content?: string;
+        reviewContextPath?: string;
         reviewContext?: Record<string, unknown> | null;
         receipt?: ReviewReceipt | null;
     }>,
@@ -212,6 +219,20 @@ export function validateReviewSkillEvidence(
                 `Do not backfill '${key}' review evidence from an older execution cycle.`
             );
         }
+        if (recordEventIsReuse) {
+            const recordEventIntegrity = recordEvent?.integrity && typeof recordEvent.integrity === 'object' && !Array.isArray(recordEvent.integrity)
+                ? recordEvent.integrity as unknown as Record<string, unknown>
+                : null;
+            const recordEventTaskSequence = typeof recordEventIntegrity?.task_sequence === 'number'
+                ? recordEventIntegrity.task_sequence
+                : Number(recordEventIntegrity?.task_sequence);
+            const recordEventSha256 = normalizeTimelineDetailString(recordEventIntegrity?.event_sha256);
+            if (!recordEventIntegrity || !Number.isInteger(recordEventTaskSequence) || !recordEventSha256 || !/^[0-9a-f]{64}$/.test(recordEventSha256)) {
+                result.violations.push(
+                    `Required review '${key}' REVIEW_RECORDED reuse telemetry is missing integrity.`
+                );
+            }
+        }
         if (!routingEvent && !recordEventIsReuse) {
             result.violations.push(
                 `Code-changing task is missing REVIEWER_DELEGATION_ROUTED telemetry for required review '${key}'. ` +
@@ -330,6 +351,12 @@ export function validateReviewSkillEvidence(
                 const actualExecutionMode = normalizeCompatibilityReviewerExecutionMode(reviewerRouting.actual_execution_mode);
                 const reviewerSessionId = normalizeTimelineDetailString(reviewerRouting.reviewer_session_id);
                 const fallbackReason = normalizeTimelineDetailString(reviewerRouting.fallback_reason);
+                const contextReviewTreeStateSha256 = getReviewContextTreeStateSha256(reviewContext);
+                if (!contextReviewTreeStateSha256) {
+                    result.violations.push(
+                        `Required review '${key}' review-context is missing tree_state.tree_state_sha256.`
+                    );
+                }
                 if (!canonicalSourceOfTruth) {
                     result.violations.push(
                         `Required review '${key}' cannot be validated because the active workspace is missing canonical SourceOfTruth.`
@@ -437,10 +464,17 @@ export function validateReviewSkillEvidence(
                     const receiptReviewerIdentity = normalizeTimelineDetailString(receipt.reviewer_identity);
                     const receiptFallbackReason = normalizeTimelineDetailString(receipt.reviewer_fallback_reason);
                     const receiptTrustLevel = normalizeTimelineDetailString(receipt.trust_level)?.toUpperCase() ?? null;
+                    const receiptReviewTreeStateSha256 = normalizeTimelineDetailString(receipt.review_tree_state_sha256);
                     const reusedFromReviewTreeStateSha256 = normalizeTimelineDetailString(receipt.reused_from_review_tree_state_sha256);
+                    const expectedInvocationReviewTreeStateSha256 = reusedExistingReview
+                        ? reusedFromReviewTreeStateSha256
+                        : contextReviewTreeStateSha256;
                     const receiptReviewerProvenance = receipt.reviewer_provenance == null
                         ? null
                         : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+                    const receiptReviewerProvenanceReviewTreeStateSha256 = receiptReviewerProvenance?.attestation_type === 'reviewer_invocation_attestation'
+                        ? normalizeTimelineDetailString(receiptReviewerProvenance.review_tree_state_sha256)
+                        : null;
                     const attestedRoutingEvent = receiptReviewerProvenance
                         ? findLatestTimelineEvent(events, (entry) => (
                             (provenanceCycleFloorSequence == null || entry.sequence > provenanceCycleFloorSequence)
@@ -473,8 +507,10 @@ export function validateReviewSkillEvidence(
                                 && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === receiptExecutionMode
                                 && detailsReviewerIdentity === receiptReviewerIdentity
                                 && normalizeTimelineDetailString(details?.review_context_sha256 ?? details?.reviewContextSha256) === receiptReviewerProvenance.review_context_sha256
-                                && (!reusedExistingReview || !reusedFromReviewTreeStateSha256
-                                    || normalizeTimelineDetailString(details?.review_tree_state_sha256 ?? details?.reviewTreeStateSha256) === reusedFromReviewTreeStateSha256)
+                                && (!expectedInvocationReviewTreeStateSha256
+                                    || receiptReviewerProvenanceReviewTreeStateSha256 === expectedInvocationReviewTreeStateSha256)
+                                && (!expectedInvocationReviewTreeStateSha256
+                                    || normalizeTimelineDetailString(details?.review_tree_state_sha256 ?? details?.reviewTreeStateSha256) === expectedInvocationReviewTreeStateSha256)
                                 && normalizeTimelineDetailString(details?.routing_event_sha256 ?? details?.routingEventSha256) === receiptReviewerProvenance.routing_event_sha256
                                 && entry.integrity?.task_sequence === receiptReviewerProvenance.task_sequence
                                 && normalizeTimelineDetailString(entry.integrity?.event_sha256) === receiptReviewerProvenance.event_sha256
@@ -518,43 +554,113 @@ export function validateReviewSkillEvidence(
                             `Required review '${key}' receipt has invalid reviewer_provenance.`
                         );
                     }
+                    if (contextReviewTreeStateSha256 && !receiptReviewTreeStateSha256) {
+                        result.violations.push(
+                            `Required review '${key}' receipt is missing review_tree_state_sha256.`
+                        );
+                    } else if (
+                        contextReviewTreeStateSha256
+                        && receiptReviewTreeStateSha256
+                        && receiptReviewTreeStateSha256 !== contextReviewTreeStateSha256
+                    ) {
+                        result.violations.push(
+                            `Required review '${key}' receipt review_tree_state_sha256 does not match review-context tree_state.`
+                        );
+                    }
+                    if (
+                        expectedInvocationReviewTreeStateSha256
+                        && receiptReviewerProvenance
+                        && !receiptReviewerProvenanceReviewTreeStateSha256
+                    ) {
+                        result.violations.push(
+                            `Required review '${key}' receipt reviewer_provenance is missing review_tree_state_sha256.`
+                        );
+                    } else if (
+                        expectedInvocationReviewTreeStateSha256
+                        && receiptReviewerProvenanceReviewTreeStateSha256
+                        && receiptReviewerProvenanceReviewTreeStateSha256 !== expectedInvocationReviewTreeStateSha256
+                    ) {
+                        result.violations.push(
+                            `Required review '${key}' receipt reviewer_provenance review_tree_state_sha256 does not match expected review tree-state.`
+                        );
+                    }
                     if (reusedExistingReview) {
-                        const expectedReceiptPath = normalizePath(artifact.path.replace(/\.md$/, '-receipt.json')).toLowerCase();
-                        const reuseTelemetryMatch = validateReviewReuseRecordedEventMatch({
-                            event: recordEvent,
-                            reviewType: key,
-                            receiptPath: expectedReceiptPath,
-                            reviewContextSha256: receipt.review_context_sha256,
-                            reviewContextReuseSha256: receipt.review_context_reuse_sha256,
-                            reviewTreeStateSha256: receipt.review_tree_state_sha256,
-                            reviewScopeSha256: receipt.review_scope_sha256,
-                            codeScopeSha256: receipt.code_scope_sha256,
-                            reviewArtifactSha256: receipt.review_artifact_sha256,
-                            reusedFromReceiptPath: receipt.reused_from_receipt_path || null,
-                            reusedFromReceiptSha256: receipt.reused_from_receipt_sha256 || null,
-                            reusedFromReviewContextSha256: receipt.reused_from_review_context_sha256 || null,
-                            reusedFromReviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256 || null,
-                            reusedFromReviewTreeStateSha256: reusedFromReviewTreeStateSha256 || null,
-                            reusedFromReviewScopeSha256: receipt.reused_from_review_scope_sha256 || null,
-                            reusedFromCodeScopeSha256: receipt.reused_from_code_scope_sha256 || null
-                        });
+                        const expectedReceiptPath = normalizePath(artifact.path.replace(/\.md$/, '-receipt.json'));
+                        const expectedReviewContextPath = normalizePath(
+                            artifact.reviewContextPath || artifact.path.replace(/\.md$/, '-review-context.json')
+                        );
+                        const currentReviewArtifactSha256 = fileSha256(artifact.path);
+                        const currentReviewContextSha256 = repoRoot
+                            ? fileSha256(expectedReviewContextPath)
+                            : null;
+                        if (!currentReviewArtifactSha256) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt cannot validate current review artifact hash.`
+                            );
+                        } else if (
+                            normalizeTimelineDetailString(receipt.review_artifact_sha256)
+                            && normalizeTimelineDetailString(receipt.review_artifact_sha256) !== currentReviewArtifactSha256
+                        ) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt review_artifact_sha256 does not match the current review artifact file.`
+                            );
+                        }
+                        if (repoRoot && !currentReviewContextSha256) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt cannot validate current review-context hash.`
+                            );
+                        } else if (
+                            repoRoot
+                            && currentReviewContextSha256
+                            && normalizeTimelineDetailString(receipt.review_context_sha256)
+                            && normalizeTimelineDetailString(receipt.review_context_sha256) !== currentReviewContextSha256
+                        ) {
+                            result.violations.push(
+                                `Required review '${key}' reused receipt review_context_sha256 does not match the current review-context file.`
+                            );
+                        }
                         if (!recordEvent || recordEvent.details?.reused_existing_review !== true) {
                             result.violations.push(
                                 `Required review '${key}' reused receipt is missing REVIEW_RECORDED reuse telemetry.`
                             );
-                        } else if (!reusedFromReviewTreeStateSha256) {
-                            result.violations.push(
-                                `Required review '${key}' reused receipt is missing reused_from_review_tree_state_sha256.`
-                            );
-                        } else if (!reuseTelemetryMatch.hasIntegrity) {
-                            result.violations.push(
-                                `Required review '${key}' REVIEW_RECORDED reuse telemetry is missing integrity.`
-                            );
                         }
-                        else if (!reuseTelemetryMatch.matched) {
+                        if (!repoRoot) {
                             result.violations.push(
-                                `Required review '${key}' REVIEW_RECORDED reuse telemetry does not match receipt reuse fields.`
+                                `Required review '${key}' reused receipt cannot validate strict historical evidence because repo root is unavailable.`
                             );
+                        } else {
+                            const strictReuseValidation = validateStrictReusedReviewEvidence({
+                                repoRoot,
+                                taskId: normalizeTimelineDetailString(receipt.task_id) || '',
+                                reviewType: key,
+                                events,
+                                receiptPath: expectedReceiptPath,
+                                reviewContextSha256: currentReviewContextSha256 || null,
+                                reviewContextReuseSha256: receipt.review_context_reuse_sha256 || null,
+                                reviewTreeStateSha256: receipt.review_tree_state_sha256 || null,
+                                reviewScopeSha256: receipt.review_scope_sha256 || null,
+                                codeScopeSha256: receipt.code_scope_sha256 || null,
+                                reviewArtifactSha256: currentReviewArtifactSha256 || null,
+                                reusedFromReceiptPath: receipt.reused_from_receipt_path || null,
+                                reusedFromReceiptSha256: receipt.reused_from_receipt_sha256 || null,
+                                reusedFromReviewContextSha256: receipt.reused_from_review_context_sha256 || null,
+                                reusedFromReviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256 || null,
+                                reusedFromReviewTreeStateSha256: reusedFromReviewTreeStateSha256 || null,
+                                reusedFromReviewScopeSha256: receipt.reused_from_review_scope_sha256 || null,
+                                reusedFromCodeScopeSha256: receipt.reused_from_code_scope_sha256 || null,
+                                reviewerExecutionMode: receiptExecutionMode,
+                                reviewerIdentity: receiptReviewerIdentity,
+                                reviewerProvenance: receiptReviewerProvenance as unknown as Record<string, unknown> | null,
+                                latestCompileEventSequence: compilePassSequence
+                            });
+                            if (!strictReuseValidation.valid) {
+                                const strictReuseReason = strictReuseValidation.reason.includes('historical REVIEW_RECORDED telemetry')
+                                    ? `historical REVIEW_RECORDED telemetry validation failed: ${strictReuseValidation.reason}`
+                                    : strictReuseValidation.reason;
+                                result.violations.push(
+                                    `Required review '${key}' reused receipt strict evidence is invalid: ${strictReuseReason}.`
+                                );
+                            }
                         }
                         const trustViolation = getMandatoryDelegatedReviewTrustViolation({
                             reviewKey: key,
@@ -564,39 +670,6 @@ export function validateReviewSkillEvidence(
                         if (trustViolation) {
                             result.violations.push(
                                 trustViolation.replace(`Review receipt for '${key}'`, `Required review '${key}' receipt`)
-                            );
-                        }
-                        if (!receiptReviewerProvenance) {
-                            result.violations.push(
-                                `Required review '${key}' reused receipt is missing historical reviewer_provenance.`
-                            );
-                        } else if (receiptReviewerProvenance.attestation_type !== 'reviewer_invocation_attestation') {
-                            result.violations.push(
-                                `Required review '${key}' reused receipt must preserve REVIEWER_INVOCATION_ATTESTED provenance.`
-                            );
-                        } else if (!invocationAttestationEvent) {
-                            result.violations.push(
-                                `Required review '${key}' reused receipt reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED telemetry.`
-                            );
-                        } else if (!findMatchingHistoricalReviewRecordedTelemetryEvent(events, {
-                            repoRoot,
-                            taskId: receiptReviewerProvenance.task_id,
-                            reviewType: key,
-                            receiptPath: receipt.reused_from_receipt_path || expectedReceiptPath,
-                            reviewContextSha256: receipt.reused_from_review_context_sha256 || receiptReviewerProvenance.review_context_sha256,
-                            reviewContextReuseSha256: receipt.reused_from_review_context_reuse_sha256,
-                            reviewTreeStateSha256: reusedFromReviewTreeStateSha256 || null,
-                            reviewScopeSha256: receipt.reused_from_review_scope_sha256,
-                            codeScopeSha256: receipt.reused_from_code_scope_sha256,
-                            reviewArtifactSha256: receipt.review_artifact_sha256,
-                            reviewerExecutionMode: receiptExecutionMode,
-                            reviewerIdentity: receiptReviewerIdentity,
-                            reviewerProvenance: receiptReviewerProvenance as unknown as Record<string, unknown>,
-                            maxEventSequenceExclusive: compilePassSequence,
-                            verifyReceiptSnapshot: true
-                        })) {
-                            result.violations.push(
-                                `Required review '${key}' reused receipt reviewer_provenance does not match historical REVIEW_RECORDED telemetry.`
                             );
                         }
                     }

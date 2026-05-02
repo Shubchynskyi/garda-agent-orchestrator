@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
+    buildReviewReceiptReviewerInvocationProvenance,
     buildReviewReceiptReviewerProvenance,
     buildReviewVerdictTokenSet,
     extractReviewVerdictToken,
@@ -412,6 +413,32 @@ test('normalizeReviewReceiptReviewerProvenance accepts controller event integrit
         prev_event_sha256: 'c'.repeat(64),
         event_sha256: 'd'.repeat(64)
     });
+});
+
+test('buildReviewReceiptReviewerInvocationProvenance preserves review tree-state binding', () => {
+    const provenance = buildReviewReceiptReviewerInvocationProvenance(
+        'REVIEWER_INVOCATION_ATTESTED',
+        {
+            schema_version: 1,
+            task_sequence: 11,
+            prev_event_sha256: 'e'.repeat(64),
+            event_sha256: 'f'.repeat(64)
+        },
+        {
+            task_id: 'T-1001',
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: 'agent:reviewer-1',
+            review_context_sha256: '1'.repeat(64),
+            review_tree_state_sha256: '2'.repeat(64),
+            routing_event_sha256: '3'.repeat(64)
+        }
+    );
+
+    assert.equal(provenance?.attestation_type, 'reviewer_invocation_attestation');
+    assert.equal(provenance?.review_context_sha256, '1'.repeat(64));
+    assert.equal(provenance?.review_tree_state_sha256, '2'.repeat(64));
+    assert.equal(provenance?.routing_event_sha256, '3'.repeat(64));
 });
 
 test('extractReviewVerdictToken prefers verdict section tokens', () => {
