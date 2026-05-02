@@ -262,6 +262,14 @@ interface PreflightCycleReadiness {
     reason: string;
 }
 
+interface FailedGateRecovery {
+    nextGate: string;
+    title: string;
+    reason: string;
+    label: string;
+    command: string;
+}
+
 interface RulePackReadiness {
     ready: boolean;
     reason: string;
@@ -450,7 +458,11 @@ function readReviewArtifactState(
                     violations.push(...contractViolations);
                 }
             } else {
-                violations.push('review context preflight binding is stale or missing');
+                violations.push(
+                    'review context preflight binding is stale or missing ' +
+                    `(context preflight_path='${contextPreflightPath || 'missing'}', preflight_sha256=${contextPreflightHash || 'missing'}; ` +
+                    `expected preflight_path='${expectedPreflightPath || 'missing'}', preflight_sha256=${expectedPreflightHash || 'missing'})`
+                );
             }
         }
     }
@@ -1878,6 +1890,84 @@ function findLatestTimelineEvent(
     return null;
 }
 
+function getTimelineEventDetailString(
+    event: TimelineEventEntry | null,
+    fieldName: string
+): string {
+    const value = event?.details?.[fieldName];
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function hasProtectedOrchestratorWorkRecoverySignal(message: string): boolean {
+    const normalized = String(message || '').toLowerCase();
+    return normalized.includes('protected')
+        && normalized.includes('control-plane')
+        && normalized.includes('enter-task-mode')
+        && normalized.includes('--orchestrator-work');
+}
+
+function readFailedGateRecovery(
+    repoRoot: string,
+    eventsRoot: string,
+    taskId: string,
+    cliPrefix: string,
+    taskMode: Record<string, unknown> | null
+): FailedGateRecovery | null {
+    if (!taskMode) {
+        return null;
+    }
+
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const timelineErrors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    if (timelineErrors.length > 0 || events.length === 0) {
+        return null;
+    }
+
+    const latestPreflightFailure = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'PREFLIGHT_FAILED'
+    );
+    if (!latestPreflightFailure) {
+        return null;
+    }
+
+    const latestPreflightSuccess = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'PREFLIGHT_CLASSIFIED'
+    );
+    if (latestPreflightSuccess && latestPreflightSuccess.sequence > latestPreflightFailure.sequence) {
+        return null;
+    }
+
+    const latestTaskMode = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'TASK_MODE_ENTERED'
+    );
+    if (latestTaskMode && latestTaskMode.sequence > latestPreflightFailure.sequence) {
+        return null;
+    }
+
+    const errorText = getTimelineEventDetailString(latestPreflightFailure, 'error');
+    if (!hasProtectedOrchestratorWorkRecoverySignal(errorText)) {
+        return null;
+    }
+    const currentWorkspace = readCurrentGitWorkspaceSnapshot(repoRoot, true);
+    const currentChangedFiles = Array.isArray(currentWorkspace?.changed_files)
+        ? currentWorkspace.changed_files
+        : [];
+
+    return {
+        nextGate: 'enter-task-mode',
+        title: 'Recover failed classify-change as orchestrator work.',
+        reason:
+            `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected control-plane recovery signal. ` +
+            'Run the deterministic recovery command rebuilt from current task-mode and workspace state before reclassifying.',
+        label: 'Restart task mode with orchestrator work',
+        command: buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode, currentChangedFiles)
+    };
+}
+
 function getDefaultCommandsPath(repoRoot: string): string {
     return path.resolve(repoRoot, buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/40-commands.md'));
 }
@@ -2288,7 +2378,8 @@ function getNumberField(source: Record<string, unknown> | null, field: string, f
 function buildOrchestratorWorkRestartCommand(
     cliPrefix: string,
     taskId: string,
-    taskMode: Record<string, unknown> | null
+    taskMode: Record<string, unknown> | null,
+    additionalPlannedChangedFiles: string[] = []
 ): string {
     const parts = [
         `${cliPrefix} gate enter-task-mode`,
@@ -2307,7 +2398,11 @@ function buildOrchestratorWorkRestartCommand(
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
-    for (const plannedChangedFile of plannedChangedFiles) {
+    const mergedPlannedChangedFiles = [...new Set([
+        ...plannedChangedFiles,
+        ...additionalPlannedChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
+    ])].sort();
+    for (const plannedChangedFile of mergedPlannedChangedFiles) {
         parts.push(`--planned-changed-file ${quoteCommandValue(plannedChangedFile)}`);
     }
     parts.push('--repo-root "."');
@@ -2781,6 +2876,20 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (!preflight || !isGatePassed(summary, 'classify-change')) {
+        const failedGateRecovery = readFailedGateRecovery(repoRoot, eventsRoot, taskId, cliPrefix, taskMode);
+        if (failedGateRecovery) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: failedGateRecovery.nextGate,
+                title: failedGateRecovery.title,
+                reason: failedGateRecovery.reason,
+                commands: [
+                    buildCommand(failedGateRecovery.label, failedGateRecovery.command)
+                ]
+            });
+        }
+
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
@@ -3102,6 +3211,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         if (!state || !state.contextExists || !state.contextCurrent) {
+            const contextDetails = state?.violations
+                .filter((violation) => violation.includes('review context'))
+                .join(' ');
+            const contextDetailsSuffix = contextDetails ? ` ${contextDetails}` : '';
             if (!scopedDiffReadiness.ready) {
                 return buildResult({
                     ...resultBase,
@@ -3124,7 +3237,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Prepare '${reviewType}' review context.`,
                 reason: !state || !state.contextExists
                     ? `Required review '${reviewType}' has no canonical review-context artifact.`
-                    : `Required review '${reviewType}' review-context artifact is stale for the current preflight.`,
+                    : `Required review '${reviewType}' review-context artifact is stale for the current preflight.${contextDetailsSuffix}`,
                 commands: [
                     buildCommand(
                         'Build review context',
