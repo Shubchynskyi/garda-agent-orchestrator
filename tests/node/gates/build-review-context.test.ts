@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -15,6 +16,7 @@ import {
     getLegacyDefaultReviewContextPath,
     resolveCanonicalReviewContextPath
 } from '../../../src/gates/review-context-paths';
+import { computeReviewContextReuseHash } from '../../../src/gates/review-reuse';
 import { buildTaskModeArtifact, getTaskModeEvidence, resolveTaskModeArtifactPath } from '../../../src/gates/task-mode';
 import { resolveReviewerRoutingPolicy, resolveRuntimeReviewerIdentity } from '../../../src/gates/reviewer-routing';
 
@@ -25,6 +27,14 @@ function runGit(repoRoot: string, args: string[]): void {
         stdio: ['ignore', 'pipe', 'pipe']
     });
     assert.equal(result.status, 0, String(result.stderr || result.error || 'git command failed'));
+}
+
+function sha256Text(text: string): string {
+    return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function cloneJson<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function writeTaskModeArtifactFixture(
@@ -988,6 +998,148 @@ describe('gates/build-review-context', () => {
                     repoRoot
                 }),
                 /expects scoped diff metadata.*src\/auth\.ts/s
+            );
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('binds scoped diff metadata hashes into review-context validation and reuse hashing', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-scoped-binding-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            runGit(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('security').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'src', 'auth.ts'), 'export const auth = true;\n', 'utf8');
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({
+                enabled: true,
+                enabled_depths: [1, 2],
+                scoped_diffs: true
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-scoped-binding', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/auth.ts']);
+            const preflightPath = path.join(reviewsRoot, 'T-901-scoped-binding-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-scoped-binding',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: ['src/auth.ts'],
+                metrics: {
+                    changed_files_sha256: snapshot.changed_files_sha256,
+                    scope_content_sha256: snapshot.scope_content_sha256,
+                    scope_sha256: snapshot.scope_sha256
+                },
+                required_reviews: { security: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true, security: true },
+                budget_forecast: { token_economy_active_for_depth: true },
+                risk_aware_depth: { compression: { scoped_diffs: true } }
+            }, null, 2), 'utf8');
+            const preflightSha256 = sha256Text(fs.readFileSync(preflightPath, 'utf8'));
+            const scopedDiffOutputPath = path.join(reviewsRoot, 'T-901-scoped-binding-security-scoped.diff');
+            const scopedDiffMetadataPath = path.join(reviewsRoot, 'T-901-scoped-binding-security-scoped.json');
+            const scopedDiffText = [
+                'diff --git a/src/auth.ts b/src/auth.ts',
+                'new file mode 100644',
+                '--- /dev/null',
+                '+++ b/src/auth.ts',
+                '@@ -0,0 +1 @@',
+                '+export const auth = true;',
+                ''
+            ].join('\n');
+            fs.writeFileSync(scopedDiffOutputPath, scopedDiffText, 'utf8');
+            const metadata = {
+                review_type: 'security',
+                preflight_path: preflightPath.replace(/\\/g, '/'),
+                preflight_sha256: preflightSha256,
+                detection_source: 'explicit_changed_files',
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256,
+                output_path: scopedDiffOutputPath.replace(/\\/g, '/'),
+                metadata_path: scopedDiffMetadataPath.replace(/\\/g, '/'),
+                use_staged: false,
+                include_untracked: true,
+                changed_files_count: 1,
+                changed_files: ['src/auth.ts'],
+                matched_files_count: 1,
+                matched_files: ['src/auth.ts'],
+                fallback_to_full_diff: false,
+                output_diff_sha256: sha256Text(scopedDiffText),
+                scoped_diff_line_count: scopedDiffText.split('\n').length,
+                output_diff_line_count: scopedDiffText.split('\n').length,
+                hunk_level: false
+            };
+            fs.writeFileSync(scopedDiffMetadataPath, JSON.stringify(metadata, null, 2) + '\n', 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'security',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath,
+                outputPath: path.join(reviewsRoot, 'T-901-scoped-binding-security-review-context.json'),
+                repoRoot
+            });
+
+            const reuseHash = computeReviewContextReuseHash(result as Record<string, unknown>);
+            assert.match(String(reuseHash || ''), /^[0-9a-f]{64}$/);
+            const pathOnlyMutation = cloneJson(result as Record<string, unknown>);
+            pathOnlyMutation.preflight_path = 'garda-agent-orchestrator/runtime/reviews/other-preflight.json';
+            pathOnlyMutation.preflight_sha256 = '9'.repeat(64);
+            pathOnlyMutation.output_path = 'garda-agent-orchestrator/runtime/reviews/other-context.json';
+            (pathOnlyMutation.scoped_diff as Record<string, unknown>).metadata_path = 'garda-agent-orchestrator/runtime/reviews/other-scoped.json';
+            const pathOnlyMetadata = (pathOnlyMutation.scoped_diff as Record<string, unknown>).metadata as Record<string, unknown>;
+            pathOnlyMetadata.preflight_path = 'garda-agent-orchestrator/runtime/reviews/other-preflight.json';
+            pathOnlyMetadata.metadata_path = 'garda-agent-orchestrator/runtime/reviews/other-scoped.json';
+            pathOnlyMetadata.output_path = 'garda-agent-orchestrator/runtime/reviews/other-scoped.diff';
+            assert.equal(computeReviewContextReuseHash(pathOnlyMutation), reuseHash);
+
+            const scopeMutation = cloneJson(result as Record<string, unknown>);
+            ((scopeMutation.scoped_diff as Record<string, unknown>).metadata as Record<string, unknown>).scope_sha256 = 'f'.repeat(64);
+            assert.notEqual(computeReviewContextReuseHash(scopeMutation), reuseHash);
+
+            const staleMetadata = {
+                ...metadata,
+                preflight_sha256: '0'.repeat(64),
+                changed_files_sha256: '1'.repeat(64),
+                scope_content_sha256: '2'.repeat(64),
+                scope_sha256: '3'.repeat(64)
+            };
+            fs.writeFileSync(scopedDiffMetadataPath, JSON.stringify(staleMetadata, null, 2) + '\n', 'utf8');
+            assert.throws(
+                () => buildReviewContext({
+                    reviewType: 'security',
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath,
+                    outputPath: path.join(reviewsRoot, 'T-901-scoped-binding-stale-security-review-context.json'),
+                    repoRoot
+                }),
+                (error: unknown) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    assert.match(message, /stale preflight_sha256/);
+                    assert.match(message, /stale changed_files_sha256/);
+                    assert.match(message, /stale scope_content_sha256/);
+                    assert.match(message, /stale scope_sha256/);
+                    return true;
+                }
             );
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
