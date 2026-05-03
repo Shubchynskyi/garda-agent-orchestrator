@@ -5551,6 +5551,105 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result normalizes obvious reviewer section heading variants while preserving raw output', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-318-heading-normalization';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputContent = [
+            '# Review',
+            '',
+            'Validated `src/cli/commands/gate-review-handlers/index.ts` and `src/gates/completion-verdict-markdown.ts` for reviewer receipt heading normalization, confirming that obvious markdown variants remain auditable without changing raw evidence.',
+            '',
+            '**Findings by Severity**',
+            'none',
+            '',
+            '### Residual Risks',
+            'none',
+            '',
+            '## **Verdict**',
+            'REVIEW PASSED'
+        ].join('\n');
+        fs.writeFileSync(reviewOutputPath, reviewOutputContent, 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleLog = console.log;
+        const capturedLogs: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.log = (...args: unknown[]) => {
+            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.log = originalConsoleLog;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
+        assert.equal(rawReviewContent, reviewOutputContent);
+        assert.ok(rawReviewContent.includes('**Findings by Severity**'));
+        assert.ok(rawReviewContent.includes('### Residual Risks'));
+        assert.ok(rawReviewContent.includes('## **Verdict**'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+        assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
+        assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
+        assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result keeps canonical review record when aggregate telemetry index fails', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-aggregate-warning';
@@ -6865,6 +6964,9 @@ describe('cli/commands/gates', () => {
             '## Deferred Findings',
             '- [low] follow up on reviewer wording in `src/cli/commands/gate-review-handlers.ts:1`',
             '',
+            '## Residual Risks',
+            'none',
+            '',
             '## Verdict',
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
@@ -7016,6 +7118,87 @@ describe('cli/commands/gates', () => {
         const events = fs.existsSync(timelinePath) ? readTaskTimelineEvents(repoRoot, taskId) : [];
         assert.equal(events.some((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED'), false);
         assert.equal(events.some((event) => event.event_type === 'REVIEW_RECORDED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects ambiguous duplicate reviewer section headings', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-318-duplicate-heading';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Codex', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated `src/gates/completion-verdict-markdown.ts` and duplicate section handling with enough concrete detail to avoid the triviality filter while keeping the duplicate heading malformed on purpose.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '**Findings by Severity**',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.ok(capturedErrors.some((line) => line.includes("ambiguous duplicate section heading for '## Findings by Severity'")));
+        assert.ok(capturedErrors.some((line) => line.includes("Accepted section heading shapes include '## Findings by Severity'")));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -11349,7 +11532,7 @@ describe('executeCommand timeout protection (T-061)', () => {
         }
     });
 
-    it('record-review-result materializes pass review losslessly through stdin when sections are missing (T-199 regression)', async () => {
+    it('record-review-result rejects pass review through stdin when required lifecycle sections are missing', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-199-stdin-normalization';
         seedTaskQueue(repoRoot, taskId);
@@ -11388,14 +11571,14 @@ describe('executeCommand timeout protection (T-061)', () => {
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
-        const originalConsoleLog = console.log;
+        const originalConsoleError = console.error;
         const originalReadReviewOutputFromStdin = gateReviewHandlers.readReviewOutputFromStdin;
         const mutableGateReviewHandlers = gateReviewHandlers as { readReviewOutputFromStdin: () => Promise<string> };
-        const capturedLogs: string[] = [];
+        const capturedErrors: string[] = [];
         process.exitCode = 0;
         let observedExitCode = 0;
-        console.log = (...args: unknown[]) => {
-            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
         };
         mutableGateReviewHandlers.readReviewOutputFromStdin = async () => stdinReviewOutput;
         try {
@@ -11421,32 +11604,20 @@ describe('executeCommand timeout protection (T-061)', () => {
             observedExitCode = process.exitCode ?? 0;
         } finally {
             mutableGateReviewHandlers.readReviewOutputFromStdin = originalReadReviewOutputFromStdin;
-            console.log = originalConsoleLog;
+            console.error = originalConsoleError;
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
-        assert.equal(fs.existsSync(artifactPath), true);
-        assert.equal(fs.existsSync(receiptPath), true);
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
-
-        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
 
         assert.equal(rawReviewContent, stdinReviewOutput);
-        assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
-        assert.ok(artifactContent.includes('> # Review'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
-
-        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-        assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
-        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
-        assert.equal(typeof receipt.review_output_sha256, 'string');
-        assert.ok(receipt.review_output_sha256.length > 0);
-        assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
-        assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
+        assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Findings by Severity'")));
+        assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Residual Risks'")));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

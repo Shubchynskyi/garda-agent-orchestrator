@@ -16,7 +16,12 @@ export type { ZeroDiffCompletionEvidence } from './completion-verdict-zero-diff'
 
 export {
     EMPTY_REVIEW_MARKERS,
+    CANONICAL_REVIEW_SECTION_HEADINGS,
+    countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
+    formatAcceptedReviewSectionHeadingShapes,
+    getCanonicalReviewSectionHeading,
+    normalizeCanonicalReviewSectionHeadings,
     normalizeReviewListText,
     isMeaningfulReviewEntry,
     getMarkdownMeaningfulEntries,
@@ -36,4 +41,3 @@ export {
 export {
     validatePreflightForCompletion
 } from './completion-verdict-preflight';
-

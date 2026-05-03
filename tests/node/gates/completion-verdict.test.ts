@@ -291,6 +291,21 @@ describe('gates/completion-verdict', () => {
             assert.equal(result.status, 'PASS');
             assert.equal(result.violations.length, 0);
         });
+
+        it('rejects ambiguous duplicate section headings after normalization', () => {
+            const content = [
+                '# Review',
+                '## Findings by Severity',
+                'none',
+                '**Findings by Severity**',
+                'none',
+                '## Residual Risks',
+                'none'
+            ].join('\n');
+            const result = getReviewArtifactFindingsEvidence('/review.md', content);
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some((entry) => entry.includes("ambiguous duplicate section heading for '## Findings by Severity'")));
+        });
     });
 
     describe('validatePreflightForCompletion', () => {

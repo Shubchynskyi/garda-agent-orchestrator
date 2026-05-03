@@ -63,8 +63,10 @@ import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '
 import { getProviderEntryById } from '../../../core/provider-registry';
 import {
     extractMarkdownSectionLines,
+    getCanonicalReviewSectionHeading,
     getReviewArtifactFindingsEvidence,
-    isTrivialReview
+    isTrivialReview,
+    normalizeCanonicalReviewSectionHeadings
 } from '../../../gates/completion';
 import {
     cleanupReviewTempSourceArtifact,
@@ -540,7 +542,10 @@ function hasMarkdownHeading(reviewContent: string, heading: string): boolean {
         .split('\n')
         .some((rawLine) => {
             const headingMatch = /^(#{2,6})\s+(.+?)\s*$/.exec(rawLine.trim());
-            return !!headingMatch && headingMatch[2].trim().toLowerCase() === heading.trim().toLowerCase();
+            const canonicalHeading = getCanonicalReviewSectionHeading(rawLine);
+            return canonicalHeading
+                ? canonicalHeading.toLowerCase() === heading.trim().toLowerCase()
+                : !!headingMatch && headingMatch[2].trim().toLowerCase() === heading.trim().toLowerCase();
         });
 }
 
@@ -647,7 +652,8 @@ function extractReviewPreambleLines(reviewType: string, reviewContent: string): 
     const preamble: string[] = [];
     for (const line of lines) {
         const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(line.trim());
-        if (headingMatch && CANONICAL_REVIEW_SECTION_HEADINGS.has(headingMatch[2].trim().toLowerCase())) {
+        const canonicalHeading = getCanonicalReviewSectionHeading(line);
+        if (canonicalHeading || (headingMatch && CANONICAL_REVIEW_SECTION_HEADINGS.has(headingMatch[2].trim().toLowerCase()))) {
             break;
         }
         preamble.push(line);
@@ -681,8 +687,6 @@ function appendPreservedRawReviewerOutput(lines: string[], reviewContent: string
 function isLosslessPassNormalizationEligibleViolation(violation: string): boolean {
     const normalizedViolation = String(violation || '').toLowerCase();
     return normalizedViolation.includes('still contains active ')
-        || normalizedViolation.includes("missing required section '## findings by severity'")
-        || normalizedViolation.includes("missing required section '## residual risks'")
         || normalizedViolation.includes("deferred finding without usable 'justification:'");
 }
 
@@ -707,8 +711,7 @@ function buildLosslessPassReviewNormalization(options: {
         ...activeFindings,
         ...activeResidualRisks
     ];
-    const hasMissingSections = !findingsEvidence.findings_section_present || !findingsEvidence.residual_risks_section_present;
-    if (pendingDeferredEntries.length === 0 && !hasMissingSections) {
+    if (pendingDeferredEntries.length === 0) {
         return null;
     }
 
@@ -2610,6 +2613,21 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         verdictToken,
         expectedPassVerdict
     });
+    const normalizedHeadings = normalizeCanonicalReviewSectionHeadings(reviewContent);
+    if (normalizedHeadings.changed) {
+        const normalizedHeadingAnalysis = analyzeEarlyReviewMaterialization({
+            artifactPath,
+            reviewContent: normalizedHeadings.content,
+            verdictToken,
+            expectedPassVerdict
+        });
+        if (normalizedHeadingAnalysis.violations.length <= materializationAnalysis.violations.length) {
+            reviewContent = normalizedHeadings.content;
+            reviewMaterializationFidelity = 'normalized_lossless';
+            materializationAnalysis.violations = normalizedHeadingAnalysis.violations;
+            materializationAnalysis.findingsEvidence = normalizedHeadingAnalysis.findingsEvidence;
+        }
+    }
     if (verdictToken === expectedPassVerdict) {
         const normalizedPassReviewContent = buildLosslessPassReviewNormalization({
             reviewType,

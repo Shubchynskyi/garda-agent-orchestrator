@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import {
     collectOrderedTimelineEvents,
     extractMarkdownSectionLines,
+    getCanonicalReviewSectionHeading,
     isMeaningfulReviewEntry,
     formatCompletionGateResult,
     getFindingsBySeverity,
@@ -75,6 +76,21 @@ describe('gates/completion — helpers and formatters', () => {
             ];
             const result = extractMarkdownSectionLines(lines, 'Findings by Severity');
             assert.equal(result.length, 1);
+        });
+
+        it('normalizes obvious reviewer section heading variants', () => {
+            assert.equal(getCanonicalReviewSectionHeading('**Findings by Severity**'), 'Findings by Severity');
+            assert.equal(getCanonicalReviewSectionHeading('### Residual Risks'), 'Residual Risks');
+            assert.equal(getCanonicalReviewSectionHeading('## **Verdict**'), 'Verdict');
+            assert.equal(getCanonicalReviewSectionHeading('**## Deferred Findings**'), 'Deferred Findings');
+
+            const result = extractMarkdownSectionLines([
+                '**Findings by Severity**',
+                'none',
+                '## **Residual Risks**',
+                'none'
+            ], 'Findings by Severity');
+            assert.deepEqual(result, ['none']);
         });
     });
 

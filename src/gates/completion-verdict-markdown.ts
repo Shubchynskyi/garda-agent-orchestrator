@@ -3,15 +3,103 @@ export const EMPTY_REVIEW_MARKERS = new Set([
     'no deferred findings', 'no open findings', 'no outstanding findings'
 ]);
 
+export const CANONICAL_REVIEW_SECTION_HEADINGS = [
+    'Findings by Severity',
+    'Deferred Findings',
+    'Residual Risks',
+    'Verdict'
+] as const;
+
+const CANONICAL_REVIEW_SECTION_HEADING_LOOKUP = new Map(
+    CANONICAL_REVIEW_SECTION_HEADINGS.map((heading) => [heading.toLowerCase(), heading])
+);
+
+export function formatAcceptedReviewSectionHeadingShapes(heading: string): string {
+    return `Accepted section heading shapes include '## ${heading}', '**${heading}**', and '## **${heading}**'.`;
+}
+
+function stripOuterBoldMarkdown(value: string): { text: string; stripped: boolean } {
+    const match = /^(?:\*\*|__)\s*(.+?)\s*(?:\*\*|__)$/.exec(value.trim());
+    return match ? { text: match[1].trim(), stripped: true } : { text: value, stripped: false };
+}
+
+function stripHashMarkdownHeading(value: string): { text: string; stripped: boolean } {
+    const match = /^(#{2,6})\s+(.+?)\s*$/.exec(value.trim());
+    return match ? { text: match[2].trim(), stripped: true } : { text: value, stripped: false };
+}
+
+export function getCanonicalReviewSectionHeading(rawLine: unknown): string | null {
+    let text = String(rawLine || '').trim();
+    if (!text) {
+        return null;
+    }
+
+    let sawHeadingSyntax = false;
+    for (let index = 0; index < 4; index += 1) {
+        const bold = stripOuterBoldMarkdown(text);
+        if (bold.stripped) {
+            text = bold.text;
+            sawHeadingSyntax = true;
+            continue;
+        }
+        const hash = stripHashMarkdownHeading(text);
+        if (hash.stripped) {
+            text = hash.text;
+            sawHeadingSyntax = true;
+            continue;
+        }
+        break;
+    }
+    if (!sawHeadingSyntax) {
+        return null;
+    }
+
+    return CANONICAL_REVIEW_SECTION_HEADING_LOOKUP.get(text.toLowerCase()) || null;
+}
+
+export function countCanonicalReviewSectionHeadings(lines: string[]): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const rawLine of lines) {
+        const heading = getCanonicalReviewSectionHeading(rawLine);
+        if (heading) {
+            counts[heading] = (counts[heading] || 0) + 1;
+        }
+    }
+    return counts;
+}
+
+export function normalizeCanonicalReviewSectionHeadings(content: string): { content: string; changed: boolean } {
+    const lines = String(content || '').split('\n');
+    let changed = false;
+    const normalizedLines = lines.map((line) => {
+        const heading = getCanonicalReviewSectionHeading(line);
+        if (!heading) {
+            return line;
+        }
+        const canonicalLine = `## ${heading}`;
+        if (line.trim() !== canonicalLine) {
+            changed = true;
+        }
+        return canonicalLine;
+    });
+    return {
+        content: normalizedLines.join('\n'),
+        changed
+    };
+}
+
 export function extractMarkdownSectionLines(lines: string[], heading: string): string[] {
     const sectionLines: string[] = [];
     let capture = false;
     for (const rawLine of lines) {
         const trimmed = rawLine.trim();
+        const canonicalHeading = getCanonicalReviewSectionHeading(trimmed);
         const headingMatch = /^(#{2,6})\s+(.+?)\s*$/.exec(trimmed);
-        if (headingMatch) {
+        if (canonicalHeading || headingMatch) {
             if (capture) break;
-            capture = headingMatch[2].trim().toLowerCase() === heading.trim().toLowerCase();
+            capture = canonicalHeading
+                ? canonicalHeading.toLowerCase() === heading.trim().toLowerCase()
+                : headingMatch?.[2].trim().toLowerCase() === heading.trim().toLowerCase();
             continue;
         }
         if (capture) sectionLines.push(rawLine);

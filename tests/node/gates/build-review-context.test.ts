@@ -566,6 +566,11 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifact.includes('## Changed Files'));
             assert.ok(promptArtifact.includes('- src/app.ts'));
             assert.ok(promptArtifact.includes('## Reviewer Output Contract'));
+            assert.ok(promptArtifact.includes('Return a canonical code review report using exactly this section order and heading text'));
+            assert.ok(promptArtifact.includes('```markdown\n## Findings by Severity'));
+            assert.ok(promptArtifact.includes('## Deferred Findings'));
+            assert.ok(promptArtifact.includes('## Residual Risks'));
+            assert.ok(promptArtifact.includes('## Verdict'));
             assert.ok(promptArtifact.includes('1-3 concise sentences naming the reviewed files and behavior checked'));
             assert.ok(promptArtifact.includes('Do not return only headings, `none`, and a PASS verdict'));
             assert.ok(promptArtifact.includes('record-review-result rejects trivial or obviously synthetic reports'));

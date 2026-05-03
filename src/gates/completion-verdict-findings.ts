@@ -1,6 +1,8 @@
 import { normalizePath } from './helpers';
 import {
+    countCanonicalReviewSectionHeadings,
     extractMarkdownSectionLines,
+    formatAcceptedReviewSectionHeadingShapes,
     getMarkdownMeaningfulEntries,
     getFindingsBySeverity
 } from './completion-verdict-markdown';
@@ -55,11 +57,22 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
 
     const lines = (content || '').split('\n');
 
+    const headingCounts = countCanonicalReviewSectionHeadings(lines);
+    for (const heading of ['Findings by Severity', 'Deferred Findings', 'Residual Risks', 'Verdict']) {
+        if ((headingCounts[heading] || 0) > 1) {
+            result.violations.push(
+                `Review artifact '${artifactPathNormalized}' has ambiguous duplicate section heading for '## ${heading}'. ` +
+                formatAcceptedReviewSectionHeadingShapes(heading)
+            );
+        }
+    }
+
     const findingsLines = extractMarkdownSectionLines(lines, 'Findings by Severity');
     if (!findingsLines.length) {
         result.missing_sections.push('Findings by Severity');
         result.violations.push(
-            `Review artifact '${artifactPathNormalized}' is missing required section '## Findings by Severity' for lifecycle validation.`
+            `Review artifact '${artifactPathNormalized}' is missing required section '## Findings by Severity' for lifecycle validation. ` +
+            formatAcceptedReviewSectionHeadingShapes('Findings by Severity')
         );
     } else {
         result.findings_section_present = true;
@@ -80,7 +93,8 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
     if (!residualLines.length) {
         result.missing_sections.push('Residual Risks');
         result.violations.push(
-            `Review artifact '${artifactPathNormalized}' is missing required section '## Residual Risks' for lifecycle validation.`
+            `Review artifact '${artifactPathNormalized}' is missing required section '## Residual Risks' for lifecycle validation. ` +
+            formatAcceptedReviewSectionHeadingShapes('Residual Risks')
         );
     } else {
         result.residual_risks_section_present = true;
