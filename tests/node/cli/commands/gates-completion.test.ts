@@ -533,6 +533,7 @@ function writeReceiptBackedReviewArtifact(
             reviewer_session_id: execution.reviewerIdentity,
             reviewer_identity: execution.reviewerIdentity,
             review_context_sha256: reviewContextHash,
+            review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routedEvent?.integrity?.event_sha256
         };
         const invocationEvent = appendTaskEvent(
@@ -670,6 +671,7 @@ function seedReusableReviewEvidence(
         reviewer_session_id: execution.reviewerIdentity,
         reviewer_identity: execution.reviewerIdentity,
         review_context_sha256: reviewContextHash,
+        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256
     };
     const invocationEvent = appendTaskEvent(
