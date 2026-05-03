@@ -66,6 +66,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Review execution policy: code_first_optional'));
         assert.ok(output.includes('FullSuiteCommand: npm test'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
+        assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -104,7 +105,36 @@ test('workflow set updates scope budget guard settings deterministically', () =>
     }
 });
 
-test('workflow validate and explain include scope budget guard diagnostics', () => {
+test('workflow set updates review cycle guard settings deterministically', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--review-cycle-enabled', 'true',
+            '--review-cycle-action', 'warn_only',
+            '--review-cycle-max-failed-non-test-reviews', '4',
+            '--review-cycle-max-total-non-test-reviews', '8',
+            '--review-cycle-excluded-review-types', 'test,docs'
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.ok(output.includes('Review cycle guard: WARN_ONLY'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.review_cycle_guard.enabled, true);
+        assert.equal(parsedConfig.review_cycle_guard.action, 'WARN_ONLY');
+        assert.equal(parsedConfig.review_cycle_guard.max_failed_non_test_reviews, 4);
+        assert.equal(parsedConfig.review_cycle_guard.max_total_non_test_reviews, 8);
+        assert.deepEqual(parsedConfig.review_cycle_guard.excluded_review_types, ['test', 'docs']);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow validate and explain include workflow guard diagnostics', () => {
     const bundleRoot = createBundleRoot();
 
     try {
@@ -119,8 +149,11 @@ test('workflow validate and explain include scope budget guard diagnostics', () 
             'explain',
             '--bundle-root', bundleRoot
         ], PACKAGE_JSON)).output;
-        assert.ok(explainOutput.includes('Topic: scope-budget-guard'));
+        assert.ok(explainOutput.includes('Topic: workflow-guards'));
         assert.ok(explainOutput.includes('before compile/review loops'));
+        assert.ok(explainOutput.includes('Review cycle guard: stops runaway non-test review cycles'));
+        assert.ok(explainOutput.includes('BLOCK_FOR_OPERATOR_DECISION'));
+        assert.ok(explainOutput.includes('WARN_ONLY'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

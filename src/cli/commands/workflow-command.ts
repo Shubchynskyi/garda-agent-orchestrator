@@ -23,6 +23,11 @@ import {
     type ScopeBudgetGuardConfig
 } from '../../core/scope-budget-guard';
 import {
+    REVIEW_CYCLE_GUARD_ACTIONS,
+    normalizeReviewCycleGuardConfig,
+    type ReviewCycleGuardConfig
+} from '../../core/review-cycle-guard';
+import {
     OUT_OF_SCOPE_FAILURE_POLICIES,
     type OutOfScopeFailurePolicy
 } from '../../gates/full-suite-validation';
@@ -40,6 +45,7 @@ type WorkflowFileConfigData = {
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy?: WorkflowConfigData['review_execution_policy'];
     scope_budget_guard?: WorkflowConfigData['scope_budget_guard'];
+    review_cycle_guard?: WorkflowConfigData['review_cycle_guard'];
     [key: string]: unknown;
 };
 
@@ -73,9 +79,11 @@ interface WorkflowCommandResultBase {
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy: WorkflowReviewExecutionPolicyView;
     scope_budget_guard: ScopeBudgetGuardConfig;
+    review_cycle_guard: ReviewCycleGuardConfig;
     visible_summary_line: string;
     review_execution_policy_summary_line: string;
     scope_budget_guard_summary_line: string;
+    review_cycle_guard_summary_line: string;
 }
 
 interface WorkflowShowResult extends WorkflowCommandResultBase {
@@ -96,7 +104,7 @@ interface WorkflowValidateResult extends WorkflowCommandResultBase {
 
 interface WorkflowExplainResult extends WorkflowCommandResultBase {
     action: 'explain';
-    topic: 'scope-budget-guard';
+    topic: 'workflow-guards';
     explanation: string[];
 }
 
@@ -121,7 +129,12 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--scope-budget-max-files': { key: 'scopeBudgetMaxFiles', type: 'string' },
     '--scope-budget-max-changed-lines': { key: 'scopeBudgetMaxChangedLines', type: 'string' },
     '--scope-budget-max-required-reviews': { key: 'scopeBudgetMaxRequiredReviews', type: 'string' },
-    '--scope-budget-max-review-tokens': { key: 'scopeBudgetMaxReviewTokens', type: 'string' }
+    '--scope-budget-max-review-tokens': { key: 'scopeBudgetMaxReviewTokens', type: 'string' },
+    '--review-cycle-enabled': { key: 'reviewCycleEnabled', type: 'string' },
+    '--review-cycle-action': { key: 'reviewCycleAction', type: 'string' },
+    '--review-cycle-max-failed-non-test-reviews': { key: 'reviewCycleMaxFailedNonTestReviews', type: 'string' },
+    '--review-cycle-max-total-non-test-reviews': { key: 'reviewCycleMaxTotalNonTestReviews', type: 'string' },
+    '--review-cycle-excluded-review-types': { key: 'reviewCycleExcludedReviewTypes', type: 'string' }
 };
 
 function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoots {
@@ -146,7 +159,8 @@ function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFi
     return {
         ...config,
         full_suite_validation: config.full_suite_validation,
-        scope_budget_guard: normalizeScopeBudgetGuardConfig(config.scope_budget_guard ?? defaultConfig.scope_budget_guard)
+        scope_budget_guard: normalizeScopeBudgetGuardConfig(config.scope_budget_guard ?? defaultConfig.scope_budget_guard),
+        review_cycle_guard: normalizeReviewCycleGuardConfig(config.review_cycle_guard ?? defaultConfig.review_cycle_guard)
     };
 }
 
@@ -223,12 +237,17 @@ function buildScopeBudgetGuardLine(config: ScopeBudgetGuardConfig): string {
     return `Scope budget guard: ${config.enabled ? config.action : 'disabled'} profiles=${config.profiles.join(',')} max_files=${config.max_files} max_lines=${config.max_changed_lines} max_reviews=${config.max_required_reviews} max_review_tokens=${config.max_review_tokens}`;
 }
 
+function buildReviewCycleGuardLine(config: ReviewCycleGuardConfig): string {
+    return `Review cycle guard: ${config.enabled ? config.action : 'disabled'} max_failed_non_test_reviews=${config.max_failed_non_test_reviews} max_total_non_test_reviews=${config.max_total_non_test_reviews} excluded=${config.excluded_review_types.join(',')}`;
+}
+
 function buildWorkflowShowResult(
     roots: WorkflowCommandRoots,
     state: WorkflowConfigState
 ): WorkflowShowResult {
     const reviewExecutionPolicy = buildReviewExecutionPolicyView(state);
     const scopeBudgetGuard = normalizeScopeBudgetGuardConfig(state.config.scope_budget_guard);
+    const reviewCycleGuard = normalizeReviewCycleGuardConfig(state.config.review_cycle_guard);
     return {
         action: 'show',
         scope: 'repo-local',
@@ -239,9 +258,11 @@ function buildWorkflowShowResult(
         full_suite_validation: state.config.full_suite_validation,
         review_execution_policy: reviewExecutionPolicy,
         scope_budget_guard: scopeBudgetGuard,
+        review_cycle_guard: reviewCycleGuard,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
         review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
-        scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard)
+        scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard),
+        review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard)
     };
 }
 
@@ -253,6 +274,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     const fullSuiteValidation = result.full_suite_validation;
     const reviewExecutionPolicy = result.review_execution_policy;
     const scopeBudgetGuard = result.scope_budget_guard;
+    const reviewCycleGuard = result.review_cycle_guard;
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
     lines.push(`Action: ${result.action}`);
@@ -264,6 +286,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(result.visible_summary_line);
     lines.push(result.review_execution_policy_summary_line);
     lines.push(result.scope_budget_guard_summary_line);
+    lines.push(result.review_cycle_guard_summary_line);
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
@@ -281,9 +304,15 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ScopeBudgetGuardMaxChangedLines: ${scopeBudgetGuard.max_changed_lines}`);
     lines.push(`ScopeBudgetGuardMaxRequiredReviews: ${scopeBudgetGuard.max_required_reviews}`);
     lines.push(`ScopeBudgetGuardMaxReviewTokens: ${scopeBudgetGuard.max_review_tokens}`);
+    lines.push(`ReviewCycleGuardEnabled: ${reviewCycleGuard.enabled}`);
+    lines.push(`ReviewCycleGuardAction: ${reviewCycleGuard.action}`);
+    lines.push(`ReviewCycleGuardMaxFailedNonTestReviews: ${reviewCycleGuard.max_failed_non_test_reviews}`);
+    lines.push(`ReviewCycleGuardMaxTotalNonTestReviews: ${reviewCycleGuard.max_total_non_test_reviews}`);
+    lines.push(`ReviewCycleGuardExcludedReviewTypes: ${reviewCycleGuard.excluded_review_types.join(', ')}`);
     lines.push('Tip: run "workflow set --full-suite-enabled true|false" to change the repo-local mode.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}>" to change review launch ordering.`);
     lines.push('Tip: run "workflow set --scope-budget-enabled true|false" to change the scope budget guard.');
+    lines.push('Tip: run "workflow set --review-cycle-enabled true|false" to change the review cycle guard.');
     return lines.join('\n');
 }
 
@@ -329,6 +358,14 @@ function parseScopeBudgetAction(value: string): ScopeBudgetGuardConfig['action']
     return normalized as ScopeBudgetGuardConfig['action'];
 }
 
+function parseReviewCycleAction(value: string): ReviewCycleGuardConfig['action'] {
+    const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (!REVIEW_CYCLE_GUARD_ACTIONS.includes(normalized as ReviewCycleGuardConfig['action'])) {
+        throw new Error(`--review-cycle-action must be one of: ${REVIEW_CYCLE_GUARD_ACTIONS.join(', ')}.`);
+    }
+    return normalized as ReviewCycleGuardConfig['action'];
+}
+
 function parseProfileList(value: string): string[] {
     const profiles = [...new Set(value
         .split(',')
@@ -338,6 +375,17 @@ function parseProfileList(value: string): string[] {
         throw new Error('--scope-budget-profiles must contain at least one profile.');
     }
     return profiles;
+}
+
+function parseReviewTypeList(value: string, flagName: string): string[] {
+    const reviewTypes = [...new Set(value
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean))];
+    if (reviewTypes.length === 0) {
+        throw new Error(`${flagName} must contain at least one review type.`);
+    }
+    return reviewTypes;
 }
 
 function writeWorkflowConfig(configPath: string, config: WorkflowFileConfigData): void {
@@ -454,6 +502,39 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         changedFields.push('scope_budget_guard.max_review_tokens');
     }
     nextConfig.scope_budget_guard = nextScopeBudgetGuard;
+    const nextReviewCycleGuard = normalizeReviewCycleGuardConfig(nextConfig.review_cycle_guard);
+    if (typeof options.reviewCycleEnabled === 'string') {
+        nextReviewCycleGuard.enabled = parseBooleanText(options.reviewCycleEnabled, '--review-cycle-enabled');
+        changedFields.push('review_cycle_guard.enabled');
+    }
+    if (typeof options.reviewCycleAction === 'string') {
+        nextReviewCycleGuard.action = parseReviewCycleAction(options.reviewCycleAction);
+        changedFields.push('review_cycle_guard.action');
+    }
+    if (typeof options.reviewCycleMaxFailedNonTestReviews === 'string') {
+        nextReviewCycleGuard.max_failed_non_test_reviews = parseIntegerText(
+            options.reviewCycleMaxFailedNonTestReviews,
+            '--review-cycle-max-failed-non-test-reviews',
+            1
+        );
+        changedFields.push('review_cycle_guard.max_failed_non_test_reviews');
+    }
+    if (typeof options.reviewCycleMaxTotalNonTestReviews === 'string') {
+        nextReviewCycleGuard.max_total_non_test_reviews = parseIntegerText(
+            options.reviewCycleMaxTotalNonTestReviews,
+            '--review-cycle-max-total-non-test-reviews',
+            1
+        );
+        changedFields.push('review_cycle_guard.max_total_non_test_reviews');
+    }
+    if (typeof options.reviewCycleExcludedReviewTypes === 'string') {
+        nextReviewCycleGuard.excluded_review_types = parseReviewTypeList(
+            options.reviewCycleExcludedReviewTypes,
+            '--review-cycle-excluded-review-types'
+        );
+        changedFields.push('review_cycle_guard.excluded_review_types');
+    }
+    nextConfig.review_cycle_guard = nextReviewCycleGuard;
 
     if (changedFields.length === 0) {
         throw new Error(
@@ -461,14 +542,15 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + 'Use --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --review-execution-policy, '
-            + 'or --scope-budget-* flags.'
+            + '--scope-budget-* flags, or --review-cycle-* flags.'
         );
     }
 
     const currentSerialized = JSON.stringify(
         normalizeWorkflowFileConfig(validateWorkflowConfig(state.rawConfig ?? {
             full_suite_validation: state.config.full_suite_validation,
-            scope_budget_guard: state.config.scope_budget_guard
+            scope_budget_guard: state.config.scope_budget_guard,
+            review_cycle_guard: state.config.review_cycle_guard
         }) as WorkflowFileConfigData),
         null,
         2
@@ -517,6 +599,7 @@ function handleValidate(options: ParsedOptionsRecord): WorkflowValidateResult {
         console.log('Status: PASS');
         console.log(`ConfigPath: ${roots.configPath}`);
         console.log(result.scope_budget_guard_summary_line);
+        console.log(result.review_cycle_guard_summary_line);
     }
     return result;
 }
@@ -527,13 +610,18 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
     const result: WorkflowExplainResult = {
         ...buildWorkflowShowResult(roots, state),
         action: 'explain',
-        topic: 'scope-budget-guard',
+        topic: 'workflow-guards',
         explanation: [
-            'The scope budget guard stops large configured-profile tasks before compile/review loops.',
-            'It compares changed file count, changed line count, required review lanes, and estimated review tokens against workflow-config.json limits.',
+            'Scope budget guard: stops large configured-profile tasks before compile/review loops.',
+            'Scope budget guard compares changed file count, changed line count, required review lanes, and estimated review tokens against workflow-config.json limits.',
             'Required review lanes means the number of review types required by the current preflight, not the number of completed review attempts.',
             'Estimated review tokens are a heuristic forecast from review type base cost plus changed file and changed line costs; they are not measured model tokenizer output.',
-            'When action is BLOCK_FOR_SPLIT, next-step blocks ordinary continuation and asks the operator to split or decompose the task.'
+            'When scope_budget_guard.action is BLOCK_FOR_SPLIT, next-step blocks ordinary continuation and asks the operator to split or decompose the task.',
+            'Review cycle guard: stops runaway non-test review cycles after the configured failed or total review-attempt thresholds are exceeded.',
+            'Review cycle attempts are deduplicated only when review type, reviewer identity, and review context hash all match; otherwise each timeline event is counted separately.',
+            'Review cycle guard excluded_review_types are not counted; the default excludes test reviews because reaching test review means code-facing review lanes have already been handled.',
+            'When review_cycle_guard.action is BLOCK_FOR_OPERATOR_DECISION, next-step blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise decides the recovery path.',
+            'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.'
         ]
     };
     if (options.json === true) {
@@ -541,8 +629,9 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
     } else {
         console.log('GARDA_WORKFLOW');
         console.log('Action: explain');
-        console.log('Topic: scope-budget-guard');
+        console.log('Topic: workflow-guards');
         console.log(result.scope_budget_guard_summary_line);
+        console.log(result.review_cycle_guard_summary_line);
         for (const line of result.explanation) {
             console.log(`- ${line}`);
         }

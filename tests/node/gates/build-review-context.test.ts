@@ -898,6 +898,67 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('keeps untracked new file content reviewable when tracked diff consumes the context budget', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-untracked-priority-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'large.ts'), 'export const baseline = true;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/large.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            for (const ruleFile of getRulePack('code').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'large.ts'),
+                `${Array.from({ length: 8000 }, (_, index) => `export const value${index} = ${index};`).join('\n')}\n`,
+                'utf8'
+            );
+            fs.writeFileSync(path.join(repoRoot, 'src', 'new-guard.ts'), 'export const reviewableNewFile = true;\n', 'utf8');
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-untracked-priority', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-untracked-priority-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-untracked-priority',
+                detection_source: 'git_auto',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: ['src/large.ts', 'src/new-guard.ts'],
+                required_reviews: { code: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'code',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-untracked-priority-code-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-untracked-priority-code-review-context.json'),
+                repoRoot
+            });
+
+            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
+            assert.equal(result.task_scope.diff.truncated, true);
+            assert.ok(promptArtifact.includes('diff --git a/src/new-guard.ts b/src/new-guard.ts'));
+            assert.ok(promptArtifact.includes('+export const reviewableNewFile = true;'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('rejects required code review contexts without task diff material for changed code files', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-missing-diff-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

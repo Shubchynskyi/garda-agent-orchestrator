@@ -100,6 +100,11 @@ import {
     type ScopeBudgetGuardEvaluation
 } from '../core/scope-budget-guard';
 import {
+    evaluateReviewCycleGuard,
+    normalizeReviewCycleGuardConfig,
+    type ReviewCycleGuardEvaluation
+} from '../core/review-cycle-guard';
+import {
     resolveTaskProfileSelection
 } from '../policy/task-profile-selection';
 import {
@@ -200,6 +205,7 @@ export interface NextStepResult {
     review: NextStepReviewSummary;
     audit_status: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
+    warnings: string[];
     final_report: NextStepFinalReportSummary | null;
 }
 
@@ -2495,6 +2501,259 @@ function readScopeBudgetGuardEvaluation(
     );
 }
 
+function getTimelineReviewType(details: Record<string, unknown> | null): string {
+    return String(details?.review_type || details?.reviewType || '').trim().toLowerCase();
+}
+
+function getTimelineReviewerIdentity(details: Record<string, unknown> | null): string {
+    return String(details?.reviewer_identity || details?.reviewerIdentity || '').trim();
+}
+
+function getTimelineReviewContextSha256(details: Record<string, unknown> | null): string {
+    return String(details?.review_context_sha256 || details?.reviewContextSha256 || '').trim().toLowerCase();
+}
+
+function getTimelineReviewFailure(eventType: string, details: Record<string, unknown> | null, outcome: string | null): boolean | null {
+    const verdictToken = String(details?.verdict_token || details?.verdictToken || '').trim().toUpperCase();
+    if (verdictToken.endsWith('FAILED')) {
+        return true;
+    }
+    if (verdictToken.endsWith('PASSED')) {
+        return false;
+    }
+    if (
+        eventType === 'REVIEW_RECORDED'
+        && String(details?.review_artifact_path || details?.reviewArtifactPath || '').trim()
+    ) {
+        return null;
+    }
+    const normalizedOutcome = String(outcome || '').trim().toUpperCase();
+    if (normalizedOutcome === 'FAIL') {
+        return true;
+    }
+    if (normalizedOutcome === 'PASS') {
+        return false;
+    }
+    return null;
+}
+
+function reviewRecordedArtifactHasFailToken(
+    repoRoot: string,
+    reviewType: string,
+    details: Record<string, unknown> | null,
+    verdictCache: Map<string, boolean>
+): boolean {
+    const failToken = REVIEW_VERDICT_FAIL_TOKENS[reviewType] || '';
+    const artifactPathText = String(details?.review_artifact_path || details?.reviewArtifactPath || '').trim();
+    if (!failToken || !artifactPathText) {
+        return false;
+    }
+    const resolvedArtifactPath = path.isAbsolute(artifactPathText)
+        ? path.resolve(artifactPathText)
+        : path.resolve(repoRoot, artifactPathText);
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    const relativeToRepo = path.relative(resolvedRepoRoot, resolvedArtifactPath);
+    if (relativeToRepo.startsWith('..') || path.isAbsolute(relativeToRepo)) {
+        return false;
+    }
+    if (!fs.existsSync(resolvedArtifactPath) || !fs.statSync(resolvedArtifactPath).isFile()) {
+        return false;
+    }
+    const cacheKey = `${reviewType}|${resolvedArtifactPath}`;
+    const cached = verdictCache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached;
+    }
+    const file = fs.openSync(resolvedArtifactPath, 'r');
+    let content = '';
+    try {
+        const buffer = Buffer.alloc(128 * 1024);
+        const bytesRead = fs.readSync(file, buffer, 0, buffer.length, 0);
+        content = buffer.subarray(0, bytesRead).toString('utf8');
+    } finally {
+        fs.closeSync(file);
+    }
+    if (!content.includes(failToken)) {
+        verdictCache.set(cacheKey, false);
+        return false;
+    }
+    const failed = extractReviewVerdictToken(content, REVIEW_VERDICT_PASS_TOKENS[reviewType] || null, failToken, reviewType) === failToken;
+    verdictCache.set(cacheKey, failed);
+    return failed;
+}
+
+function parseReviewCycleTimelineLine(line: string, sequence: number): TimelineEventEntry | null {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    const eventType = String(parsed.event_type || '').trim().toUpperCase();
+    if (!eventType) {
+        return null;
+    }
+    const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
+        ? parsed.details as Record<string, unknown>
+        : null;
+    return {
+        event_type: eventType,
+        outcome: String(parsed.outcome || '').trim().toUpperCase() || undefined,
+        timestamp_utc: String(parsed.timestamp_utc || '').trim(),
+        sequence,
+        details
+    };
+}
+
+function readReviewCycleGuardAttempts(
+    repoRoot: string,
+    timelinePath: string,
+    reviewCycleGuardConfig: ReturnType<typeof normalizeReviewCycleGuardConfig>
+): { attempts: { reviewType: string; failed: boolean }[]; timelineValid: boolean } {
+    const resolvedPath = path.resolve(String(timelinePath || ''));
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        return {
+            attempts: [],
+            timelineValid: false
+        };
+    }
+
+    const attemptsByKey = new Map<string, { reviewType: string; failed: boolean }>();
+    const verdictCache = new Map<string, boolean>();
+    const excludedReviewTypes = new Set(reviewCycleGuardConfig.excluded_review_types.map((entry) => entry.trim().toLowerCase()).filter(Boolean));
+    let totalNonTestReviewCount = 0;
+    let failedNonTestReviewCount = 0;
+    let malformedReviewCycleEvent = false;
+    let sequence = 0;
+    let pending = '';
+    const file = fs.openSync(resolvedPath, 'r');
+    const buffer = Buffer.alloc(64 * 1024);
+
+    const handleLine = (rawLine: string): boolean => {
+        const line = rawLine.trim();
+        if (!line) {
+            return false;
+        }
+        let event: TimelineEventEntry | null = null;
+        try {
+            event = parseReviewCycleTimelineLine(line, sequence);
+        } catch {
+            malformedReviewCycleEvent = true;
+            return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION';
+        } finally {
+            sequence += 1;
+        }
+        if (!event || !['REVIEWER_INVOCATION_ATTESTED', 'REVIEW_RECORDED'].includes(event.event_type)) {
+            return false;
+        }
+        const reviewType = getTimelineReviewType(event.details);
+        if (!reviewType) {
+            malformedReviewCycleEvent = true;
+            return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION';
+        }
+        const reviewerIdentity = getTimelineReviewerIdentity(event.details);
+        const reviewContextSha256 = getTimelineReviewContextSha256(event.details);
+        const key = reviewerIdentity && reviewContextSha256
+            ? `${reviewType}|${reviewerIdentity}|${reviewContextSha256}`
+            : `${event.event_type}:${event.sequence}`;
+        const timelineFailure = getTimelineReviewFailure(event.event_type, event.details, event.outcome || null);
+        const failed = timelineFailure ?? (
+            event.event_type === 'REVIEW_RECORDED'
+                && reviewRecordedArtifactHasFailToken(repoRoot, reviewType, event.details, verdictCache)
+        );
+        const existing = attemptsByKey.get(key);
+        const existingFailed = Boolean(existing?.failed);
+        const nextFailed = Boolean(existingFailed || failed);
+        attemptsByKey.set(key, {
+            reviewType,
+            failed: nextFailed
+        });
+        const countedReviewType = reviewType.trim().toLowerCase();
+        const countsTowardGuard = countedReviewType && !excludedReviewTypes.has(countedReviewType);
+        if (!existing && countsTowardGuard) {
+            totalNonTestReviewCount += 1;
+        }
+        if (!existingFailed && nextFailed && countsTowardGuard) {
+            failedNonTestReviewCount += 1;
+        }
+        return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION'
+            && (
+                failedNonTestReviewCount > reviewCycleGuardConfig.max_failed_non_test_reviews
+                || totalNonTestReviewCount > reviewCycleGuardConfig.max_total_non_test_reviews
+            );
+    };
+
+    try {
+        let bytesRead = 0;
+        do {
+            bytesRead = fs.readSync(file, buffer, 0, buffer.length, null);
+            if (bytesRead <= 0) {
+                break;
+            }
+            pending += buffer.subarray(0, bytesRead).toString('utf8');
+            let newlineIndex = pending.indexOf('\n');
+            while (newlineIndex >= 0) {
+                const line = pending.slice(0, newlineIndex).replace(/\r$/, '');
+                pending = pending.slice(newlineIndex + 1);
+                if (handleLine(line)) {
+                    return {
+                        attempts: [...attemptsByKey.values()],
+                        timelineValid: !malformedReviewCycleEvent
+                    };
+                }
+                newlineIndex = pending.indexOf('\n');
+            }
+        } while (bytesRead > 0);
+        if (pending.trim() && handleLine(pending.replace(/\r$/, ''))) {
+            return {
+                attempts: [...attemptsByKey.values()],
+                timelineValid: !malformedReviewCycleEvent
+            };
+        }
+    } finally {
+        fs.closeSync(file);
+    }
+
+    return {
+        attempts: [...attemptsByKey.values()],
+        timelineValid: !malformedReviewCycleEvent
+    };
+}
+
+function readReviewCycleGuardEvaluation(
+    repoRoot: string,
+    eventsRoot: string,
+    taskId: string
+): ReviewCycleGuardEvaluation {
+    const defaultWorkflowConfig = buildDefaultWorkflowConfig();
+    let rawReviewCycleGuard: unknown = defaultWorkflowConfig.review_cycle_guard;
+    const workflowConfig = readWorkflowConfigRecordForNextStep(repoRoot);
+    if (workflowConfig?.review_cycle_guard !== undefined) {
+        const validatedWorkflowConfig = validateWorkflowConfig({
+            full_suite_validation: defaultWorkflowConfig.full_suite_validation,
+            review_execution_policy: defaultWorkflowConfig.review_execution_policy,
+            scope_budget_guard: defaultWorkflowConfig.scope_budget_guard,
+            review_cycle_guard: workflowConfig.review_cycle_guard
+        });
+        rawReviewCycleGuard = isPlainRecord(validatedWorkflowConfig.review_cycle_guard)
+            ? validatedWorkflowConfig.review_cycle_guard
+            : defaultWorkflowConfig.review_cycle_guard;
+    }
+    const reviewCycleGuardConfig = normalizeReviewCycleGuardConfig(rawReviewCycleGuard);
+    if (!reviewCycleGuardConfig.enabled) {
+        return evaluateReviewCycleGuard(reviewCycleGuardConfig, {
+            attempts: [],
+            timelineValid: true
+        });
+    }
+
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const reviewCycleAttempts = readReviewCycleGuardAttempts(repoRoot, timelinePath, reviewCycleGuardConfig);
+
+    return evaluateReviewCycleGuard(
+        reviewCycleGuardConfig,
+        {
+            attempts: reviewCycleAttempts.attempts,
+            timelineValid: reviewCycleAttempts.timelineValid
+        }
+    );
+}
+
 function buildNextStepProfileSummary(
     repoRoot: string,
     taskEntry: TaskQueueEntry | null,
@@ -2855,6 +3114,7 @@ function buildResult(params: {
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
+    warnings?: string[];
     finalReport?: NextStepFinalReportSummary | null;
     sourceRuntimeStaleness?: SourceCheckoutRuntimeStalenessResult | null;
 }): NextStepResult {
@@ -2888,6 +3148,7 @@ function buildResult(params: {
         review: params.review,
         audit_status: params.auditStatus,
         profile: params.profile,
+        warnings: params.warnings || [],
         final_report: params.finalReport || null
     };
 }
@@ -3231,6 +3492,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         review: reviewSummary,
         profile: profileSummary,
         auditStatus: summary.status,
+        warnings: [] as string[],
         sourceRuntimeStaleness
     };
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
@@ -3546,6 +3808,57 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 )
             ]
         });
+    }
+
+    let reviewCycleGuardEvaluation: ReviewCycleGuardEvaluation | null = null;
+    try {
+        reviewCycleGuardEvaluation = readReviewCycleGuardEvaluation(repoRoot, eventsRoot, taskId);
+    } catch (error: unknown) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'workflow-config-validation',
+            title: 'Validate workflow configuration before continuing.',
+            reason: error instanceof Error ? error.message : String(error),
+            commands: [
+                buildCommand(
+                    'Validate workflow config',
+                    `${cliPrefix} workflow validate --target-root "."`
+                )
+            ]
+        });
+    }
+    if (reviewCycleGuardEvaluation?.should_block) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'review-cycle-attempt-guard',
+            title: 'Review cycle limit exceeded.',
+            reason:
+                `${reviewCycleGuardEvaluation.summary_line}. ` +
+                `Counts: total_non_test_reviews=${reviewCycleGuardEvaluation.total_non_test_review_count}, ` +
+                `failed_non_test_reviews=${reviewCycleGuardEvaluation.failed_non_test_review_count}, ` +
+                `excluded_review_types=${reviewCycleGuardEvaluation.excluded_review_types.join(',') || 'none'}. ` +
+                'The configured workflow guard blocks additional compile, review, or full-suite continuation until operator decision.',
+            commands: [
+                buildCommand(
+                    'Inspect review cycle guard',
+                    `${cliPrefix} workflow explain --target-root "."`
+                )
+            ]
+        });
+    }
+    if (
+        reviewCycleGuardEvaluation?.active
+        && reviewCycleGuardEvaluation.action === 'WARN_ONLY'
+        && reviewCycleGuardEvaluation.violations.length > 0
+    ) {
+        resultBase.warnings.push(
+            `${reviewCycleGuardEvaluation.summary_line}. ` +
+            `Counts: total_non_test_reviews=${reviewCycleGuardEvaluation.total_non_test_review_count}, ` +
+            `failed_non_test_reviews=${reviewCycleGuardEvaluation.failed_non_test_review_count}, ` +
+            `excluded_review_types=${reviewCycleGuardEvaluation.excluded_review_types.join(',') || 'none'}.`
+        );
     }
 
     const compileReadiness = preflight
@@ -4005,6 +4318,12 @@ export function formatNextStepText(result: NextStepResult): string {
         `Title: ${result.title}`,
         `Reason: ${result.reason}`
     ];
+    if (result.warnings.length > 0) {
+        lines.push('Warnings:');
+        for (const warning of result.warnings) {
+            lines.push(`  - ${warning}`);
+        }
+    }
     if (result.profile) {
         lines.push(`TaskProfile: ${result.profile.task_selected_profile || 'default'} (${result.profile.profile_selection_source || 'unknown'})`);
         if (result.profile.runtime_active_profile) {

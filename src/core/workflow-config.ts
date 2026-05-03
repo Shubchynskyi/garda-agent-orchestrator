@@ -11,6 +11,10 @@ import {
     DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,
     type ScopeBudgetGuardConfig
 } from './scope-budget-guard';
+import {
+    DEFAULT_REVIEW_CYCLE_GUARD_CONFIG,
+    type ReviewCycleGuardConfig
+} from './review-cycle-guard';
 
 export interface FullSuiteValidationConfig {
     enabled: boolean;
@@ -26,6 +30,7 @@ export interface WorkflowConfigData {
     full_suite_validation: FullSuiteValidationConfig;
     review_execution_policy: ReviewExecutionPolicyConfig;
     scope_budget_guard: ScopeBudgetGuardConfig;
+    review_cycle_guard: ReviewCycleGuardConfig;
     [key: string]: unknown;
 }
 
@@ -54,7 +59,8 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
     }),
     review_execution_policy: Object.freeze(buildDefaultReviewExecutionPolicyConfig()),
-    scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG
+    scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,
+    review_cycle_guard: DEFAULT_REVIEW_CYCLE_GUARD_CONFIG
 });
 
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {

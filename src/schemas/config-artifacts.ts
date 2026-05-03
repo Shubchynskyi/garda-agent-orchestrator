@@ -20,6 +20,10 @@ import {
     SCOPE_BUDGET_GUARD_ACTIONS,
     normalizeScopeBudgetGuardConfig
 } from '../core/scope-budget-guard';
+import {
+    REVIEW_CYCLE_GUARD_ACTIONS,
+    normalizeReviewCycleGuardConfig
+} from '../core/review-cycle-guard';
 
 interface IntegerArrayOptions {
     allowScalar?: boolean;
@@ -579,7 +583,7 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard'] as const;
+    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -652,6 +656,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         if (raw.scope_budget_guard !== undefined) {
             normalized.scope_budget_guard = validateScopeBudgetGuardSection(raw.scope_budget_guard);
         }
+        if (raw.review_cycle_guard !== undefined) {
+            normalized.review_cycle_guard = validateReviewCycleGuardSection(raw.review_cycle_guard);
+        }
         return normalized;
     }
 
@@ -677,6 +684,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     normalized.review_execution_policy = normalizedReviewExecutionPolicy;
     if (raw.scope_budget_guard !== undefined) {
         normalized.scope_budget_guard = validateScopeBudgetGuardSection(raw.scope_budget_guard);
+    }
+    if (raw.review_cycle_guard !== undefined) {
+        normalized.review_cycle_guard = validateReviewCycleGuardSection(raw.review_cycle_guard);
     }
     return normalized;
 }
@@ -726,6 +736,52 @@ function validateScopeBudgetGuardSection(input: unknown): Record<string, unknown
     }
     const normalized = normalizeScopeBudgetGuardConfig(normalizedInput) as unknown as Record<string, unknown>;
     return normalized;
+}
+
+function validateReviewCycleGuardSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.review_cycle_guard');
+    const normalizedInput = { ...section };
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types'],
+        'workflow-config.review_cycle_guard'
+    );
+    assertNoUnknownKeys(
+        section,
+        ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types'],
+        'workflow-config.review_cycle_guard'
+    );
+    if (section.enabled !== undefined) {
+        normalizedInput.enabled = normalizeBooleanLike(
+            section.enabled,
+            'workflow-config.review_cycle_guard.enabled'
+        );
+    }
+    if (section.action !== undefined) {
+        const normalizedAction = normalizeNonEmptyString(
+            section.action,
+            'workflow-config.review_cycle_guard.action'
+        ).toUpperCase().replace(/[\s-]+/g, '_');
+        if (!REVIEW_CYCLE_GUARD_ACTIONS.includes(normalizedAction as typeof REVIEW_CYCLE_GUARD_ACTIONS[number])) {
+            throw new Error(
+                'workflow-config.review_cycle_guard.action must be one of: '
+                + `${REVIEW_CYCLE_GUARD_ACTIONS.join(', ')}.`
+            );
+        }
+        normalizedInput.action = normalizedAction;
+    }
+    if (section.excluded_review_types !== undefined) {
+        normalizedInput.excluded_review_types = normalizeStringArray(
+            section.excluded_review_types,
+            'workflow-config.review_cycle_guard.excluded_review_types'
+        );
+    }
+    for (const key of ['max_failed_non_test_reviews', 'max_total_non_test_reviews']) {
+        if (section[key] !== undefined) {
+            normalizedInput[key] = normalizeInteger(section[key], `workflow-config.review_cycle_guard.${key}`, { minimum: 1 });
+        }
+    }
+    return normalizeReviewCycleGuardConfig(normalizedInput) as unknown as Record<string, unknown>;
 }
 
 const MANAGED_CONFIG_VALIDATORS = Object.freeze({

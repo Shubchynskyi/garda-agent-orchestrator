@@ -66,6 +66,13 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
             max_changed_lines: '300',
             max_required_reviews: '3',
             max_review_tokens: '5000'
+        },
+        review_cycle_guard: {
+            enabled: 'true',
+            action: 'warn only',
+            max_failed_non_test_reviews: '4',
+            max_total_non_test_reviews: '9',
+            excluded_review_types: ['Test', 'test']
         }
     });
 
@@ -77,6 +84,13 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
     assert.equal(guard.max_changed_lines, 300);
     assert.equal(guard.max_required_reviews, 3);
     assert.equal(guard.max_review_tokens, 5000);
+
+    const reviewCycleGuard = normalized.review_cycle_guard as Record<string, unknown>;
+    assert.equal(reviewCycleGuard.enabled, true);
+    assert.equal(reviewCycleGuard.action, 'WARN_ONLY');
+    assert.equal(reviewCycleGuard.max_failed_non_test_reviews, 4);
+    assert.equal(reviewCycleGuard.max_total_non_test_reviews, 9);
+    assert.deepEqual(reviewCycleGuard.excluded_review_types, ['test']);
 });
 
 test('validateOutputFiltersConfig accepts context-driven parser controls from the tracked template', () => {

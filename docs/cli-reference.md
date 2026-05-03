@@ -350,19 +350,25 @@ garda workflow show --target-root "." --json
 garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test"
 garda workflow set --target-root "." --review-execution-policy strict_sequential
 garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000
+garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15
 garda workflow explain --target-root "."
 ```
 
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
-- The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, and `scope_budget_guard` settings in `live/config/workflow-config.json`.
+- The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, and `review_cycle_guard` settings in `live/config/workflow-config.json`.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
 - Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.
 - Existing repos that still omit `review_execution_policy` stay on the legacy compatibility path (`test` waits for all required upstream reviews, other review types remain independent) until an operator explicitly sets one of the supported modes.
 - Scope budget guard settings can be changed with `--scope-budget-enabled true|false`, `--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY`, `--scope-budget-profiles strict,balanced`, `--scope-budget-max-files N`, `--scope-budget-max-changed-lines N`, `--scope-budget-max-required-reviews N`, and `--scope-budget-max-review-tokens N`.
 - The default scope budget guard is enabled for `strict`, uses `BLOCK_FOR_SPLIT`, and limits large tasks before expensive gates with `max_files=12`, `max_changed_lines=1200`, `max_required_reviews=6`, and `max_review_tokens=50000`.
 - `max_required_reviews` means required review lanes from the current preflight, not completed review attempts.
-- `max_review_tokens` is a heuristic review forecast, not a measured tokenizer count; use `garda workflow explain` to show the effective guard settings and behavior.
+- `max_review_tokens` is a heuristic review forecast, not a measured tokenizer count; use `garda workflow explain` to show the effective workflow guard settings, behavior, and unblock options.
+- Review cycle guard settings can be changed with `--review-cycle-enabled true|false`, `--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY`, `--review-cycle-max-failed-non-test-reviews N`, `--review-cycle-max-total-non-test-reviews N`, and `--review-cycle-excluded-review-types test`.
+- The default review cycle guard is enabled, uses `BLOCK_FOR_OPERATOR_DECISION`, blocks when failed non-test reviews exceed `15` or total non-test review attempts exceed `15`, and excludes `test` review from counting.
+- Review cycle attempts are counted from review invocation and recorded-review timeline evidence with deduplication only when both reviewer identity and review context hash match; `test` is excluded because reaching test review means upstream code-oriented review gates already allowed the task forward.
+- When `review_cycle_guard.action=BLOCK_FOR_OPERATOR_DECISION`, `next-step` blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise chooses the recovery path.
+- `WARN_ONLY` does not block the next gate, but `next-step` prints the review-cycle violation under `Warnings` so the operator still sees the over-budget review cycle.
 
 ### `garda review-capabilities`
 

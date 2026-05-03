@@ -1078,6 +1078,441 @@ describe('gates/next-step', () => {
         assert.equal(preflightPath.endsWith(`${TASK_ID}-preflight.json`), true);
     });
 
+    it('blocks next-step when non-test review attempts exceed review cycle guard total limit', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 2,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:code-${index}`,
+                review_context_sha256: sha256Text(`code-context-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('total_non_test_review_count=3>2'));
+        assert.ok(result.reason.includes('excluded_review_types=test'));
+        assert.ok(text.includes('NextGate: review-cycle-attempt-guard'));
+    });
+
+    it('blocks next-step when failed non-test review attempts exceed review cycle guard failed limit', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, security: true });
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+                review_type: 'security',
+                reviewer_identity: `agent:security-${index}`,
+                review_context_sha256: sha256Text(`security-context-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+    });
+
+    it('counts a normal invocation and recorded review pair as one review cycle attempt', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        const reviewContextSha256 = sha256Text('normal-code-context');
+        const sharedDetails = {
+            review_type: 'code',
+            reviewer_identity: 'agent:normal-code',
+            review_context_sha256: reviewContextSha256
+        };
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', sharedDetails);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', sharedDetails);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+    });
+
+    it('stops reading review-cycle timeline after a blocking limit is exceeded', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:early-stop-${index}`,
+                review_context_sha256: sha256Text(`early-stop-context-${index}`)
+            });
+        }
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            reviewer_identity: 'agent:malformed-after-block',
+            review_context_sha256: sha256Text('malformed-after-block')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('total_non_test_review_count=2>1'));
+        assert.equal(result.reason.includes('timeline_integrity'), false);
+    });
+
+    it('counts failed review records by reading review artifact verdict when timeline outcome only confirms recording success', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, security: true });
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-security.md`);
+        fs.writeFileSync(artifactPath, '# security review\n\nSECURITY REVIEW FAILED\n', 'utf8');
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+                review_type: 'security',
+                reviewer_identity: `agent:legacy-security-${index}`,
+                review_context_sha256: sha256Text(`legacy-security-context-${index}`),
+                review_artifact_path: artifactPath
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+    });
+
+    it('does not collapse repeated review attempts when context hash is missing', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: 'agent:repeat-code'
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('total_non_test_review_count=2>1'));
+    });
+
+    it('does not collapse repeated failed review attempts when reviewer identity is missing', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, security: true });
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+                review_type: 'security',
+                review_context_sha256: sha256Text('repeat-security-context')
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('failed_non_test_review_count=2>1'));
+    });
+
+    it('surfaces WARN_ONLY review cycle violations without blocking the next gate', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'WARN_ONLY',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:warn-code-${index}`,
+                review_context_sha256: sha256Text(`warn-code-context-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.warnings.length, 1);
+        assert.ok(result.warnings[0].includes('Review cycle guard: WARN_ONLY'));
+        assert.ok(result.warnings[0].includes('total_non_test_review_count=2>1'));
+        assert.ok(text.includes('Warnings:'));
+        assert.ok(text.includes('Review cycle guard: WARN_ONLY'));
+    });
+
+    it('does not block next-step when only excluded test review attempts exceed review cycle limits', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'test',
+                reviewer_identity: `agent:test-${index}`,
+                review_context_sha256: sha256Text(`test-context-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+    });
+
+    it('blocks next-step when review cycle timeline history is malformed', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            reviewer_identity: 'agent:missing-review-type',
+            review_context_sha256: sha256Text('missing-review-type')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(result.reason.includes('timeline_integrity=1>0'));
+    });
+
+    it('does not scan review cycle timeline when the guard is disabled', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: false,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            reviewer_identity: 'agent:missing-review-type',
+            review_context_sha256: sha256Text('missing-review-type')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+    });
+
     it('blocks next-step when present workflow config is not an object', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(

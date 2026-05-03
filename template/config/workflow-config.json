@@ -20,5 +20,14 @@
     "max_changed_lines": 1200,
     "max_required_reviews": 6,
     "max_review_tokens": 50000
+  },
+  "review_cycle_guard": {
+    "enabled": true,
+    "action": "BLOCK_FOR_OPERATOR_DECISION",
+    "max_failed_non_test_reviews": 15,
+    "max_total_non_test_reviews": 15,
+    "excluded_review_types": [
+      "test"
+    ]
   }
 }

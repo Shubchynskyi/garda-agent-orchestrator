@@ -5,6 +5,7 @@ import { normalizePath } from './helpers';
 
 export interface TimelineEventEntry {
     event_type: string;
+    outcome?: string;
     timestamp_utc: string;
     sequence: number;
     details: Record<string, unknown> | null;
@@ -55,7 +56,14 @@ export function collectOrderedTimelineEvents(timelinePath: string, errors: strin
                 } as TaskEventIntegrity
                 : null;
             if (eventType) {
-                entries.push({ event_type: eventType, timestamp_utc: timestampUtc, sequence: seq, details, integrity });
+                entries.push({
+                    event_type: eventType,
+                    outcome: String(parsed.outcome || '').trim().toUpperCase() || undefined,
+                    timestamp_utc: timestampUtc,
+                    sequence: seq,
+                    details,
+                    integrity
+                });
             }
             seq++;
         } catch {

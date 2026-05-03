@@ -304,6 +304,29 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
             },
             required: ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],
             additionalProperties: false
+        },
+        review_cycle_guard: {
+            type: 'object',
+            description: 'Configurable guard that blocks runaway non-test review cycles.',
+            properties: {
+                enabled: { type: 'boolean', description: 'Enable review-cycle checks.' },
+                action: {
+                    type: 'string',
+                    enum: ['BLOCK_FOR_OPERATOR_DECISION', 'WARN_ONLY'],
+                    description: 'Action when any configured review-cycle limit is exceeded.'
+                },
+                max_failed_non_test_reviews: { type: 'integer', minimum: 1, description: 'Maximum failed non-test review attempts before guard action.' },
+                max_total_non_test_reviews: { type: 'integer', minimum: 1, description: 'Maximum total non-test review attempts before guard action.' },
+                excluded_review_types: {
+                    type: 'array',
+                    items: { type: 'string', minLength: 1 },
+                    minItems: 1,
+                    uniqueItems: true,
+                    description: 'Review types excluded from review-cycle counting.'
+                }
+            },
+            required: ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types'],
+            additionalProperties: false
         }
     },
     additionalProperties: true
