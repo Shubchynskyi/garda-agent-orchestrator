@@ -9,6 +9,7 @@ import {
 } from '../core/review-execution-policy';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import {
+    REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
@@ -3603,7 +3604,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 status: 'BLOCKED',
                 nextGate: 'record-review-routing',
                 title: `Record '${reviewType}' delegated reviewer routing.`,
-                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION} ${reviewerReadinessChain}`,
+                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION} ${reviewerReadinessChain}`,
                 commands: [
                     buildCommand(
                         'Record fresh delegated review routing',
@@ -3654,7 +3655,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
                 reason:
                     `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the prepared prompt, then run complete-reviewer-launch to persist the post-launch fields before recording the invocation. ${reviewerReadinessChain}`,
+                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch to persist the post-launch fields before recording the invocation. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${reviewerReadinessChain}`,
                 commands: [
                     buildCommand(
                         'Complete delegated reviewer launch metadata',

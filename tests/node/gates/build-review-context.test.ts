@@ -565,6 +565,9 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifact.includes('# Review Context: T-901-scope code'));
             assert.ok(promptArtifact.includes('## Changed Files'));
             assert.ok(promptArtifact.includes('- src/app.ts'));
+            assert.equal(result.reviewer_routing.opaque_handoff_required, true);
+            assert.ok(String(result.reviewer_routing.opaque_handoff_instruction || '').includes('opaque handoff artifact'));
+            assert.ok(String(result.reviewer_routing.opaque_handoff_instruction || '').includes('Do not open or summarize'));
             assert.ok(promptArtifact.includes('## Reviewer Output Contract'));
             assert.ok(promptArtifact.includes('Return a canonical code review report using exactly this section order and heading text'));
             assert.ok(promptArtifact.includes('```markdown\n## Findings by Severity'));

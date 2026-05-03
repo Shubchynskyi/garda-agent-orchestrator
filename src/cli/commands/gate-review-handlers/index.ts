@@ -13,6 +13,7 @@ import {
     restoreReviewerRoutingMetadata
 } from '../../../gate-runtime/review-context';
 import {
+    REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
 } from '../../../gate-runtime/reviewer-session-contract';
 import {
@@ -2144,7 +2145,8 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         generated_by: 'garda prepare-reviewer-launch',
         generated_at_utc: new Date().toISOString(),
         next_action: (
-            'Launch a fresh delegated reviewer with the reviewer_prompt_path, then update only the ' +
+            'Launch a fresh delegated reviewer with the reviewer_prompt_path as an opaque handoff artifact; ' +
+            'do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
             'Run record_invocation_command after the real launch is recorded in this artifact.'
         )
@@ -2212,11 +2214,12 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log('AttestationState: prepared');
     console.log(`LaunchTool: ${providerLaunch.launchTool}`);
     console.log(`LaunchInstruction: ${providerLaunch.launchInstruction}`);
+    console.log(`HandoffInstruction: ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION}`);
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
     console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
     console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, review_tree_state_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
-    console.log('NextAction: launch the delegated reviewer, update after_launch_required_updates, then run RecordInvocationCommand.');
+    console.log('NextAction: launch the delegated reviewer with ReviewerPromptPath as an opaque handoff, update after_launch_required_updates, then run RecordInvocationCommand.');
 }
 
 export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {

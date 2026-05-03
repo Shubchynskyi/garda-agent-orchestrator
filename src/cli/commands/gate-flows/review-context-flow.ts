@@ -53,6 +53,7 @@ import {
     requireResolvedPath
 } from '../shared-command-utils';
 import type { TokenEconomyConfig } from '../../../gates/build-review-context';
+import { REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION } from '../../../gate-runtime/reviewer-session-contract';
 
 interface ReviewReuseResult {
     reused: boolean;
@@ -658,11 +659,12 @@ export async function runBuildReviewContextCommand(
     const outputKV: Record<string, unknown> = {
         outputPath: result.output_path,
         ruleContextArtifactPath: result.rule_context.artifact_path,
+        handoffInstruction: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
         tokenEconomyActive: result.token_economy_active,
         reviewReuseDecision: reviewReuseResult.reused ? 'accepted' : 'rejected',
         reviewReuseReason: reviewReuseResult.reason
     };
-    const orderedKeys = ['outputPath', 'ruleContextArtifactPath', 'tokenEconomyActive', 'reviewReuseDecision', 'reviewReuseReason'];
+    const orderedKeys = ['outputPath', 'ruleContextArtifactPath', 'handoffInstruction', 'tokenEconomyActive', 'reviewReuseDecision', 'reviewReuseReason'];
     if (reviewReuseResult.reused) {
         outputKV.reusedReviewEvidence = true;
         outputKV.reusedReceiptPath = reviewReuseResult.receiptPath;

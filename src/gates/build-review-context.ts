@@ -5,6 +5,7 @@ import { buildReviewContextSections, type ReviewContextSectionsResult } from '..
 import { stringSha256 } from '../gate-runtime/hash';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import {
+    REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
@@ -663,6 +664,8 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             reviewer_identity_required: !!requiredReview,
             fresh_context_required: !!requiredReview,
             fresh_context_instruction: requiredReview ? REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION : null,
+            opaque_handoff_required: !!requiredReview,
+            opaque_handoff_instruction: requiredReview ? REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION : null,
             reviewer_session_reuse_forbidden: !!requiredReview,
             reviewer_session_reuse_note: requiredReview ? REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION : null,
             cleanup_required_after_receipt: !!requiredReview,

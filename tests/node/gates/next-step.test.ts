@@ -1830,6 +1830,8 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'record-review-routing');
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('current REVIEWER_DELEGATION_ROUTED telemetry'));
+        assert.ok(result.reason.includes('opaque handoff artifact'));
+        assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('new clean-context delegated reviewer'));
         assert.ok(result.reason.includes('do not reuse an existing reviewer session'));
         assert.ok(result.reason.includes('fork_context=false'));
@@ -1908,7 +1910,8 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'complete-reviewer-launch');
         assert.ok(result.reason.includes('launch metadata'));
-        assert.ok(result.reason.includes('Launch the delegated reviewer with the prepared prompt'));
+        assert.ok(result.reason.includes('Launch the delegated reviewer with the prepared prompt path as an opaque handoff'));
+        assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('complete-reviewer-launch'));
         assert.ok(result.reason.includes('launch artifact=prepared'));
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));

@@ -3155,10 +3155,12 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes('PreparedLaunchEventSha256:')));
         assert.ok(capturedLogs.some((line) => line.includes('AttestationState: prepared')));
         assert.ok(capturedLogs.some((line) => line.includes('TrustBoundary: Local reviewer launch artifacts are convenience metadata')));
+        assert.ok(capturedLogs.some((line) => line.includes('HandoffInstruction: Treat review context as an opaque handoff artifact')));
+        assert.ok(capturedLogs.some((line) => line.includes('Do not open or summarize the generated review-context markdown')));
         assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
-        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer')));
+        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with ReviewerPromptPath as an opaque handoff')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
