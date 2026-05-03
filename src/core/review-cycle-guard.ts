@@ -13,6 +13,7 @@ export interface ReviewCycleGuardConfig {
 export interface ReviewCycleAttempt {
     reviewType: string;
     failed: boolean;
+    passed?: boolean;
 }
 
 export interface ReviewCycleGuardViolation {
@@ -31,7 +32,7 @@ export interface ReviewCycleGuardEvaluation {
     action: ReviewCycleGuardAction;
     total_non_test_review_count: number;
     failed_non_test_review_count: number;
-    counts_by_review_type: Record<string, { total: number; failed: number }>;
+    counts_by_review_type: Record<string, { total: number; failed: number; passed: number; pending: number }>;
     excluded_review_types: string[];
     violations: ReviewCycleGuardViolation[];
     should_block: boolean;
@@ -100,7 +101,7 @@ export function evaluateReviewCycleGuard(
     input: ReviewCycleGuardEvaluationInput
 ): ReviewCycleGuardEvaluation {
     const excluded = new Set(config.excluded_review_types.map((entry) => entry.trim().toLowerCase()).filter(Boolean));
-    const countsByReviewType: Record<string, { total: number; failed: number }> = {};
+    const countsByReviewType: Record<string, { total: number; failed: number; passed: number; pending: number }> = {};
     let totalNonTestReviewCount = 0;
     let failedNonTestReviewCount = 0;
 
@@ -109,12 +110,16 @@ export function evaluateReviewCycleGuard(
         if (!reviewType || excluded.has(reviewType)) {
             continue;
         }
-        countsByReviewType[reviewType] ??= { total: 0, failed: 0 };
+        countsByReviewType[reviewType] ??= { total: 0, failed: 0, passed: 0, pending: 0 };
         countsByReviewType[reviewType].total += 1;
         totalNonTestReviewCount += 1;
         if (attempt.failed) {
             countsByReviewType[reviewType].failed += 1;
             failedNonTestReviewCount += 1;
+        } else if (attempt.passed) {
+            countsByReviewType[reviewType].passed += 1;
+        } else {
+            countsByReviewType[reviewType].pending += 1;
         }
     }
 

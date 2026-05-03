@@ -1730,6 +1730,80 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('prioritizes changed test diff sections in test review prompt excerpts', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-test-priority-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'tests', 'node', 'gates'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            for (const ruleFile of getRulePack('test').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'src', 'large.ts'), 'export const before = true;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'gates', 'next-step.test.ts'), 'import assert from "node:assert/strict";\n', 'utf8');
+            runGit(repoRoot, ['add', '.']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'large.ts'),
+                `${'export const filler = "'.repeat(2500)}tail";\n`,
+                'utf8'
+            );
+            fs.appendFileSync(
+                path.join(repoRoot, 'tests', 'node', 'gates', 'next-step.test.ts'),
+                'assert.equal("review-cycle-block-test-priority", "review-cycle-block-test-priority");\n',
+                'utf8'
+            );
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-test-priority', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-test-priority-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-test-priority',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'mixed',
+                changed_files: [
+                    'src/large.ts',
+                    'tests/node/gates/next-step.test.ts'
+                ],
+                required_reviews: { code: true, test: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true, test: true }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-test-priority-test-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-test-priority-test-review-context.json'),
+                repoRoot
+            });
+
+            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
+            const testDiffIndex = promptArtifact.indexOf('diff --git a/tests/node/gates/next-step.test.ts');
+            const sourceDiffIndex = promptArtifact.indexOf('diff --git a/src/large.ts');
+            assert.ok(testDiffIndex >= 0, 'test diff should be visible in the test review prompt excerpt');
+            assert.ok(sourceDiffIndex >= 0, 'source diff should still be present after the prioritized test diff');
+            assert.ok(testDiffIndex < sourceDiffIndex, 'test diff should appear before source diff for test reviews');
+            assert.ok(promptArtifact.includes('review-cycle-block-test-priority'));
+            assert.ok(promptArtifact.includes('[diff excerpt truncated at 20000 chars'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('preserves blocked reviewer launchability from current task-mode runtime evidence', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-task-mode-blocked-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

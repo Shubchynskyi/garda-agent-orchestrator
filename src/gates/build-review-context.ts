@@ -166,6 +166,48 @@ function buildReviewerOutputContractMarkdown(reviewType: string): string[] {
     ];
 }
 
+function isTestLikeChangedFile(filePath: string): boolean {
+    const normalized = normalizePath(filePath).toLowerCase();
+    return normalized.includes('/test/')
+        || normalized.includes('/tests/')
+        || normalized.includes('/__tests__/')
+        || /(^|\/)tests?\//u.test(normalized)
+        || /\.(test|spec)\.[cm]?[jt]sx?$/u.test(normalized);
+}
+
+function splitGitDiffSections(diffText: string): string[] {
+    const starts = [...diffText.matchAll(/^diff --git /gmu)].map((match) => match.index ?? -1).filter((index) => index >= 0);
+    if (starts.length === 0) {
+        return [diffText];
+    }
+    return starts.map((start, index) => diffText.slice(start, starts[index + 1] ?? diffText.length));
+}
+
+function getDiffSectionFilePath(section: string): string {
+    const firstLine = section.split(/\r?\n/, 1)[0] || '';
+    const match = /^diff --git a\/.+ b\/(.+)$/u.exec(firstLine);
+    return match ? normalizePath(match[1] || '') : '';
+}
+
+function prioritizePromptDiffForReview(reviewType: string, diffText: string): string {
+    if (reviewType !== 'test' || !diffText.trim()) {
+        return diffText;
+    }
+    const sections = splitGitDiffSections(diffText);
+    if (sections.length <= 1) {
+        return diffText;
+    }
+    return sections
+        .map((section, index) => ({
+            section,
+            index,
+            priority: isTestLikeChangedFile(getDiffSectionFilePath(section)) ? 0 : 1
+        }))
+        .sort((left, right) => left.priority - right.priority || left.index - right.index)
+        .map((entry) => entry.section)
+        .join('');
+}
+
 function buildTaskScopeMarkdown(options: {
     taskId: string | null;
     reviewType: string;
@@ -181,11 +223,12 @@ function buildTaskScopeMarkdown(options: {
 }): string {
     const lines: string[] = [];
     const fullDiffText = options.gitDiff.diff || '';
+    const promptDiffSourceText = prioritizePromptDiffForReview(options.reviewType, fullDiffText);
     const promptDiffMaxChars = options.reviewType === 'code'
         ? REVIEW_CONTEXT_DIFF_MAX_CHARS
         : REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS;
-    const promptDiffText = fullDiffText.slice(0, promptDiffMaxChars);
-    const promptDiffExcerptTruncated = fullDiffText.length > promptDiffMaxChars;
+    const promptDiffText = promptDiffSourceText.slice(0, promptDiffMaxChars);
+    const promptDiffExcerptTruncated = promptDiffSourceText.length > promptDiffMaxChars;
     const diffFence = buildMarkdownFence(promptDiffText, 'diff');
     const statFence = buildMarkdownFence(options.gitDiff.stat || '', 'text');
     lines.push(`# Review Context: ${options.taskId || '<unknown>'} ${options.reviewType}`);
