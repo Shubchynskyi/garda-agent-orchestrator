@@ -946,6 +946,68 @@ test('applyProfileGuardrails: docs-only scope allows lightening', () => {
     assert.ok(lightened.length >= 4, 'docs-only scope should lighten code/security/db/refactor');
 });
 
+test('applyProfileGuardrails: test-only scope suppresses profile-forced code security and refactor reviews', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: true, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'test-only', 'strict', {
+        domainSurface: {
+            db: false,
+            security: false,
+            api: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        }
+    });
+
+    assert.equal(result.guardrails_active, false);
+    assert.equal(result.lightening_eligible, true);
+    assert.equal(result.is_code_changing_task, false);
+    for (const reviewType of ['code', 'security', 'refactor']) {
+        const decision = result.decisions.find(d => d.review_type === reviewType);
+        assert.equal(decision?.effective_value, false, `${reviewType} review should be suppressed`);
+        assert.equal(decision?.decision, 'lightened_by_profile');
+        assert.match(String(decision?.reason || ''), /test-only/);
+    }
+    assert.equal(result.decisions.find(d => d.review_type === 'test')?.effective_value, true);
+});
+
+test('applyProfileGuardrails: test-only scope keeps security review for sensitive test paths', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: true, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'test-only', 'strict', {
+        domainSurface: {
+            db: false,
+            security: true,
+            api: false,
+            performance: false,
+            infra: false,
+            dependency: false
+        }
+    });
+    const securityDecision = result.decisions.find(d => d.review_type === 'security');
+    assert.equal(securityDecision?.effective_value, true);
+    assert.equal(securityDecision?.decision, 'profile_forced');
+});
+
+test('applyProfileGuardrails: test-only scope keeps security review when domain surface evidence is absent', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: true, security: true, refactor: true };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: true, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(profile, caps, 'test-only', 'strict');
+    const securityDecision = result.decisions.find(d => d.review_type === 'security');
+    assert.equal(securityDecision?.effective_value, true);
+    assert.equal(securityDecision?.decision, 'profile_forced');
+});
+
 test('applyProfileGuardrails: fast docs-only scope lightens explicit code review', () => {
     const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
     const caps: ReviewCapabilities = {

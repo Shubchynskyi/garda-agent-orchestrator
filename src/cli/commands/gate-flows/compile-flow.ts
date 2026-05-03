@@ -198,6 +198,7 @@ function hasArrayEntries(value: unknown): boolean {
 function buildDomainReviewSurface(triggers: Record<string, unknown>): Record<string, boolean> {
     return {
         db: triggers.db === true || hasArrayEntries(triggers.db_project_evidence),
+        security: triggers.security === true,
         api: triggers.api === true,
         performance: triggers.performance === true,
         infra: triggers.infra === true,

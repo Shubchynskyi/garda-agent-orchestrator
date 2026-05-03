@@ -887,6 +887,53 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change strict profile treats pure test-scope diffs as test-review-only', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-test-only.json');
+        const taskId = 'T-930-strict-test-only';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Keep strict profile test fixture changes on test review only'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['tests/node/cli/commands/gates-review-reuse.test.ts'],
+            taskId,
+            taskIntent: 'Keep strict profile test fixture changes on test review only',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.scope_category, 'test-only');
+        assert.equal(payload.profile_selection.effective_profile, 'strict');
+        assert.equal(payload.triggers.test, true);
+        assert.equal(payload.required_reviews.code, false);
+        assert.equal(payload.required_reviews.security, false);
+        assert.equal(payload.required_reviews.refactor, false);
+        assert.equal(payload.required_reviews.test, true);
+        for (const reviewType of ['code', 'security', 'refactor']) {
+            const decision = payload.profile_guardrails.decisions.find(
+                (entry: Record<string, unknown>) => entry.review_type === reviewType
+            );
+            assert.equal(decision?.decision, 'lightened_by_profile');
+            assert.match(String(decision?.reason || ''), /test-only/);
+        }
+        assert.deepEqual(payload.budget_forecast.required_reviews, ['test']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change strict profile suppresses reviews for audited zero-diff baseline-only closeout', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-strict-zero-diff.json');

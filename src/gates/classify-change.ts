@@ -566,11 +566,12 @@ export function isRuntimeCodeLikePath(pathValue: string, codeLikeRegexes: string
     }) && matchesConfiguredRoot(normalizedPath, runtimeRoots, { allowNestedRoot: true });
 }
 
-export type ScopeCategory = 'code' | 'docs-only' | 'config-only' | 'audit-only' | 'mixed' | 'empty';
+export type ScopeCategory = 'code' | 'docs-only' | 'test-only' | 'config-only' | 'audit-only' | 'mixed' | 'empty';
 
 interface ScopeCategoryOptions {
     ordinaryDocPaths?: string[];
     protectedControlPlaneRoots?: string[];
+    testTriggerRegexes?: string[];
     sqlOrMigrationRegexes?: string[];
     dbTriggerRegexes?: string[];
     securityTriggerRegexes?: string[];
@@ -596,6 +597,7 @@ interface SafeOrdinaryDocumentationPathConfig {
  * Categories:
  * - `code`: at least one code-like file under runtime roots
  * - `docs-only`: all files match documentation patterns
+ * - `test-only`: all files match configured test-scope patterns
  * - `config-only`: all files match config/infra patterns (no code)
  * - `audit-only`: all files are orchestrator control-plane artifacts
  * - `mixed`: mix of code and non-code files
@@ -613,18 +615,19 @@ export function classifyScopeCategory(
 
     let codeCount = 0;
     let docCount = 0;
+    let testCount = 0;
     let configCount = 0;
     let auditCount = 0;
 
     for (const file of normalizedFiles) {
         const isCode = isRuntimeCodeLikePath(file, codeLikeRegexes, runtimeRoots);
+        const isTest = matchAnyRegex(file, options.testTriggerRegexes || [], {
+            skipInvalidRegex: true,
+            caseInsensitive: true
+        });
         const isConfig = testPrecompiled(file, CONFIG_LIKE_COMPILED);
         const isAudit = testPrecompiled(file, AUDIT_ONLY_COMPILED);
         const isProtectedControlPlane = testPathPrefix(file, options.protectedControlPlaneRoots || []);
-        if (isCode) {
-            codeCount++;
-            continue;
-        }
         if (isAudit || isProtectedControlPlane) {
             auditCount++;
             continue;
@@ -647,6 +650,14 @@ export function classifyScopeCategory(
             docCount++;
             continue;
         }
+        if (isTest) {
+            testCount++;
+            continue;
+        }
+        if (isCode) {
+            codeCount++;
+            continue;
+        }
         codeCount++; // unknown files default to code for safety
     }
 
@@ -654,8 +665,8 @@ export function classifyScopeCategory(
     const reasons: string[] = [];
 
     if (codeCount > 0) {
-        if (docCount > 0 || configCount > 0 || auditCount > 0) {
-            reasons.push(`code=${codeCount}`, `docs=${docCount}`, `config=${configCount}`, `audit=${auditCount}`);
+        if (docCount > 0 || testCount > 0 || configCount > 0 || auditCount > 0) {
+            reasons.push(`code=${codeCount}`, `docs=${docCount}`, `tests=${testCount}`, `config=${configCount}`, `audit=${auditCount}`);
             return { category: 'mixed', reasons };
         }
         reasons.push(`code_files=${codeCount}`);
@@ -672,6 +683,11 @@ export function classifyScopeCategory(
         return { category: 'docs-only', reasons };
     }
 
+    if (testCount === total) {
+        reasons.push(`test_only_files=${testCount}`);
+        return { category: 'test-only', reasons };
+    }
+
     if (configCount === total) {
         reasons.push(`config_only_files=${configCount}`);
         return { category: 'config-only', reasons };
@@ -679,6 +695,7 @@ export function classifyScopeCategory(
 
     // Mix of non-code categories (e.g., docs + config)
     if (docCount > 0) reasons.push(`docs=${docCount}`);
+    if (testCount > 0) reasons.push(`tests=${testCount}`);
     if (configCount > 0) reasons.push(`config=${configCount}`);
     if (auditCount > 0) reasons.push(`audit=${auditCount}`);
     return { category: 'docs-only', reasons: [...reasons, 'all_non_code'] };
@@ -780,7 +797,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
     }));
     const runtimeCodeChanged = normalizedFiles.some((p: string) => matchesConfiguredRoot(p, runtimeRoots, {
         allowNestedRoot: true
-    }) && testMatch(p, codeLike));
+    }) && testMatch(p, codeLike) && !testMatch(p, classificationConfig.test_trigger_regexes));
 
     const protectedControlPlaneFiles = normalizedFiles.filter((p: string) => testPathPrefix(p, classificationConfig.protected_control_plane_roots));
     const protectedControlPlaneChanged = protectedControlPlaneFiles.length > 0;
@@ -823,7 +840,9 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const refactorIntentTriggered = /\b(refactor|cleanup|restructure|extract|rename|modularization|simplify)\b/i.test(taskIntent);
     const codeLikeCount = normalizedFiles.filter((p: string) => testMatch(p, codeLike)).length;
     const runtimeCodeLikeCount = normalizedFiles.filter(
-        (p: string) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true }) && testMatch(p, codeLike)
+        (p: string) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true })
+            && testMatch(p, codeLike)
+            && !testMatch(p, classificationConfig.test_trigger_regexes)
     ).length;
 
     const refactorHeuristicReasons = [];
@@ -835,7 +854,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
         const totalChurn = additionsTotal + deletionsTotal;
         const deltaBalanceThreshold = Math.max(20, Math.floor(totalChurn * 0.15));
         const balancedChurn = Math.abs(additionsTotal - deletionsTotal) <= deltaBalanceThreshold;
-        if (codeLikeCount >= 3 && totalChurn >= 80 && balancedChurn && !dbTriggered && !securityTriggered) {
+        if (runtimeCodeLikeCount >= 3 && totalChurn >= 80 && balancedChurn && !dbTriggered && !securityTriggered) {
             refactorHeuristicReasons.push('balanced_structural_churn');
         }
     }
@@ -885,6 +904,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const scopeClassification = classifyScopeCategory(normalizedFiles, codeLike, runtimeRoots, {
         ordinaryDocPaths: classificationConfig.ordinary_doc_paths,
         protectedControlPlaneRoots: classificationConfig.protected_control_plane_roots,
+        testTriggerRegexes: classificationConfig.test_trigger_regexes,
         sqlOrMigrationRegexes: classificationConfig.sql_or_migration_regexes,
         dbTriggerRegexes: classificationConfig.db_trigger_regexes,
         securityTriggerRegexes: classificationConfig.security_trigger_regexes,

@@ -191,6 +191,106 @@ describe('gates/classify-change', () => {
             assert.deepEqual((result.triggers as Record<string, unknown>).test_ordinary_doc_suppressed_files, []);
         });
 
+        it('classifies pure configured test-scope changes as test-only', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/node/cli/commands/gates.test.ts'],
+                taskIntent: 'Update test fixture expectations',
+                changedLinesTotal: 8,
+                additionsTotal: 5,
+                deletionsTotal: 3,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.required_reviews.code, false);
+            assert.equal(result.required_reviews.test, true);
+            assert.ok(result.scope_category_reasons.includes('test_only_files=1'));
+        });
+
+        it('classifies configured test-scope changes under runtime roots as test-only', () => {
+            const result = classifyChange({
+                normalizedFiles: ['src/test/cart.test.ts', 'packages/orders/tests/order-flow.test.ts'],
+                taskIntent: 'Update test fixture expectations',
+                changedLinesTotal: 12,
+                additionsTotal: 9,
+                deletionsTotal: 3,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    runtime_roots: ['src/', 'packages/']
+                }),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.required_reviews.code, false);
+            assert.equal(result.required_reviews.test, true);
+            assert.ok(result.scope_category_reasons.includes('test_only_files=2'));
+        });
+
+        it('keeps mixed source plus test changes on the code review path', () => {
+            const result = classifyChange({
+                normalizedFiles: ['src/app.ts', 'tests/app.test.ts'],
+                taskIntent: 'Update runtime and coverage',
+                changedLinesTotal: 24,
+                additionsTotal: 18,
+                deletionsTotal: 6,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'mixed');
+            assert.equal(result.required_reviews.code, true);
+            assert.equal(result.required_reviews.test, true);
+        });
+
+        it('honors configured nonstandard test roots without assuming a Node project layout', () => {
+            const result = classifyChange({
+                normalizedFiles: ['quality/regression/auth-flow.fixture.py'],
+                taskIntent: 'Update regression fixture',
+                changedLinesTotal: 6,
+                additionsTotal: 4,
+                deletionsTotal: 2,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    test_trigger_regexes: ['(^|/)quality/regression/']
+                }),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.required_reviews.test, true);
+            assert.equal(result.required_reviews.code, false);
+        });
+
+        it('keeps security review for sensitive paths under test scope', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/security/auth-token.test.ts'],
+                taskIntent: 'Update sensitive auth test coverage',
+                changedLinesTotal: 12,
+                additionsTotal: 8,
+                deletionsTotal: 4,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.security, true);
+            assert.equal(result.required_reviews.security, true);
+            assert.equal(result.required_reviews.test, true);
+        });
+
         it('rejects protected control-plane docs as ordinary docs even when a configured glob matches', () => {
             const result = classifyChange({
                 normalizedFiles: ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
@@ -741,6 +841,32 @@ describe('gates/classify-change', () => {
             assert.ok(result.triggers.refactor_heuristic_reasons.includes('balanced_structural_churn'));
         });
 
+        it('does not trigger refactor heuristic for pure test-only churn under runtime roots', () => {
+            const result = classifyChange({
+                normalizedFiles: [
+                    'src/test/cart.test.ts',
+                    'src/test/order.test.ts',
+                    'packages/orders/tests/order-flow.test.ts'
+                ],
+                taskIntent: 'Update test fixtures',
+                changedLinesTotal: 100,
+                additionsTotal: 50,
+                deletionsTotal: 50,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig({
+                    runtime_roots: ['src/', 'packages/']
+                }),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.refactor, false);
+            assert.equal(result.triggers.refactor_heuristic, false);
+            assert.equal(result.required_reviews.refactor, false);
+            assert.equal(result.required_reviews.test, true);
+        });
+
         it('disables api review if capability is false', () => {
             const result = classifyChange({
                 normalizedFiles: ['src/controllers/UserController.ts'],
@@ -889,6 +1015,28 @@ describe('classifyScopeCategory', () => {
     it('classifies doc-only changes as docs-only', () => {
         const result = classifyScopeCategory(['README.md', 'docs/guide.md'], codeLikeRegexes, runtimeRoots);
         assert.equal(result.category, 'docs-only');
+    });
+
+    it('classifies configured test paths as test-only', () => {
+        const result = classifyScopeCategory(
+            ['quality/regression/cart-flow.fixture.py'],
+            codeLikeRegexes,
+            runtimeRoots,
+            { testTriggerRegexes: ['(^|/)quality/regression/'] }
+        );
+        assert.equal(result.category, 'test-only');
+        assert.ok(result.reasons.includes('test_only_files=1'));
+    });
+
+    it('classifies configured test paths inside runtime roots as test-only', () => {
+        const result = classifyScopeCategory(
+            ['src/test/cart.test.ts', 'packages/orders/tests/order-flow.test.ts'],
+            codeLikeRegexes,
+            runtimeRoots,
+            { testTriggerRegexes: ['(^|/)src/test/', '(^|/)(tests?)/', '\\.(spec|test)\\.(ts|tsx|js|jsx)$'] }
+        );
+        assert.equal(result.category, 'test-only');
+        assert.ok(result.reasons.includes('test_only_files=2'));
     });
 
     it('classifies config-only changes as config-only', () => {

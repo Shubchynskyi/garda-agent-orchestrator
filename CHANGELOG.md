@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made strict-profile review selection treat configured test-only changes as test review only, including non-Node test roots and tests under runtime roots, while preserving security/protected-scope fail-closed behavior
 - added configurable `ordinary_doc_paths` so agent-init can confirm ordinary planning/changelog paths that skip code/test review while still appearing in preflight and doc-impact evidence
 - kept ordinary docs/`CHANGELOG.md` follow-up changes in doc-impact scope after reviews instead of forcing fresh code/test review cycles, while protected control-plane docs still fail closed
 - added `garda gate complete-reviewer-launch` so real delegated reviewer launches can fill post-launch metadata without hand-editing reviewer launch artifacts

@@ -136,8 +136,9 @@ const CODE_CHANGING_SAFETY_FLOORS: ReadonlyMap<string, boolean> = new Map([
  * Scope categories that are eligible for profile-driven review lightening.
  * Only these non-code categories allow profiles to relax mandatory reviews.
  */
-const LIGHTENABLE_SCOPE_CATEGORIES = new Set(['docs-only', 'config-only', 'audit-only']);
+const LIGHTENABLE_SCOPE_CATEGORIES = new Set(['docs-only', 'test-only', 'config-only', 'audit-only']);
 const DOMAIN_SURFACE_REVIEW_TYPES = new Set(['db', 'api', 'performance', 'infra', 'dependency']);
+const TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'security', 'refactor']);
 
 export interface ProfileReviewDecision {
     review_type: string;
@@ -184,6 +185,25 @@ function shouldLightenExplicitCodeReviewForDocsOnly(
         && profileValue === true
         && scopeCategory === 'docs-only'
         && options.protectedControlPlaneChanged !== true;
+}
+
+function shouldLightenReviewForTestOnlyScope(
+    reviewType: string,
+    scopeCategory: string,
+    options: ProfileGuardrailOptions
+): boolean {
+    if (
+        scopeCategory !== 'test-only'
+        || !TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES.has(reviewType)
+        || options.protectedControlPlaneChanged === true
+        || (reviewType === 'code' && options.forceCodeReview === true)
+    ) {
+        return false;
+    }
+    if (reviewType === 'security') {
+        return options.domainSurface !== undefined && options.domainSurface.security === false;
+    }
+    return true;
 }
 
 function hasAnyDomainSurface(domainSurface: Record<string, boolean> | undefined): boolean {
@@ -413,7 +433,7 @@ export function applyProfileGuardrails(
             profileValue,
             scopeCategory,
             options
-        );
+        ) || shouldLightenReviewForTestOnlyScope(key, scopeCategory, options);
         const codeReviewExplicitlyForced = key === 'code' && options.forceCodeReview === true;
         const effectiveValue = zeroDiffNoReviewableScope
             ? false
@@ -441,7 +461,9 @@ export function applyProfileGuardrails(
             reason = `${key} review requested by profile '${profileName}', but no ${key} trigger or project surface evidence was found`;
         } else if (scopeLightenedExplicitReview) {
             decision = 'lightened_by_profile';
-            reason = `${key} review lightened by profile '${profileName}' for true ${scopeCategory} scope`;
+            reason = scopeCategory === 'test-only'
+                ? `${key} review suppressed because scope is test-only and no source/security/control-plane trigger requires it`
+                : `${key} review lightened by profile '${profileName}' for true ${scopeCategory} scope`;
         } else if (forcedDomainWithoutSurface) {
             decision = 'profile_forced';
             reason = `${key} review explicitly forced by profile '${profileName}' even though no ${key} domain surface evidence was found`;
