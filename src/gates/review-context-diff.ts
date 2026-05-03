@@ -498,11 +498,12 @@ export function buildGitDiffSummary(
     if (cached) {
         return cached;
     }
-    const diffResult = runGitTextCommand(repoRoot, [...diffBaseArgs, '--', ...literalPathspecs], REVIEW_CONTEXT_DIFF_MAX_CHARS);
     const untrackedDiff = includeUntracked
-        ? buildUntrackedFileDiff(repoRoot, changedFiles, Math.max(0, REVIEW_CONTEXT_DIFF_MAX_CHARS - (diffResult.text || '').length))
+        ? buildUntrackedFileDiff(repoRoot, changedFiles, REVIEW_CONTEXT_DIFF_MAX_CHARS)
         : { text: null, charCount: 0, truncated: false };
-    const fullDiff = [diffResult.text, untrackedDiff.text].filter(Boolean).join('\n');
+    const remainingTrackedDiffChars = Math.max(0, REVIEW_CONTEXT_DIFF_MAX_CHARS - (untrackedDiff.text || '').length);
+    const diffResult = runGitTextCommand(repoRoot, [...diffBaseArgs, '--', ...literalPathspecs], remainingTrackedDiffChars);
+    const fullDiff = [untrackedDiff.text, diffResult.text].filter(Boolean).join('\n');
     const diffTruncated = diffResult.truncated || untrackedDiff.truncated || fullDiff.length > REVIEW_CONTEXT_DIFF_MAX_CHARS;
     const summary = {
         stat: statResult.text,
