@@ -7,6 +7,10 @@ import {
     buildDefaultReviewExecutionPolicyConfig,
     type ReviewExecutionPolicyConfig
 } from './review-execution-policy';
+import {
+    DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,
+    type ScopeBudgetGuardConfig
+} from './scope-budget-guard';
 
 export interface FullSuiteValidationConfig {
     enabled: boolean;
@@ -21,6 +25,7 @@ export interface FullSuiteValidationConfig {
 export interface WorkflowConfigData {
     full_suite_validation: FullSuiteValidationConfig;
     review_execution_policy: ReviewExecutionPolicyConfig;
+    scope_budget_guard: ScopeBudgetGuardConfig;
     [key: string]: unknown;
 }
 
@@ -48,7 +53,8 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         red_failure_chunk_lines: 50,
         out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
     }),
-    review_execution_policy: Object.freeze(buildDefaultReviewExecutionPolicyConfig())
+    review_execution_policy: Object.freeze(buildDefaultReviewExecutionPolicyConfig()),
+    scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG
 });
 
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {

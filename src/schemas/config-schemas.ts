@@ -279,6 +279,31 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
             },
             required: ['mode'],
             additionalProperties: false
+        },
+        scope_budget_guard: {
+            type: 'object',
+            description: 'Configurable guard that blocks oversized task scopes before compile/review loops.',
+            properties: {
+                enabled: { type: 'boolean', description: 'Enable scope budget checks.' },
+                profiles: {
+                    type: 'array',
+                    items: { type: 'string', minLength: 1 },
+                    minItems: 1,
+                    uniqueItems: true,
+                    description: 'Profiles where the guard applies.'
+                },
+                action: {
+                    type: 'string',
+                    enum: ['BLOCK_FOR_SPLIT', 'WARN_ONLY'],
+                    description: 'Action when any configured budget is exceeded.'
+                },
+                max_files: { type: 'integer', minimum: 1, description: 'Maximum changed files before guard action.' },
+                max_changed_lines: { type: 'integer', minimum: 1, description: 'Maximum changed lines before guard action.' },
+                max_required_reviews: { type: 'integer', minimum: 1, description: 'Maximum required review lanes before guard action.' },
+                max_review_tokens: { type: 'integer', minimum: 1, description: 'Maximum estimated review tokens before guard action.' }
+            },
+            required: ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],
+            additionalProperties: false
         }
     },
     additionalProperties: true

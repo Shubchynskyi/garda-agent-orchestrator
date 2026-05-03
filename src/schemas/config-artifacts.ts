@@ -16,6 +16,10 @@ import {
     ORDINARY_DOC_PATHS_CONFIG_KEY,
     normalizeOrdinaryDocPathPatterns
 } from '../core/ordinary-doc-paths';
+import {
+    SCOPE_BUDGET_GUARD_ACTIONS,
+    normalizeScopeBudgetGuardConfig
+} from '../core/scope-budget-guard';
 
 interface IntegerArrayOptions {
     allowScalar?: boolean;
@@ -575,7 +579,7 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['full_suite_validation', 'review_execution_policy'] as const;
+    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -645,6 +649,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
 
     normalized.full_suite_validation = normalizedSection;
     if (raw.review_execution_policy === undefined) {
+        if (raw.scope_budget_guard !== undefined) {
+            normalized.scope_budget_guard = validateScopeBudgetGuardSection(raw.scope_budget_guard);
+        }
         return normalized;
     }
 
@@ -668,6 +675,56 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         'workflow-config.review_execution_policy.mode'
     );
     normalized.review_execution_policy = normalizedReviewExecutionPolicy;
+    if (raw.scope_budget_guard !== undefined) {
+        normalized.scope_budget_guard = validateScopeBudgetGuardSection(raw.scope_budget_guard);
+    }
+    return normalized;
+}
+
+function validateScopeBudgetGuardSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.scope_budget_guard');
+    const normalizedInput = { ...section };
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],
+        'workflow-config.scope_budget_guard'
+    );
+    assertNoUnknownKeys(
+        section,
+        ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],
+        'workflow-config.scope_budget_guard'
+    );
+    if (section.enabled !== undefined) {
+        normalizedInput.enabled = normalizeBooleanLike(
+            section.enabled,
+            'workflow-config.scope_budget_guard.enabled'
+        );
+    }
+    if (section.action !== undefined) {
+        const normalizedAction = normalizeNonEmptyString(
+            section.action,
+            'workflow-config.scope_budget_guard.action'
+        ).toUpperCase().replace(/[\s-]+/g, '_');
+        if (!SCOPE_BUDGET_GUARD_ACTIONS.includes(normalizedAction as typeof SCOPE_BUDGET_GUARD_ACTIONS[number])) {
+            throw new Error(
+                'workflow-config.scope_budget_guard.action must be one of: '
+                + `${SCOPE_BUDGET_GUARD_ACTIONS.join(', ')}.`
+            );
+        }
+        normalizedInput.action = normalizedAction;
+    }
+    if (section.profiles !== undefined) {
+        normalizedInput.profiles = normalizeStringArray(
+            section.profiles,
+            'workflow-config.scope_budget_guard.profiles'
+        );
+    }
+    for (const key of ['max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens']) {
+        if (section[key] !== undefined) {
+            normalizedInput[key] = normalizeInteger(section[key], `workflow-config.scope_budget_guard.${key}`, { minimum: 1 });
+        }
+    }
+    const normalized = normalizeScopeBudgetGuardConfig(normalizedInput) as unknown as Record<string, unknown>;
     return normalized;
 }
 

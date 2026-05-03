@@ -977,6 +977,153 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('OrdinaryDocReviewSkips: docs/plan.md (matched docs/plan.md)'));
     });
 
+    it('blocks oversized strict-profile scopes before compile for decomposition', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/scope-budget | Add decomposition guard | gpt-5.4 | 2026-05-03 | strict | Test queue entry. |`,
+            ''
+        ].join('\n'), 'utf8');
+        const changedFiles = Array.from({ length: 13 }, (_, index) => `src/file-${index}.ts`);
+        for (const filePath of changedFiles) {
+            fs.writeFileSync(path.join(repoRoot, filePath), 'export const value = 1;\n', 'utf8');
+        }
+        seedStartedTask(repoRoot, TASK_ID);
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            scope_category: 'code',
+            metrics: {
+                changed_files_count: snapshot.changed_files.length,
+                changed_lines_total: snapshot.changed_lines_total,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS, code: true, security: true, refactor: true, test: true },
+            changed_files: changedFiles,
+            review_execution_policy: {
+                mode: 'code_first_optional',
+                visible_summary_line: 'Review execution policy: code_first_optional'
+            },
+            profile_selection: {
+                task_profile: 'strict',
+                profile_selection_source: 'task_queue',
+                effective_profile: 'strict',
+                effective_profile_source: 'built_in',
+                runtime_active_profile: 'balanced',
+                runtime_profile_source: 'built_in'
+            },
+            budget_forecast: {
+                total_estimated_review_tokens: 9000
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'scope-budget-decomposition-guard');
+        assert.ok(result.reason.includes('changed_files_count=13>12'));
+        assert.ok(result.commands[0].command.includes('workflow explain'));
+        assert.ok(text.includes('NextGate: scope-budget-decomposition-guard'));
+    });
+
+    it('blocks next-step when scope budget workflow config is invalid', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                scope_budget_guard: {
+                    enabled: true,
+                    profiles: ['strict'],
+                    action: 'BLOCK_SOMEHOW',
+                    max_files: 12,
+                    max_changed_lines: 1200,
+                    max_required_reviews: 6,
+                    max_review_tokens: 20000
+                }
+            }, null, 2),
+            'utf8'
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'workflow-config-validation');
+        assert.ok(result.reason.includes('workflow-config.scope_budget_guard.action'));
+        assert.ok(result.commands[0].command.includes('workflow validate'));
+        assert.equal(preflightPath.endsWith(`${TASK_ID}-preflight.json`), true);
+    });
+
+    it('blocks next-step when present workflow config is not an object', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            JSON.stringify(['not-a-workflow-config'], null, 2),
+            'utf8'
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'workflow-config-validation');
+        assert.ok(result.reason.includes('must be a JSON object'));
+        assert.ok(result.commands[0].command.includes('workflow validate'));
+    });
+
+    it('keeps legacy next-step defaults when workflow config is missing unrelated sections', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            JSON.stringify({
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                scope_budget_guard: {
+                    enabled: true,
+                    profiles: ['strict'],
+                    action: 'BLOCK_FOR_SPLIT',
+                    max_files: 12,
+                    max_changed_lines: 1200,
+                    max_required_reviews: 6,
+                    max_review_tokens: 20000
+                }
+            }, null, 2),
+            'utf8'
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'workflow-config-validation');
+        assert.ok(!result.reason.includes('workflow-config.full_suite_validation'));
+    });
+
     it('routes task-mode-only runs to TASK_ENTRY rule-pack loading', () => {
         const repoRoot = makeTempRepo();
         seedTaskModeOnly(repoRoot, TASK_ID);

@@ -475,16 +475,18 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
         summary: 'Show and set repo-local workflow config.',
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} workflow [show] [--target-root PATH] [--bundle-root PATH] [--json]`,
-            `${PRIMARY_CLI_NAME} workflow set [--full-suite-enabled true|false] [--full-suite-command CMD] [--review-execution-policy MODE] [--target-root PATH] [--json]`
+            `${PRIMARY_CLI_NAME} workflow set [--full-suite-enabled true|false] [--full-suite-command CMD] [--review-execution-policy MODE] [--scope-budget-enabled true|false] [--target-root PATH] [--json]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} workflow`,
             `${PRIMARY_CLI_NAME} workflow set --full-suite-enabled true --full-suite-command "npm test"`,
-            `${PRIMARY_CLI_NAME} workflow set --review-execution-policy strict_sequential`
+            `${PRIMARY_CLI_NAME} workflow set --review-execution-policy strict_sequential`,
+            `${PRIMARY_CLI_NAME} workflow set --scope-budget-enabled true --scope-budget-max-changed-lines 1200`
         ]),
         hints: Object.freeze([
             'Default mode: workflow with no subcommand behaves like workflow show.',
-            'Review execution policy modes: parallel_all, test_after_code, code_first_optional, strict_sequential.'
+            'Review execution policy modes: parallel_all, test_after_code, code_first_optional, strict_sequential.',
+            'Scope budget guard can block oversized tasks before compile/review loops.'
         ])
     })
 });

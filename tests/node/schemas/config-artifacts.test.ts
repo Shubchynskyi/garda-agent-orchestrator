@@ -11,7 +11,8 @@ import {
     validatePathsConfig,
     validateTokenEconomyConfig,
     validateProfilesConfig,
-    validateReviewArtifactStorageConfig
+    validateReviewArtifactStorageConfig,
+    validateWorkflowConfig
 } from '../../../src/schemas/config-artifacts';
 
 function readTemplateConfig(configName: string): Record<string, unknown> {
@@ -42,6 +43,40 @@ test('validateTokenEconomyConfig canonicalizes integer arrays and boolean-like v
     assert.deepEqual(normalized.enabled_depths, [1, 2, 3]);
     assert.equal(normalized.scoped_diffs, false);
     assert.equal(normalized.fail_tail_lines, 25);
+});
+
+test('validateWorkflowConfig canonicalizes scope budget guard values before guard normalization', () => {
+    const normalized = validateWorkflowConfig({
+        full_suite_validation: {
+            enabled: false,
+            command: 'npm test',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        },
+        scope_budget_guard: {
+            enabled: 'false',
+            profiles: ['Strict', 'balanced'],
+            action: 'warn only',
+            max_files: '7',
+            max_changed_lines: '300',
+            max_required_reviews: '3',
+            max_review_tokens: '5000'
+        }
+    });
+
+    const guard = normalized.scope_budget_guard as Record<string, unknown>;
+    assert.equal(guard.enabled, false);
+    assert.deepEqual(guard.profiles, ['strict', 'balanced']);
+    assert.equal(guard.action, 'WARN_ONLY');
+    assert.equal(guard.max_files, 7);
+    assert.equal(guard.max_changed_lines, 300);
+    assert.equal(guard.max_required_reviews, 3);
+    assert.equal(guard.max_review_tokens, 5000);
 });
 
 test('validateOutputFiltersConfig accepts context-driven parser controls from the tracked template', () => {

@@ -18,6 +18,11 @@ import {
     type WorkflowConfigData
 } from '../../core/workflow-config';
 import {
+    SCOPE_BUDGET_GUARD_ACTIONS,
+    normalizeScopeBudgetGuardConfig,
+    type ScopeBudgetGuardConfig
+} from '../../core/scope-budget-guard';
+import {
     OUT_OF_SCOPE_FAILURE_POLICIES,
     type OutOfScopeFailurePolicy
 } from '../../gates/full-suite-validation';
@@ -34,6 +39,7 @@ type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefine
 type WorkflowFileConfigData = {
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy?: WorkflowConfigData['review_execution_policy'];
+    scope_budget_guard?: WorkflowConfigData['scope_budget_guard'];
     [key: string]: unknown;
 };
 
@@ -66,8 +72,10 @@ interface WorkflowCommandResultBase {
     config_exists: boolean;
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy: WorkflowReviewExecutionPolicyView;
+    scope_budget_guard: ScopeBudgetGuardConfig;
     visible_summary_line: string;
     review_execution_policy_summary_line: string;
+    scope_budget_guard_summary_line: string;
 }
 
 interface WorkflowShowResult extends WorkflowCommandResultBase {
@@ -79,6 +87,17 @@ interface WorkflowSetResult extends WorkflowCommandResultBase {
     status: 'CHANGED' | 'NO_CHANGE';
     changed: boolean;
     changed_fields: string[];
+}
+
+interface WorkflowValidateResult extends WorkflowCommandResultBase {
+    action: 'validate';
+    status: 'PASS';
+}
+
+interface WorkflowExplainResult extends WorkflowCommandResultBase {
+    action: 'explain';
+    topic: 'scope-budget-guard';
+    explanation: string[];
 }
 
 const WORKFLOW_SHARED_DEFINITIONS = {
@@ -95,7 +114,14 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--full-suite-green-summary-max-lines': { key: 'fullSuiteGreenSummaryMaxLines', type: 'string' },
     '--full-suite-red-failure-chunk-lines': { key: 'fullSuiteRedFailureChunkLines', type: 'string' },
     '--full-suite-out-of-scope-failure-policy': { key: 'fullSuiteOutOfScopeFailurePolicy', type: 'string' },
-    '--review-execution-policy': { key: 'reviewExecutionPolicy', type: 'string' }
+    '--review-execution-policy': { key: 'reviewExecutionPolicy', type: 'string' },
+    '--scope-budget-enabled': { key: 'scopeBudgetEnabled', type: 'string' },
+    '--scope-budget-action': { key: 'scopeBudgetAction', type: 'string' },
+    '--scope-budget-profiles': { key: 'scopeBudgetProfiles', type: 'string' },
+    '--scope-budget-max-files': { key: 'scopeBudgetMaxFiles', type: 'string' },
+    '--scope-budget-max-changed-lines': { key: 'scopeBudgetMaxChangedLines', type: 'string' },
+    '--scope-budget-max-required-reviews': { key: 'scopeBudgetMaxRequiredReviews', type: 'string' },
+    '--scope-budget-max-review-tokens': { key: 'scopeBudgetMaxReviewTokens', type: 'string' }
 };
 
 function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoots {
@@ -115,14 +141,24 @@ function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoot
     };
 }
 
+function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFileConfigData {
+    const defaultConfig = buildDefaultWorkflowConfig() as WorkflowConfigData;
+    return {
+        ...config,
+        full_suite_validation: config.full_suite_validation,
+        scope_budget_guard: normalizeScopeBudgetGuardConfig(config.scope_budget_guard ?? defaultConfig.scope_budget_guard)
+    };
+}
+
 function readWorkflowConfigState(configPath: string, bundleRoot: string): WorkflowConfigState {
     if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
         const defaultConfig = buildDefaultWorkflowConfig() as WorkflowConfigData;
         return {
             rawConfig: null,
-            config: {
-                full_suite_validation: defaultConfig.full_suite_validation
-            },
+            config: normalizeWorkflowFileConfig({
+                full_suite_validation: defaultConfig.full_suite_validation,
+                scope_budget_guard: defaultConfig.scope_budget_guard
+            }),
             exists: false,
             missingReviewExecutionPolicyMode: hasMaterializedWorkflowConfigBaseline(bundleRoot)
                 ? 'legacy_test_downstream'
@@ -140,7 +176,7 @@ function readWorkflowConfigState(configPath: string, bundleRoot: string): Workfl
     }
 
     try {
-        const validated = validateWorkflowConfig(parsed) as WorkflowFileConfigData;
+        const validated = normalizeWorkflowFileConfig(validateWorkflowConfig(parsed) as WorkflowFileConfigData);
         return {
             rawConfig: validated,
             config: validated,
@@ -183,11 +219,16 @@ function buildReviewExecutionPolicyView(state: WorkflowConfigState): WorkflowRev
     };
 }
 
+function buildScopeBudgetGuardLine(config: ScopeBudgetGuardConfig): string {
+    return `Scope budget guard: ${config.enabled ? config.action : 'disabled'} profiles=${config.profiles.join(',')} max_files=${config.max_files} max_lines=${config.max_changed_lines} max_reviews=${config.max_required_reviews} max_review_tokens=${config.max_review_tokens}`;
+}
+
 function buildWorkflowShowResult(
     roots: WorkflowCommandRoots,
     state: WorkflowConfigState
 ): WorkflowShowResult {
     const reviewExecutionPolicy = buildReviewExecutionPolicyView(state);
+    const scopeBudgetGuard = normalizeScopeBudgetGuardConfig(state.config.scope_budget_guard);
     return {
         action: 'show',
         scope: 'repo-local',
@@ -197,8 +238,10 @@ function buildWorkflowShowResult(
         config_exists: state.exists,
         full_suite_validation: state.config.full_suite_validation,
         review_execution_policy: reviewExecutionPolicy,
+        scope_budget_guard: scopeBudgetGuard,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
-        review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line
+        review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
+        scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard)
     };
 }
 
@@ -209,6 +252,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
 
     const fullSuiteValidation = result.full_suite_validation;
     const reviewExecutionPolicy = result.review_execution_policy;
+    const scopeBudgetGuard = result.scope_budget_guard;
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
     lines.push(`Action: ${result.action}`);
@@ -219,6 +263,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ConfigExists: ${result.config_exists}`);
     lines.push(result.visible_summary_line);
     lines.push(result.review_execution_policy_summary_line);
+    lines.push(result.scope_budget_guard_summary_line);
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
@@ -229,8 +274,16 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ReviewExecutionPolicyConfigured: ${reviewExecutionPolicy.configured}`);
     lines.push(`ReviewExecutionPolicyDescription: ${reviewExecutionPolicy.description}`);
     lines.push(`ReviewExecutionPolicyAllowedModes: ${reviewExecutionPolicy.allowed_modes.join(', ')}`);
+    lines.push(`ScopeBudgetGuardEnabled: ${scopeBudgetGuard.enabled}`);
+    lines.push(`ScopeBudgetGuardProfiles: ${scopeBudgetGuard.profiles.join(', ')}`);
+    lines.push(`ScopeBudgetGuardAction: ${scopeBudgetGuard.action}`);
+    lines.push(`ScopeBudgetGuardMaxFiles: ${scopeBudgetGuard.max_files}`);
+    lines.push(`ScopeBudgetGuardMaxChangedLines: ${scopeBudgetGuard.max_changed_lines}`);
+    lines.push(`ScopeBudgetGuardMaxRequiredReviews: ${scopeBudgetGuard.max_required_reviews}`);
+    lines.push(`ScopeBudgetGuardMaxReviewTokens: ${scopeBudgetGuard.max_review_tokens}`);
     lines.push('Tip: run "workflow set --full-suite-enabled true|false" to change the repo-local mode.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}>" to change review launch ordering.`);
+    lines.push('Tip: run "workflow set --scope-budget-enabled true|false" to change the scope budget guard.');
     return lines.join('\n');
 }
 
@@ -268,6 +321,25 @@ function parseOutOfScopeFailurePolicy(value: string): OutOfScopeFailurePolicy {
     return normalized as OutOfScopeFailurePolicy;
 }
 
+function parseScopeBudgetAction(value: string): ScopeBudgetGuardConfig['action'] {
+    const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (!SCOPE_BUDGET_GUARD_ACTIONS.includes(normalized as ScopeBudgetGuardConfig['action'])) {
+        throw new Error(`--scope-budget-action must be one of: ${SCOPE_BUDGET_GUARD_ACTIONS.join(', ')}.`);
+    }
+    return normalized as ScopeBudgetGuardConfig['action'];
+}
+
+function parseProfileList(value: string): string[] {
+    const profiles = [...new Set(value
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean))];
+    if (profiles.length === 0) {
+        throw new Error('--scope-budget-profiles must contain at least one profile.');
+    }
+    return profiles;
+}
+
 function writeWorkflowConfig(configPath: string, config: WorkflowFileConfigData): void {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const validated = validateWorkflowConfig(config) as WorkflowFileConfigData;
@@ -292,9 +364,9 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         ?? (preserveLegacyMissingReviewExecutionPolicy
             ? { full_suite_validation: state.config.full_suite_validation }
             : buildDefaultWorkflowConfig());
-    const nextConfig = JSON.parse(JSON.stringify(
+    const nextConfig = normalizeWorkflowFileConfig(JSON.parse(JSON.stringify(
         mutableBaseConfig
-    )) as WorkflowFileConfigData;
+    )) as WorkflowFileConfigData);
     const nextFullSuiteValidation = JSON.parse(
         JSON.stringify(state.config.full_suite_validation)
     ) as WorkflowConfigData['full_suite_validation'];
@@ -352,22 +424,56 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         };
         changedFields.push('review_execution_policy.mode');
     }
+    const nextScopeBudgetGuard = normalizeScopeBudgetGuardConfig(nextConfig.scope_budget_guard);
+    if (typeof options.scopeBudgetEnabled === 'string') {
+        nextScopeBudgetGuard.enabled = parseBooleanText(options.scopeBudgetEnabled, '--scope-budget-enabled');
+        changedFields.push('scope_budget_guard.enabled');
+    }
+    if (typeof options.scopeBudgetAction === 'string') {
+        nextScopeBudgetGuard.action = parseScopeBudgetAction(options.scopeBudgetAction);
+        changedFields.push('scope_budget_guard.action');
+    }
+    if (typeof options.scopeBudgetProfiles === 'string') {
+        nextScopeBudgetGuard.profiles = parseProfileList(options.scopeBudgetProfiles);
+        changedFields.push('scope_budget_guard.profiles');
+    }
+    if (typeof options.scopeBudgetMaxFiles === 'string') {
+        nextScopeBudgetGuard.max_files = parseIntegerText(options.scopeBudgetMaxFiles, '--scope-budget-max-files', 1);
+        changedFields.push('scope_budget_guard.max_files');
+    }
+    if (typeof options.scopeBudgetMaxChangedLines === 'string') {
+        nextScopeBudgetGuard.max_changed_lines = parseIntegerText(options.scopeBudgetMaxChangedLines, '--scope-budget-max-changed-lines', 1);
+        changedFields.push('scope_budget_guard.max_changed_lines');
+    }
+    if (typeof options.scopeBudgetMaxRequiredReviews === 'string') {
+        nextScopeBudgetGuard.max_required_reviews = parseIntegerText(options.scopeBudgetMaxRequiredReviews, '--scope-budget-max-required-reviews', 1);
+        changedFields.push('scope_budget_guard.max_required_reviews');
+    }
+    if (typeof options.scopeBudgetMaxReviewTokens === 'string') {
+        nextScopeBudgetGuard.max_review_tokens = parseIntegerText(options.scopeBudgetMaxReviewTokens, '--scope-budget-max-review-tokens', 1);
+        changedFields.push('scope_budget_guard.max_review_tokens');
+    }
+    nextConfig.scope_budget_guard = nextScopeBudgetGuard;
 
     if (changedFields.length === 0) {
         throw new Error(
             "Workflow setting flags are required for 'workflow set'. "
             + 'Use --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
-            + '--full-suite-out-of-scope-failure-policy, or --review-execution-policy.'
+            + '--full-suite-out-of-scope-failure-policy, --review-execution-policy, '
+            + 'or --scope-budget-* flags.'
         );
     }
 
     const currentSerialized = JSON.stringify(
-        validateWorkflowConfig(state.rawConfig ?? { full_suite_validation: state.config.full_suite_validation }),
+        normalizeWorkflowFileConfig(validateWorkflowConfig(state.rawConfig ?? {
+            full_suite_validation: state.config.full_suite_validation,
+            scope_budget_guard: state.config.scope_budget_guard
+        }) as WorkflowFileConfigData),
         null,
         2
     ) + '\n';
-    const nextValidated = validateWorkflowConfig(nextConfig) as WorkflowFileConfigData;
+    const nextValidated = normalizeWorkflowFileConfig(validateWorkflowConfig(nextConfig) as WorkflowFileConfigData);
     const nextSerialized = JSON.stringify(nextValidated, null, 2) + '\n';
     const changed = !state.exists || nextSerialized !== currentSerialized;
 
@@ -395,10 +501,57 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     return result;
 }
 
+function handleValidate(options: ParsedOptionsRecord): WorkflowValidateResult {
+    const roots = resolveWorkflowRoots(options);
+    const state = readWorkflowConfigState(roots.configPath, roots.bundleRoot);
+    const result: WorkflowValidateResult = {
+        ...buildWorkflowShowResult(roots, state),
+        action: 'validate',
+        status: 'PASS'
+    };
+    if (options.json === true) {
+        console.log(JSON.stringify(result, null, 2));
+    } else {
+        console.log('GARDA_WORKFLOW');
+        console.log('Action: validate');
+        console.log('Status: PASS');
+        console.log(`ConfigPath: ${roots.configPath}`);
+        console.log(result.scope_budget_guard_summary_line);
+    }
+    return result;
+}
+
+function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
+    const roots = resolveWorkflowRoots(options);
+    const state = readWorkflowConfigState(roots.configPath, roots.bundleRoot);
+    const result: WorkflowExplainResult = {
+        ...buildWorkflowShowResult(roots, state),
+        action: 'explain',
+        topic: 'scope-budget-guard',
+        explanation: [
+            'The scope budget guard stops large configured-profile tasks before compile/review loops.',
+            'It compares changed file count, changed line count, required review lanes, and estimated review tokens against workflow-config.json limits.',
+            'When action is BLOCK_FOR_SPLIT, next-step blocks ordinary continuation and asks the operator to split or decompose the task.'
+        ]
+    };
+    if (options.json === true) {
+        console.log(JSON.stringify(result, null, 2));
+    } else {
+        console.log('GARDA_WORKFLOW');
+        console.log('Action: explain');
+        console.log('Topic: scope-budget-guard');
+        console.log(result.scope_budget_guard_summary_line);
+        for (const line of result.explanation) {
+            console.log(`- ${line}`);
+        }
+    }
+    return result;
+}
+
 export function handleWorkflow(
     commandArgv: string[],
     packageJson: PackageJsonLike
-): WorkflowShowResult | WorkflowSetResult | null {
+): WorkflowShowResult | WorkflowSetResult | WorkflowValidateResult | WorkflowExplainResult | null {
     const firstArg = String(commandArgv[0] || '').trim();
     const hasExplicitSubcommand = firstArg.length > 0 && !firstArg.startsWith('-');
     const subcommand = hasExplicitSubcommand ? firstArg : 'show';
@@ -416,7 +569,11 @@ export function handleWorkflow(
             return handleShow(options as ParsedOptionsRecord);
         case 'set':
             return handleSet(options as ParsedOptionsRecord);
+        case 'validate':
+            return handleValidate(options as ParsedOptionsRecord);
+        case 'explain':
+            return handleExplain(options as ParsedOptionsRecord);
         default:
-            throw new Error(`Unknown workflow action: ${subcommand}. Allowed values: show, set.`);
+            throw new Error(`Unknown workflow action: ${subcommand}. Allowed values: show, set, validate, explain.`);
     }
 }

@@ -65,6 +65,62 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Mandatory full-suite: false'));
         assert.ok(output.includes('Review execution policy: code_first_optional'));
         assert.ok(output.includes('FullSuiteCommand: npm test'));
+        assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set updates scope budget guard settings deterministically', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--scope-budget-enabled', 'true',
+            '--scope-budget-action', 'warn_only',
+            '--scope-budget-profiles', 'strict,balanced',
+            '--scope-budget-max-files', '7',
+            '--scope-budget-max-changed-lines', '300',
+            '--scope-budget-max-required-reviews', '3',
+            '--scope-budget-max-review-tokens', '5000'
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.ok(output.includes('Scope budget guard: WARN_ONLY profiles=strict,balanced'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.scope_budget_guard.enabled, true);
+        assert.equal(parsedConfig.scope_budget_guard.action, 'WARN_ONLY');
+        assert.deepEqual(parsedConfig.scope_budget_guard.profiles, ['strict', 'balanced']);
+        assert.equal(parsedConfig.scope_budget_guard.max_files, 7);
+        assert.equal(parsedConfig.scope_budget_guard.max_changed_lines, 300);
+        assert.equal(parsedConfig.scope_budget_guard.max_required_reviews, 3);
+        assert.equal(parsedConfig.scope_budget_guard.max_review_tokens, 5000);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow validate and explain include scope budget guard diagnostics', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        const validateOutput = captureConsole(() => handleWorkflow([
+            'validate',
+            '--bundle-root', bundleRoot
+        ], PACKAGE_JSON)).output;
+        assert.ok(validateOutput.includes('Action: validate'));
+        assert.ok(validateOutput.includes('Status: PASS'));
+
+        const explainOutput = captureConsole(() => handleWorkflow([
+            'explain',
+            '--bundle-root', bundleRoot
+        ], PACKAGE_JSON)).output;
+        assert.ok(explainOutput.includes('Topic: scope-budget-guard'));
+        assert.ok(explainOutput.includes('before compile/review loops'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

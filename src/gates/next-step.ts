@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import {
+    LEGACY_REVIEW_EXECUTION_POLICY_MODE,
     getReviewExecutionDependencies,
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
@@ -51,6 +52,9 @@ import {
     resolveBundleNameForTarget
 } from '../core/constants';
 import {
+    buildDefaultWorkflowConfig
+} from '../core/workflow-config';
+import {
     REVIEW_CONTRACTS
 } from './required-reviews-check';
 import {
@@ -91,8 +95,16 @@ import {
     normalizeProviderId
 } from '../core/provider-registry';
 import {
+    evaluateScopeBudgetGuard,
+    normalizeScopeBudgetGuardConfig,
+    type ScopeBudgetGuardEvaluation
+} from '../core/scope-budget-guard';
+import {
     resolveTaskProfileSelection
 } from '../policy/task-profile-selection';
+import {
+    validateWorkflowConfig
+} from '../schemas/config-artifacts';
 import {
     detectSourceCheckoutRuntimeStaleness,
     type SourceCheckoutRuntimeStalenessResult
@@ -2414,6 +2426,75 @@ function parseOptionalNumberField(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
+function readWorkflowConfigRecordForNextStep(repoRoot: string): Record<string, unknown> | null {
+    const workflowConfigPath = resolveWorkflowConfigPath(repoRoot);
+    if (!fileExists(workflowConfigPath)) {
+        return null;
+    }
+
+    let workflowConfig: unknown;
+    try {
+        workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+    } catch (error: unknown) {
+        throw new Error(
+            `Workflow config at '${toRepoDisplayPath(repoRoot, workflowConfigPath)}' is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+    if (!isPlainRecord(workflowConfig)) {
+        throw new Error(
+            `Workflow config at '${toRepoDisplayPath(repoRoot, workflowConfigPath)}' must be a JSON object.`
+        );
+    }
+    return workflowConfig;
+}
+
+function readScopeBudgetGuardEvaluation(
+    repoRoot: string,
+    preflight: Record<string, unknown> | null,
+    profileSummary: NextStepProfileSummary | null,
+    requiredReviewTypes: string[]
+): ScopeBudgetGuardEvaluation | null {
+    if (!preflight) {
+        return null;
+    }
+    const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
+    const budgetForecast = isPlainRecord(preflight.budget_forecast) ? preflight.budget_forecast : {};
+    const defaultWorkflowConfig = buildDefaultWorkflowConfig();
+    let rawScopeBudgetGuard: unknown = defaultWorkflowConfig.scope_budget_guard;
+    const workflowConfig = readWorkflowConfigRecordForNextStep(repoRoot);
+    if (workflowConfig?.scope_budget_guard !== undefined) {
+        const validatedWorkflowConfig = validateWorkflowConfig({
+            full_suite_validation: defaultWorkflowConfig.full_suite_validation,
+            review_execution_policy: defaultWorkflowConfig.review_execution_policy,
+            scope_budget_guard: workflowConfig.scope_budget_guard
+        });
+        rawScopeBudgetGuard = isPlainRecord(validatedWorkflowConfig.scope_budget_guard)
+            ? validatedWorkflowConfig.scope_budget_guard
+            : defaultWorkflowConfig.scope_budget_guard;
+    }
+
+    const changedFilesCount =
+        parseOptionalNumberField(metrics.changed_files_count)
+        ?? (Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0);
+    const changedLinesTotal =
+        parseOptionalNumberField(metrics.changed_lines_total)
+        ?? parseOptionalNumberField(budgetForecast.changed_lines_total)
+        ?? 0;
+    const totalEstimatedReviewTokens =
+        parseOptionalNumberField(budgetForecast.total_estimated_review_tokens)
+        ?? 0;
+    return evaluateScopeBudgetGuard(
+        normalizeScopeBudgetGuardConfig(rawScopeBudgetGuard),
+        {
+            profileName: profileSummary?.effective_profile || profileSummary?.task_selected_profile || null,
+            changedFilesCount,
+            changedLinesTotal,
+            requiredReviewCount: requiredReviewTypes.length,
+            totalEstimatedReviewTokens
+        }
+    );
+}
+
 function buildNextStepProfileSummary(
     repoRoot: string,
     taskEntry: TaskQueueEntry | null,
@@ -3028,6 +3109,59 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const taskEntry = readTaskQueueEntry(repoRoot, taskId);
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
+    try {
+        readWorkflowConfigRecordForNextStep(repoRoot);
+    } catch (error: unknown) {
+        const fallbackFullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
+        const coreArtifacts = artifactState(repoRoot, [
+            { key: 'task-mode', path: path.join(reviewsRoot, `${taskId}-task-mode.json`) },
+            { key: 'rule-pack', path: rulePackPath },
+            { key: 'handshake', path: path.join(reviewsRoot, `${taskId}-handshake.json`) },
+            { key: 'shell-smoke', path: path.join(reviewsRoot, `${taskId}-shell-smoke.json`) },
+            { key: 'preflight', path: preflightPath },
+            { key: 'compile-gate', path: path.join(reviewsRoot, `${taskId}-compile-gate.json`) },
+            { key: 'review-gate', path: path.join(reviewsRoot, `${taskId}-review-gate.json`) },
+            { key: 'doc-impact', path: path.join(reviewsRoot, `${taskId}-doc-impact.json`) },
+            { key: 'full-suite-validation', path: path.join(reviewsRoot, `${taskId}-full-suite-validation.json`) },
+            { key: 'completion-gate', path: path.join(reviewsRoot, `${taskId}-completion-gate.json`) }
+        ]);
+        return buildResult({
+            taskId,
+            navigatorCommand,
+            status: 'BLOCKED',
+            nextGate: 'workflow-config-validation',
+            title: 'Validate workflow configuration before continuing.',
+            reason: error instanceof Error ? error.message : String(error),
+            commands: [
+                buildCommand(
+                    'Validate workflow config',
+                    `${cliPrefix} workflow validate --target-root "."`
+                )
+            ],
+            missingArtifacts: coreArtifacts.missing,
+            presentArtifacts: coreArtifacts.present,
+            fullSuite: {
+                enabled: fallbackFullSuiteConfig.enabled,
+                command: fallbackFullSuiteConfig.command,
+                config_path: toRepoDisplayPath(repoRoot, resolveWorkflowConfigPath(repoRoot)),
+                config_source: 'effective_workflow_config',
+                note: 'Full-suite validation is unavailable until workflow config validation passes.'
+            },
+            review: {
+                required_reviews: [],
+                review_execution_policy_mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
+                review_execution_policy_source: 'workflow_config_fallback',
+                next_review_type: null,
+                blocked_review_dependencies: [],
+                ordinary_doc_review_skips: [],
+                trust: null,
+                trust_note: 'Review trust is unavailable until workflow config validation passes.'
+            },
+            auditStatus: 'INCOMPLETE',
+            profile: profileSummary,
+            sourceRuntimeStaleness: detectSourceCheckoutRuntimeStaleness(repoRoot)
+        });
+    }
     const summary = buildTaskAuditSummary({
         taskId,
         repoRoot,
@@ -3368,6 +3502,47 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         taskId,
                         getPostPreflightRuleFileNames(preflight, taskMode)
                     )
+                )
+            ]
+        });
+    }
+
+    let scopeBudgetGuardEvaluation: ScopeBudgetGuardEvaluation | null = null;
+    try {
+        scopeBudgetGuardEvaluation = readScopeBudgetGuardEvaluation(
+            repoRoot,
+            preflight,
+            profileSummary,
+            requiredReviewTypes
+        );
+    } catch (error: unknown) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'workflow-config-validation',
+            title: 'Validate workflow configuration before continuing.',
+            reason: error instanceof Error ? error.message : String(error),
+            commands: [
+                buildCommand(
+                    'Validate workflow config',
+                    `${cliPrefix} workflow validate --target-root "."`
+                )
+            ]
+        });
+    }
+    if (scopeBudgetGuardEvaluation?.should_block) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'scope-budget-decomposition-guard',
+            title: 'Split or decompose the task before expensive gates.',
+            reason:
+                `${scopeBudgetGuardEvaluation.summary_line}. ` +
+                'The configured workflow budget requires decomposition before compile, review, or full-suite gates continue.',
+            commands: [
+                buildCommand(
+                    'Inspect scope budget guard',
+                    `${cliPrefix} workflow explain --target-root "."`
                 )
             ]
         });
