@@ -349,14 +349,20 @@ garda workflow --target-root "."
 garda workflow show --target-root "." --json
 garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test"
 garda workflow set --target-root "." --review-execution-policy strict_sequential
+garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000
+garda workflow explain --target-root "."
 ```
 
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
-- The current surface manages repo-local `full_suite_validation` and `review_execution_policy` settings in `live/config/workflow-config.json`.
+- The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, and `scope_budget_guard` settings in `live/config/workflow-config.json`.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
 - Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.
 - Existing repos that still omit `review_execution_policy` stay on the legacy compatibility path (`test` waits for all required upstream reviews, other review types remain independent) until an operator explicitly sets one of the supported modes.
+- Scope budget guard settings can be changed with `--scope-budget-enabled true|false`, `--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY`, `--scope-budget-profiles strict,balanced`, `--scope-budget-max-files N`, `--scope-budget-max-changed-lines N`, `--scope-budget-max-required-reviews N`, and `--scope-budget-max-review-tokens N`.
+- The default scope budget guard is enabled for `strict`, uses `BLOCK_FOR_SPLIT`, and limits large tasks before expensive gates with `max_files=12`, `max_changed_lines=1200`, `max_required_reviews=6`, and `max_review_tokens=50000`.
+- `max_required_reviews` means required review lanes from the current preflight, not completed review attempts.
+- `max_review_tokens` is a heuristic review forecast, not a measured tokenizer count; use `garda workflow explain` to show the effective guard settings and behavior.
 
 ### `garda review-capabilities`
 

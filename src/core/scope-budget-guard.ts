@@ -42,7 +42,7 @@ export const DEFAULT_SCOPE_BUDGET_GUARD_CONFIG: ScopeBudgetGuardConfig = Object.
     max_files: 12,
     max_changed_lines: 1200,
     max_required_reviews: 6,
-    max_review_tokens: 20000
+    max_review_tokens: 50000
 });
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {

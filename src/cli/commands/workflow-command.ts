@@ -531,6 +531,8 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
         explanation: [
             'The scope budget guard stops large configured-profile tasks before compile/review loops.',
             'It compares changed file count, changed line count, required review lanes, and estimated review tokens against workflow-config.json limits.',
+            'Required review lanes means the number of review types required by the current preflight, not the number of completed review attempts.',
+            'Estimated review tokens are a heuristic forecast from review type base cost plus changed file and changed line costs; they are not measured model tokenizer output.',
             'When action is BLOCK_FOR_SPLIT, next-step blocks ordinary continuation and asks the operator to split or decompose the task.'
         ]
     };
