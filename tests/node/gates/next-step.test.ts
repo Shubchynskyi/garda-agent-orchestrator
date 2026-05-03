@@ -622,6 +622,21 @@ function materializeFinalCloseout(repoRoot: string, taskId: string): void {
     synchronizeFinalCloseoutArtifacts(summary);
 }
 
+function seedSourceCheckoutRuntime(repoRoot: string, stale: boolean): void {
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), '{"name":"garda-test"}\n', 'utf8');
+    fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'src', 'index.ts'), 'export {};\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+    fs.mkdirSync(path.join(repoRoot, 'dist', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'dist', 'src', 'app.js'), 'exports.value = 1;\n', 'utf8');
+    const generatedTime = stale
+        ? new Date(Date.now() - 5000)
+        : new Date(Date.now() + 5000);
+    fs.utimesSync(path.join(repoRoot, 'dist', 'src', 'app.js'), generatedTime, generatedTime);
+}
+
 afterEach(() => {
     for (const tempRoot of tempRoots) {
         fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -677,6 +692,75 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes(expectedProviderReference));
         assert.ok(!result.commands[0].command.includes('--provider "Codex"'));
         assert.ok(!result.commands[0].command.includes('<'));
+    });
+
+    it('reports stale source runtime as a first-class remediation before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        seedSourceCheckoutRuntime(repoRoot, true);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'source-runtime-remediation');
+        assert.equal(result.commands[0].command, 'npm run build');
+        assert.ok(result.reason.includes("intended gate 'classify-change'"));
+        assert.ok(result.reason.includes('Generated runtime file is older than source: src/app.ts newer than dist/src/app.js'));
+        assert.ok(text.includes('NextGate: source-runtime-remediation'));
+        assert.ok(text.includes('Rebuild source-checkout runtime: npm run build'));
+    });
+
+    it('does not report source runtime remediation before classify-change when generated runtime is clean', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        seedSourceCheckoutRuntime(repoRoot, false);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+    });
+
+    it('reports stale source runtime before non-classify gate commands', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        seedSourceCheckoutRuntime(repoRoot, true);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { seedPostPreflight: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'source-runtime-remediation');
+        assert.equal(result.commands[0].command, 'npm run build');
+        assert.ok(result.reason.includes("intended gate 'load-rule-pack'"));
+        assert.ok(result.reason.includes('gate load-rule-pack'));
+    });
+
+    it('reports stale source runtime before review gate commands without hiding the intended gate', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        seedSourceCheckoutRuntime(repoRoot, true);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'source-runtime-remediation');
+        assert.equal(result.commands[0].command, 'npm run build');
+        assert.ok(result.reason.includes("intended gate 'build-review-context'"));
+        assert.ok(result.reason.includes('gate build-review-context'));
+        assert.ok(result.reason.includes('--review-type "code"'));
     });
 
     it('uses shell-safe quoting for TASK.md summaries with embedded quotes', () => {
@@ -2209,6 +2293,22 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'required-reviews-check');
         assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
+    });
+
+    it('reports stale source runtime before required reviews check without hiding the intended gate', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        seedSourceCheckoutRuntime(repoRoot, true);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'source-runtime-remediation');
+        assert.equal(result.commands[0].command, 'npm run build');
+        assert.ok(result.reason.includes("intended gate 'required-reviews-check'"));
+        assert.ok(result.reason.includes('gate required-reviews-check'));
     });
 
     it('explains zero-diff no-review closeout before required reviews check', () => {

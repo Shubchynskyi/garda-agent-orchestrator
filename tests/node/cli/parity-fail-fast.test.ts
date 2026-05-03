@@ -94,7 +94,7 @@ test('gate command warns and continues when source checkout runtime is stale', a
     }
 });
 
-test('next-step command warns and continues when source checkout runtime is stale', async () => {
+test('next-step command suppresses legacy warning when source checkout runtime is stale', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-warning-dispatch-'));
     const previousExitCode = process.exitCode;
     const originalConsoleError = console.error;
@@ -127,8 +127,52 @@ test('next-step command warns and continues when source checkout runtime is stal
         });
 
         const combinedErrors = capturedErrors.join('\n');
-        assert.ok(combinedErrors.includes('Source Runtime Warning: source checkout generated runtime may be stale.'));
-        assert.ok(combinedErrors.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js'));
+        assert.ok(!combinedErrors.includes('Source Runtime Warning: source checkout generated runtime may be stale.'));
+        assert.ok(!combinedErrors.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js'));
+        assert.ok(capturedOutput.join('').includes('GARDA_NEXT_STEP'));
+    } finally {
+        console.error = originalConsoleError;
+        (process.stdout as unknown as { write: typeof process.stdout.write }).write = originalStdoutWrite;
+        process.exitCode = previousExitCode;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('gate next-step suppresses legacy warning when source checkout runtime is stale', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-warning-dispatch-'));
+    const previousExitCode = process.exitCode;
+    const originalConsoleError = console.error;
+    const originalStdoutWrite = process.stdout.write;
+    const capturedErrors: string[] = [];
+    const capturedOutput: string[] = [];
+    try {
+        seedMatchingSourceCheckoutBundle(tmpDir);
+        writeFixtureFile(tmpDir, 'src/gates/next-step.ts', 'export const source = true;\n');
+        writeFixtureFile(tmpDir, 'dist/src/index.js', 'module.exports = {};\n');
+        writeFixtureFile(tmpDir, 'dist/src/gates/next-step.js', 'exports.source = false;\n');
+        const oldTime = new Date(Date.now() - 5000);
+        fs.utimesSync(path.join(tmpDir, 'dist', 'src', 'gates', 'next-step.js'), oldTime, oldTime);
+
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
+        };
+        (process.stdout as unknown as { write: (...args: unknown[]) => boolean }).write = (...args: unknown[]): boolean => {
+            capturedOutput.push(String(args[0]));
+            return true;
+        };
+        process.exitCode = 0;
+
+        await dispatchCliCommand({
+            commandName: 'gate',
+            commandArgv: ['next-step', 'T-runtime-probe', '--repo-root', tmpDir],
+            packageJson: TEST_PACKAGE_JSON,
+            packageRoot: REPO_ROOT,
+            globalFlags: { offline: false, forceNetwork: false }
+        });
+
+        const combinedErrors = capturedErrors.join('\n');
+        assert.ok(!combinedErrors.includes('Source Runtime Warning: source checkout generated runtime may be stale.'));
+        assert.ok(!combinedErrors.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js'));
         assert.ok(capturedOutput.join('').includes('GARDA_NEXT_STEP'));
     } finally {
         console.error = originalConsoleError;

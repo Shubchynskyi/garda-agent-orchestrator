@@ -92,6 +92,10 @@ import {
 import {
     resolveTaskProfileSelection
 } from '../policy/task-profile-selection';
+import {
+    detectSourceCheckoutRuntimeStaleness,
+    type SourceCheckoutRuntimeStalenessResult
+} from '../validators/workspace-layout';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -2670,7 +2674,21 @@ function buildResult(params: {
     auditStatus: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
     finalReport?: NextStepFinalReportSummary | null;
+    sourceRuntimeStaleness?: SourceCheckoutRuntimeStalenessResult | null;
 }): NextStepResult {
+    const intendedGateCommand = params.commands.find((command) => /\bgate\s+[a-z0-9-]+/iu.test(command.command));
+    if (
+        params.sourceRuntimeStaleness?.isStale
+        && params.nextGate !== 'source-runtime-remediation'
+        && intendedGateCommand
+    ) {
+        return buildSourceRuntimeRemediationResult({
+            ...params,
+            intendedGate: params.nextGate || intendedGateCommand.label,
+            intendedCommand: intendedGateCommand.command,
+            staleness: params.sourceRuntimeStaleness
+        });
+    }
     const missingArtifacts = params.status === 'DONE' ? [] : params.missingArtifacts;
     return {
         schema_version: 1,
@@ -2690,6 +2708,45 @@ function buildResult(params: {
         profile: params.profile,
         final_report: params.finalReport || null
     };
+}
+
+function buildSourceRuntimeRemediationResult(params: {
+    taskId: string;
+    navigatorCommand: string;
+    intendedGate: string;
+    intendedCommand: string;
+    staleness: SourceCheckoutRuntimeStalenessResult;
+    missingArtifacts: NextStepArtifactState[];
+    presentArtifacts: NextStepArtifactState[];
+    fullSuite: NextStepFullSuiteSummary;
+    review: NextStepReviewSummary;
+    auditStatus: TaskAuditSummaryResult['status'];
+    profile: NextStepProfileSummary | null;
+}): NextStepResult {
+    const violationSummary = params.staleness.violations.length > 0
+        ? params.staleness.violations.join('; ')
+        : 'source checkout generated runtime may be stale';
+    const remediation = params.staleness.remediation || 'Run "npm run build" before continuing gate execution from this source checkout.';
+    return buildResult({
+        taskId: params.taskId,
+        navigatorCommand: params.navigatorCommand,
+        status: 'BLOCKED',
+        nextGate: 'source-runtime-remediation',
+        title: 'Rebuild source-checkout runtime before continuing.',
+        reason:
+            `Source checkout generated runtime is stale: ${violationSummary}. ` +
+            `Remediation blocks intended gate '${params.intendedGate}'. ` +
+            `After the rebuild, rerun the navigator to continue with '${params.intendedGate}': ${params.intendedCommand}.`,
+        commands: [
+            buildCommand('Rebuild source-checkout runtime', remediation.replace(/^Run\s+"([^"]+)".*$/u, '$1'))
+        ],
+        missingArtifacts: params.missingArtifacts,
+        presentArtifacts: params.presentArtifacts,
+        fullSuite: params.fullSuite,
+        review: params.review,
+        auditStatus: params.auditStatus,
+        profile: params.profile
+    });
 }
 
 function buildFinalReportOrder(summary: TaskAuditSummaryResult, commitCommandSuggestion: string, commitQuestion: string): string[] {
@@ -2928,6 +2985,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         { key: 'completion-gate', path: path.join(reviewsRoot, `${taskId}-completion-gate.json`) }
     ]);
 
+    const sourceRuntimeStaleness = detectSourceCheckoutRuntimeStaleness(repoRoot);
     const resultBase = {
         taskId,
         navigatorCommand,
@@ -2936,9 +2994,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         fullSuite: fullSuiteSummary,
         review: reviewSummary,
         profile: profileSummary,
-        auditStatus: summary.status
+        auditStatus: summary.status,
+        sourceRuntimeStaleness
     };
-
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
         const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
         if (finalReport) {
@@ -3060,6 +3118,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
 
+        const classifyCommand = buildClassifyChangeCommand({
+            cliPrefix,
+            taskId,
+            taskMode,
+            preflightCommandPath,
+            includePlannedScope: true
+        });
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
@@ -3069,13 +3134,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Classify changed files',
-                    buildClassifyChangeCommand({
-                        cliPrefix,
-                        taskId,
-                        taskMode,
-                        preflightCommandPath,
-                        includePlannedScope: true
-                    })
+                    classifyCommand
                 )
             ]
         });
@@ -3083,6 +3142,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
 
     const preflightCycleReadiness = readPreflightCycleReadiness(eventsRoot, taskId);
     if (!preflightCycleReadiness.ready) {
+        const classifyCommand = buildClassifyChangeCommand({
+            cliPrefix,
+            taskId,
+            taskMode,
+            preflightCommandPath,
+            includePlannedScope: false,
+            changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
+        });
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
@@ -3092,14 +3159,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Refresh preflight',
-                    buildClassifyChangeCommand({
-                        cliPrefix,
-                        taskId,
-                        taskMode,
-                        preflightCommandPath,
-                        includePlannedScope: false,
-                        changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
-                    })
+                    classifyCommand
                 )
             ]
         });
@@ -3135,6 +3195,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         })
         : { ready: false, reason: 'No current preflight exists.' };
     if (!preflightWorkspaceReadiness.ready) {
+        const classifyCommand = buildClassifyChangeCommand({
+            cliPrefix,
+            taskId,
+            taskMode,
+            preflightCommandPath,
+            includePlannedScope: false,
+            changedFiles: preflightWorkspaceReadiness.currentChangedFiles
+                ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+        });
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
@@ -3144,15 +3213,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Refresh preflight',
-                    buildClassifyChangeCommand({
-                        cliPrefix,
-                        taskId,
-                        taskMode,
-                        preflightCommandPath,
-                        includePlannedScope: false,
-                        changedFiles: preflightWorkspaceReadiness.currentChangedFiles
-                            ?? getPreflightRefreshChangedFiles(taskMode, preflight)
-                    })
+                    classifyCommand
                 )
             ]
         });
@@ -3214,6 +3275,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ? readCompileReadiness(repoRoot, reviewsRoot, taskId, preflightPath)
         : { ready: false, reason: 'No current preflight exists.' };
     if (!isGatePassed(summary, 'compile-gate') || !compileReadiness.ready) {
+        const compileCommand = `${cliPrefix} gate compile-gate --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
@@ -3223,7 +3285,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Run compile gate',
-                    `${cliPrefix} gate compile-gate --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                    compileCommand
                 )
             ]
         });
@@ -3250,6 +3312,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         if (!isGatePassed(summary, 'full-suite-validation')) {
+            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -3262,7 +3325,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Run full-suite validation',
-                        `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                        fullSuiteCommand
                     )
                 ]
             });

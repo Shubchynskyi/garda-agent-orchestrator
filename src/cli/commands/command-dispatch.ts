@@ -62,6 +62,8 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
     const { commandName, commandArgv, packageJson, packageRoot, globalFlags } = options;
     const isIntrospection = commandArgv.some((arg) => arg === '--help' || arg === '-h' || arg === '--version' || arg === '-v');
+    const isNextStepNavigatorCommand = commandName === 'next-step'
+        || (commandName === 'gate' && String(commandArgv[0] || '').trim() === 'next-step');
 
     if (commandName === 'help') {
         printHelp(packageJson);
@@ -96,7 +98,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
                 })
             );
         }
-        if (!isIntrospection && (commandName === 'gate' || commandName === 'next-step')) {
+        if (!isIntrospection && (commandName === 'gate' || commandName === 'next-step') && !isNextStepNavigatorCommand) {
             const runtimeStaleness = detectSourceCheckoutRuntimeStaleness(parityRoot);
             if (runtimeStaleness.isStale) {
                 console.error(
