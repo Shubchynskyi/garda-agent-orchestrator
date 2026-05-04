@@ -492,11 +492,12 @@ describe('gates/full-suite-validation', () => {
             fs.writeFileSync(
                 helperScript,
                 [
+                    'const fs = require("node:fs");',
                     'const chunk = "x".repeat(64 * 1024);',
                     'for (let index = 0; index < 17; index += 1) {',
-                    '  process.stdout.write(`${chunk}\\n`);',
+                    '  fs.writeSync(1, `${chunk}\\n`);',
                     '}',
-                    'process.stdout.write("# tests 1\\n# pass 1\\n# fail 0\\n# duration_ms 1\\n");',
+                    'fs.writeSync(1, "# tests 1\\n# pass 1\\n# fail 0\\n# duration_ms 1\\n");',
                     'process.exit(0);'
                 ].join('\n'),
                 'utf8'
@@ -557,9 +558,10 @@ describe('gates/full-suite-validation', () => {
             fs.writeFileSync(
                 helperScript,
                 [
-                    'process.stdout.write("not ok 1 - failed at src/changed.ts:1\\n");',
+                    'const fs = require("node:fs");',
+                    'fs.writeSync(1, "not ok 1 - failed at src/changed.ts:1\\n");',
                     'for (let index = 0; index < 70000; index += 1) {',
-                    '  process.stdout.write(`verbose detail line ${index}\\n`);',
+                    '  fs.writeSync(1, `verbose detail line ${index}\\n`);',
                     '}',
                     'process.exit(7);'
                 ].join('\n'),
