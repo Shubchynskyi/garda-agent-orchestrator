@@ -104,16 +104,12 @@ import {
     normalizeReviewCycleGuardConfig,
     type ReviewCycleGuardEvaluation
 } from '../core/review-cycle-guard';
-import {
-    resolveTaskProfileSelection
-} from '../policy/task-profile-selection';
-import {
-    validateWorkflowConfig
-} from '../schemas/config-artifacts';
+import { resolveTaskProfileSelection } from '../policy/task-profile-selection';
+import { validateWorkflowConfig } from '../schemas/config-artifacts';
 import {
     detectSourceCheckoutRuntimeStaleness,
     type SourceCheckoutRuntimeStalenessResult
-} from '../validators/workspace-layout';
+} from '../validators';
 import {
     buildDefaultReviewScratchCommandPath,
     resolveDefaultReviewScratchPath,
@@ -428,7 +424,7 @@ function isGatePassed(summary: TaskAuditSummaryResult, gateName: string): boolea
 }
 
 function getRequiredReviewTypes(requiredReviews: Record<string, boolean>): string[] {
-    return REVIEW_PREPARATION_ORDER.filter((reviewType) => requiredReviews[reviewType] === true);
+    return REVIEW_PREPARATION_ORDER.filter((reviewType) => requiredReviews[reviewType]);
 }
 
 function hasZeroDiffNoReviewableScopeSuppression(
@@ -1050,10 +1046,7 @@ function timelineHasReviewReuseRecordedAfterCompile(eventsRoot: string, taskId: 
         reviewerProvenance: state.reviewerProvenance as unknown as Record<string, unknown> | null,
         latestCompileTaskSequence: latestCompileSequence
     });
-    if (!validation.valid) {
-        return false;
-    }
-    return true;
+    return validation.valid;
 }
 
 function timelineHasDelegatedReviewInvocationForCurrentContext(
@@ -2977,7 +2970,7 @@ function buildReviewCycleAutoSplitPromptContent(
         LATEST_FAILED_REVIEW: formatLatestFailedReviewForTemplate(latestFailedReview)
     };
     const template = readReviewCycleAutoSplitTemplate(repoRoot);
-    return `${template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (match, key: string) => replacements[key] ?? match).trimEnd()}\n`;
+    return `${template.replace(/\{\{([A-Z0-9_]+)}}/g, (match, key: string) => replacements[key] ?? match).trimEnd()}\n`;
 }
 
 function materializeReviewCycleAutoSplitPrompt(
@@ -3036,7 +3029,7 @@ function buildReviewCycleOperatorBlock(
     const autoSplitEnabled = evaluation.action === 'BLOCK_FOR_OPERATOR_DECISION'
         && evaluation.violations.length > 0
         && evaluation.active
-        && evaluation.auto_split_enabled === true;
+        && evaluation.auto_split_enabled;
     const autoSplitPrompt = autoSplitEnabled
         ? materializeReviewCycleAutoSplitPrompt(repoRoot, reviewsRoot, taskId, evaluation, latestFailedReview)
         : null;
@@ -3069,7 +3062,7 @@ function buildNextStepProfileSummary(
             ? taskEntry.profile.trim()
             : null;
 
-    let resolvedSelection: ReturnType<typeof resolveTaskProfileSelection>['selection'] | null = null;
+    let resolvedSelection: ReturnType<typeof resolveTaskProfileSelection>['selection'] | null;
     try {
         resolvedSelection = resolveTaskProfileSelection(
             path.join(repoRoot, 'garda-agent-orchestrator'),
@@ -3265,7 +3258,7 @@ function getLatestTimelineSequence(eventsRoot: string, taskId: string, eventType
             continue;
         }
         const sequence = event.integrity?.task_sequence ?? event.sequence;
-        if (typeof sequence !== 'number' || !Number.isFinite(sequence)) {
+        if (!Number.isFinite(sequence)) {
             continue;
         }
         latestSequence = latestSequence == null ? sequence : Math.max(latestSequence, sequence);
@@ -3527,10 +3520,7 @@ function finalCloseoutMatchesCurrentCycle(
     if (expectedBinding.preflight_sha256 && actualBinding.preflight_sha256 !== expectedBinding.preflight_sha256) {
         return false;
     }
-    if (expectedBinding.preflight_path && actualBinding.preflight_path !== expectedBinding.preflight_path) {
-        return false;
-    }
-    return true;
+    return !(expectedBinding.preflight_path && actualBinding.preflight_path !== expectedBinding.preflight_path);
 }
 
 function readReadyFinalReportSummary(

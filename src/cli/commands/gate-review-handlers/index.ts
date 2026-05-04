@@ -818,7 +818,7 @@ function assertReviewContextContractOrThrow(options: {
 }): void {
     const diffExpectations = buildReviewContextPreflightDiffExpectations(options.preflightPayload, options.reviewType);
     const requireStrictBindingMetadata = options.requireStrictBindingMetadata === true
-        || diffExpectations.expectedRequiredReview === true;
+        || diffExpectations.expectedRequiredReview;
     const violations = getReviewContextContractViolations({
         contextPath: options.contextPath,
         reviewContext: options.reviewContext,
@@ -1112,18 +1112,19 @@ function findMatchingReviewerLaunchPreparedEvent(
 }
 
 function readJsonFile(pathValue: string, label: string): Record<string, unknown> {
+    let parsed: unknown;
     try {
-        const parsed = JSON.parse(fs.readFileSync(pathValue, 'utf8')) as unknown;
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error(`${label} must contain a JSON object.`);
-        }
-        return parsed as Record<string, unknown>;
+        parsed = JSON.parse(fs.readFileSync(pathValue, 'utf8')) as unknown;
     } catch (error: unknown) {
         if (error instanceof SyntaxError) {
             throw new Error(`${label} must contain valid JSON: ${error.message}`);
         }
         throw error;
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`${label} must contain a JSON object.`);
+    }
+    return parsed as Record<string, unknown>;
 }
 
 function readJsonObjectIfPresent(pathValue: string): Record<string, unknown> | null {
@@ -1913,6 +1914,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
         contextSha256: null as string | null
     };
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+    let routingError: unknown = null;
     try {
         routingUpdate = applyReviewerRoutingMetadata(contextPath, {
             actualExecutionMode: reviewerExecutionMode,
@@ -1928,18 +1930,21 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
             reviewerFallbackReason
         );
         if (!routedEvent || taskEventAppendHasBlockingFailure(routedEvent, false)) {
-            throw new Error(
+            routingError = new Error(
                 `Review routing requires REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}'. ` +
                 'The lifecycle event could not be persisted.'
             );
         }
     } catch (error: unknown) {
+        routingError = error;
+    }
+    if (routingError !== null) {
         try {
             restoreReviewerRoutingMetadata(contextPath, previousRoutingUpdate);
         } catch {
             // Best-effort rollback only.
         }
-        throw error;
+        throw routingError;
     }
     console.log(
         `REVIEW_ROUTING_RECORDED: ${reviewType} ` +

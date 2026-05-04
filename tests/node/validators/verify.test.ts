@@ -15,9 +15,8 @@ import {
     detectCoreRuleViolations,
     detectEntrypointViolations,
     detectTaskViolations,
-    detectQwenSettingsViolations,
-    detectManifestContractViolations
-} from '../../../src/validators/verify';
+    detectQwenSettingsViolations
+} from '../../../src/validators';
 
 function writeInitAnswersFixture(targetRoot: string) {
     const answersDir = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime');

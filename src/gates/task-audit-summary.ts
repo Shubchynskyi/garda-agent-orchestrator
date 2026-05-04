@@ -24,7 +24,7 @@ import {
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
-import { getStatusSnapshot } from '../validators/status';
+import { getStatusSnapshot } from '../validators';
 import { getWorkspaceSnapshotCached } from './workspace-snapshot-cache';
 import {
     buildUnavailableRequiredReviewTrustSummary,
@@ -810,7 +810,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     );
     const workspaceStatusSnapshot = getStatusSnapshot(repoRoot);
     const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled);
-    let integrityStatus = 'UNKNOWN';
+    let integrityStatus: string;
     if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
         try {
             const report = inspectTaskEventFile(taskEventFile, safeTaskId);
@@ -929,7 +929,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     }
 
     let status: 'PASS' | 'BLOCKED' | 'INCOMPLETE';
-    const reviewsRequired = Object.keys(requiredReviews).some((reviewType) => requiredReviews[reviewType] === true);
+    const reviewsRequired = Object.keys(requiredReviews).some((reviewType) => requiredReviews[reviewType]);
     const supportingLifecycleAnchorEvents = new Set([
         'HANDSHAKE_DIAGNOSTICS_RECORDED',
         'SHELL_SMOKE_PREFLIGHT_RECORDED',
@@ -975,7 +975,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
 
     const commitGuardEnabled = workspaceStatusSnapshot.enforceNoAutoCommit === true;
     const commitCommand = buildCommitCommandSuggestion(changedFiles, taskMetadata, commitGuardEnabled);
-    let isCleanWorktree = false;
+    let isCleanWorktree: boolean;
     try {
         const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);
         isCleanWorktree = currentWorkspaceSnapshot.changed_files_count === 0;
@@ -1039,7 +1039,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         scopeCategory,
         preflightSha256
     );
-    const hasRequiredReviews = Object.values(requiredReviews).some((value) => value === true);
+    const hasRequiredReviews = Object.values(requiredReviews).some((value) => value);
     const reviewTrustSummary = reviewGateTrustSummary
         ?? (hasRequiredReviews
             ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)

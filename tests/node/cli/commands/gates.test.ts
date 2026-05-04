@@ -29,7 +29,7 @@ import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
 import { runCompletionGate } from '../../../../src/gates/completion';
-import { buildReviewContext, getRulePack } from '../../../../src/gates/build-review-context';
+import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
 import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
 import {
