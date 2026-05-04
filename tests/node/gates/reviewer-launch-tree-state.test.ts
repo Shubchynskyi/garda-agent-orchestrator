@@ -125,7 +125,7 @@ function makeStagedReviewContextFixture(taskId: string): {
         repoRoot,
         reviewsRoot,
         contextPath,
-        launchArtifactPath: path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json')
+        launchArtifactPath: path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json')
     };
 }
 
@@ -177,7 +177,7 @@ async function recordInvocation(repoRoot: string, taskId: string, launchArtifact
 }
 
 function writeReviewOutput(repoRoot: string, taskId: string): string {
-    const outputPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'review-output.md');
+    const outputPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'review-output.md');
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, [
         '# Code Review',

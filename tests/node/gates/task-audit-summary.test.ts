@@ -2961,6 +2961,18 @@ describe('gates/task-audit-summary', () => {
                 metrics: { changed_lines_total: 12 },
                 required_reviews: {}
             });
+            const scratchLaunchPath = path.join(
+                tmpDir,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                'reviews',
+                TASK_ID,
+                'code',
+                'reviewer-launch.json'
+            );
+            fs.mkdirSync(path.dirname(scratchLaunchPath), { recursive: true });
+            fs.writeFileSync(scratchLaunchPath, '{}\n', 'utf8');
 
             const result = buildTaskAuditSummary({
                 taskId: TASK_ID,
@@ -2977,6 +2989,8 @@ describe('gates/task-audit-summary', () => {
             const renderedSummaryText = formatTaskAuditSummaryText(result);
             assert.equal(fs.existsSync(jsonPath), true);
             assert.equal(fs.existsSync(markdownPath), true);
+            assert.equal(fs.existsSync(scratchLaunchPath), false);
+            assert.equal(fs.existsSync(path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID)), false);
             assert.equal(result.final_closeout.artifact_state, 'MATERIALIZED');
             assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, true);
             const closeoutJson = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));

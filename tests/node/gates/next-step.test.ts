@@ -139,7 +139,7 @@ function makeTempRepo(): string {
 }
 
 function initGitRepo(repoRoot: string): void {
-    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n.review-temp/\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n', 'utf8');
     execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 'garda-test@example.invalid'], { cwd: repoRoot, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.name', 'Garda Test'], { cwd: repoRoot, stdio: 'ignore' });
@@ -459,7 +459,11 @@ function writeReviewEvidence(
     repoRoot: string,
     taskId: string,
     reviewType: string,
-    options: { verdict?: 'pass' | 'fail'; body?: string; includeLaunchArtifact?: boolean } = {}
+    options: {
+        verdict?: 'pass' | 'fail';
+        body?: string;
+        includeLaunchArtifact?: boolean;
+    } = {}
 ): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
@@ -494,6 +498,16 @@ function writeReviewEvidence(
     let reviewerLaunchArtifactSha256 = '';
     if (options.includeLaunchArtifact !== false) {
         const launchBindingSha256 = 'c'.repeat(64);
+        const reviewerLaunchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            reviewType,
+            'reviewer-launch.json'
+        );
         const preparedIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
             task_id: taskId,
             review_type: reviewType,
@@ -502,9 +516,9 @@ function writeReviewEvidence(
             reviewer_identity: `agent:${reviewType}-reviewer`,
             review_context_sha256: sha256Text(reviewContextText),
             routing_event_sha256: routeIntegrity.event_sha256,
-            launch_binding_sha256: launchBindingSha256
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_artifact_path: reviewerLaunchArtifactPath
         });
-        const reviewerLaunchArtifactPath = path.join(repoRoot, '.review-temp', taskId, reviewType, 'reviewer-launch.json');
         writeJson(reviewerLaunchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -535,7 +549,16 @@ function writeReviewEvidence(
         routing_event_sha256: routeIntegrity.event_sha256,
         ...(reviewerLaunchArtifactSha256
             ? {
-                reviewer_launch_artifact_path: path.join(repoRoot, '.review-temp', taskId, reviewType, 'reviewer-launch.json'),
+                reviewer_launch_artifact_path: path.join(
+                    repoRoot,
+                    'garda-agent-orchestrator',
+                    'runtime',
+                    'tmp',
+                    'reviews',
+                    taskId,
+                    reviewType,
+                    'reviewer-launch.json'
+                ),
                 reviewer_launch_artifact_sha256: reviewerLaunchArtifactSha256,
                 reviewer_launch_attestation_source: 'test-subagent-spawn',
                 reviewer_launch_tool: 'test-subagent-spawn',
@@ -2822,7 +2845,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256
         });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch_preparation',
@@ -2874,7 +2897,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256
         });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2929,7 +2952,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256
         });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',
@@ -2979,7 +3002,7 @@ describe('gates/next-step', () => {
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256
         });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch',

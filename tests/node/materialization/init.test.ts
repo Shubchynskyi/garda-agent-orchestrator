@@ -202,7 +202,7 @@ describe('runInit', () => {
         }
     });
 
-    it('syncs root .gitignore and includes .review-temp during standalone init', () => {
+    it('syncs root .gitignore without root reviewer scratch during standalone init', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             runInit({
@@ -217,7 +217,7 @@ describe('runInit', () => {
             assert.ok(gitignore.includes('# garda-agent-orchestrator managed ignores'));
             assert.ok(gitignore.includes('garda-agent-orchestrator/'));
             assert.ok(gitignore.includes('TASK.md'));
-            assert.ok(gitignore.includes('.review-temp/'));
+            assert.ok(!gitignore.includes('.review-temp/'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

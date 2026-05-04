@@ -42,7 +42,7 @@ describe('getManagedGitignoreEntries with activeEntryFiles (provider minimalism)
         assert.ok(entries.some(e => e.endsWith('/')), 'should have bundle root dir');
         assert.ok(entries.includes('TASK.md'));
         assert.ok(entries.includes('.qwen/'));
-        assert.ok(entries.includes('.review-temp/'));
+        assert.ok(!entries.includes('.review-temp/'));
         assert.ok(entries.includes('.agents/workflows/start-task.md'));
     });
 

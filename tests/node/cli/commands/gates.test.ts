@@ -483,7 +483,7 @@ async function seedPromptBoundReviewFixture(options: {
         reviewerIdentity,
         reviewerPromptPath,
         reviewContextPath,
-        launchArtifactPath: path.join(options.repoRoot, '.review-temp', options.taskId, 'code', 'reviewer-launch.json')
+        launchArtifactPath: path.join(options.repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', options.taskId, 'code', 'reviewer-launch.json')
     };
 }
 
@@ -2624,7 +2624,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('logs terminal task events with review-temp cleanup and command audit', () => {
+    it('logs terminal task events with reviewer scratch cleanup and command audit', () => {
         for (const eventType of ['TASK_DONE', 'TASK_BLOCKED'] as const) {
             const repoRoot = createTempRepo();
             const taskId = `T-904-${eventType.toLowerCase()}`;
@@ -2632,7 +2632,7 @@ describe('cli/commands/gates', () => {
             const staleForeignTaskId = 'T-foreign-stale';
             const reviewsRoot = getReviewsRoot(repoRoot);
             fs.mkdirSync(reviewsRoot, { recursive: true });
-            const reviewTempRoot = path.join(repoRoot, '.review-temp');
+            const reviewTempRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
             const stagedReviewOutputPath = path.join(reviewTempRoot, taskId, 'code', 'review-output.md');
             const foreignReviewOutputPath = path.join(reviewTempRoot, 'scratch-output.md');
             const activeForeignReviewOutputPath = path.join(reviewTempRoot, 'session-1', activeForeignTaskId, 'code', 'review-output.md');
@@ -2958,7 +2958,7 @@ describe('cli/commands/gates', () => {
         const routingEvent = events.find((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED');
         const routingIntegrity = routingEvent?.integrity as Record<string, unknown> | undefined;
         assert.ok(routingIntegrity?.event_sha256);
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
         process.exitCode = 0;
@@ -3071,7 +3071,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-prepare-launch';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -3233,7 +3233,7 @@ describe('cli/commands/gates', () => {
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
             '--reviewer-identity', reviewerIdentity,
-            '--reviewer-launch-artifact-path', path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json')
+            '--reviewer-launch-artifact-path', path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json')
         ], { cwd: repoRoot });
 
         assert.notEqual(prepare.exitCode, 0);
@@ -3320,7 +3320,7 @@ describe('cli/commands/gates', () => {
             '--repo-root', repoRoot,
             '--reviewer-execution-mode', 'delegated_subagent',
             '--reviewer-identity', reviewerIdentity,
-            '--reviewer-launch-artifact-path', path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json')
+            '--reviewer-launch-artifact-path', path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json')
         ], { cwd: repoRoot });
 
         assert.notEqual(prepare.exitCode, 0);
@@ -3637,7 +3637,7 @@ describe('cli/commands/gates', () => {
         });
 
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 3;\n', 'utf8');
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.writeFileSync(reviewOutputPath, [
@@ -3754,7 +3754,7 @@ describe('cli/commands/gates', () => {
                 reviewContextPath: fixture.reviewContextPath,
                 reviewerIdentity: fixture.reviewerIdentity
             });
-            const foreignOutputDir = path.join(repoRoot, '.review-temp', 'T-265-foreign-output', 'code');
+            const foreignOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', 'T-265-foreign-output', 'code');
             fs.mkdirSync(foreignOutputDir, { recursive: true });
             fs.writeFileSync(path.join(foreignOutputDir, 'review-output.md'), [
                 '# Review',
@@ -3863,7 +3863,7 @@ describe('cli/commands/gates', () => {
             reviewerIdentity: fixture.reviewerIdentity
         });
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.writeFileSync(reviewOutputPath, [
@@ -3967,7 +3967,7 @@ describe('cli/commands/gates', () => {
             reviewerIdentity: fixture.reviewerIdentity
         });
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.writeFileSync(reviewOutputPath, [
@@ -4084,7 +4084,7 @@ describe('cli/commands/gates', () => {
             reviewerIdentity
         });
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.writeFileSync(reviewOutputPath, [
@@ -4145,7 +4145,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-prepare-launch-stale';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
         fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             schema_version: 1,
@@ -4195,7 +4195,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-prepared-not-attested';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -4261,7 +4261,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-launch-without-prepared-event';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
         fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             schema_version: 1,
@@ -4321,7 +4321,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-launch-from-prepared-metadata';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -4402,7 +4402,7 @@ describe('cli/commands/gates', () => {
             const repoRoot = createTempRepo();
             try {
                 const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId: testCase.taskId });
-                const launchArtifactPath = path.join(repoRoot, '.review-temp', testCase.taskId, 'code', 'reviewer-launch.json');
+                const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', testCase.taskId, 'code', 'reviewer-launch.json');
 
                 const previousPrepareExitCode = process.exitCode;
                 const previousPrepareCwd = process.cwd();
@@ -4479,7 +4479,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-launch-missing-provider-proof';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
         fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             schema_version: 1,
@@ -4539,7 +4539,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-valid';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -4676,7 +4676,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-missing-id';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -4738,7 +4738,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-stale-hash';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -4807,7 +4807,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-stale-routing';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -4880,7 +4880,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-both-ids';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -4944,7 +4944,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-bad-source';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -5007,7 +5007,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-no-ctx';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -5069,7 +5069,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-controller-id';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -5129,7 +5129,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-ctx-flags';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -5190,7 +5190,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-no-utc';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -5252,7 +5252,7 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-257-complete-launch-bad-utc';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
-        const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, 'code', 'reviewer-launch.json');
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
         const previousPrepareExitCode = process.exitCode;
         const previousPrepareCwd = process.cwd();
@@ -5445,7 +5445,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -5575,7 +5575,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         const reviewOutputContent = [
@@ -5672,7 +5672,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', taskId, 'code');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -5845,7 +5845,7 @@ describe('cli/commands/gates', () => {
             }
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -6019,7 +6019,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, '# Review\n\n## Verdict\nREVIEW PASSED\n', 'utf8');
@@ -6063,7 +6063,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result rejects .review-temp sources that do not encode the current task id', async () => {
+    it('record-review-result rejects reviewer scratch sources that do not encode the current task id', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-review-temp-orphan';
         seedTaskQueue(repoRoot, taskId);
@@ -6082,13 +6082,13 @@ describe('cli/commands/gates', () => {
             reviewer_routing: createReviewerRoutingFixture('Codex')
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp', 'session-42');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', 'session-42');
         const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
             '# Review',
             '',
-            'Validated reviewer materialization input ownership enforcement and confirmed that a .review-temp source path without the current task identifier is rejected before canonical artifact persistence or receipt materialization can occur.',
+            'Validated reviewer materialization input ownership enforcement and confirmed that a reviewer scratch source path without the current task identifier is rejected before canonical artifact persistence or receipt materialization can occur.',
             '',
             '## Findings by Severity',
             'none',
@@ -6158,7 +6158,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -6255,7 +6255,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -6338,7 +6338,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -6415,7 +6415,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         // Intentionally uses 'pass' (a wrong flag-style token) instead of a canonical verdict token.
@@ -6497,7 +6497,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-test-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         // Uses a code-review token for a test review – should be rejected with the correct test-review tokens listed.
@@ -6576,7 +6576,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         // APPROVED is not a recognized token; the error must show both PASS and FAIL example lines.
@@ -6660,7 +6660,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -6750,7 +6750,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -6835,7 +6835,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -6952,7 +6952,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -7063,7 +7063,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -7145,7 +7145,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -7225,7 +7225,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -7311,7 +7311,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -7395,7 +7395,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -7620,7 +7620,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -7717,7 +7717,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, '# Review\n\n## Verdict\nREVIEW PASSED\n', 'utf8');
@@ -7775,7 +7775,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -8678,7 +8678,7 @@ describe('cli/commands/gates', () => {
             })
         }, null, 2) + '\n', 'utf8');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [
@@ -8736,7 +8736,7 @@ describe('cli/commands/gates', () => {
         const preflightPath = writePreflight(repoRoot, taskId);
         prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
 
-        const reviewOutputDir = path.join(repoRoot, '.review-temp');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews');
         const reviewOutputPath = path.join(reviewOutputDir, `${taskId}-code-output.md`);
         fs.mkdirSync(reviewOutputDir, { recursive: true });
         fs.writeFileSync(reviewOutputPath, [

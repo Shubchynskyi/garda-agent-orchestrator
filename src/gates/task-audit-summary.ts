@@ -51,6 +51,7 @@ import {
     updateEvidenceArtifactState
 } from './task-audit-summary-collectors';
 import { buildCommitCommandSuggestion, formatFinalCloseoutMarkdown } from './task-audit-summary-renderers';
+import { cleanupTerminalReviewTempOutputs } from '../cli/commands/gates-artifacts';
 export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
 
 export interface TaskAuditSummaryOptions {
@@ -1172,6 +1173,7 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         };
         writeFileAtomically(jsonPath, JSON.stringify(closeout, null, 2) + '\n', { encoding: 'utf8' });
         writeFileAtomically(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', { encoding: 'utf8' });
+        cleanupTerminalReviewTempOutputs(path.resolve(path.dirname(jsonPath), '..', '..', '..'), summary.task_id);
         summary.final_closeout = closeout;
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);

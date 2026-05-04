@@ -140,7 +140,6 @@ export function getManagedGitignoreEntries(
         resolveBundleName() + '/',
         'TASK.md',
         '.qwen/',
-        '.review-temp/',
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
     ]);
 

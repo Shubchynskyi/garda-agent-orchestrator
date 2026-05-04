@@ -114,6 +114,11 @@ import {
     detectSourceCheckoutRuntimeStaleness,
     type SourceCheckoutRuntimeStalenessResult
 } from '../validators/workspace-layout';
+import {
+    buildDefaultReviewScratchCommandPath,
+    resolveDefaultReviewScratchPath,
+    resolveReviewScratchRoot
+} from './review-scratch-paths';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -934,11 +939,13 @@ function timelineHasDelegatedReviewInvocationAttestation(
     ) {
         return false;
     }
-    if (getCurrentReviewerLaunchArtifactStateForInvocation(repoRoot, eventsRoot, taskId, state) !== 'launched') {
-        return false;
-    }
-    const reviewerLaunchArtifactSha256 = fileSha256(path.join(repoRoot, '.review-temp', taskId, state.reviewType, 'reviewer-launch.json'));
-    if (!reviewerLaunchArtifactSha256) {
+    const reviewerLaunchArtifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+        repoRoot,
+        eventsRoot,
+        taskId,
+        state
+    );
+    if (reviewerLaunchArtifactEvidence.state !== 'launched' || !reviewerLaunchArtifactEvidence.sha256) {
         return false;
     }
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
@@ -981,7 +988,7 @@ function timelineHasDelegatedReviewInvocationAttestation(
                 reviewContextSha256 !== String(state.reviewerProvenance.review_context_sha256 || '').trim().toLowerCase()
                 || reviewTreeStateSha256 !== expectedReviewTreeStateSha256
                 || routingEventSha256 !== String(state.reviewerProvenance.routing_event_sha256 || '').trim().toLowerCase()
-                || launchArtifactSha256 !== reviewerLaunchArtifactSha256
+                || launchArtifactSha256 !== reviewerLaunchArtifactEvidence.sha256
             ) {
                 continue;
             }
@@ -1064,12 +1071,13 @@ function timelineHasDelegatedReviewInvocationForCurrentContext(
     if (!reviewContextSha256 || !reviewTreeStateSha256) {
         return false;
     }
-    if (getCurrentReviewerLaunchArtifactStateForInvocation(repoRoot, eventsRoot, taskId, state) !== 'launched') {
-        return false;
-    }
-    const reviewerLaunchArtifactPath = path.join(repoRoot, '.review-temp', taskId, state.reviewType, 'reviewer-launch.json');
-    const reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
-    if (!reviewerLaunchArtifactSha256) {
+    const reviewerLaunchArtifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+        repoRoot,
+        eventsRoot,
+        taskId,
+        state
+    );
+    if (reviewerLaunchArtifactEvidence.state !== 'launched' || !reviewerLaunchArtifactEvidence.sha256) {
         return false;
     }
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
@@ -1142,7 +1150,7 @@ function timelineHasDelegatedReviewInvocationForCurrentContext(
             || String(details.review_context_sha256 || '').trim().toLowerCase() !== reviewContextSha256
             || String(details.review_tree_state_sha256 || '').trim().toLowerCase() !== reviewTreeStateSha256
             || String(details.routing_event_sha256 || '').trim().toLowerCase() !== routingEventSha256
-            || String(details.reviewer_launch_artifact_sha256 || '').trim().toLowerCase() !== reviewerLaunchArtifactSha256
+            || String(details.reviewer_launch_artifact_sha256 || '').trim().toLowerCase() !== reviewerLaunchArtifactEvidence.sha256
         ) {
             continue;
         }
@@ -1283,15 +1291,46 @@ function hasCompletedReviewerLaunchEvidence(launchArtifact: Record<string, unkno
 
 type CurrentReviewerLaunchArtifactState = 'missing_or_invalid' | 'prepared' | 'launched';
 
-function getCurrentReviewerLaunchArtifactStateForInvocation(
+interface CurrentReviewerLaunchArtifactEvidence {
+    state: CurrentReviewerLaunchArtifactState;
+    path: string | null;
+    sha256: string | null;
+}
+
+function resolveReviewerLaunchArtifactPathFromTelemetry(repoRoot: string, rawPath: unknown): string | null {
+    const pathValue = String(rawPath || '').trim();
+    if (!pathValue) {
+        return null;
+    }
+    try {
+        const resolvedPath = resolvePathInsideRepo(pathValue, repoRoot, { allowMissing: true });
+        if (!resolvedPath) {
+            return null;
+        }
+        const reviewScratchRoot = normalizePath(path.resolve(resolveReviewScratchRoot(repoRoot))).toLowerCase();
+        const normalizedPath = normalizePath(path.resolve(resolvedPath)).toLowerCase();
+        return normalizedPath === reviewScratchRoot || normalizedPath.startsWith(`${reviewScratchRoot}/`)
+            ? resolvedPath
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
     repoRoot: string,
     eventsRoot: string,
     taskId: string,
     state: ReviewArtifactState
-): CurrentReviewerLaunchArtifactState {
+): CurrentReviewerLaunchArtifactEvidence {
+    const missing: CurrentReviewerLaunchArtifactEvidence = {
+        state: 'missing_or_invalid',
+        path: null,
+        sha256: null
+    };
     const reviewerIdentity = state.contextReviewerIdentity || '';
     if (!reviewerIdentity.startsWith('agent:') || !state.contextExists || !state.contextCurrent) {
-        return 'missing_or_invalid';
+        return missing;
     }
     const reviewContextSha256 = fileSha256(state.contextPath);
     const routingEventSha256 = getDelegatedReviewRoutingShaAfterCompile(
@@ -1301,82 +1340,98 @@ function getCurrentReviewerLaunchArtifactStateForInvocation(
         reviewerIdentity
     );
     if (!reviewContextSha256 || !routingEventSha256) {
-        return 'missing_or_invalid';
-    }
-    const launchArtifactPath = path.join(repoRoot, '.review-temp', taskId, state.reviewType, 'reviewer-launch.json');
-    const launchArtifact = safeReadJson(launchArtifactPath);
-    if (!launchArtifact) {
-        return 'missing_or_invalid';
-    }
-    const evidenceType = getArtifactStringField(launchArtifact, 'evidence_type', 'artifact_type');
-    const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
-    const launchBindingSha256 = getArtifactStringField(launchArtifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
-    const preparedLaunchEventSha256 = getArtifactStringField(
-        launchArtifact,
-        'prepared_launch_event_sha256',
-        'preparedLaunchEventSha256'
-    ).toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(launchBindingSha256) || !/^[0-9a-f]{64}$/.test(preparedLaunchEventSha256)) {
-        return 'missing_or_invalid';
-    }
-    let artifactState: CurrentReviewerLaunchArtifactState = 'missing_or_invalid';
-    if (evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE && attestationState === 'prepared') {
-        artifactState = 'prepared';
-    } else if (
-        evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
-        && attestationState === 'launched'
-        && hasCompletedReviewerLaunchEvidence(launchArtifact)
-    ) {
-        artifactState = 'launched';
-    }
-    if (artifactState === 'missing_or_invalid') {
-        return 'missing_or_invalid';
-    }
-    const artifactMatchesCurrentContext = (
-        getArtifactStringField(launchArtifact, 'task_id', 'taskId') === taskId
-        && getArtifactStringField(launchArtifact, 'review_type', 'reviewType') === state.reviewType
-        && getArtifactStringField(launchArtifact, 'reviewer_execution_mode', 'reviewerExecutionMode') === 'delegated_subagent'
-        && getArtifactStringField(
-            launchArtifact,
-            'reviewer_identity',
-            'reviewerIdentity',
-            'reviewer_session_id',
-            'reviewerSessionId'
-        ) === reviewerIdentity
-        && getArtifactStringField(launchArtifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() === reviewContextSha256
-        && getArtifactStringField(launchArtifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() === routingEventSha256
-    );
-    if (!artifactMatchesCurrentContext) {
-        return 'missing_or_invalid';
+        return missing;
     }
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    for (const line of fs.readFileSync(timelinePath, 'utf8').split('\n')) {
-        if (!line.trim()) {
-            continue;
-        }
+    if (!fileExists(timelinePath)) {
+        return missing;
+    }
+    const lines = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
         try {
-            const event = JSON.parse(line) as Record<string, unknown>;
+            const event = JSON.parse(lines[index]) as Record<string, unknown>;
             if (String(event.event_type || '').trim() !== 'REVIEWER_LAUNCH_PREPARED') {
                 continue;
             }
             const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
             const details = isPlainRecord(event.details) ? event.details : {};
-            if (
-                String(integrity?.event_sha256 || '').trim().toLowerCase() === preparedLaunchEventSha256
-                && String(details.review_type || '').trim() === state.reviewType
-                && String(details.reviewer_execution_mode || '').trim() === 'delegated_subagent'
-                && String(details.reviewer_session_id || details.reviewer_identity || '').trim() === reviewerIdentity
-                && String(details.review_context_sha256 || '').trim().toLowerCase() === reviewContextSha256
-                && String(details.routing_event_sha256 || '').trim().toLowerCase() === routingEventSha256
-                && String(details.launch_binding_sha256 || '').trim().toLowerCase() === launchBindingSha256
-            ) {
-                return artifactState;
+            const preparedLaunchEventSha256 = String(integrity?.event_sha256 || '').trim().toLowerCase();
+            const launchArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
+                repoRoot,
+                details.reviewer_launch_artifact_path
+            ) || resolveDefaultReviewScratchPath(repoRoot, taskId, state.reviewType, 'reviewer-launch.json');
+            const launchArtifact = safeReadJson(launchArtifactPath);
+            if (!launchArtifact) {
+                continue;
             }
+            const launchBindingSha256 = getArtifactStringField(
+                launchArtifact,
+                'launch_binding_sha256',
+                'launchBindingSha256'
+            ).toLowerCase();
+            if (
+                !/^[0-9a-f]{64}$/.test(preparedLaunchEventSha256)
+                || !/^[0-9a-f]{64}$/.test(launchBindingSha256)
+                || getArtifactStringField(launchArtifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256').toLowerCase() !== preparedLaunchEventSha256
+                || getArtifactStringField(launchArtifact, 'task_id', 'taskId') !== taskId
+                || getArtifactStringField(launchArtifact, 'review_type', 'reviewType') !== state.reviewType
+                || getArtifactStringField(launchArtifact, 'reviewer_execution_mode', 'reviewerExecutionMode') !== 'delegated_subagent'
+                || getArtifactStringField(
+                    launchArtifact,
+                    'reviewer_identity',
+                    'reviewerIdentity',
+                    'reviewer_session_id',
+                    'reviewerSessionId'
+                ) !== reviewerIdentity
+                || getArtifactStringField(launchArtifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() !== reviewContextSha256
+                || getArtifactStringField(launchArtifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() !== routingEventSha256
+                || String(details.review_type || '').trim() !== state.reviewType
+                || String(details.reviewer_execution_mode || '').trim() !== 'delegated_subagent'
+                || String(details.reviewer_session_id || details.reviewer_identity || '').trim() !== reviewerIdentity
+                || String(details.review_context_sha256 || '').trim().toLowerCase() !== reviewContextSha256
+                || String(details.routing_event_sha256 || '').trim().toLowerCase() !== routingEventSha256
+                || String(details.launch_binding_sha256 || '').trim().toLowerCase() !== launchBindingSha256
+            ) {
+                continue;
+            }
+            const evidenceType = getArtifactStringField(launchArtifact, 'evidence_type', 'artifact_type');
+            const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
+            let artifactState: CurrentReviewerLaunchArtifactState = 'missing_or_invalid';
+            if (evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE && attestationState === 'prepared') {
+                artifactState = 'prepared';
+            } else if (
+                evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+                && attestationState === 'launched'
+                && hasCompletedReviewerLaunchEvidence(launchArtifact)
+            ) {
+                artifactState = 'launched';
+            }
+            if (artifactState === 'missing_or_invalid') {
+                continue;
+            }
+            const launchArtifactSha256 = fileSha256(launchArtifactPath);
+            return {
+                state: artifactState,
+                path: launchArtifactPath,
+                sha256: launchArtifactSha256 || null
+            };
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
         }
     }
-    return 'missing_or_invalid';
+    return missing;
+}
+
+function getCurrentReviewerLaunchArtifactStateForInvocation(
+    repoRoot: string,
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): CurrentReviewerLaunchArtifactState {
+    return getCurrentReviewerLaunchArtifactEvidenceForInvocation(repoRoot, eventsRoot, taskId, state).state;
 }
 
 function buildReviewerReadinessChainSummary(
@@ -4345,6 +4400,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         const contextReviewerIdentity = state.contextReviewerIdentity || '';
+        const reviewOutputPath = buildDefaultReviewScratchCommandPath(
+            repoRoot,
+            taskId,
+            reviewType,
+            'review-output.md'
+        );
         if (
             !currentReviewReuseRecorded
             && (
@@ -4379,7 +4440,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ) {
             const reviewerIdentity = state.contextReviewerIdentity
                 || '<agent:reviewer-session-id-from-review-context>';
-            const launchArtifactPath = `.review-temp/${taskId}/${reviewType}/reviewer-launch.json`;
+            const launchArtifactPath = buildDefaultReviewScratchCommandPath(
+                repoRoot,
+                taskId,
+                reviewType,
+                'reviewer-launch.json'
+            );
             const launchArtifactState = getCurrentReviewerLaunchArtifactStateForInvocation(
                 repoRoot,
                 eventsRoot,
@@ -4452,7 +4518,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',
-                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path ".review-temp/${taskId}/${reviewType}/review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
+                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path "${reviewOutputPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
                     )
                 ]
             });
@@ -4475,7 +4541,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',
-                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path ".review-temp/${taskId}/${reviewType}/review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
+                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path "${reviewOutputPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
                     )
                 ]
             });

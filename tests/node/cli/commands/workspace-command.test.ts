@@ -62,7 +62,7 @@ test('handleInit forwards init-answer gitignore options into standalone init mat
     try {
         handleInit(['--target-root', projectRoot], { name: 'garda-agent-orchestrator', version: '1.0.0' });
         const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
-        assert.ok(gitignore.includes('.review-temp/'));
+        assert.ok(!gitignore.includes('.review-temp/'));
         assert.ok(gitignore.includes('.claude/'));
         assert.ok(gitignore.includes('AGENTS.md'));
         assert.ok(!gitignore.includes('GEMINI.md'));

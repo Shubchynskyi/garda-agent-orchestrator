@@ -7,6 +7,7 @@ import { withFilesystemLock } from '../../../gate-runtime/task-events-locking';
 import { KNOWN_SUFFIXES, removeEntries } from '../../../gate-runtime/reviews-index';
 import { reconcileTimelineSummaryForTask } from '../../../gate-runtime/timeline-summary';
 import * as gateHelpers from '../../../gates/helpers';
+import { resolveReviewScratchRoots } from '../../../gates/review-scratch-paths';
 import { readTaskQueueStatus, syncTaskQueueStatusDetailed } from './task-queue-sync';
 
 export type TaskResetOutcome =
@@ -31,6 +32,7 @@ export interface TaskResetScope {
     aggregatePath: string;
     aggregateLockPath: string;
     reviewTempDir: string;
+    reviewTempDirs: string[];
     reviewArtifactNames: string[];
     artifacts: TaskResetArtifact[];
     aggregateLineCount: number;
@@ -219,7 +221,9 @@ export function resolveTaskResetScope(options: {
     const taskLockPath = path.join(eventsRoot, `.${taskId}.lock`);
     const aggregatePath = path.join(eventsRoot, 'all-tasks.jsonl');
     const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
-    const reviewTempDir = path.resolve(repoRoot, '.review-temp', taskId);
+    const reviewTempDirs = resolveReviewScratchRoots(repoRoot)
+        .map((reviewScratchRoot) => path.resolve(reviewScratchRoot, taskId));
+    const reviewTempDir = reviewTempDirs[0];
 
     const artifacts: TaskResetArtifact[] = [];
 
@@ -237,8 +241,10 @@ export function resolveTaskResetScope(options: {
         }
     }
 
-    if (pathExists(reviewTempDir)) {
-        artifacts.push({ path: reviewTempDir, type: 'review-temp-dir' });
+    for (const candidateReviewTempDir of reviewTempDirs) {
+        if (pathExists(candidateReviewTempDir)) {
+            artifacts.push({ path: candidateReviewTempDir, type: 'review-temp-dir' });
+        }
     }
 
     let aggregateLineCount = 0;
@@ -262,6 +268,7 @@ export function resolveTaskResetScope(options: {
         aggregatePath,
         aggregateLockPath,
         reviewTempDir,
+        reviewTempDirs,
         reviewArtifactNames,
         artifacts,
         aggregateLineCount,
@@ -456,7 +463,9 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
     }
 
     // Delete review temp directory
-    deleteDirectoryIfExists(scope.reviewTempDir);
+    for (const reviewTempDir of scope.reviewTempDirs) {
+        deleteDirectoryIfExists(reviewTempDir);
+    }
 
     // Remove task lines from aggregate log under aggregate lock
     let aggregateLinesRemoved = 0;

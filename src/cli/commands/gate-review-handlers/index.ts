@@ -58,6 +58,11 @@ import {
 import {
     resolveReviewerPromptArtifactBinding
 } from '../../../gates/review-prompt-artifact';
+import {
+    resolveLegacyReviewTempRoot,
+    resolveDefaultReviewScratchPath,
+    resolveReviewScratchRoot
+} from '../../../gates/review-scratch-paths';
 import { resolveReviewContextRoutingIdentity } from '../../../gates/review-context-routing';
 import { assertReviewLifecycleGuard } from '../../../gates/review-lifecycle-guard';
 import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
@@ -411,17 +416,26 @@ async function resolveReviewOutputInput(
                 `${normalizePath(resolvedReviewOutputPath)}.`
             );
         }
-        const reviewTempRoot = path.resolve(repoRoot, '.review-temp');
-        const relativeReviewTempPath = path.relative(reviewTempRoot, resolvedReviewOutputPath);
+        const relativeReviewTempPath = path.relative(resolveReviewScratchRoot(repoRoot), resolvedReviewOutputPath);
         const isInsideReviewTemp = relativeReviewTempPath.length > 0
             && !relativeReviewTempPath.startsWith('..')
             && !path.isAbsolute(relativeReviewTempPath);
         if (isInsideReviewTemp
             && !isTaskOwnedReviewTempPath(repoRoot, taskId, resolvedReviewOutputPath)) {
             throw new Error(
-                `ReviewOutputPath inside '.review-temp' must encode the current task id '${taskId}' ` +
-                `so cleanup can attribute it safely. Use '.review-temp/${taskId}/${reviewType}/review-output.md' ` +
-                `or '.review-temp/${taskId}-${reviewType}-output.md'.`
+                `ReviewOutputPath inside reviewer scratch storage must encode the current task id '${taskId}' ` +
+                `so cleanup can attribute it safely. Use ` +
+                `'garda-agent-orchestrator/runtime/tmp/reviews/${taskId}/${reviewType}/review-output.md'.`
+            );
+        }
+        const relativeLegacyReviewTempPath = path.relative(resolveLegacyReviewTempRoot(repoRoot), resolvedReviewOutputPath);
+        const isInsideLegacyReviewTemp = relativeLegacyReviewTempPath.length > 0
+            && !relativeLegacyReviewTempPath.startsWith('..')
+            && !path.isAbsolute(relativeLegacyReviewTempPath);
+        if (isInsideLegacyReviewTemp) {
+            throw new Error(
+                `ReviewOutputPath must not use legacy '.review-temp'. Use ` +
+                `'garda-agent-orchestrator/runtime/tmp/reviews/${taskId}/${reviewType}/review-output.md'.`
             );
         }
         reviewOutputSourcePath = resolvedReviewOutputPath;
@@ -1141,7 +1155,7 @@ function getStringField(record: Record<string, unknown>, ...keys: string[]): str
 }
 
 function resolveDefaultReviewerLaunchArtifactPath(repoRoot: string, taskId: string, reviewType: string): string {
-    return path.join(repoRoot, '.review-temp', taskId, reviewType, 'reviewer-launch.json');
+    return resolveDefaultReviewScratchPath(repoRoot, taskId, reviewType, 'reviewer-launch.json');
 }
 
 function resolveReviewerLaunchArtifactPathForWrite(options: {
@@ -1158,7 +1172,7 @@ function resolveReviewerLaunchArtifactPathForWrite(options: {
     }
     if (!isTaskOwnedReviewTempPath(options.repoRoot, options.taskId, artifactPath)) {
         throw new Error(
-            `ReviewerLaunchArtifactPath must be task-owned under '.review-temp/${options.taskId}/'. ` +
+            `ReviewerLaunchArtifactPath must be task-owned under reviewer scratch storage for '${options.taskId}'. ` +
             `Got ${normalizePath(artifactPath)}.`
         );
     }
@@ -1327,7 +1341,7 @@ function validateReviewerLaunchArtifact(options: {
     }
     if (!isTaskOwnedReviewTempPath(options.repoRoot, options.taskId, artifactPath)) {
         throw new Error(
-            `ReviewerLaunchArtifactPath must be task-owned under '.review-temp/${options.taskId}/'. ` +
+            `ReviewerLaunchArtifactPath must be task-owned under reviewer scratch storage for '${options.taskId}'. ` +
             `Got ${normalizePath(artifactPath)}.`
         );
     }

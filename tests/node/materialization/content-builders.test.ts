@@ -694,7 +694,7 @@ describe('buildGitignoreEntries', () => {
         assert.ok(entries.includes('garda-agent-orchestrator/'));
         assert.ok(entries.includes('TASK.md'));
         assert.ok(entries.includes('.qwen/'));
-        assert.ok(entries.includes('.review-temp/'));
+        assert.ok(!entries.includes('.review-temp/'));
     });
 
     it('includes .qwen/ in the managed baseline so later Qwen activation stays ignored', () => {
@@ -724,7 +724,7 @@ describe('buildGitignoreEntries', () => {
         assert.ok(entries.includes('.junie/'));
         assert.ok(entries.includes('.windsurf/'));
         assert.ok(entries.includes('.qwen/'));
-        assert.ok(entries.includes('.review-temp/'));
+        assert.ok(!entries.includes('.review-temp/'));
         assert.ok(!entries.includes('.windsurf/rules/rules.md'));
         assert.ok(!entries.includes('.junie/guidelines.md'));
         assert.ok(!entries.includes('.antigravity/rules.md'));

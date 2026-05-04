@@ -495,11 +495,11 @@ Task-start identity and preflight notes:
 `validate-manifest --compact` preserves failure diagnostics but reduces the green path to `MANIFEST_VALIDATION_PASSED | entries=<count>`.
 
 Reviewer staging note:
-- Keep transient reviewer source files under `.review-temp/<task-id>/<review-type>/review-output.md` when using `record-review-result --review-output-path`.
-- If `--review-output-path` points into `.review-temp`, the path must encode the current task id so Garda can attribute and clean it safely.
+- Keep transient reviewer source files under `garda-agent-orchestrator/runtime/tmp/reviews/<task-id>/<review-type>/review-output.md` when using `record-review-result --review-output-path`.
+- If `--review-output-path` points into reviewer scratch storage, the path must encode the current task id so Garda can attribute and clean it safely.
 - `build-review-context` records the fresh-context reviewer contract in `reviewer_routing`: required reviews need a new delegated reviewer session, not a reused long-lived reviewer agent. `record-review-result` prints a reviewer cleanup reminder after receipt persistence.
 - `build-review-context` also prints `ReviewReuseDecision` and `ReviewReuseReason` so agents can see whether a prior PASS review was safely rebound to the current cycle or why a fresh reviewer is still required.
-- Garda now cleans current-task `.review-temp` artifacts deterministically after successful review recording, removes same-task leftovers on terminal `TASK_DONE` or `TASK_BLOCKED`, sweeps aged task-attributable staging files when they no longer belong to active `IN_PROGRESS` or `IN_REVIEW` tasks, and retains stale unattributed paths instead of deleting them by guesswork.
+- Garda cleans current-task reviewer scratch artifacts deterministically after successful review recording, removes same-task leftovers on terminal `TASK_DONE` or `TASK_BLOCKED`, sweeps aged task-attributable staging files when they no longer belong to active `IN_PROGRESS` or `IN_REVIEW` tasks, and retains stale unattributed paths instead of deleting them by guesswork.
 
 Zero-diff task contract:
 - A clean-tree `classify-change` result is baseline-only evidence, not proof that the task is complete.

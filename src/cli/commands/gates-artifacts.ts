@@ -4,6 +4,11 @@ import * as gateHelpers from '../../gates/helpers';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
 import { resolveActiveTaskIds } from '../../core/active-task-state';
 import { resolveCanonicalReviewContextPath } from '../../gates/review-context-paths';
+import {
+    resolveLegacyReviewTempRoot,
+    resolveReviewScratchRoot,
+    resolveReviewScratchRoots
+} from '../../gates/review-scratch-paths';
 import { writeReviewArtifactJson, writeReviewArtifactText } from '../../gate-runtime/review-artifacts';
 
 export interface TerminalLogCleanupResult {
@@ -85,6 +90,32 @@ function pruneEmptyDirectoriesUpToRoot(startDirectory: string, rootDirectory: st
             break;
         }
         currentDirectory = parentDirectory;
+    }
+}
+
+function pruneEmptyDirectoryTree(rootDirectory: string): void {
+    if (!fs.existsSync(rootDirectory) || !fs.statSync(rootDirectory).isDirectory()) {
+        return;
+    }
+    const directories = [rootDirectory];
+    for (let index = 0; index < directories.length; index += 1) {
+        const currentDirectory = directories[index];
+        for (const entry of fs.readdirSync(currentDirectory, { withFileTypes: true })) {
+            if (entry.isDirectory()) {
+                directories.push(path.join(currentDirectory, entry.name));
+            }
+        }
+    }
+    for (const directoryPath of directories.sort((left, right) => right.length - left.length)) {
+        try {
+            if (fs.existsSync(directoryPath)
+                && fs.statSync(directoryPath).isDirectory()
+                && fs.readdirSync(directoryPath).length === 0) {
+                fs.rmdirSync(directoryPath);
+            }
+        } catch {
+            // Best-effort cleanup only. Retained paths are reported by the next cleanup pass.
+        }
     }
 }
 
@@ -203,21 +234,26 @@ function isReviewTempPathOwnedByTask(reviewTempRoot: string, candidatePath: stri
 }
 
 export function isTaskOwnedReviewTempPath(repoRoot: string, taskId: string, candidatePath: string): boolean {
-    const reviewTempRoot = path.resolve(repoRoot, '.review-temp');
     let resolvedCandidatePath: string | null;
     try {
         resolvedCandidatePath = gateHelpers.resolvePathInsideRepo(candidatePath, repoRoot, { allowMissing: true });
     } catch {
         return false;
     }
-    if (!resolvedCandidatePath || !isPathInsideRoot(resolvedCandidatePath, reviewTempRoot)) {
+    if (!resolvedCandidatePath) {
         return false;
     }
-    if (!gateHelpers.isPathRealpathInsideRoot(resolvedCandidatePath, repoRoot, { allowMissing: true })
-        || !gateHelpers.isPathRealpathInsideRoot(resolvedCandidatePath, reviewTempRoot, { allowMissing: true })) {
+    if (!gateHelpers.isPathRealpathInsideRoot(resolvedCandidatePath, repoRoot, { allowMissing: true })) {
         return false;
     }
-    return isReviewTempPathOwnedByTask(reviewTempRoot, resolvedCandidatePath, taskId);
+    const reviewScratchRoot = resolveReviewScratchRoot(repoRoot);
+    if (!isPathInsideRoot(resolvedCandidatePath, reviewScratchRoot)) {
+        return false;
+    }
+    if (!gateHelpers.isPathRealpathInsideRoot(resolvedCandidatePath, reviewScratchRoot, { allowMissing: true })) {
+        return false;
+    }
+    return isReviewTempPathOwnedByTask(reviewScratchRoot, resolvedCandidatePath, taskId);
 }
 
 function resolveReviewTempActiveTaskIdKeys(repoRoot: string, currentTaskId: string): Set<string> {
@@ -364,11 +400,9 @@ export function cleanupReviewTempSourceArtifact(
         return;
     }
 
-    const reviewTempRoot = path.resolve(repoRoot, '.review-temp');
-    if (!isPathInsideRoot(resolvedSourcePath, reviewTempRoot)) {
-        return;
-    }
-    if (!isReviewTempPathOwnedByTask(reviewTempRoot, resolvedSourcePath, taskId)) {
+    const reviewTempRoot = resolveReviewScratchRoots(repoRoot)
+        .find((candidateRoot) => isPathInsideRoot(resolvedSourcePath as string, candidateRoot));
+    if (!reviewTempRoot || !isReviewTempPathOwnedByTask(reviewTempRoot, resolvedSourcePath, taskId)) {
         return;
     }
 
@@ -510,73 +544,92 @@ export function cleanupTerminalCompileLogs(repoRoot: string, taskId: string): Te
 
 export function cleanupTerminalReviewTempOutputs(repoRoot: string, taskId: string): TerminalLogCleanupResult {
     const result = createTerminalCleanupResult(true);
-    const reviewTempRoot = path.resolve(repoRoot, '.review-temp');
-    if (!fs.existsSync(reviewTempRoot) || !fs.statSync(reviewTempRoot).isDirectory()) {
-        return result;
-    }
-
     const candidatePaths = new Set<string>();
     const staleCandidatePaths = new Set<string>();
     const retainedPaths = new Set<string>();
-    const directoryQueue = [reviewTempRoot];
     const nowMs = Date.now();
     const activeTaskIdKeys = resolveReviewTempActiveTaskIdKeys(repoRoot, taskId);
 
-    while (directoryQueue.length > 0) {
-        const currentDirectory = directoryQueue.pop() as string;
-        let entries: fs.Dirent[];
-        try {
-            entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
-        } catch (error) {
-            result.errors.push(
-                `Failed to read review temp directory '${gateHelpers.normalizePath(currentDirectory)}': ${getErrorMessage(error)}`
-            );
+    for (const reviewTempRoot of resolveReviewScratchRoots(repoRoot)) {
+        if (!fs.existsSync(reviewTempRoot) || !fs.statSync(reviewTempRoot).isDirectory()) {
             continue;
         }
 
-        for (const entry of entries) {
-            const entryPath = path.join(currentDirectory, entry.name);
-            if (entry.isDirectory()) {
-                directoryQueue.push(entryPath);
-                continue;
-            }
-            if (!entry.isFile()) {
-                continue;
-            }
-            if (isReviewTempPathOwnedByTask(reviewTempRoot, entryPath, taskId)) {
-                candidatePaths.add(entryPath);
-                continue;
-            }
-            if (!isReviewTempFileStale(entryPath, nowMs)) {
-                retainedPaths.add(gateHelpers.normalizePath(entryPath));
+        const directoryQueue = [reviewTempRoot];
+        while (directoryQueue.length > 0) {
+            const currentDirectory = directoryQueue.pop() as string;
+            let entries: fs.Dirent[];
+            try {
+                entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
+            } catch (error) {
+                result.errors.push(
+                    `Failed to read review temp directory '${gateHelpers.normalizePath(currentDirectory)}': ${getErrorMessage(error)}`
+                );
                 continue;
             }
 
-            if (isReviewTempPathOwnedByAnyTask(reviewTempRoot, entryPath, activeTaskIdKeys)) {
-                retainedPaths.add(gateHelpers.normalizePath(entryPath));
-                continue;
+            for (const entry of entries) {
+                const entryPath = path.join(currentDirectory, entry.name);
+                if (entry.isDirectory()) {
+                    directoryQueue.push(entryPath);
+                    continue;
+                }
+                if (!entry.isFile()) {
+                    continue;
+                }
+                if (isReviewTempPathOwnedByTask(reviewTempRoot, entryPath, taskId)) {
+                    candidatePaths.add(entryPath);
+                    continue;
+                }
+                if (!isReviewTempFileStale(entryPath, nowMs)) {
+                    retainedPaths.add(gateHelpers.normalizePath(entryPath));
+                    continue;
+                }
+
+                if (isReviewTempPathOwnedByAnyTask(reviewTempRoot, entryPath, activeTaskIdKeys)) {
+                    retainedPaths.add(gateHelpers.normalizePath(entryPath));
+                    continue;
+                }
+                const ownership = inspectReviewTempOwnership(reviewTempRoot, entryPath);
+                if (!ownership.task_id_key) {
+                    retainedPaths.add(gateHelpers.normalizePath(entryPath));
+                    continue;
+                }
+                staleCandidatePaths.add(entryPath);
             }
-            const ownership = inspectReviewTempOwnership(reviewTempRoot, entryPath);
-            if (!ownership.task_id_key) {
-                retainedPaths.add(gateHelpers.normalizePath(entryPath));
-                continue;
-            }
-            staleCandidatePaths.add(entryPath);
         }
     }
 
     for (const candidatePath of [...candidatePaths].sort()) {
+        const deletedPathsBeforeCleanup = result.deleted_paths.length;
         cleanupCandidateFilePath(repoRoot, candidatePath, result, 'Review temp output');
+        if (result.deleted_paths.length > deletedPathsBeforeCleanup) {
+            for (const reviewTempRoot of resolveReviewScratchRoots(repoRoot)) {
+                if (isPathInsideRoot(candidatePath, reviewTempRoot)) {
+                    pruneEmptyDirectoriesUpToRoot(path.dirname(candidatePath), reviewTempRoot);
+                    break;
+                }
+            }
+        }
     }
     for (const candidatePath of [...staleCandidatePaths].sort()) {
         const deletedPathsBeforeCleanup = result.deleted_paths.length;
         cleanupCandidateFilePath(repoRoot, candidatePath, result, 'Review temp stale output');
         if (result.deleted_paths.length > deletedPathsBeforeCleanup) {
             result.stale_deleted_paths.push(gateHelpers.normalizePath(candidatePath));
+            for (const reviewTempRoot of resolveReviewScratchRoots(repoRoot)) {
+                if (isPathInsideRoot(candidatePath, reviewTempRoot)) {
+                    pruneEmptyDirectoriesUpToRoot(path.dirname(candidatePath), reviewTempRoot);
+                    break;
+                }
+            }
         }
     }
     result.retained_paths = [...retainedPaths].sort();
-    pruneEmptyDirectoriesUpToRoot(reviewTempRoot, reviewTempRoot);
+    for (const reviewTempRoot of [resolveReviewScratchRoot(repoRoot), resolveLegacyReviewTempRoot(repoRoot)]) {
+        pruneEmptyDirectoryTree(reviewTempRoot);
+        pruneEmptyDirectoriesUpToRoot(reviewTempRoot, reviewTempRoot);
+    }
 
     return result;
 }
