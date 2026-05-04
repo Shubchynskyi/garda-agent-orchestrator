@@ -7,6 +7,32 @@ import * as path from 'node:path';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
 
+const RETRYABLE_WINDOWS_CLEANUP_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
+
+function getErrorCode(error: unknown): string {
+    return error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+}
+
+function removePackSmokeTempRoot(tempRoot: string): void {
+    try {
+        fs.rmSync(tempRoot, {
+            recursive: true,
+            force: true,
+            maxRetries: process.platform === 'win32' ? 10 : 3,
+            retryDelay: 100
+        });
+    } catch (error: unknown) {
+        const errorCode = getErrorCode(error);
+        if (process.platform === 'win32' && RETRYABLE_WINDOWS_CLEANUP_CODES.has(errorCode)) {
+            console.warn(`pack-smoke temp cleanup skipped after retryable Windows ${errorCode}: ${tempRoot}`);
+            return;
+        }
+        throw error;
+    }
+}
+
 function loadPackFixtureItems(repoRoot: string): string[] {
     const pkgJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     const items = new Set<string>(pkgJson.files || []);
@@ -218,6 +244,6 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
             'CLI must not produce TypeScript stripping warnings from node_modules'
         );
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        removePackSmokeTempRoot(tempRoot);
     }
 });
