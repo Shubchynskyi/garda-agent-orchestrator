@@ -245,27 +245,32 @@ function getExplainDatabase(): readonly ExplainEntry[] {
             `Run: ${getBundleCliCommand(bn)} gate completion-gate --task-id "<task-id>" and read the failure list.`,
             "Common causes: missing lifecycle events, unresolved findings in review artifacts, missing doc-impact gate.",
             "Fix each listed issue and re-run the completion gate."
-        ]
+        ],
+        seeAlso: ['docs/operator-consistency-runbook.md']
     },
     {
         id: 'TIMELINE_INCOMPLETE',
         title: 'Task timeline is incomplete',
-        description: 'The task event log is missing one or more mandatory lifecycle events.',
+        description: 'The canonical per-task task-event JSONL is missing one or more mandatory lifecycle events.',
         remediation: [
             `Run: ${getBundleCliCommand(bn)} gate task-events-summary --task-id "<task-id>" to see which events are missing.`,
+            `Treat ${bn}/runtime/task-events/<task-id>.jsonl as the source of truth; all-tasks.jsonl and .timeline-summary.json are derived indexes.`,
             "Re-run the appropriate gate commands to emit the missing events.",
-            "Do not manually backfill events unless recovery tooling explicitly requires it."
-        ]
+            "Do not manually backfill or edit task-event JSONL unless explicit recovery tooling requires it."
+        ],
+        seeAlso: ['docs/operator-consistency-runbook.md']
     },
     {
         id: 'TIMELINE_INTEGRITY_FAILED',
         title: 'Task timeline integrity check failed',
-        description: 'The task event JSONL file has hash-chain violations indicating tampering or replay.',
+        description: 'The canonical per-task task-event JSONL has hash-chain violations indicating corruption, replay, or manual tampering.',
         remediation: [
             `Run: ${getBundleCliCommand(bn)} gate task-events-summary --task-id "<task-id>" for details.`,
-            "Do not edit JSONL files manually.",
+            `Keep ${bn}/runtime/task-events/<task-id>.jsonl intact while diagnosing; aggregate and summary files are derived indexes, not the source of truth.`,
+            "Do not edit task-event JSONL files manually.",
             "If the timeline is unrecoverable, mark the task BLOCKED with blocked_reason_code=TIMELINE_CORRUPT."
-        ]
+        ],
+        seeAlso: ['docs/operator-consistency-runbook.md']
     },
     {
         id: 'DOC_IMPACT_MISSING',

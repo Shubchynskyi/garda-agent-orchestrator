@@ -66,6 +66,8 @@ Notes:
 - `status --compact` preserves the not-ready output but reduces the green path to a single summary line: `GARDA_STATUS: ready | source=<provider>`.
 - `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
 - `status why-blocked` also surfaces task-event locks that can block timeline writes and review-artifact locks that can block `runtime/reviews` artifact persistence.
+- The canonical task timeline is `garda-agent-orchestrator/runtime/task-events/<task-id>.jsonl`; status rolls up derived task-event indexes rather than replacing the per-task JSONL source of truth.
+- See [Operator Consistency and Recovery Runbook](operator-consistency-runbook.md) for the canonical-vs-derived model and recovery guidance.
 
 ### `garda doctor`
 
@@ -89,6 +91,8 @@ Notes:
 - `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks and stale review-artifact locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
 - `doctor explain <FAILURE_ID>` prints remediation steps for known failure IDs such as `TASK_MODE_NOT_ENTERED`, `COMPILE_GATE_FAILED`, and `TIMELINE_INCOMPLETE`.
 - `doctor explain --list` prints the current remediation database keys.
+- `doctor` uses the same runtime-consistency vocabulary as the operator runbook: canonical per-task JSONL, derived indexes, trusted protected manifest, and stale lock cleanup.
+- See [Operator Consistency and Recovery Runbook](operator-consistency-runbook.md) for the operator playbook behind these diagnostics.
 
 ### `garda preprompt`
 
@@ -305,6 +309,7 @@ Notes:
 - Count-based eviction uses **real filesystem recency** (file modification time), not task-id ordering. When the number of items exceeds the cap, the least recently modified entries are removed first. When modification times are equal, task-id / filename order is used as a deterministic tie-breaker.
 - For review artifacts, recency is determined per task group: the most recent `mtime` among all files in a `T-xxx-*` group represents that group's freshness.
 - `runtime/task-events/all-tasks.jsonl` is subject to aggregate line-count retention (`--max-aggregate-lines` via cleanup/gc policy). Tail pruning keeps the most recent entries and discards the oldest when the aggregate exceeds the configured cap. The file is never deleted outright by cleanup.
+- `runtime/task-events/all-tasks.jsonl` is a derived aggregate index; the canonical task record remains `runtime/task-events/<task-id>.jsonl`.
 - Cleanup runs under the lifecycle operation lock to avoid concurrent mutation of the same runtime state.
 - `cleanup policy` shows the current persistent review-artifact storage settings from `live/config/review-artifact-storage.json`.
 - `cleanup policy edit` is the dialog-first editor for retention mode, compression threshold, and receipt preservation. `cleanup policy --edit` is an alias.

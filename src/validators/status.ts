@@ -557,6 +557,7 @@ function appendProtectedManifestLines(lines: string[], snapshot: StatusSnapshot)
     const manifestSeverity = manifestAssessment?.severity
         || (manifestStatus === 'MATCH' || manifestStatus === 'MISSING' ? 'pass' : 'fail');
     lines.push(`  ${buildSeverityBadge(manifestSeverity)} Protected manifest (${manifestStatus})`);
+    lines.push('    Role: trusted protected control-plane baseline for lifecycle drift checks.');
 
     if (manifestAssessment?.code === 'INFO_SOURCE_CHECKOUT') {
         lines.push('    Assessment: INFO_SOURCE_CHECKOUT');
@@ -624,6 +625,8 @@ function appendTimelineLines(lines: string[], snapshot: StatusSnapshot): void {
     }
 
     lines.push(`TaskTimelines: ${snapshot.timelineHealthy}/${snapshot.timelineTaskCount} complete`);
+    lines.push('  Canonical task timelines: garda-agent-orchestrator/runtime/task-events/<task-id>.jsonl');
+    lines.push('  Derived indexes: garda-agent-orchestrator/runtime/task-events/all-tasks.jsonl, garda-agent-orchestrator/runtime/task-events/.timeline-summary.json');
     for (const warning of snapshot.timelineWarnings) {
         lines.push(`  Warning: ${warning}`);
     }

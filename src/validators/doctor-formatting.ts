@@ -39,6 +39,7 @@ export function formatDoctorResult(result: DoctorResult): string {
         lines.push('Protected Control-Plane Manifest');
         lines.push('  Status: '+result.protectedManifestEvidence.status);
         lines.push('  ManifestPath: '+result.protectedManifestEvidence.manifest_path);
+        lines.push('  Role: trusted protected control-plane baseline for lifecycle drift checks.');
         if (result.protectedManifestEvidence.status === 'DRIFT') {
             var driftFiles = result.protectedManifestEvidence.changed_files;
             lines.push('  DriftCount: '+driftFiles.length);
@@ -64,6 +65,8 @@ export function formatDoctorResult(result: DoctorResult): string {
     // Timeline evidence summary
     if (result.timelineEvidence.length > 0) {
         lines.push('Timeline Evidence');
+        lines.push('  Canonical: runtime/task-events/<task-id>.jsonl');
+        lines.push('  Derived indexes: runtime/task-events/all-tasks.jsonl, runtime/task-events/.timeline-summary.json');
         for (var i = 0; i < result.timelineEvidence.length; i++) {
             var te = result.timelineEvidence[i];
             lines.push(
@@ -102,6 +105,7 @@ export function formatDoctorResult(result: DoctorResult): string {
     if (result.lockHealth.locks.length > 0 || result.lockCleanup) {
         lines.push('Task-Event Locks');
         lines.push('  Scope: ' + result.lockHealth.subsystem_scope_note);
+        lines.push('  Role: protects writes to canonical task timelines and derived task-event indexes.');
         lines.push(
             '  Summary: active=' + result.lockHealth.active_count +
             ', stale=' + result.lockHealth.stale_count
@@ -264,6 +268,7 @@ export function formatDoctorResult(result: DoctorResult): string {
         for (const pv of result.partialStateEvidence.violations) {
             lines.push('  - ' + pv);
         }
+        lines.push('  Recovery: rerun update/rollback/setup instead of deleting lifecycle sentinels or locks manually.');
         lines.push('');
     }
 
