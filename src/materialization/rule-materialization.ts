@@ -36,6 +36,204 @@ export const DISCOVERY_AUGMENTED_RULE_FILES = CONTEXT_RULE_FILES;
 
 export const LANGUAGE_PLACEHOLDER = '{{ASSISTANT_RESPONSE_LANGUAGE}}';
 export const BREVITY_PLACEHOLDER = '{{ASSISTANT_RESPONSE_BREVITY}}';
+export const MEANINGFUL_DIFF_THRESHOLD = 5;
+
+export const LEGACY_BOOTSTRAP_CODE_STYLE_TEMPLATE = [
+    '# Code Style',
+    '',
+    'Primary entry point: selected source-of-truth entrypoint for this workspace.',
+    '',
+    '## Purpose',
+    'Define style rules for languages that actually exist in this repository.',
+    '',
+    '## Global Rules',
+    '- Prefer small, testable functions and explicit naming.',
+    '- Keep public APIs stable and documented.',
+    '- Follow explicit project rules first, not vague habit or local drift.',
+    '- If formatter or linter exists, treat it as source of truth.',
+    '- Do not copy inconsistent, legacy, or obviously low-quality patterns just because they already exist in the repository.',
+    '',
+    '## Style Priority Order',
+    '- Rules written in this file are the primary source of truth.',
+    '- Formatter, linter, and static-analysis configs come next.',
+    '- Strong, consistent patterns from high-quality project modules may refine local style decisions.',
+    '- Common best practices are the fallback when project-specific guidance is missing.',
+    '',
+    '## Bootstrap Policy When Repository Is Empty',
+    '- If there is little or no real project code yet, do not invent a silent style policy.',
+    '- Ask the user a mandatory question: accept the default policy of explicit rules + tooling + common best practices, or provide custom project-specific style rules now.',
+    '- Record that answer here before broad implementation starts.',
+    '- If the default policy is accepted, state it explicitly instead of leaving the section vague.',
+    '- As soon as stable project-specific rules exist, replace this bootstrap policy with concrete repository-specific guidance.',
+    '',
+    '## Language-Specific Rules (Fill Only Relevant Sections)',
+    '',
+    '### Java or Kotlin (if present)',
+    '- DTO and domain mapping style: `TODO`',
+    '- Null-safety and error handling approach: `TODO`',
+    '- Transaction and persistence conventions: `TODO`',
+    '',
+    '### TypeScript or JavaScript (if present)',
+    '- Type strictness level and runtime validation strategy: `TODO`',
+    '- Component and state management conventions: `TODO`',
+    '- API contract and schema handling: `TODO`',
+    '',
+    '### Python (if present)',
+    '- Type hinting policy and linting rules: `TODO`',
+    '- Async patterns and dependency management: `TODO`',
+    '- Framework-specific conventions: `TODO`',
+    '',
+    '### Go (if present)',
+    '- Package boundaries and interface patterns: `TODO`',
+    '- Error wrapping and logging rules: `TODO`',
+    '',
+    '### Rust (if present)',
+    '- Ownership and error handling conventions: `TODO`',
+    '- Module and crate organization rules: `TODO`',
+    '',
+    '## Definition of Done for Style',
+    '- Rules above must match actual stack from `live/project-discovery.md`.',
+    '- Outdated language sections must be removed or explicitly marked as not applicable.'
+].join('\n');
+
+function normalizeSeedMarkdown(content: string): string {
+    return String(content || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .trim();
+}
+
+function removeSectionByHeading(markdown: string, sectionHeading: string): string {
+    const lines = markdown.split(/\r?\n/);
+    const result: string[] = [];
+    let skipping = false;
+
+    for (const line of lines) {
+        const h2 = line.match(/^## (.+)$/);
+        if (h2) {
+            skipping = h2[1].trim() === sectionHeading;
+        }
+        if (!skipping) {
+            result.push(line);
+        }
+    }
+
+    return result.join('\n');
+}
+
+export function getMeaningfulLines(text: string): string[] {
+    let cleaned = stripHtmlComments(text);
+    cleaned = removeSectionByHeading(cleaned, 'Project Discovery Snapshot');
+
+    return cleaned
+        .split(/\r?\n/)
+        .map((line: string) => line.trim())
+        .filter((line: string) =>
+            line.length > 0 &&
+            !line.match(/^#+\s/) &&
+            line !== '```' &&
+            line !== '```text' &&
+            line !== '```bash' &&
+            !line.match(/^\|[-:\s|]+\|$/) &&
+            line !== '---' &&
+            line !== '`TODO`' &&
+            line !== 'TODO'
+        );
+}
+
+export function countMeaningfulAddedLines(liveContent: string, templateContent: string): number {
+    const templateSet = new Set(getMeaningfulLines(templateContent));
+    const liveLines = getMeaningfulLines(liveContent);
+    return liveLines.filter((line: string) => !templateSet.has(line)).length;
+}
+
+export function countLegacyBootstrapNovelLines(content: string, templateContent: string): number {
+    const meaningfulLines = getMeaningfulLines(content);
+    const knownBootstrapLines = new Set([
+        ...getMeaningfulLines(LEGACY_BOOTSTRAP_CODE_STYLE_TEMPLATE),
+        ...getMeaningfulLines(templateContent)
+    ]);
+    return meaningfulLines.filter((line) => !knownBootstrapLines.has(line)).length;
+}
+
+export function isBootstrapOnlyLegacyCodeStyleRule(content: string, templateContent: string): boolean {
+    const normalized = normalizeSeedMarkdown(content);
+    if (!normalized) {
+        return false;
+    }
+
+    const stillLooksLikeLegacyBootstrap = normalized.includes('## Bootstrap Policy When Repository Is Empty')
+        && normalized.includes('## Language-Specific Rules (Fill Only Relevant Sections)');
+
+    return stillLooksLikeLegacyBootstrap
+        && countLegacyBootstrapNovelLines(normalized, templateContent) <= MEANINGFUL_DIFF_THRESHOLD;
+}
+
+export function resolveTemplateProjectMemoryDir(projectMemoryDir: string): string | null {
+    const templateDir = path.resolve(projectMemoryDir, '..', '..', '..', 'template', 'docs', 'project-memory');
+    return pathExists(templateDir) ? templateDir : null;
+}
+
+export function isTemplateSeedProjectMemoryFile(projectMemoryDir: string, fileName: string, content: string): boolean {
+    const templateDir = resolveTemplateProjectMemoryDir(projectMemoryDir);
+    if (!templateDir) {
+        return false;
+    }
+    const templatePath = path.join(templateDir, fileName);
+    if (!pathExists(templatePath)) {
+        return false;
+    }
+
+    const templateContent = readTextFile(templatePath);
+    return normalizeSeedMarkdown(content) === normalizeSeedMarkdown(templateContent);
+}
+
+function resolveExistingRuleSourceCandidates(ruleFile: string, options: SelectRuleSourceOptions): RuleSourceSelection[] {
+    const { targetRoot, liveRuleRoot, templateRuleRoot } = options;
+
+    const legacyCandidate = path.join(targetRoot, 'docs/agent-rules', ruleFile);
+    const liveCandidate = path.join(liveRuleRoot, ruleFile);
+    const templateCandidate = path.join(templateRuleRoot, ruleFile);
+    const isContextRule = CONTEXT_RULE_FILES.includes(ruleFile);
+    const candidates: RuleSourceSelection[] = [];
+
+    if (ruleFile === '00-core.md') {
+        candidates.push(
+            { path: templateCandidate, origin: 'template' },
+            { path: liveCandidate, origin: 'live-existing' },
+            { path: legacyCandidate, origin: 'legacy-docs' }
+        );
+    } else if (isContextRule) {
+        candidates.push(
+            { path: legacyCandidate, origin: 'legacy-docs' },
+            { path: liveCandidate, origin: 'live-existing' },
+            { path: templateCandidate, origin: 'template' }
+        );
+    } else {
+        candidates.push(
+            { path: liveCandidate, origin: 'live-existing' },
+            { path: templateCandidate, origin: 'template' },
+            { path: legacyCandidate, origin: 'legacy-docs' }
+        );
+    }
+
+    return candidates.filter((candidate) => pathExists(candidate.path));
+}
+
+function resolveRuleSourceCandidates(ruleFile: string, options: SelectRuleSourceOptions): RuleSourceSelection[] {
+    const { templateRuleRoot } = options;
+    const templateCandidate = path.join(templateRuleRoot, ruleFile);
+    const existingCandidates = resolveExistingRuleSourceCandidates(ruleFile, options);
+    if (ruleFile !== '30-code-style.md' || !pathExists(templateCandidate)) {
+        return existingCandidates;
+    }
+
+    const templateContent = readTextFile(templateCandidate);
+    return existingCandidates.filter((candidate) => candidate.origin === 'template' || !isBootstrapOnlyLegacyCodeStyleRule(
+        readTextFile(candidate.path),
+        templateContent
+    ));
+}
 
 /**
  * Selects the best source for a rule file following priority rules:
@@ -44,28 +242,24 @@ export const BREVITY_PLACEHOLDER = '{{ASSISTANT_RESPONSE_BREVITY}}';
  * - Other rules: live > template > legacy
  */
 export function selectRuleSource(ruleFile: string, options: SelectRuleSourceOptions): RuleSourceSelection | null {
-    const { targetRoot, liveRuleRoot, templateRuleRoot } = options;
+    return resolveRuleSourceCandidates(ruleFile, options)[0] ?? null;
+}
 
-    const legacyCandidate = path.join(targetRoot, 'docs/agent-rules', ruleFile);
-    const liveCandidate = path.join(liveRuleRoot, ruleFile);
-    const templateCandidate = path.join(templateRuleRoot, ruleFile);
-    const isContextRule = CONTEXT_RULE_FILES.includes(ruleFile);
+/**
+ * Returns all existing source candidates for a rule file in the same priority
+ * order used by selectRuleSource().
+ */
+export function selectRuleSources(ruleFile: string, options: SelectRuleSourceOptions): RuleSourceSelection[] {
+    return resolveRuleSourceCandidates(ruleFile, options);
+}
 
-    if (ruleFile === '00-core.md') {
-        if (pathExists(templateCandidate)) return { path: templateCandidate, origin: 'template' };
-        if (pathExists(liveCandidate)) return { path: liveCandidate, origin: 'live-existing' };
-        if (pathExists(legacyCandidate)) return { path: legacyCandidate, origin: 'legacy-docs' };
-    } else if (isContextRule) {
-        if (pathExists(legacyCandidate)) return { path: legacyCandidate, origin: 'legacy-docs' };
-        if (pathExists(liveCandidate)) return { path: liveCandidate, origin: 'live-existing' };
-        if (pathExists(templateCandidate)) return { path: templateCandidate, origin: 'template' };
-    } else {
-        if (pathExists(liveCandidate)) return { path: liveCandidate, origin: 'live-existing' };
-        if (pathExists(templateCandidate)) return { path: templateCandidate, origin: 'template' };
-        if (pathExists(legacyCandidate)) return { path: legacyCandidate, origin: 'legacy-docs' };
-    }
-
-    return null;
+/**
+ * Returns all existing source candidates for a rule file in priority order
+ * without applying bootstrap-only legacy filtering. Use this when the caller
+ * needs to inspect potentially disposable legacy content before deciding.
+ */
+export function selectRuleSourceCandidates(ruleFile: string, options: SelectRuleSourceOptions): RuleSourceSelection[] {
+    return resolveExistingRuleSourceCandidates(ruleFile, options);
 }
 
 export function applyContextDefaults(content: string, ruleFile: string, discoveryOverlay: string | null | undefined): string {
@@ -170,6 +364,9 @@ export function generateProjectMemorySummary(projectMemoryDir: string, timestamp
     for (const fileName of mdFiles) {
         const filePath = path.join(projectMemoryDir, fileName);
         const raw = readTextFile(filePath);
+        if (isTemplateSeedProjectMemoryFile(projectMemoryDir, fileName, raw)) {
+            continue;
+        }
         const sections = extractNonEmptySections(raw);
 
         if (sections.length === 0) continue;

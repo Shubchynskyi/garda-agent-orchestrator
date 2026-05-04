@@ -3,14 +3,21 @@
 Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Purpose
-Define style rules for languages that actually exist in this repository.
+Define the default style contract agents should follow until stable
+repository-specific conventions replace or refine it.
 
 ## Global Rules
-- Prefer small, testable functions and explicit naming.
-- Keep public APIs stable and documented.
+- Prefer small, focused, testable units and explicit naming.
+- Prefer thin entrypoints and handlers over mixing parse, validate, execute,
+  render, and persistence concerns in one place.
+- Keep public contracts stable unless the task explicitly changes them.
 - Follow explicit project rules first, not vague habit or local drift.
-- If formatter or linter exists, treat it as source of truth.
-- Do not copy inconsistent, legacy, or obviously low-quality patterns just because they already exist in the repository.
+- If formatter, linter, or static-analysis config exists, treat it as
+  enforceable source of truth.
+- Do not copy inconsistent, legacy, or obviously low-quality patterns just
+  because they already exist in the repository.
+- Avoid style-only churn that does not improve readability, maintainability, or
+  correctness.
 
 ## Style Priority Order
 - Rules written in this file are the primary source of truth.
@@ -18,38 +25,50 @@ Define style rules for languages that actually exist in this repository.
 - Strong, consistent patterns from high-quality project modules may refine local style decisions.
 - Common best practices are the fallback when project-specific guidance is missing.
 
-## Bootstrap Policy When Repository Is Empty
-- If there is little or no real project code yet, do not invent a silent style policy.
-- Ask the user a mandatory question: accept the default policy of explicit rules + tooling + common best practices, or provide custom project-specific style rules now.
-- Record that answer here before broad implementation starts.
-- If the default policy is accepted, state it explicitly instead of leaving the section vague.
-- As soon as stable project-specific rules exist, replace this bootstrap policy with concrete repository-specific guidance.
+## Comments
+- Keep comments only for rationale, invariants, security-sensitive constraints,
+  provider or platform quirks, or real boundary exceptions.
+- Remove section banners, step narration, line-by-line paraphrases, and JSDoc
+  for self-explanatory typed helpers.
+- If a block is understandable only because of a prose comment, simplify the
+  code first.
 
-## Language-Specific Rules (Fill Only Relevant Sections)
+## Naming
+- Internal code uses `camelCase`.
+- Type-like symbols use `PascalCase`.
+- Do not prefix interfaces with `I`.
+- Boolean helpers should read like questions: `is*`, `has*`, `can*`,
+  `should*`.
+- Prefer intent-first helper names such as `resolve*`, `read*`, `parse*`,
+  `build*`, `format*`, and `print*`.
 
-### Java or Kotlin (if present)
-- DTO and domain mapping style: `TODO`
-- Null-safety and error handling approach: `TODO`
-- Transaction and persistence conventions: `TODO`
+## Constants and Boundary Shapes
+- Use `UPPER_SNAKE_CASE` only for real module-level constants such as stable
+  defaults, registries, regex or token maps, CLI option definitions, and other
+  long-lived declarations.
+- Keep local computed values in normal local naming style even when immutable.
+- Keep `snake_case` at external boundaries only, such as JSON, persisted
+  artifacts, manifests, CLI or wire contracts, and serialized evidence. Prefer
+  `camelCase` inside modules.
 
-### TypeScript or JavaScript (if present)
-- Type strictness level and runtime validation strategy: `TODO`
-- Component and state management conventions: `TODO`
-- API contract and schema handling: `TODO`
+## Module Shape
+- Prefer one main responsibility per file.
+- Preferred small-module reading order: imports -> types or contracts ->
+  constants or definitions -> pure helpers -> effectful helpers -> exported
+  entrypoint.
+- For handler or command modules, prefer parse -> validate -> execute or
+  use-case -> render.
 
-### Python (if present)
-- Type hinting policy and linting rules: `TODO`
-- Async patterns and dependency management: `TODO`
-- Framework-specific conventions: `TODO`
-
-### Go (if present)
-- Package boundaries and interface patterns: `TODO`
-- Error wrapping and logging rules: `TODO`
-
-### Rust (if present)
-- Ownership and error handling conventions: `TODO`
-- Module and crate organization rules: `TODO`
+## Bootstrap and Refinement
+- On a fresh or low-code repository, use this contract plus tooling defaults
+  until stable project-specific conventions exist.
+- Promote durable repository-specific refinements into
+  `project-memory/conventions.md` instead of scattering them across ad-hoc
+  local notes or generated materializations.
+- Remove unused language or framework placeholders instead of leaving stale
+  guidance behind.
 
 ## Definition of Done for Style
 - Rules above must match actual stack from `live/project-discovery.md`.
-- Outdated language sections must be removed or explicitly marked as not applicable.
+- Repository-specific conventions in `project-memory/conventions.md` may refine
+  these defaults but must not contradict mandatory rule files.

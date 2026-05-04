@@ -102,6 +102,325 @@ describe('runInit', () => {
         }
     });
 
+    it('replaces obsolete legacy code-style bootstrap defaults with the promoted template contract', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const legacyRuleDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyRuleDir, '30-code-style.md'), [
+                '# Code Style',
+                '',
+                '## Bootstrap Policy When Repository Is Empty',
+                '- Keep the legacy bootstrap default for empty repositories.',
+                '',
+                '## Language-Specific Rules (Fill Only Relevant Sections)',
+                '- Type strictness level and runtime validation strategy: `TODO`'
+            ].join('\n'), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const codeStyleContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/agent-rules/30-code-style.md'),
+                'utf8'
+            );
+            assert.ok(codeStyleContent.includes('## Comments'));
+            assert.ok(!codeStyleContent.includes('## Bootstrap Policy When Repository Is Empty'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('migrates concise legacy code-style refinements into project-memory while promoting the template contract', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const legacyRuleDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyRuleDir, '30-code-style.md'), [
+                '# Code Style',
+                '',
+                '## Bootstrap Policy When Repository Is Empty',
+                '- Keep the legacy bootstrap default for empty repositories.',
+                '',
+                '## Language-Specific Rules (Fill Only Relevant Sections)',
+                '- Type strictness level and runtime validation strategy: `TODO`',
+                '',
+                '## Team Conventions',
+                '- Prefer domain event names that read like past-tense business facts.'
+            ].join('\n'), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const codeStyleContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/agent-rules/30-code-style.md'),
+                'utf8'
+            );
+            const conventionsContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/project-memory/conventions.md'),
+                'utf8'
+            );
+
+            assert.ok(codeStyleContent.includes('## Comments'));
+            assert.ok(!codeStyleContent.includes('## Bootstrap Policy When Repository Is Empty'));
+            assert.ok(conventionsContent.includes('## Team Conventions'));
+            assert.ok(conventionsContent.includes('Prefer domain event names that read like past-tense business facts.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves concise legacy code-style refinements when project-memory already has user content', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const projectMemoryDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), projectMemoryDir);
+            fs.writeFileSync(
+                path.join(projectMemoryDir, 'conventions.md'),
+                '# Conventions\n\n## Existing Team Conventions\n- Preserve existing project-memory ownership.\n',
+                'utf8'
+            );
+
+            const legacyRuleDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyRuleDir, '30-code-style.md'), [
+                '# Code Style',
+                '',
+                '## Bootstrap Policy When Repository Is Empty',
+                '- Keep the legacy bootstrap default for empty repositories.',
+                '',
+                '## Language-Specific Rules (Fill Only Relevant Sections)',
+                '- Type strictness level and runtime validation strategy: `TODO`',
+                '',
+                '## Team Conventions',
+                '- Prefer domain event names that read like past-tense business facts.'
+            ].join('\n'), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const codeStyleContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/agent-rules/30-code-style.md'),
+                'utf8'
+            );
+            const conventionsContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/project-memory/conventions.md'),
+                'utf8'
+            );
+
+            assert.ok(codeStyleContent.includes('## Team Conventions'));
+            assert.ok(codeStyleContent.includes('Prefer domain event names that read like past-tense business facts.'));
+            assert.ok(codeStyleContent.includes('## Comments'));
+            assert.ok(!codeStyleContent.includes('## Bootstrap Policy When Repository Is Empty'));
+            assert.ok(conventionsContent.includes('## Existing Team Conventions'));
+            assert.ok(!conventionsContent.includes('Prefer domain event names that read like past-tense business facts.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves concise live code-style refinements when project-memory already has user content', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const projectMemoryDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), projectMemoryDir);
+            fs.writeFileSync(
+                path.join(projectMemoryDir, 'conventions.md'),
+                '# Conventions\n\n## Existing Team Conventions\n- Preserve existing project-memory ownership.\n',
+                'utf8'
+            );
+
+            const liveRuleDir = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(liveRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(liveRuleDir, '30-code-style.md'), [
+                '# Code Style',
+                '',
+                '## Bootstrap Policy When Repository Is Empty',
+                '- Keep the legacy bootstrap default for empty repositories.',
+                '',
+                '## Language-Specific Rules (Fill Only Relevant Sections)',
+                '- Type strictness level and runtime validation strategy: `TODO`',
+                '',
+                '## Team Conventions',
+                '- Prefer domain event names that read like past-tense business facts.'
+            ].join('\n'), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const codeStyleContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/agent-rules/30-code-style.md'),
+                'utf8'
+            );
+            const conventionsContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/project-memory/conventions.md'),
+                'utf8'
+            );
+
+            assert.ok(codeStyleContent.includes('## Team Conventions'));
+            assert.ok(codeStyleContent.includes('Prefer domain event names that read like past-tense business facts.'));
+            assert.ok(codeStyleContent.includes('## Comments'));
+            assert.ok(!codeStyleContent.includes('## Bootstrap Policy When Repository Is Empty'));
+            assert.ok(conventionsContent.includes('## Existing Team Conventions'));
+            assert.ok(!conventionsContent.includes('Prefer domain event names that read like past-tense business facts.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves live code-style refinements when project-memory does not exist yet', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const liveRuleDir = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(liveRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(liveRuleDir, '30-code-style.md'), [
+                '# Code Style',
+                '',
+                '## Team Conventions',
+                '- Prefer domain event names that read like past-tense business facts.'
+            ].join('\n'), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const codeStyleContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/agent-rules/30-code-style.md'),
+                'utf8'
+            );
+
+            assert.ok(codeStyleContent.includes('## Team Conventions'));
+            assert.ok(codeStyleContent.includes('Prefer domain event names that read like past-tense business facts.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps code-style refinements while picking up later template updates on rerun', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const projectMemoryDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), projectMemoryDir);
+            fs.writeFileSync(
+                path.join(projectMemoryDir, 'conventions.md'),
+                '# Conventions\n\n## Existing Team Conventions\n- Preserve existing project-memory ownership.\n',
+                'utf8'
+            );
+
+            const liveRulePath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '30-code-style.md');
+            fs.mkdirSync(path.dirname(liveRulePath), { recursive: true });
+            fs.writeFileSync(liveRulePath, [
+                '# Code Style',
+                '',
+                '## Team Conventions',
+                '- Prefer domain event names that read like past-tense business facts.'
+            ].join('\n'), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const templateRulePath = path.join(bundleRoot, 'template', 'docs', 'agent-rules', '30-code-style.md');
+            const updatedTemplate = fs.readFileSync(templateRulePath, 'utf8').replace(
+                '- Remove unused language or framework placeholders instead of leaving stale',
+                '- Prefer contract tests for cross-boundary adapters before wiring them into handlers.\n- Remove unused language or framework placeholders instead of leaving stale'
+            );
+            fs.writeFileSync(templateRulePath, updatedTemplate, 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const codeStyleContent = fs.readFileSync(liveRulePath, 'utf8');
+            assert.ok(codeStyleContent.includes('## Team Conventions'));
+            assert.ok(codeStyleContent.includes('Prefer domain event names that read like past-tense business facts.'));
+            assert.ok(codeStyleContent.includes('Prefer contract tests for cross-boundary adapters before wiring them into handlers.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('prefers newer live code-style refinements over stale legacy ones when project-memory is already user-owned', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const projectMemoryDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), projectMemoryDir);
+            fs.writeFileSync(
+                path.join(projectMemoryDir, 'conventions.md'),
+                '# Conventions\n\n## Existing Team Conventions\n- Preserve existing project-memory ownership.\n',
+                'utf8'
+            );
+
+            const legacyRuleDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyRuleDir, '30-code-style.md'), [
+                '# Code Style',
+                '',
+                '## Team Conventions',
+                '- Legacy refinement should not win once a newer live refinement exists.'
+            ].join('\n'), 'utf8');
+
+            const liveRuleDir = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(liveRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(liveRuleDir, '30-code-style.md'), [
+                '# Code Style',
+                '',
+                '## Team Conventions',
+                '- Live refinement should win over stale legacy content on rerun.'
+            ].join('\n'), 'utf8');
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const codeStyleContent = fs.readFileSync(
+                path.join(bundleRoot, 'live/docs/agent-rules/30-code-style.md'),
+                'utf8'
+            );
+
+            assert.ok(codeStyleContent.includes('Live refinement should win over stale legacy content on rerun.'));
+            assert.ok(!codeStyleContent.includes('Legacy refinement should not win once a newer live refinement exists.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('copies support directories to live/', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

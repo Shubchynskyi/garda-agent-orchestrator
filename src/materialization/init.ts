@@ -35,13 +35,15 @@ import { getProjectDiscovery, buildProjectDiscoveryLines, buildDiscoveryOverlayS
 import {
     RULE_FILES,
     GENERATED_RULE_FILES,
+    countLegacyBootstrapNovelLines,
     selectRuleSource,
+    selectRuleSourceCandidates,
     applyContextDefaults,
     applyAssistantDefaults,
     generateProjectMemorySummary
 } from './rule-materialization';
 import { getNodeHumanCommitCommand, getNodeInteractiveUpdateCommand, getNodeNonInteractiveUpdateCommand } from './command-constants';
-import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
+import { migrateContextRulesToProjectMemory, buildMigrationReportLines, extractMigrationContent } from './project-memory-migration';
 import { withLifecycleOperationLock } from '../lifecycle/common';
 export { mergeConfig } from '../core/config-merge';
 
@@ -81,8 +83,78 @@ interface SourceInventory {
     docsMarkdownFiles: string[];
 }
 
+interface MarkdownSection {
+    heading: string;
+    lines: string[];
+}
+
 type ProjectDiscovery = ReturnType<typeof getProjectDiscovery>;
 type ReviewCapabilitiesSyncResult = ReturnType<typeof syncReviewCapabilities>;
+
+function parseMarkdownSections(markdown: string): MarkdownSection[] {
+    const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
+    const sections: MarkdownSection[] = [];
+    let current: MarkdownSection | null = null;
+
+    for (const line of lines) {
+        const headingMatch = /^## (.+)$/.exec(line);
+        if (headingMatch) {
+            if (current) {
+                sections.push(current);
+            }
+            current = { heading: headingMatch[1].trim(), lines: [] };
+            continue;
+        }
+        if (current) {
+            current.lines.push(line);
+        }
+    }
+
+    if (current) {
+        sections.push(current);
+    }
+
+    return sections;
+}
+
+function mergeLegacyCodeStyleRefinements(baseContent: string, refinementMarkdown: string): string {
+    const newline = baseContent.includes('\r\n') ? '\r\n' : '\n';
+    const lines = baseContent.replace(/\r\n/g, '\n').split('\n');
+    const refinementSections = parseMarkdownSections(refinementMarkdown);
+
+    for (const section of refinementSections) {
+        const headingIndex = lines.findIndex((line) => line.trim() === `## ${section.heading}`);
+        if (headingIndex >= 0) {
+            let insertAt = lines.length;
+            for (let index = headingIndex + 1; index < lines.length; index++) {
+                if (/^## /.test(lines[index].trim())) {
+                    insertAt = index;
+                    break;
+                }
+            }
+
+            const insertion: string[] = [];
+            if (insertAt > 0 && lines[insertAt - 1].trim() !== '') {
+                insertion.push('');
+            }
+            insertion.push(...section.lines);
+            if (insertAt < lines.length && lines[insertAt].trim() !== '') {
+                insertion.push('');
+            }
+            lines.splice(insertAt, 0, ...insertion);
+            continue;
+        }
+
+        if (lines.length > 0 && lines[lines.length - 1].trim() !== '') {
+            lines.push('');
+        }
+        lines.push(`## ${section.heading}`);
+        lines.push('');
+        lines.push(...section.lines);
+    }
+
+    return lines.join(newline);
+}
 
 function getFullSuiteEnabledDiagnostic(config: Record<string, unknown>): string {
     const fullSuiteSection = isPlainObject(config.full_suite_validation)
@@ -236,9 +308,19 @@ export function runInit(options: RunInitOptions) {
     for (const ruleFile of RULE_FILES) {
         if (GENERATED_RULE_FILES.includes(ruleFile)) continue;
 
-        const source = selectRuleSource(ruleFile, { targetRoot, liveRuleRoot, templateRuleRoot });
+        let source = selectRuleSource(ruleFile, { targetRoot, liveRuleRoot, templateRuleRoot });
         if (!source) {
             throw new Error(`No source found for rule file: ${ruleFile}`);
+        }
+
+        if (
+            ruleFile === '30-code-style.md'
+            && migrationResult.status === 'project_memory_has_content'
+        ) {
+            const templatePath = path.join(templateRuleRoot, ruleFile);
+            if (pathExists(templatePath)) {
+                source = { path: templatePath, origin: 'template' };
+            }
         }
 
         let content = readTextFile(source.path);
@@ -253,6 +335,34 @@ export function runInit(options: RunInitOptions) {
 
         // Apply assistant defaults (language/brevity) to 00-core.md
         content = applyAssistantDefaults(content, ruleFile, lang, brevity);
+
+        if (
+            ruleFile === '30-code-style.md'
+            && source.origin === 'template'
+            && migrationResult.status === 'project_memory_has_content'
+        ) {
+            const rawCandidates = selectRuleSourceCandidates(ruleFile, { targetRoot, liveRuleRoot, templateRuleRoot })
+                .filter((candidate) => candidate.origin !== 'template')
+                .sort((left, right) => {
+                    const priority = (origin: string): number => origin === 'live-existing' ? 0 : 1;
+                    return priority(left.origin) - priority(right.origin);
+                });
+            const templateContent = readTextFile(path.join(templateRuleRoot, ruleFile));
+            for (const rawCandidate of rawCandidates) {
+                const candidateContent = readTextFile(rawCandidate.path);
+                if (countLegacyBootstrapNovelLines(candidateContent, templateContent) <= 0) {
+                    continue;
+                }
+                const refinementMarkdown = extractMigrationContent(candidateContent, 'Code Style', {
+                    ruleFile,
+                    templateContent
+                });
+                if (refinementMarkdown.trim()) {
+                    content = mergeLegacyCodeStyleRefinements(content, refinementMarkdown);
+                    break;
+                }
+            }
+        }
 
         const destPath = path.join(liveRuleRoot, ruleFile);
         if (!dryRun) {

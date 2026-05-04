@@ -161,6 +161,42 @@ describe('selectRuleSource', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     });
+
+    it('skips obsolete legacy bootstrap code-style and falls through to live-existing', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-rules-style-'));
+        try {
+            const templateRuleRoot = path.join(tmpDir, 'template');
+            const liveRuleRoot = path.join(tmpDir, 'live');
+            const targetRoot = path.join(tmpDir, 'project');
+            fs.mkdirSync(templateRuleRoot, { recursive: true });
+            fs.mkdirSync(liveRuleRoot, { recursive: true });
+            fs.mkdirSync(path.join(targetRoot, 'docs/agent-rules'), { recursive: true });
+
+            const templateContent = fs.readFileSync(
+                path.join(findRepoRoot(), 'template', 'docs', 'agent-rules', '30-code-style.md'),
+                'utf8'
+            );
+            const legacyBootstrapContent = [
+                '# Code Style',
+                '',
+                '## Bootstrap Policy When Repository Is Empty',
+                '- Keep the legacy bootstrap default for empty repositories.',
+                '',
+                '## Language-Specific Rules (Fill Only Relevant Sections)',
+                '- Type strictness level and runtime validation strategy: `TODO`'
+            ].join('\n');
+            const liveContent = '# Code Style\n\n## Naming\n- Prefer intent-first helper names.\n';
+
+            fs.writeFileSync(path.join(templateRuleRoot, '30-code-style.md'), templateContent, 'utf8');
+            fs.writeFileSync(path.join(liveRuleRoot, '30-code-style.md'), liveContent, 'utf8');
+            fs.writeFileSync(path.join(targetRoot, 'docs/agent-rules/30-code-style.md'), legacyBootstrapContent, 'utf8');
+
+            const result = selectRuleSource('30-code-style.md', { targetRoot, liveRuleRoot, templateRuleRoot });
+            assert.equal(result!.origin, 'live-existing');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('applyContextDefaults', () => {

@@ -86,6 +86,10 @@ const TEMPLATE_20 = fs.readFileSync(
     path.join(findRepoRoot(), 'template/docs/agent-rules/20-architecture.md'), 'utf8'
 );
 
+const TEMPLATE_30 = fs.readFileSync(
+    path.join(findRepoRoot(), 'template/docs/agent-rules/30-code-style.md'), 'utf8'
+);
+
 const USER_AUTHORED_20 = `# Architecture
 
 ## System Shape (Required)
@@ -117,6 +121,112 @@ ecommerce-platform/
 - Failure: circuit breaker pattern for external service calls
 - Performance: hot path is order creation (P99 target: 200ms)
 `;
+
+const LEGACY_DEFAULT_30 = `# Code Style
+
+Primary entry point: selected source-of-truth entrypoint for this workspace.
+
+## Purpose
+Define style rules for languages that actually exist in this repository.
+
+## Global Rules
+- Prefer small, testable functions and explicit naming.
+- Keep public APIs stable and documented.
+- Follow explicit project rules first, not vague habit or local drift.
+- If formatter or linter exists, treat it as source of truth.
+- Do not copy inconsistent, legacy, or obviously low-quality patterns just because they already exist in the repository.
+
+## Style Priority Order
+- Rules written in this file are the primary source of truth.
+- Formatter, linter, and static-analysis configs come next.
+- Strong, consistent patterns from high-quality project modules may refine local style decisions.
+- Common best practices are the fallback when project-specific guidance is missing.
+
+## Bootstrap Policy When Repository Is Empty
+- If there is little or no real project code yet, do not invent a silent style policy.
+- Ask the user a mandatory question: accept the default policy of explicit rules + tooling + common best practices, or provide custom project-specific style rules now.
+- Record that answer here before broad implementation starts.
+- If the default policy is accepted, state it explicitly instead of leaving the section vague.
+- As soon as stable project-specific rules exist, replace this bootstrap policy with concrete repository-specific guidance.
+
+## Language-Specific Rules (Fill Only Relevant Sections)
+
+### Java or Kotlin (if present)
+- DTO and domain mapping style: \`TODO\`
+- Null-safety and error handling approach: \`TODO\`
+- Transaction and persistence conventions: \`TODO\`
+
+### TypeScript or JavaScript (if present)
+- Type strictness level and runtime validation strategy: \`TODO\`
+- Component and state management conventions: \`TODO\`
+- API contract and schema handling: \`TODO\`
+
+### Python (if present)
+- Type hinting policy and linting rules: \`TODO\`
+- Async patterns and dependency management: \`TODO\`
+- Framework-specific conventions: \`TODO\`
+
+### Go (if present)
+- Package boundaries and interface patterns: \`TODO\`
+- Error wrapping and logging rules: \`TODO\`
+
+### Rust (if present)
+- Ownership and error handling conventions: \`TODO\`
+- Module and crate organization rules: \`TODO\`
+
+## Definition of Done for Style
+- Rules above must match actual stack from \`live/project-discovery.md\`.
+- Outdated language sections must be removed or explicitly marked as not applicable.
+`;
+
+const LEGACY_CUSTOMIZED_30 = `${LEGACY_DEFAULT_30}
+
+## Project TypeScript Conventions
+- Prefer explicit runtime validation for persisted JSON artifacts.
+- Keep serializer boundary fields in snake_case and internal helper state in camelCase.
+- Put shared CLI formatter helpers in dedicated modules instead of inline command handlers.
+- Keep handler modules thin: parse -> validate -> execute -> render.
+- Preserve rationale-only comments for provider quirks and invariants.
+- Prefer intent-first helper names such as resolve*, build*, and format*.
+`;
+
+const LEGACY_BRIDGED_30 = `${LEGACY_DEFAULT_30}
+
+## Comments
+- Keep comments only for rationale, invariants, security-sensitive constraints,
+  provider or platform quirks, or real boundary exceptions.
+- Remove section banners, step narration, line-by-line paraphrases, and JSDoc
+  for self-explanatory typed helpers.
+- If a block is understandable only because of a prose comment, simplify the
+  code first.
+
+## Naming
+- Internal code uses \`camelCase\`.
+- Type-like symbols use \`PascalCase\`.
+- Do not prefix interfaces with \`I\`.
+- Boolean helpers should read like questions: \`is*\`, \`has*\`, \`can*\`,
+  \`should*\`.
+- Prefer intent-first helper names such as \`resolve*\`, \`read*\`, \`parse*\`,
+  \`build*\`, \`format*\`, and \`print*\`.
+`;
+
+const LEGACY_MINIMAL_CUSTOMIZED_30 = `${LEGACY_DEFAULT_30}
+
+## Team Conventions
+- Prefer domain event names that read like past-tense business facts.
+`;
+
+const LEGACY_WRAPPED_CUSTOMIZED_30 = `${LEGACY_DEFAULT_30}
+
+## Team Conventions
+- Preserve multiline migration notes when a custom rule needs additional
+  context on the next line for maintainers reading generated conventions.
+`;
+
+const LEGACY_INDENTED_CONTINUATION_30 = TEMPLATE_30.replace(
+    /- Prefer intent-first helper names such as `resolve\*`, `read\*`, `parse\*`,\r?\n  `build\*`, `format\*`, and `print\*`\./,
+    '- Prefer intent-first helper names such as `resolve*`, `read*`, `parse*`,\n  `build*`, `format*`, and `print*`.\n  Keep transport adapters suffixed with `Gateway` so boundary wiring stays obvious.'
+);
 
 // ──────────────────────────────────────────────────
 // Unit tests for detection helpers
@@ -257,6 +367,42 @@ describe('extractMigrationContent', () => {
         assert.ok(!output.includes('## Domain'));
         assert.ok(output.includes('## Goals'));
         assert.ok(output.includes('Real goal here.'));
+    });
+
+    it('keeps only novel legacy code-style refinements when migrating conventions', () => {
+        const output = extractMigrationContent(LEGACY_CUSTOMIZED_30, 'Conventions', {
+            ruleFile: '30-code-style.md',
+            templateContent: TEMPLATE_30
+        });
+
+        assert.ok(output.includes('## Project TypeScript Conventions'));
+        assert.ok(output.includes('Prefer explicit runtime validation for persisted JSON artifacts.'));
+        assert.ok(!output.includes('## Bootstrap Policy When Repository Is Empty'));
+        assert.ok(!output.includes('## Language-Specific Rules (Fill Only Relevant Sections)'));
+        assert.ok(!output.includes('## Global Rules'));
+        assert.ok(!output.includes('## Style Priority Order'));
+    });
+
+    it('preserves wrapped custom bullet indentation for legacy code-style refinements', () => {
+        const output = extractMigrationContent(LEGACY_WRAPPED_CUSTOMIZED_30, 'Conventions', {
+            ruleFile: '30-code-style.md',
+            templateContent: TEMPLATE_30
+        });
+
+        assert.ok(output.includes('## Team Conventions'));
+        assert.ok(output.includes('- Preserve multiline migration notes when a custom rule needs additional'));
+        assert.ok(output.includes('  context on the next line for maintainers reading generated conventions.'));
+    });
+
+    it('preserves the parent bullet when a novel refinement is an indented continuation under a template bullet', () => {
+        const output = extractMigrationContent(LEGACY_INDENTED_CONTINUATION_30, 'Conventions', {
+            ruleFile: '30-code-style.md',
+            templateContent: TEMPLATE_30
+        });
+
+        assert.ok(output.includes('## Naming'));
+        assert.ok(output.includes('- Prefer intent-first helper names such as `resolve*`, `read*`, `parse*`,'));
+        assert.ok(output.includes('  Keep transport adapters suffixed with `Gateway` so boundary wiring stays obvious.'));
     });
 });
 
@@ -485,6 +631,174 @@ describe('migrateContextRulesToProjectMemory', () => {
 
             const migrated20 = result.migratedFiles.find(f => f.ruleFile === '20-architecture.md');
             assert.ok(!migrated20, '20-architecture.md should NOT be migrated for ≤5 line tweaks');
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('does not migrate legacy default code-style bootstrap content after template promotion', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), pmDir);
+
+            const legacyDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyDir, '30-code-style.md'), LEGACY_DEFAULT_30, 'utf8');
+
+            const result = migrateContextRulesToProjectMemory({
+                bundleRoot,
+                targetRoot: projectRoot,
+                templateRoot: path.join(bundleRoot, 'template')
+            });
+
+            assert.equal(result.status, 'no_significant_content');
+            assert.ok(!result.migratedFiles.some((file) => file.ruleFile === '30-code-style.md'));
+
+            const conventionsContent = fs.readFileSync(path.join(pmDir, 'conventions.md'), 'utf8');
+            assert.ok(
+                conventionsContent.includes('Fresh installs start with the seed conventions below;'),
+                'template-seeded conventions content must remain intact'
+            );
+            assert.ok(
+                !conventionsContent.includes('Bootstrap Policy When Repository Is Empty'),
+                'legacy default bootstrap text must not overwrite project-memory conventions'
+            );
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('migrates customized legacy code-style content that still retains old bootstrap markers', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), pmDir);
+
+            const legacyDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyDir, '30-code-style.md'), LEGACY_CUSTOMIZED_30, 'utf8');
+
+            const result = migrateContextRulesToProjectMemory({
+                bundleRoot,
+                targetRoot: projectRoot,
+                templateRoot: path.join(bundleRoot, 'template')
+            });
+
+            assert.equal(result.status, 'migrated');
+            assert.ok(result.migratedFiles.some((file) => file.ruleFile === '30-code-style.md'));
+
+            const conventionsContent = fs.readFileSync(path.join(pmDir, 'conventions.md'), 'utf8');
+            assert.ok(
+                conventionsContent.includes('Project TypeScript Conventions'),
+                'user-authored legacy conventions must still migrate into project-memory'
+            );
+            assert.ok(
+                conventionsContent.includes('Prefer explicit runtime validation for persisted JSON artifacts.'),
+                'customized legacy style guidance must not be dropped'
+            );
+            assert.ok(
+                !conventionsContent.includes('## Bootstrap Policy When Repository Is Empty'),
+                'legacy bootstrap policy must not leak into migrated conventions'
+            );
+            assert.ok(
+                !conventionsContent.includes('## Language-Specific Rules (Fill Only Relevant Sections)'),
+                'legacy placeholder language sections must not leak into migrated conventions'
+            );
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('migrates concise legacy code-style refinements even below the generic diff threshold', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), pmDir);
+
+            const legacyDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyDir, '30-code-style.md'), LEGACY_MINIMAL_CUSTOMIZED_30, 'utf8');
+
+            const result = migrateContextRulesToProjectMemory({
+                bundleRoot,
+                targetRoot: projectRoot,
+                templateRoot: path.join(bundleRoot, 'template')
+            });
+
+            assert.equal(result.status, 'migrated');
+            const migrated30 = result.migratedFiles.find((file) => file.ruleFile === '30-code-style.md');
+            assert.ok(migrated30, '30-code-style.md should migrate concise legacy refinements');
+            assert.equal(migrated30.origin, 'legacy-docs');
+
+            const conventionsContent = fs.readFileSync(path.join(pmDir, 'conventions.md'), 'utf8');
+            assert.ok(conventionsContent.includes('## Team Conventions'));
+            assert.ok(conventionsContent.includes('Prefer domain event names that read like past-tense business facts.'));
+            assert.ok(!conventionsContent.includes('## Bootstrap Policy When Repository Is Empty'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('falls through from legacy bootstrap defaults to user-authored live code-style content', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), pmDir);
+
+            const legacyDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyDir, '30-code-style.md'), LEGACY_DEFAULT_30, 'utf8');
+
+            const liveRuleDir = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(liveRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(liveRuleDir, '30-code-style.md'), LEGACY_CUSTOMIZED_30, 'utf8');
+
+            const result = migrateContextRulesToProjectMemory({
+                bundleRoot,
+                targetRoot: projectRoot,
+                templateRoot: path.join(bundleRoot, 'template')
+            });
+
+            assert.equal(result.status, 'migrated');
+            const migrated30 = result.migratedFiles.find((file) => file.ruleFile === '30-code-style.md');
+            assert.ok(migrated30, '30-code-style.md should migrate from live-existing fallback');
+            assert.equal(migrated30.origin, 'live-existing');
+
+            const conventionsContent = fs.readFileSync(path.join(pmDir, 'conventions.md'), 'utf8');
+            assert.ok(conventionsContent.includes('## Project TypeScript Conventions'));
+            assert.ok(conventionsContent.includes('Keep handler modules thin: parse -> validate -> execute -> render.'));
+            assert.ok(!conventionsContent.includes('## Bootstrap Policy When Repository Is Empty'));
+            assert.ok(!conventionsContent.includes('## Language-Specific Rules (Fill Only Relevant Sections)'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('does not migrate legacy bootstrap files that only copy newer default style sections', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            copyDirRecursive(path.join(bundleRoot, 'template', 'docs', 'project-memory'), pmDir);
+
+            const legacyDir = path.join(projectRoot, 'docs', 'agent-rules');
+            fs.mkdirSync(legacyDir, { recursive: true });
+            fs.writeFileSync(path.join(legacyDir, '30-code-style.md'), LEGACY_BRIDGED_30, 'utf8');
+
+            const result = migrateContextRulesToProjectMemory({
+                bundleRoot,
+                targetRoot: projectRoot,
+                templateRoot: path.join(bundleRoot, 'template')
+            });
+
+            assert.equal(result.status, 'no_significant_content');
+            assert.ok(!result.migratedFiles.some((file) => file.ruleFile === '30-code-style.md'));
+
+            const conventionsContent = fs.readFileSync(path.join(pmDir, 'conventions.md'), 'utf8');
+            assert.ok(
+                !conventionsContent.includes('Bootstrap Policy When Repository Is Empty'),
+                'bridged default sections must not cause obsolete bootstrap text to overwrite project-memory conventions'
+            );
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

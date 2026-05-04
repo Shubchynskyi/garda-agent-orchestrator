@@ -1,7 +1,19 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists, readTextFile } from '../core/filesystem';
-import { extractNonEmptySections, selectRuleSource, stripHtmlComments } from './rule-materialization';
+import {
+    LEGACY_BOOTSTRAP_CODE_STYLE_TEMPLATE,
+    MEANINGFUL_DIFF_THRESHOLD,
+    countMeaningfulAddedLines,
+    extractNonEmptySections,
+    getMeaningfulLines,
+    isBootstrapOnlyLegacyCodeStyleRule,
+    isTemplateSeedProjectMemoryFile,
+    selectRuleSourceCandidates,
+    stripHtmlComments
+} from './rule-materialization';
+
+export { MEANINGFUL_DIFF_THRESHOLD, countMeaningfulAddedLines, getMeaningfulLines };
 
 interface MigrationMapping {
     ruleFile: string;
@@ -21,6 +33,11 @@ interface MigrationOptions {
     dryRun?: boolean;
 }
 
+interface ExtractMigrationContentOptions {
+    ruleFile?: string;
+    templateContent?: string;
+}
+
 export interface ProjectMemoryMigrationFile {
     ruleFile: string;
     memoryFile: string;
@@ -38,12 +55,6 @@ export interface ProjectMemoryMigrationResult {
  */
 export const MIGRATION_MARKER = '.migrated-from-rules';
 
-/**
- * Minimum number of meaningful lines that must differ between a live/legacy
- * context rule and its template source before we treat the rule as user-authored.
- */
-export const MEANINGFUL_DIFF_THRESHOLD = 5;
-
 export const MIGRATION_RULE_MAP: readonly MigrationMapping[] = Object.freeze([
     { ruleFile: '10-project-context.md', memoryFile: 'context.md', heading: 'Project Context' },
     { ruleFile: '20-architecture.md', memoryFile: 'architecture.md', heading: 'Architecture' },
@@ -56,7 +67,104 @@ export const MIGRATION_RULE_MAP: readonly MigrationMapping[] = Object.freeze([
  * be migrated (they are auto-generated or purely instructional).
  */
 export const BOILERPLATE_SECTIONS: ReadonlySet<string> = new Set(['Purpose', 'Project Discovery Snapshot']);
+const OBSOLETE_CODE_STYLE_SECTION_HEADINGS: ReadonlySet<string> = new Set([
+    'Bootstrap Policy When Repository Is Empty',
+    'Language-Specific Rules (Fill Only Relevant Sections)'
+]);
 
+function buildSectionMap(markdown: string): Map<string, string[]> {
+    const sections = new Map<string, string[]>();
+    let currentHeading: string | null = null;
+    let currentLines: string[] = [];
+
+    for (const rawLine of String(markdown || '').split(/\r?\n/)) {
+        const headingMatch = /^## (.+)$/.exec(rawLine);
+        if (headingMatch) {
+            if (currentHeading) {
+                sections.set(currentHeading, currentLines.slice());
+            }
+            currentHeading = headingMatch[1].trim();
+            currentLines = [];
+            continue;
+        }
+
+        if (currentHeading) {
+            currentLines.push(rawLine);
+        }
+    }
+
+    if (currentHeading) {
+        sections.set(currentHeading, currentLines.slice());
+    }
+
+    return sections;
+}
+
+function buildCodeStyleBaselineLines(heading: string, templateContent: string): Set<string> {
+    const legacySections = buildSectionMap(LEGACY_BOOTSTRAP_CODE_STYLE_TEMPLATE);
+    const templateSections = buildSectionMap(templateContent);
+    return new Set([
+        ...getMeaningfulLines((legacySections.get(heading) || []).join('\n')),
+        ...getMeaningfulLines((templateSections.get(heading) || []).join('\n'))
+    ]);
+}
+
+function countLegacyBootstrapNovelLines(content: string, templateContent: string): number {
+    const meaningfulLines = getMeaningfulLines(content);
+    const knownBootstrapLines = new Set([
+        ...getMeaningfulLines(LEGACY_BOOTSTRAP_CODE_STYLE_TEMPLATE),
+        ...getMeaningfulLines(templateContent)
+    ]);
+    return meaningfulLines.filter((line) => !knownBootstrapLines.has(line)).length;
+}
+
+function buildCodeStyleSectionBlocks(lines: string[]): string[][] {
+    const blocks: string[][] = [];
+    let currentBlock: string[] = [];
+
+    const flush = () => {
+        if (currentBlock.length > 0) {
+            blocks.push(currentBlock);
+            currentBlock = [];
+        }
+    };
+
+    for (const rawLine of lines) {
+        const trimmedLine = rawLine.trim();
+        if (!trimmedLine) {
+            flush();
+            continue;
+        }
+
+        const isIndentedContinuation = /^[ \t]+/.test(rawLine);
+        const startsTopLevelListItem = !isIndentedContinuation && /^([-*+]|\d+\.)\s/.test(trimmedLine);
+        const currentBlockStartsWithTopLevelListItem = currentBlock.length > 0
+            && !/^[ \t]+/.test(currentBlock[0])
+            && /^([-*+]|\d+\.)\s/.test(currentBlock[0].trim());
+
+        if (
+            currentBlock.length > 0
+            && !isIndentedContinuation
+            && (startsTopLevelListItem || currentBlockStartsWithTopLevelListItem)
+        ) {
+            flush();
+        }
+
+        currentBlock.push(rawLine);
+    }
+
+    flush();
+    return blocks;
+}
+
+function extractNovelCodeStyleSectionLines(lines: string[], templateContent: string, heading: string): string[] {
+    const baselineLines = buildCodeStyleBaselineLines(heading, templateContent);
+    return buildCodeStyleSectionBlocks(lines)
+        .filter((block) =>
+            getMeaningfulLines(block.join('\n')).some((line) => !baselineLines.has(line))
+        )
+        .flat();
+}
 
 /**
  * One-time migration: copies user-authored content from context rule files
@@ -68,10 +176,10 @@ export const BOILERPLATE_SECTIONS: ReadonlySet<string> = new Set(['Purpose', 'Pr
  * 3. project-memory/ already has substantive content → skip.
  *
  * For each mapping the function:
- *   a. Finds the current rule source (legacy > live > template).
- *   b. Skips if the source is the template itself (no user edits).
+ *   a. Checks existing rule sources in priority order (legacy > live > template).
+ *   b. Skips sources that are template-only or bootstrap-only.
  *   c. Diffs against the template; skips if ≤ threshold meaningful lines differ.
- *   d. Extracts user-authored sections and writes to the memory file.
+ *   d. Extracts user-authored sections from the first qualifying source and writes them to the memory file.
  *
  * Finally writes the marker file and returns a result object suitable for
  * inclusion in the init report.
@@ -118,29 +226,54 @@ export function migrateContextRulesToProjectMemory(options: MigrationOptions): P
         if (!pathExists(templatePath)) continue;
         const templateContent = readTextFile(templatePath);
 
-        // Find where the current rule lives (before materialization)
-        const source = selectRuleSource(ruleFile, { targetRoot, liveRuleRoot, templateRuleRoot });
-        if (!source) continue;
-        if (source.origin === 'template') continue; // no user edits
+        const sources = selectRuleSourceCandidates(ruleFile, { targetRoot, liveRuleRoot, templateRuleRoot });
+        for (const source of sources) {
+            if (source.origin === 'template') {
+                continue;
+            }
 
-        const liveContent = readTextFile(source.path);
-        const addedLines = countMeaningfulAddedLines(liveContent, templateContent);
-        if (addedLines <= MEANINGFUL_DIFF_THRESHOLD) continue;
+            const liveContent = readTextFile(source.path);
+            const legacyBootstrapNovelLines = ruleFile === '30-code-style.md'
+                ? countLegacyBootstrapNovelLines(liveContent, templateContent)
+                : 0;
 
-        const extracted = extractMigrationContent(liveContent, heading);
-        if (!extracted || !extracted.trim()) continue;
+            if (
+                ruleFile === '30-code-style.md'
+                && isBootstrapOnlyLegacyCodeStyleRule(liveContent, templateContent)
+                && legacyBootstrapNovelLines === 0
+            ) {
+                continue;
+            }
 
-        const destPath = path.join(projectMemoryDir, memoryFile);
-        if (!dryRun) {
-            fs.writeFileSync(destPath, extracted, 'utf8');
+            const addedLines = countMeaningfulAddedLines(liveContent, templateContent);
+            const meaningfulLinesDetected = ruleFile === '30-code-style.md' && legacyBootstrapNovelLines > 0
+                ? legacyBootstrapNovelLines
+                : addedLines;
+
+            if (meaningfulLinesDetected <= 0 || (
+                ruleFile !== '30-code-style.md' && meaningfulLinesDetected <= MEANINGFUL_DIFF_THRESHOLD
+            )) {
+                continue;
+            }
+
+            const extracted = extractMigrationContent(liveContent, heading, { ruleFile, templateContent });
+            if (!extracted || !extracted.trim()) {
+                continue;
+            }
+
+            const destPath = path.join(projectMemoryDir, memoryFile);
+            if (!dryRun) {
+                fs.writeFileSync(destPath, extracted, 'utf8');
+            }
+
+            migratedFiles.push({
+                ruleFile,
+                memoryFile,
+                origin: source.origin,
+                meaningfulLinesDetected
+            });
+            break;
         }
-
-        migratedFiles.push({
-            ruleFile,
-            memoryFile,
-            origin: source.origin,
-            meaningfulLinesDetected: addedLines
-        });
     }
 
     // Write marker (even when migratedFiles is empty we still mark so we don't re-scan)
@@ -192,67 +325,15 @@ export function isProjectMemoryOnlySeeds(projectMemoryDir: string): boolean {
 
     for (const fileName of mdFiles) {
         const content = readTextFile(path.join(projectMemoryDir, fileName));
+        if (isTemplateSeedProjectMemoryFile(projectMemoryDir, fileName, content)) {
+            continue;
+        }
         const sections = extractNonEmptySections(content);
         if (sections.length > 0) return false;
     }
 
     return true;
 }
-
-/**
- * Counts meaningful lines present in `liveContent` but absent from
- * `templateContent`.  Both texts are normalised (HTML comments removed,
- * Project Discovery Snapshot section stripped, lines trimmed) before
- * comparison.
- */
-export function countMeaningfulAddedLines(liveContent: string, templateContent: string): number {
-    const templateSet = new Set(getMeaningfulLines(templateContent));
-    const liveLines = getMeaningfulLines(liveContent);
-    return liveLines.filter((line: string) => !templateSet.has(line)).length;
-}
-
-/**
- * Extracts meaningful (non-blank, non-heading-only, non-boilerplate) lines
- * from markdown text after stripping comments and the discovery overlay.
- */
-export function getMeaningfulLines(text: string): string[] {
-    let cleaned = stripHtmlComments(text);
-    cleaned = removeSectionByHeading(cleaned, 'Project Discovery Snapshot');
-
-    return cleaned
-        .split(/\r?\n/)
-        .map((line: string) => line.trim())
-        .filter((line: string) =>
-            line.length > 0 &&
-            !line.match(/^#+\s/) &&         // headings
-            line !== '```' &&
-            line !== '```text' &&
-            line !== '```bash' &&
-            !line.match(/^\|[-:\s|]+\|$/) && // table separator rows
-            line !== '---' &&
-            line !== '`TODO`' &&
-            line !== 'TODO'
-        );
-}
-
-function removeSectionByHeading(markdown: string, sectionHeading: string): string {
-    const lines = markdown.split(/\r?\n/);
-    const result: string[] = [];
-    let skipping = false;
-
-    for (const line of lines) {
-        const h2 = line.match(/^## (.+)$/);
-        if (h2) {
-            skipping = h2[1].trim() === sectionHeading;
-        }
-        if (!skipping) {
-            result.push(line);
-        }
-    }
-
-    return result.join('\n');
-}
-
 
 /**
  * Extracts migrateable content from a context rule file.
@@ -262,7 +343,11 @@ function removeSectionByHeading(markdown: string, sectionHeading: string): strin
  * - Replaces the H1 heading with the project-memory target heading.
  * - Adds a migration provenance comment.
  */
-export function extractMigrationContent(ruleContent: string, targetHeading: string): string {
+export function extractMigrationContent(
+    ruleContent: string,
+    targetHeading: string,
+    options: ExtractMigrationContentOptions = {}
+): string {
     const lines = ruleContent.split(/\r?\n/);
     const sections: MigrationSection[] = [];
     let current: MigrationSection | null = null;
@@ -282,10 +367,28 @@ export function extractMigrationContent(ruleContent: string, targetHeading: stri
     if (current) sections.push(current);
 
     // Keep only non-boilerplate sections that have real content after stripping comments
-    const kept = sections.filter((section: MigrationSection) => {
-        if (BOILERPLATE_SECTIONS.has(section.heading)) return false;
+    const kept = sections.flatMap((section: MigrationSection) => {
+        if (BOILERPLATE_SECTIONS.has(section.heading)) {
+            return [];
+        }
+
+        if (options.ruleFile === '30-code-style.md' && options.templateContent) {
+            if (OBSOLETE_CODE_STYLE_SECTION_HEADINGS.has(section.heading)) {
+                return [];
+            }
+            const novelLines = extractNovelCodeStyleSectionLines(section.lines, options.templateContent, section.heading);
+            if (novelLines.length === 0) {
+                return [];
+            }
+            return [{ heading: section.heading, lines: novelLines }];
+        }
+
         const body = stripHtmlComments(section.lines.join('\n')).trim();
-        return body.length > 0;
+        if (body.length === 0) {
+            return [];
+        }
+
+        return [section];
     });
 
     if (kept.length === 0) return '';
