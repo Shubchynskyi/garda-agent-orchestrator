@@ -351,6 +351,7 @@ garda workflow set --target-root "." --full-suite-enabled true --full-suite-comm
 garda workflow set --target-root "." --review-execution-policy strict_sequential
 garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000
 garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15
+garda workflow set --target-root "." --review-cycle-auto-split-enabled true
 garda workflow explain --target-root "."
 ```
 
@@ -364,10 +365,12 @@ Notes:
 - The default scope budget guard is enabled for `strict`, uses `BLOCK_FOR_SPLIT`, and limits large tasks before expensive gates with `max_files=12`, `max_changed_lines=1200`, `max_required_reviews=6`, and `max_review_tokens=50000`.
 - `max_required_reviews` means required review lanes from the current preflight, not completed review attempts.
 - `max_review_tokens` is a heuristic review forecast, not a measured tokenizer count; use `garda workflow explain` to show the effective workflow guard settings, behavior, and unblock options.
-- Review cycle guard settings can be changed with `--review-cycle-enabled true|false`, `--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY`, `--review-cycle-max-failed-non-test-reviews N`, `--review-cycle-max-total-non-test-reviews N`, and `--review-cycle-excluded-review-types test`.
+- Review cycle guard settings can be changed with `--review-cycle-enabled true|false`, `--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY`, `--review-cycle-max-failed-non-test-reviews N`, `--review-cycle-max-total-non-test-reviews N`, `--review-cycle-excluded-review-types test`, and `--review-cycle-auto-split-enabled true|false`.
 - The default review cycle guard is enabled, uses `BLOCK_FOR_OPERATOR_DECISION`, blocks when failed non-test reviews exceed `15` or total non-test review attempts exceed `15`, and excludes `test` review from counting.
 - Review cycle attempts are counted from review invocation and recorded-review timeline evidence with deduplication only when both reviewer identity and review context hash match; `test` is excluded because reaching test review means upstream code-oriented review gates already allowed the task forward.
 - When `review_cycle_guard.action=BLOCK_FOR_OPERATOR_DECISION`, `next-step` blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise chooses the recovery path.
+- When `review_cycle_guard.auto_split_enabled=false` (default), `next-step` tells the agent to wait for operator direction after a blocking review-cycle violation.
+- When `review_cycle_guard.auto_split_enabled=true`, `next-step` emits a dedicated auto-split prompt artifact for the agent from the bundled template at `template/docs/prompts/review-cycle-auto-split.md`. The template is materialized into `runtime/reviews/<task-id>-review-cycle-auto-split-prompt.md` only when a blocking review-cycle violation actually happens. The prompt tells the agent to move the parent into a blocked/split state through supported task controls or explicit backlog editing, decide whether a reviewed committable diff should be committed, create maximally small numeric child tasks, and then execute those child tasks sequentially. It must not auto-commit unfinished or unreviewed work, and it must not mark the parent `DONE` merely because split work exists.
 - `WARN_ONLY` does not block the next gate, but `next-step` prints the review-cycle violation under `Warnings` so the operator still sees the over-budget review cycle.
 
 ### `garda review-capabilities`

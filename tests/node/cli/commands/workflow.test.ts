@@ -117,11 +117,13 @@ test('workflow set updates review cycle guard settings deterministically', () =>
             '--review-cycle-action', 'warn_only',
             '--review-cycle-max-failed-non-test-reviews', '4',
             '--review-cycle-max-total-non-test-reviews', '8',
-            '--review-cycle-excluded-review-types', 'test,docs'
+            '--review-cycle-excluded-review-types', 'test,docs',
+            '--review-cycle-auto-split-enabled', 'true'
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
         assert.ok(output.includes('Review cycle guard: WARN_ONLY'));
+        assert.ok(output.includes('auto_split_enabled=true'));
 
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.review_cycle_guard.enabled, true);
@@ -129,6 +131,7 @@ test('workflow set updates review cycle guard settings deterministically', () =>
         assert.equal(parsedConfig.review_cycle_guard.max_failed_non_test_reviews, 4);
         assert.equal(parsedConfig.review_cycle_guard.max_total_non_test_reviews, 8);
         assert.deepEqual(parsedConfig.review_cycle_guard.excluded_review_types, ['test', 'docs']);
+        assert.equal(parsedConfig.review_cycle_guard.auto_split_enabled, true);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -153,6 +156,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(explainOutput.includes('before compile/review loops'));
         assert.ok(explainOutput.includes('Review cycle guard: stops runaway non-test review cycles'));
         assert.ok(explainOutput.includes('BLOCK_FOR_OPERATOR_DECISION'));
+        assert.ok(explainOutput.includes('auto_split_enabled is true'));
         assert.ok(explainOutput.includes('WARN_ONLY'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });

@@ -28,6 +28,7 @@
     "max_total_non_test_reviews": 15,
     "excluded_review_types": [
       "test"
-    ]
+    ],
+    "auto_split_enabled": false
   }
 }

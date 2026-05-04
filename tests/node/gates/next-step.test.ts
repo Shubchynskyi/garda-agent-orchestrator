@@ -72,7 +72,10 @@ function makeTempRepo(): string {
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'template', 'docs', 'prompts'), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '# TASK.md',
         '',
@@ -112,6 +115,24 @@ function makeTempRepo(): string {
                 mode: 'code_first_optional'
             }
         }, null, 2),
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
+        [
+            '# Review Cycle Auto-Split Prompt for {{TASK_ID}}',
+            '',
+            'GuardReason: {{GUARD_REASON}}',
+            'Counts: total_non_test_reviews={{TOTAL_NON_TEST_REVIEWS}}; failed_non_test_reviews={{FAILED_NON_TEST_REVIEWS}}; excluded_review_types={{EXCLUDED_REVIEW_TYPES}}',
+            'LatestFailedReview: {{LATEST_FAILED_REVIEW}}',
+            '',
+            '## Instructions',
+            '1. Split into child tasks.',
+            '',
+            '## Constraints',
+            '- Do not mark the parent DONE merely because child tasks were created.',
+            ''
+        ].join('\n'),
         'utf8'
     );
     return repoRoot;
@@ -1141,6 +1162,74 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('TestReviewExcluded: true'));
         assert.ok(text.includes('OperatorChoices: split_task, mark_blocked, raise_limits, allow_one_more_cycle, create_follow_up_tasks'));
         assert.ok(text.includes('do not run compile, review, or full-suite gates'));
+        assert.equal(
+            fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-cycle-auto-split-prompt.md`)),
+            false
+        );
+    });
+
+    it('materializes auto-split prompt only when review cycle block has auto split enabled', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: true
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-code-0',
+            review_context_sha256: sha256Text('auto-split-code-context-0'),
+            summary: 'first code failure'
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-code-1',
+            review_context_sha256: sha256Text('auto-split-code-context-1'),
+            summary: 'second code failure'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-cycle-auto-split');
+        assert.equal(result.commands.length, 0);
+        assert.equal(result.review_cycle_block?.operator_decision_required, false);
+        assert.equal(result.review_cycle_block?.wait_for_operator, false);
+        assert.equal(result.review_cycle_block?.auto_split_enabled, true);
+        assert.equal(result.review_cycle_block?.auto_split_prompt?.next_action, 'follow_auto_split_prompt');
+        const promptPath = path.join(repoRoot, result.review_cycle_block?.auto_split_prompt?.artifact_path || '');
+        assert.equal(fs.existsSync(promptPath), true);
+        const promptText = fs.readFileSync(promptPath, 'utf8');
+        assert.ok(promptText.includes(`# Review Cycle Auto-Split Prompt for ${TASK_ID}`));
+        assert.ok(promptText.includes('GuardReason: "Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
+        assert.ok(promptText.includes('summary="second code failure"'));
+        assert.ok(text.includes('NextGate: review-cycle-auto-split'));
+        assert.ok(text.includes('OperatorDecisionRequired: false'));
+        assert.ok(text.includes('AutoSplitPromptArtifact: path='));
+        assert.ok(text.includes('follow AutoSplitPromptArtifact instructions'));
+        assert.equal(text.includes('wait for operator choice'), false);
     });
 
     it('blocks next-step when failed non-test review attempts exceed review cycle guard failed limit', () => {

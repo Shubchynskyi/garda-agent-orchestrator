@@ -323,6 +323,10 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                     minItems: 1,
                     uniqueItems: true,
                     description: 'Review types excluded from review-cycle counting.'
+                },
+                auto_split_enabled: {
+                    type: 'boolean',
+                    description: 'When true, next-step emits an auto-split instruction artifact instead of waiting for operator input after a review-cycle block.'
                 }
             },
             required: ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types'],

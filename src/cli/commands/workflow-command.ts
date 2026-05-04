@@ -134,7 +134,8 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--review-cycle-action': { key: 'reviewCycleAction', type: 'string' },
     '--review-cycle-max-failed-non-test-reviews': { key: 'reviewCycleMaxFailedNonTestReviews', type: 'string' },
     '--review-cycle-max-total-non-test-reviews': { key: 'reviewCycleMaxTotalNonTestReviews', type: 'string' },
-    '--review-cycle-excluded-review-types': { key: 'reviewCycleExcludedReviewTypes', type: 'string' }
+    '--review-cycle-excluded-review-types': { key: 'reviewCycleExcludedReviewTypes', type: 'string' },
+    '--review-cycle-auto-split-enabled': { key: 'reviewCycleAutoSplitEnabled', type: 'string' }
 };
 
 function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoots {
@@ -238,7 +239,7 @@ function buildScopeBudgetGuardLine(config: ScopeBudgetGuardConfig): string {
 }
 
 function buildReviewCycleGuardLine(config: ReviewCycleGuardConfig): string {
-    return `Review cycle guard: ${config.enabled ? config.action : 'disabled'} max_failed_non_test_reviews=${config.max_failed_non_test_reviews} max_total_non_test_reviews=${config.max_total_non_test_reviews} excluded=${config.excluded_review_types.join(',')}`;
+    return `Review cycle guard: ${config.enabled ? config.action : 'disabled'} max_failed_non_test_reviews=${config.max_failed_non_test_reviews} max_total_non_test_reviews=${config.max_total_non_test_reviews} excluded=${config.excluded_review_types.join(',')} auto_split_enabled=${config.auto_split_enabled}`;
 }
 
 function buildWorkflowShowResult(
@@ -309,6 +310,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ReviewCycleGuardMaxFailedNonTestReviews: ${reviewCycleGuard.max_failed_non_test_reviews}`);
     lines.push(`ReviewCycleGuardMaxTotalNonTestReviews: ${reviewCycleGuard.max_total_non_test_reviews}`);
     lines.push(`ReviewCycleGuardExcludedReviewTypes: ${reviewCycleGuard.excluded_review_types.join(', ')}`);
+    lines.push(`ReviewCycleGuardAutoSplitEnabled: ${reviewCycleGuard.auto_split_enabled}`);
     lines.push('Tip: run "workflow set --full-suite-enabled true|false" to change the repo-local mode.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}>" to change review launch ordering.`);
     lines.push('Tip: run "workflow set --scope-budget-enabled true|false" to change the scope budget guard.');
@@ -534,6 +536,13 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         );
         changedFields.push('review_cycle_guard.excluded_review_types');
     }
+    if (typeof options.reviewCycleAutoSplitEnabled === 'string') {
+        nextReviewCycleGuard.auto_split_enabled = parseBooleanText(
+            options.reviewCycleAutoSplitEnabled,
+            '--review-cycle-auto-split-enabled'
+        );
+        changedFields.push('review_cycle_guard.auto_split_enabled');
+    }
     nextConfig.review_cycle_guard = nextReviewCycleGuard;
 
     if (changedFields.length === 0) {
@@ -621,6 +630,8 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
             'Review cycle attempts are deduplicated only when review type, reviewer identity, and review context hash all match; otherwise each timeline event is counted separately.',
             'Review cycle guard excluded_review_types are not counted; the default excludes test reviews because reaching test review means code-facing review lanes have already been handled.',
             'When review_cycle_guard.action is BLOCK_FOR_OPERATOR_DECISION, next-step blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise decides the recovery path.',
+            'When review_cycle_guard.auto_split_enabled is false, next-step tells the agent to wait for operator direction after a blocking review-cycle violation.',
+            'When review_cycle_guard.auto_split_enabled is true, next-step emits a dedicated auto-split prompt artifact for the agent instead of waiting for operator input.',
             'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.'
         ]
     };

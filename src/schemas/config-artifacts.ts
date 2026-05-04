@@ -743,12 +743,12 @@ function validateReviewCycleGuardSection(input: unknown): Record<string, unknown
     const normalizedInput = { ...section };
     assertNoCaseMismatchedKnownKeys(
         section,
-        ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types'],
+        ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types', 'auto_split_enabled'],
         'workflow-config.review_cycle_guard'
     );
     assertNoUnknownKeys(
         section,
-        ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types'],
+        ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types', 'auto_split_enabled'],
         'workflow-config.review_cycle_guard'
     );
     if (section.enabled !== undefined) {
@@ -774,6 +774,12 @@ function validateReviewCycleGuardSection(input: unknown): Record<string, unknown
         normalizedInput.excluded_review_types = normalizeStringArray(
             section.excluded_review_types,
             'workflow-config.review_cycle_guard.excluded_review_types'
+        );
+    }
+    if (section.auto_split_enabled !== undefined) {
+        normalizedInput.auto_split_enabled = normalizeBooleanLike(
+            section.auto_split_enabled,
+            'workflow-config.review_cycle_guard.auto_split_enabled'
         );
     }
     for (const key of ['max_failed_non_test_reviews', 'max_total_non_test_reviews']) {

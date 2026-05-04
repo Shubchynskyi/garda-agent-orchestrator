@@ -475,7 +475,7 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
         summary: 'Show and set repo-local workflow config.',
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} workflow [show] [--target-root PATH] [--bundle-root PATH] [--json]`,
-            `${PRIMARY_CLI_NAME} workflow set [--full-suite-enabled true|false] [--full-suite-command CMD] [--review-execution-policy MODE] [--scope-budget-enabled true|false] [--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY] [--scope-budget-profiles LIST] [--scope-budget-max-files N] [--scope-budget-max-changed-lines N] [--scope-budget-max-required-reviews N] [--scope-budget-max-review-tokens N] [--review-cycle-enabled true|false] [--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY] [--review-cycle-max-failed-non-test-reviews N] [--review-cycle-max-total-non-test-reviews N] [--review-cycle-excluded-review-types LIST] [--target-root PATH] [--json]`
+            `${PRIMARY_CLI_NAME} workflow set [--full-suite-enabled true|false] [--full-suite-command CMD] [--review-execution-policy MODE] [--scope-budget-enabled true|false] [--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY] [--scope-budget-profiles LIST] [--scope-budget-max-files N] [--scope-budget-max-changed-lines N] [--scope-budget-max-required-reviews N] [--scope-budget-max-review-tokens N] [--review-cycle-enabled true|false] [--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY] [--review-cycle-max-failed-non-test-reviews N] [--review-cycle-max-total-non-test-reviews N] [--review-cycle-excluded-review-types LIST] [--review-cycle-auto-split-enabled true|false] [--target-root PATH] [--json]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} workflow`,
@@ -483,14 +483,16 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
             `${PRIMARY_CLI_NAME} workflow set --review-execution-policy strict_sequential`,
             `${PRIMARY_CLI_NAME} workflow set --scope-budget-enabled true --scope-budget-max-changed-lines 1200`,
             `${PRIMARY_CLI_NAME} workflow set --scope-budget-max-review-tokens 50000`,
-            `${PRIMARY_CLI_NAME} workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15`
+            `${PRIMARY_CLI_NAME} workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15`,
+            `${PRIMARY_CLI_NAME} workflow set --review-cycle-auto-split-enabled true`
         ]),
         hints: Object.freeze([
             'Default mode: workflow with no subcommand behaves like workflow show.',
             'Review execution policy modes: parallel_all, test_after_code, code_first_optional, strict_sequential.',
             'Scope budget guard actions: BLOCK_FOR_SPLIT, WARN_ONLY.',
             'Scope budget guard can block oversized tasks before compile/review loops.',
-            'Review cycle guard can block runaway non-test review attempts; test review is excluded by default.'
+            'Review cycle guard can block runaway non-test review attempts; test review is excluded by default.',
+            'Review cycle auto split is disabled by default and can be enabled with --review-cycle-auto-split-enabled true.'
         ])
     })
 });

@@ -476,6 +476,25 @@ test('validateAllConfigs accepts workflow-config files with preserved future ful
     }
 });
 
+test('validateAllConfigs accepts legacy review_cycle_guard without auto_split_enabled', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const workflowConfigPath = path.join(configDir, 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        delete (workflowConfig.review_cycle_guard as Record<string, unknown>).auto_split_enabled;
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+        const report = validateAllConfigs(bundleRoot);
+        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        assert.equal(report.passed, true, JSON.stringify(report, null, 2));
+        assert.ok(workflowReport);
+        assert.equal(workflowReport.schemaValid, true);
+        assert.equal(workflowReport.runtimeValid, true);
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
+});
+
 test('validateAllConfigs rejects likely typo top-level workflow-config keys', () => {
     const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
     try {

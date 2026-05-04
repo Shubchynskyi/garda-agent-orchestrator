@@ -203,9 +203,9 @@ export interface NextStepReviewCycleLatestFailedReview {
 
 export interface NextStepReviewCycleBlock {
     kind: 'review_cycle_guard';
-    operator_decision_required: true;
-    wait_for_operator: true;
-    auto_split_enabled: false;
+    operator_decision_required: boolean;
+    wait_for_operator: boolean;
+    auto_split_enabled: boolean;
     reason: string;
     total_non_test_review_count: number;
     failed_non_test_review_count: number;
@@ -213,6 +213,16 @@ export interface NextStepReviewCycleBlock {
     excluded_review_types: string[];
     latest_failed_review: NextStepReviewCycleLatestFailedReview | null;
     choices: string[];
+    auto_split_prompt: NextStepReviewCycleAutoSplitPrompt | null;
+}
+
+export interface NextStepReviewCycleAutoSplitPrompt {
+    kind: 'review_cycle_auto_split_prompt';
+    artifact_path: string;
+    artifact_sha256: string;
+    next_action: string;
+    instructions: string[];
+    constraints: string[];
 }
 
 export interface NextStepResult {
@@ -380,6 +390,13 @@ function buildCliPrefix(repoRoot: string): string {
 
 function buildBundleRelativePath(repoRoot: string, relativePath: string): string {
     return normalizePath(path.join(resolveBundleNameForTarget(repoRoot), relativePath));
+}
+
+function resolveBundleRootForNextStep(repoRoot: string): string {
+    const sourceCheckoutBundleRoot = path.resolve(repoRoot);
+    return fs.existsSync(path.join(sourceCheckoutBundleRoot, 'bin', 'garda.js'))
+        ? sourceCheckoutBundleRoot
+        : path.join(sourceCheckoutBundleRoot, resolveBundleNameForTarget(repoRoot));
 }
 
 function artifactState(repoRoot: string, specs: ArtifactSpec[]): {
@@ -2857,7 +2874,94 @@ const REVIEW_CYCLE_OPERATOR_CHOICES = Object.freeze([
     'create_follow_up_tasks'
 ]);
 
+const REVIEW_CYCLE_AUTO_SPLIT_TEMPLATE_PATH = 'template/docs/prompts/review-cycle-auto-split.md';
+
+function formatLatestFailedReviewForTemplate(latestFailedReview: NextStepReviewCycleLatestFailedReview | null): string {
+    if (!latestFailedReview) {
+        return 'none';
+    }
+    const parts = [
+        `review_type=${formatNextStepInlineValue(latestFailedReview.review_type)}`,
+        `event=${formatNextStepInlineValue(latestFailedReview.event_type)}`,
+        `outcome=${formatNextStepInlineValue(latestFailedReview.outcome || 'unknown')}`,
+        `sequence=${latestFailedReview.sequence}`
+    ];
+    if (latestFailedReview.review_artifact_path) {
+        parts.push(`artifact=${formatNextStepInlineValue(latestFailedReview.review_artifact_path)}`);
+    }
+    if (latestFailedReview.summary) {
+        parts.push(`summary=${formatNextStepInlineValue(latestFailedReview.summary)}`);
+    }
+    return parts.join('; ');
+}
+
+function readReviewCycleAutoSplitTemplate(repoRoot: string): string {
+    const templatePath = path.join(resolveBundleRootForNextStep(repoRoot), REVIEW_CYCLE_AUTO_SPLIT_TEMPLATE_PATH);
+    try {
+        return fs.readFileSync(templatePath, 'utf8');
+    } catch (error: unknown) {
+        throw new Error(
+            `Review-cycle auto-split prompt template is required but unreadable: ${normalizePath(templatePath)}. ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+}
+
+function buildReviewCycleAutoSplitPromptContent(
+    repoRoot: string,
+    taskId: string,
+    evaluation: ReviewCycleGuardEvaluation,
+    latestFailedReview: NextStepReviewCycleLatestFailedReview | null
+): string {
+    const replacements: Record<string, string> = {
+        TASK_ID: taskId,
+        GUARD_REASON: formatNextStepInlineValue(evaluation.summary_line),
+        TOTAL_NON_TEST_REVIEWS: String(evaluation.total_non_test_review_count),
+        FAILED_NON_TEST_REVIEWS: String(evaluation.failed_non_test_review_count),
+        EXCLUDED_REVIEW_TYPES: formatNextStepInlineList(evaluation.excluded_review_types),
+        LATEST_FAILED_REVIEW: formatLatestFailedReviewForTemplate(latestFailedReview)
+    };
+    const template = readReviewCycleAutoSplitTemplate(repoRoot);
+    return `${template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (match, key: string) => replacements[key] ?? match).trimEnd()}\n`;
+}
+
+function materializeReviewCycleAutoSplitPrompt(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    evaluation: ReviewCycleGuardEvaluation,
+    latestFailedReview: NextStepReviewCycleLatestFailedReview | null
+): NextStepReviewCycleAutoSplitPrompt {
+    const artifactPath = path.join(reviewsRoot, `${taskId}-review-cycle-auto-split-prompt.md`);
+    const content = buildReviewCycleAutoSplitPromptContent(repoRoot, taskId, evaluation, latestFailedReview);
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    if (!fs.existsSync(artifactPath) || fs.readFileSync(artifactPath, 'utf8') !== content) {
+        fs.writeFileSync(artifactPath, content, 'utf8');
+    }
+    return {
+        kind: 'review_cycle_auto_split_prompt',
+        artifact_path: normalizePath(path.relative(repoRoot, artifactPath)),
+        artifact_sha256: createHash('sha256').update(content).digest('hex'),
+        next_action: 'follow_auto_split_prompt',
+        instructions: [
+            'move_parent_to_blocked_split_state',
+            'commit_only_completed_reviewed_work_if_required',
+            'create_maximally_small_numeric_child_tasks',
+            'execute_child_tasks_sequentially'
+        ],
+        constraints: [
+            'do_not_auto_commit_unfinished_or_unreviewed_work',
+            'do_not_mark_parent_done_because_split_exists',
+            'preserve_review_cycle_block_reason',
+            'stop_if_split_cannot_proceed_cleanly'
+        ]
+    };
+}
+
 function buildReviewCycleOperatorBlock(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
     evaluation: ReviewCycleGuardEvaluation,
     latestFailedReview: NextStepReviewCycleLatestFailedReview | null
 ): NextStepReviewCycleBlock {
@@ -2874,19 +2978,27 @@ function buildReviewCycleOperatorBlock(
                 }
             ])
     );
+    const autoSplitEnabled = evaluation.action === 'BLOCK_FOR_OPERATOR_DECISION'
+        && evaluation.violations.length > 0
+        && evaluation.active
+        && evaluation.auto_split_enabled === true;
+    const autoSplitPrompt = autoSplitEnabled
+        ? materializeReviewCycleAutoSplitPrompt(repoRoot, reviewsRoot, taskId, evaluation, latestFailedReview)
+        : null;
 
     return {
         kind: 'review_cycle_guard',
-        operator_decision_required: true,
-        wait_for_operator: true,
-        auto_split_enabled: false,
+        operator_decision_required: !autoSplitEnabled,
+        wait_for_operator: !autoSplitEnabled,
+        auto_split_enabled: autoSplitEnabled,
         reason: evaluation.summary_line,
         total_non_test_review_count: evaluation.total_non_test_review_count,
         failed_non_test_review_count: evaluation.failed_non_test_review_count,
         counts_by_review_type: countsByReviewType,
         excluded_review_types: evaluation.excluded_review_types,
         latest_failed_review: latestFailedReview,
-        choices: [...REVIEW_CYCLE_OPERATOR_CHOICES]
+        choices: [...REVIEW_CYCLE_OPERATOR_CHOICES],
+        auto_split_prompt: autoSplitPrompt
     };
 }
 
@@ -3971,26 +4083,34 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
     if (reviewCycleGuardEvaluation?.should_block) {
         const reviewCycleBlock = buildReviewCycleOperatorBlock(
+            repoRoot,
+            reviewsRoot,
+            taskId,
             reviewCycleGuardEvaluation,
             latestFailedReviewCycleAttempt
         );
+        const autoSplitEnabled = reviewCycleBlock.auto_split_enabled;
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
-            nextGate: 'review-cycle-attempt-guard',
-            title: 'Review cycle limit exceeded.',
+            nextGate: autoSplitEnabled ? 'review-cycle-auto-split' : 'review-cycle-attempt-guard',
+            title: autoSplitEnabled ? 'Review cycle limit exceeded; auto-split prompt is ready.' : 'Review cycle limit exceeded.',
             reason:
                 `${reviewCycleGuardEvaluation.summary_line}. ` +
                 `Counts: total_non_test_reviews=${reviewCycleGuardEvaluation.total_non_test_review_count}, ` +
                 `failed_non_test_reviews=${reviewCycleGuardEvaluation.failed_non_test_review_count}, ` +
                 `excluded_review_types=${formatNextStepInlineList(reviewCycleGuardEvaluation.excluded_review_types)}. ` +
-                'The configured workflow guard blocks additional compile, review, or full-suite continuation until operator decision; wait for the operator before continuing.',
-            commands: [
-                buildCommand(
-                    'Inspect review cycle guard',
-                    `${cliPrefix} workflow explain --target-root "."`
-                )
-            ],
+                (autoSplitEnabled
+                    ? 'The configured workflow guard blocks parent compile, review, or full-suite continuation; follow the auto-split prompt artifact before continuing child work.'
+                    : 'The configured workflow guard blocks additional compile, review, or full-suite continuation until operator decision; wait for the operator before continuing.'),
+            commands: autoSplitEnabled
+                ? []
+                : [
+                    buildCommand(
+                        'Inspect review cycle guard',
+                        `${cliPrefix} workflow explain --target-root "."`
+                    )
+                ],
             reviewCycleBlock
         });
     }
@@ -4472,7 +4592,7 @@ export function formatNextStepText(result: NextStepResult): string {
     }
     if (result.review_cycle_block) {
         const block = result.review_cycle_block;
-        lines.push('OperatorDecisionRequired: true');
+        lines.push(`OperatorDecisionRequired: ${block.operator_decision_required}`);
         lines.push(`ReviewCycleBlock: reason=${formatNextStepInlineValue(block.reason)}; auto_split_enabled=${block.auto_split_enabled}; wait_for_operator=${block.wait_for_operator}`);
         lines.push(
             `ReviewCycleCounts: total_non_test_reviews=${block.total_non_test_review_count}; ` +
@@ -4501,6 +4621,14 @@ export function formatNextStepText(result: NextStepResult): string {
         }
         lines.push(`TestReviewExcluded: ${block.excluded_review_types.includes('test')}`);
         lines.push(`OperatorChoices: ${block.choices.join(', ')}`);
+        if (block.auto_split_prompt) {
+            lines.push(
+                `AutoSplitPromptArtifact: path=${formatNextStepInlineValue(block.auto_split_prompt.artifact_path)}; ` +
+                `sha256=${block.auto_split_prompt.artifact_sha256}; next_action=${block.auto_split_prompt.next_action}`
+            );
+            lines.push(`AutoSplitInstructions: ${block.auto_split_prompt.instructions.join(', ')}`);
+            lines.push(`AutoSplitConstraints: ${block.auto_split_prompt.constraints.join(', ')}`);
+        }
     }
     if (result.profile) {
         lines.push(`TaskProfile: ${result.profile.task_selected_profile || 'default'} (${result.profile.profile_selection_source || 'unknown'})`);
@@ -4576,7 +4704,9 @@ export function formatNextStepText(result: NextStepResult): string {
             }
         }
     }
-    if (result.status !== 'DONE' && result.review_cycle_block) {
+    if (result.status !== 'DONE' && result.review_cycle_block?.auto_split_prompt) {
+        lines.push('AfterCommand: follow AutoSplitPromptArtifact instructions; do not run parent compile, review, or full-suite gates before split handling.');
+    } else if (result.status !== 'DONE' && result.review_cycle_block) {
         lines.push('AfterCommand: inspect diagnostics only if needed, then wait for operator choice; do not run compile, review, or full-suite gates.');
     } else if (result.status !== 'DONE') {
         lines.push(`AfterCommand: rerun ${result.navigator_command} after the command above completes.`);

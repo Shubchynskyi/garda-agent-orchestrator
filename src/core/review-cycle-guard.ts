@@ -8,6 +8,7 @@ export interface ReviewCycleGuardConfig {
     max_failed_non_test_reviews: number;
     max_total_non_test_reviews: number;
     excluded_review_types: string[];
+    auto_split_enabled: boolean;
 }
 
 export interface ReviewCycleAttempt {
@@ -30,6 +31,7 @@ export interface ReviewCycleGuardEvaluationInput {
 export interface ReviewCycleGuardEvaluation {
     active: boolean;
     action: ReviewCycleGuardAction;
+    auto_split_enabled: boolean;
     total_non_test_review_count: number;
     failed_non_test_review_count: number;
     counts_by_review_type: Record<string, { total: number; failed: number; passed: number; pending: number }>;
@@ -44,7 +46,8 @@ export const DEFAULT_REVIEW_CYCLE_GUARD_CONFIG: ReviewCycleGuardConfig = Object.
     action: 'BLOCK_FOR_OPERATOR_DECISION',
     max_failed_non_test_reviews: 15,
     max_total_non_test_reviews: 15,
-    excluded_review_types: ['test']
+    excluded_review_types: ['test'],
+    auto_split_enabled: false
 });
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {
@@ -92,7 +95,10 @@ export function normalizeReviewCycleGuardConfig(input: unknown): ReviewCycleGuar
         excluded_review_types: normalizeReviewTypeList(
             raw.excluded_review_types,
             DEFAULT_REVIEW_CYCLE_GUARD_CONFIG.excluded_review_types
-        )
+        ),
+        auto_split_enabled: typeof raw.auto_split_enabled === 'boolean'
+            ? raw.auto_split_enabled
+            : DEFAULT_REVIEW_CYCLE_GUARD_CONFIG.auto_split_enabled
     };
 }
 
@@ -150,6 +156,7 @@ export function evaluateReviewCycleGuard(
     return {
         active,
         action: config.action,
+        auto_split_enabled: config.auto_split_enabled,
         total_non_test_review_count: totalNonTestReviewCount,
         failed_non_test_review_count: failedNonTestReviewCount,
         counts_by_review_type: countsByReviewType,
