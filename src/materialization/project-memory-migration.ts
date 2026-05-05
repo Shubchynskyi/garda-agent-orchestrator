@@ -319,7 +319,8 @@ export function isProjectMemoryOnlySeeds(projectMemoryDir: string): boolean {
         .filter((e: fs.Dirent) =>
             e.isFile() &&
             e.name.toLowerCase().endsWith('.md') &&
-            e.name.toLowerCase() !== 'readme.md'
+            e.name.toLowerCase() !== 'readme.md' &&
+            !e.name.toLowerCase().endsWith('.template.md')
         )
         .map((e: fs.Dirent) => e.name);
 

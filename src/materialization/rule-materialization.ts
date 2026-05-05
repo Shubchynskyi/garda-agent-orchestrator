@@ -344,7 +344,13 @@ export function generateProjectMemorySummary(projectMemoryDir: string, timestamp
     }
 
     const mdFiles = entries
-        .filter((entry: fs.Dirent) => entry.isFile() && entry.name.toLowerCase().endsWith('.md') && entry.name.toLowerCase() !== 'readme.md')
+        .filter((entry: fs.Dirent) => {
+            const fileName = entry.name.toLowerCase();
+            return entry.isFile()
+                && fileName.endsWith('.md')
+                && fileName !== 'readme.md'
+                && !fileName.endsWith('.template.md');
+        })
         .map((entry: fs.Dirent) => entry.name)
         .sort();
 
