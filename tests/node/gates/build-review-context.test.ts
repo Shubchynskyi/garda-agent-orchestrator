@@ -2332,7 +2332,7 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
-        // T-1005: reviewer_routing includes explicit requirement fields
+        // reviewer_routing includes explicit requirement fields.
         it('includes reviewer_execution_mode_required and reviewer_identity_required for required reviews', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-req-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

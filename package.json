@@ -32,7 +32,6 @@
     "audit:all": "npm audit",
     "quality": "npm run typecheck && npm run lint && npm run coverage && npm run audit:prod",
     "validate:release": "npm run validate:version-parity && npm run build && npm run quality && node --test .node-build/tests/node/packaging/pack-smoke.test.js",
-    "prepare": "npm run build",
     "typecheck": "tsc -p tsconfig.node-foundation.json",
     "prepack": "npm run build:publish-runtime"
   },

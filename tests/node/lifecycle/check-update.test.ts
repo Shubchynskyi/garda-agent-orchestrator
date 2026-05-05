@@ -651,7 +651,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('applies update through a legacy lifecycle runner that omits lifecycleLockAlreadyHeld (T-230)', async () => {
+    it('applies update through a legacy lifecycle runner that omits lifecycleLockAlreadyHeld', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1', {
             syncSurfaceFrom: repoRoot
         });
@@ -681,7 +681,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('updates a workspace seeded from the published 1.0.0 npm release through the npm-backed legacy caller path (T-230)', async () => {
+    it('updates a workspace seeded from the published 1.0.0 npm release through the npm-backed legacy caller path', async () => {
         const candidateTarball = createCandidateTarball(repoRoot);
         try {
             const { projectRoot, bundleRoot } = setupPublishedReleaseSeededCheckUpdateWorkspace(FIRST_NPM_RELEASE_PACKAGE_SPEC);
@@ -1017,7 +1017,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('defers VERSION sync until after lifecycle completes (T-067)', async () => {
+    it('defers VERSION sync until after lifecycle completes', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             let versionDuringLifecycle = null;
@@ -1080,7 +1080,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('does not update VERSION when lifecycle fails (T-067)', async () => {
+    it('does not update VERSION when lifecycle fails', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '0.0.1');
@@ -1108,7 +1108,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('writes sentinel before lifecycle and removes it after success (T-067)', async () => {
+    it('writes sentinel before lifecycle and removes it after success', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             let sentinelExistsDuringLifecycle = false;
@@ -1249,7 +1249,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('removes sentinel on lifecycle failure (T-067)', async () => {
+    it('removes sentinel on lifecycle failure', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             const sentinelPath = getUpdateSentinelPath(bundleRoot);
@@ -1276,7 +1276,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('accepts signal option without error on sourcePath flow (T-061)', async () => {
+    it('accepts signal option without error on sourcePath flow', async () => {
         const { sourceRoot, projectRoot, bundleRoot } = setupUpToDateSourceWorkspace(repoRoot);
         try {
             const ac = new AbortController();
@@ -1296,7 +1296,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('accepts onProgress option without error (T-061)', async () => {
+    it('accepts onProgress option without error', async () => {
         const { sourceRoot, projectRoot, bundleRoot } = setupUpToDateSourceWorkspace(repoRoot);
         try {
             const result = await runCheckUpdate({
@@ -1315,7 +1315,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('npm install streams progress via onProgress callback (T-061)', async () => {
+    it('npm install streams progress via onProgress callback', async () => {
         const currentVersion = fs.readFileSync(path.join(repoRoot, 'VERSION'), 'utf8').trim();
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, currentVersion);
         try {
@@ -1339,7 +1339,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('classifies missing VERSION in an update source path (T-059)', async () => {
+    it('classifies missing VERSION in an update source path', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         const invalidSourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-checkupdate-invalid-source-'));
         try {
@@ -1365,7 +1365,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('restores previous VERSION when deferred VERSION copy fails (T-092)', async () => {
+    it('restores previous VERSION when deferred VERSION copy fails', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             // Create a source directory that has a VERSION whose copy will fail.

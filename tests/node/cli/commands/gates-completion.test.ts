@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -988,7 +988,7 @@ function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Code
 }
 
 describe('cli/commands/gates', () => {
-    it('completion-gate updates the TASK.md row to DONE through the CLI handler', async () => {
+    test('completion-gate updates the TASK.md row to DONE through the CLI handler', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-status-sync';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1073,7 +1073,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rerun repairs missing STATUS_CHANGED finalization without duplicating completion pass evidence', async () => {
+    test('completion-gate rerun repairs missing STATUS_CHANGED finalization without duplicating completion pass evidence', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-status-event-repair';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1193,7 +1193,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rerun repairs missing TASK.md DONE sync without duplicating STATUS_CHANGED telemetry', async () => {
+    test('completion-gate rerun repairs missing TASK.md DONE sync without duplicating STATUS_CHANGED telemetry', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-task-queue-repair';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1307,7 +1307,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate restores the TASK.md snapshot after a partial write failure during DONE sync', async () => {
+    test('completion-gate restores the TASK.md snapshot after a partial write failure during DONE sync', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-task-queue-write-rollback';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1434,7 +1434,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rolls back queue and status telemetry when COMPLETION_GATE_PASSED append fails', async () => {
+    test('completion-gate rolls back queue and status telemetry when COMPLETION_GATE_PASSED append fails', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-pass-rollback';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1553,7 +1553,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rollback preserves foreign aggregate and summary updates appended after the current task write', async () => {
+    test('completion-gate rollback preserves foreign aggregate and summary updates appended after the current task write', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-pass-cross-task-rollback';
         const foreignTaskId = 'T-903-foreign-summary-preserved';
@@ -1618,7 +1618,7 @@ describe('cli/commands/gates', () => {
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 appendTaskEvent(
                     getOrchestratorRoot(repoRoot),
                     foreignTaskId,
@@ -1726,7 +1726,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate refuses destructive rollback when a same-task event lands after the partial finalization write', async () => {
+    test('completion-gate refuses destructive rollback when a same-task event lands after the partial finalization write', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-pass-same-task-guard';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1789,7 +1789,7 @@ describe('cli/commands/gates', () => {
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 appendTaskEvent(
                     getOrchestratorRoot(repoRoot),
                     taskId,
@@ -1830,7 +1830,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate refuses destructive rollback when a same-task unsequenced line lands after the partial finalization write', async () => {
+    test('completion-gate refuses destructive rollback when a same-task unsequenced line lands after the partial finalization write', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-pass-unsequenced-same-task-guard';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1892,7 +1892,7 @@ describe('cli/commands/gates', () => {
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 fs.appendFileSync(taskTimelinePath, `${JSON.stringify({
                     task_id: taskId,
                     event_type: 'PLAN_CREATED',
@@ -1930,7 +1930,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate refuses destructive rollback when a same-task event lands after a partial STATUS_CHANGED write', async () => {
+    test('completion-gate refuses destructive rollback when a same-task event lands after a partial STATUS_CHANGED write', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-status-same-task-guard';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -1993,7 +1993,7 @@ describe('cli/commands/gates', () => {
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'STATUS_CHANGED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 appendTaskEvent(
                     getOrchestratorRoot(repoRoot),
                     taskId,
@@ -2039,7 +2039,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate refuses destructive rollback when a foreign STATUS_CHANGED event matches the allowed type', async () => {
+    test('completion-gate refuses destructive rollback when a foreign STATUS_CHANGED event matches the allowed type', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-status-same-type-guard';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -2144,7 +2144,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate refuses destructive rollback when a same-task event lands before COMPLETION_GATE_PASSED writes anything', async () => {
+    test('completion-gate refuses destructive rollback when a same-task event lands before COMPLETION_GATE_PASSED writes anything', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-pre-pass-same-task-guard';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -2252,7 +2252,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rollback preserves foreign summary entries when the existing summary index is version-skewed', async () => {
+    test('completion-gate rollback preserves foreign summary entries when the existing summary index is version-skewed', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-version-skew-summary-rollback';
         const foreignTaskId = 'T-903-version-skew-summary-foreign';
@@ -2333,7 +2333,7 @@ describe('cli/commands/gates', () => {
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 throw new Error('Injected post-append failure on version-skewed summary rollback fixture');
             }
             return originalAppendTaskEventAsync(...args);
@@ -2363,7 +2363,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate aggregate rollback keeps the original aggregate log intact when the rollback temp write fails', async () => {
+    test('completion-gate aggregate rollback keeps the original aggregate log intact when the rollback temp write fails', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-aggregate-rollback-temp-write-failure';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -2429,7 +2429,7 @@ describe('cli/commands/gates', () => {
         const originalRenameSync = fsModule.renameSync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 throw new Error('Injected post-append failure before aggregate rollback atomic promotion failure');
             }
             return originalAppendTaskEventAsync(...args);
@@ -2472,7 +2472,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rollback drops current-task aggregate rows that are missing integrity metadata', async () => {
+    test('completion-gate rollback drops current-task aggregate rows that are missing integrity metadata', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-aggregate-missing-integrity-rollback';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -2535,7 +2535,7 @@ describe('cli/commands/gates', () => {
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 fs.appendFileSync(aggregatePath, `${JSON.stringify({
                     task_id: taskId,
                     event_type: 'PLAN_CREATED',
@@ -2570,7 +2570,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rollback preserves baseline aggregate rows that already lack integrity metadata', async () => {
+    test('completion-gate rollback preserves baseline aggregate rows that already lack integrity metadata', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-aggregate-baseline-missing-integrity-preserved';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -2638,7 +2638,7 @@ describe('cli/commands/gates', () => {
         const originalAppendTaskEventAsync = taskEventsIoModule.appendTaskEventAsync;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 fs.appendFileSync(aggregatePath, `${JSON.stringify({
                     task_id: taskId,
                     event_type: 'PLAN_CREATED',
@@ -2678,7 +2678,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate does not duplicate DONE status when the existing current-cycle STATUS_CHANGED event is missing sequence metadata', async () => {
+    test('completion-gate does not duplicate DONE status when the existing current-cycle STATUS_CHANGED event is missing sequence metadata', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-missing-sequence-status-dedup';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -2791,7 +2791,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate restores TASK.md when timeline rollback succeeded but summary reconciliation fails afterwards', async () => {
+    test('completion-gate restores TASK.md when timeline rollback succeeded but summary reconciliation fails afterwards', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-summary-rollback-failure';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -2853,7 +2853,7 @@ describe('cli/commands/gates', () => {
         const originalReconcileTimelineSummaryForTask = timelineSummaryModule.reconcileTimelineSummaryForTask;
         taskEventsIoModule.appendTaskEventAsync = async (...args: unknown[]) => {
             if (String(args[1] || '').trim() === taskId && String(args[2] || '') === 'COMPLETION_GATE_PASSED') {
-                const result = await originalAppendTaskEventAsync(...args);
+                await originalAppendTaskEventAsync(...args);
                 throw new Error('Injected post-append failure before summary reconcile');
             }
             return originalAppendTaskEventAsync(...args);
@@ -2900,7 +2900,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate keeps canonical completion pass when aggregate append warns after TASK.md is already DONE', async () => {
+    test('completion-gate keeps canonical completion pass when aggregate append warns after TASK.md is already DONE', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-pass-warning-committed';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -3122,7 +3122,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('handleCompletionGate appends COMPLETION_GATE_FAILED when finalization fails after validation PASS', async () => {
+    test('handleCompletionGate appends COMPLETION_GATE_FAILED when finalization fails after validation PASS', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-completion-finalization-failed-marker';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -3213,7 +3213,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('task-audit-summary materializes canonical final closeout artifacts through the CLI handler', async () => {
+    test('task-audit-summary materializes canonical final closeout artifacts through the CLI handler', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-final-closeout-artifact';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -3326,7 +3326,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('task-audit-summary preserves existing final closeout artifacts while completion finalization is in flight', async () => {
+    test('task-audit-summary preserves existing final closeout artifacts while completion finalization is in flight', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-task-audit-summary-inflight-finalization';
         seedTaskQueue(repoRoot, taskId, '🟧 IN_REVIEW');
@@ -3366,11 +3366,16 @@ describe('cli/commands/gates', () => {
         const capturedStdout: string[] = [];
         process.exitCode = 0;
         process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): boolean => {
-            capturedStdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString(typeof encoding === 'string' ? encoding : 'utf8'));
+            let bufferEncoding: BufferEncoding = 'utf8';
+            let writeCallback = callback;
             if (typeof encoding === 'function') {
-                encoding();
-            } else if (typeof callback === 'function') {
-                callback();
+                writeCallback = encoding;
+            } else if (encoding !== undefined) {
+                bufferEncoding = encoding;
+            }
+            capturedStdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString(bufferEncoding));
+            if (typeof writeCallback === 'function') {
+                writeCallback();
             }
             return true;
         }) as typeof process.stdout.write;
@@ -3404,7 +3409,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('passes completion gate only after task mode entry, review gate, and doc impact gate', async () => {
+    test('passes completion gate only after task mode entry, review gate, and doc impact gate', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a';
         seedTaskQueue(repoRoot, taskId);
@@ -3499,7 +3504,7 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.outcome, 'PASS');
         assert.equal(completionResult.status, 'PASSED');
         assert.match(String(completionResult.task_mode_path || ''), /T-903a-task-mode\.json$/);
-        // T-003: verify stage_sequence_evidence is present
+        // Verify stage_sequence_evidence is present.
         assert.ok(completionResult.stage_sequence_evidence);
         assert.equal(completionResult.stage_sequence_evidence.code_changed, true);
         assert.ok(completionResult.stage_sequence_evidence.observed_order.includes('PREFLIGHT_CLASSIFIED'));
@@ -3513,7 +3518,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('passes completion gate when a later coherent cycle exists despite stale early task-entry ordering noise', async () => {
+    test('passes completion gate when a later coherent cycle exists despite stale early task-entry ordering noise', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-recovery';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -3636,7 +3641,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('fails completion gate when the latest cycle is misordered and would need compile backfill from an older cycle', async () => {
+    test('fails completion gate when the latest cycle is misordered and would need compile backfill from an older cycle', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-recovery-negative';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -3783,7 +3788,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('fails completion gate when the latest cycle has review evidence but no same-cycle implementation or compile', async () => {
+    test('fails completion gate when the latest cycle has review evidence but no same-cycle implementation or compile', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-recovery-missing-prereq';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -3919,7 +3924,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate rejects stale task-mode artifacts after review pass when runtime identity metadata is removed', async () => {
+    test('completion-gate rejects stale task-mode artifacts after review pass when runtime identity metadata is removed', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904b-task-mode-identity-missing-at-completion';
         seedTaskQueue(repoRoot, taskId);
@@ -4003,7 +4008,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('completion-gate fails when workspace canonical ownership drifts after task-mode identity was pinned', async () => {
+    test('completion-gate fails when workspace canonical ownership drifts after task-mode identity was pinned', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904b-completion-runtime-identity-drift';
         seedTaskQueue(repoRoot, taskId);

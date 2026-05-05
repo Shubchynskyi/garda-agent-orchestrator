@@ -1,5 +1,5 @@
 /**
- * T-007: Locked-file and interruption tests for update/rollback on Windows.
+ * Locked-file and interruption tests for update/rollback on Windows.
  *
  * Validates resilience of update and rollback operations under conditions
  * typical on Windows with AV scanners, multi-run orchestration, and
@@ -11,10 +11,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
+import { runUpdate } from '../../../src/lifecycle/update';
 import {
-    runRollback,
-    runSnapshotRollback
+    runRollback
 } from '../../../src/lifecycle/rollback';
 import {
     removePathRecursive,
@@ -125,7 +124,7 @@ function snapshotKeyFiles(projectRoot: string, fileList: string[]): Record<strin
 // 1. LOCKED-FILE TESTS DURING UPDATE
 // =========================================================================
 
-describe('Update locked-file edge cases (T-007)', () => {
+describe('Update locked-file edge cases', () => {
     const repoRoot = findRepoRoot();
 
     it('rolls back cleanly when install runner fails with EBUSY (locked file)', () => {
@@ -310,7 +309,7 @@ describe('Update locked-file edge cases (T-007)', () => {
 // 2. LOCKED-FILE TESTS DURING ROLLBACK
 // =========================================================================
 
-describe('Rollback locked-file edge cases (T-007)', () => {
+describe('Rollback locked-file edge cases', () => {
     const repoRoot = findRepoRoot();
 
     it('rollback snapshot restore fails clearly when target is EBUSY-locked', async () => {
@@ -387,7 +386,7 @@ describe('Rollback locked-file edge cases (T-007)', () => {
 // 3. UPDATE SENTINEL / INTERRUPTION DETECTION
 // =========================================================================
 
-describe('Update sentinel interruption detection (T-007)', () => {
+describe('Update sentinel interruption detection', () => {
     const repoRoot = findRepoRoot();
 
     it('writeUpdateSentinel creates sentinel with metadata', () => {
@@ -523,7 +522,7 @@ describe('Update sentinel interruption detection (T-007)', () => {
 // 4. PARTIAL ROLLBACK SNAPSHOT TESTS
 // =========================================================================
 
-describe('Partial rollback snapshot edge cases (T-007)', () => {
+describe('Partial rollback snapshot edge cases', () => {
     it('restoreRollbackSnapshot throws for missing snapshot entry of an existed=true record', () => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-partial-snap-'));
         try {
@@ -702,7 +701,7 @@ describe('Partial rollback snapshot edge cases (T-007)', () => {
 // 5. LIFECYCLE LOCK CONTENTION DURING UPDATE/ROLLBACK
 // =========================================================================
 
-describe('Lifecycle lock contention during update/rollback (T-007)', () => {
+describe('Lifecycle lock contention during update/rollback', () => {
     const repoRoot = findRepoRoot();
 
     it('update releases lock even when install throws EBUSY', () => {
@@ -870,7 +869,9 @@ describe('Lifecycle lock contention during update/rollback (T-007)', () => {
                 error = caught instanceof Error ? caught : new Error(String(caught));
             }
 
-            assert.ok(error, 'foreign-host lifecycle lock should block update without explicit override');
+            if (error === null) {
+                throw new Error('foreign-host lifecycle lock should block update without explicit override');
+            }
             assert.match(error.message, /GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS=1/);
             assert.doesNotMatch(String(error.message), /remote-build-host/);
             assert.ok(fs.existsSync(lockPath), 'foreign-host lock must stay in place without override');
@@ -932,7 +933,7 @@ describe('Lifecycle lock contention during update/rollback (T-007)', () => {
 // 6. copyPathRecursive EDGE CASES
 // =========================================================================
 
-describe('copyPathRecursive edge cases (T-007)', () => {
+describe('copyPathRecursive edge cases', () => {
     it('copies single file', () => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-copy-edge-'));
         try {
@@ -986,7 +987,7 @@ describe('copyPathRecursive edge cases (T-007)', () => {
 // 7. FULL UPDATE THEN ROLLBACK WITH FILESYSTEM VERIFICATION
 // =========================================================================
 
-describe('Full update-then-rollback filesystem integrity (T-007)', () => {
+describe('Full update-then-rollback filesystem integrity', () => {
     const repoRoot = findRepoRoot();
 
     it('restores all key files after update + rollback round-trip', async () => {

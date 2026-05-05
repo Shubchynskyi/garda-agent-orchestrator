@@ -6395,7 +6395,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result error names exact accepted tokens and output-file requirement when verdict token is wrong (T-306)', async () => {
+    it('record-review-result error names exact accepted tokens and output-file requirement when verdict token is wrong', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-306-wrong-token-diagnostic';
         seedTaskQueue(repoRoot, taskId);
@@ -6477,7 +6477,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result error names test-review-specific accepted tokens when token is wrong for test review type (T-306)', async () => {
+    it('record-review-result error names test-review-specific accepted tokens when token is wrong for test review type', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-306-wrong-token-test-type';
         seedTaskQueue(repoRoot, taskId);
@@ -6556,7 +6556,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result error names exact pass and fail example lines when verdict file uses wrong standalone token (T-306)', async () => {
+    it('record-review-result error names exact pass and fail example lines when verdict file uses wrong standalone token', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-306-wrong-token-example-lines';
         seedTaskQueue(repoRoot, taskId);
@@ -11366,7 +11366,7 @@ describe('cli/commands/gates', () => {
 
 });
 
-describe('executeCommand timeout protection (T-061)', () => {
+describe('executeCommand timeout protection', () => {
     it('runs a simple command successfully with default timeout', () => {
         const result = executeCommand(`node -e "console.log('hello')"`, {
             cwd: process.cwd()

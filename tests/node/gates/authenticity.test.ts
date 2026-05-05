@@ -8,7 +8,7 @@ import * as os from 'node:os';
 import { isTrivialReview } from '../../../src/gates/completion';
 import { checkRequiredReviews } from '../../../src/gates/required-reviews-check';
 
-describe('gates/authenticity (T-900)', () => {
+describe('gates/authenticity', () => {
     describe('isTrivialReview', () => {
         it('returns true for very short content', () => {
             assert.equal(isTrivialReview('REVIEW PASSED'), true);

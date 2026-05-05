@@ -668,7 +668,7 @@ describe('runInit', () => {
         }
     });
 
-    it('seeds project-memory from template on first install (T-072)', () => {
+    it('seeds project-memory from template on first install', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const result = runInit({
@@ -688,7 +688,7 @@ describe('runInit', () => {
         }
     });
 
-    it('preserves existing project-memory on reinit (T-072)', () => {
+    it('preserves existing project-memory on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // First init — seeds project-memory
@@ -727,7 +727,7 @@ describe('runInit', () => {
         }
     });
 
-    it('does not collaterally affect project-memory via docs support directory sync (T-072)', () => {
+    it('does not collaterally affect project-memory via docs support directory sync', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // First init
@@ -761,7 +761,7 @@ describe('runInit', () => {
         }
     });
 
-    it('generates 15-project-memory.md with DO NOT EDIT header on init (T-073)', () => {
+    it('generates 15-project-memory.md with DO NOT EDIT header on init', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             runInit({
@@ -783,7 +783,7 @@ describe('runInit', () => {
         }
     });
 
-    it('regenerates 15-project-memory.md with user content on reinit (T-073)', () => {
+    it('regenerates 15-project-memory.md with user content on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // First init — seeds template project-memory
@@ -820,7 +820,7 @@ describe('runInit', () => {
         }
     });
 
-    it('generates placeholder stub when project-memory has only templates (T-073)', () => {
+    it('generates placeholder stub when project-memory has only templates', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // Init seeds template files which have only HTML comment placeholders
@@ -843,7 +843,7 @@ describe('runInit', () => {
         }
     });
 
-    it('includes 15-project-memory.md in ruleSourceMap as generated (T-073)', () => {
+    it('includes 15-project-memory.md in ruleSourceMap as generated', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const result = runInit({

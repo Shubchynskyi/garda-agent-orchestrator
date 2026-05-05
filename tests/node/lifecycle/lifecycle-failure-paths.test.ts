@@ -1,5 +1,5 @@
 /**
- * T-070: Critical lifecycle failure-path tests for update, rollback, and uninstall.
+ * Critical lifecycle failure-path tests for update, rollback, and uninstall.
  *
  * Tests assert filesystem state (not only error messages) to guarantee rollback
  * and recovery semantics are correct under failure conditions.
@@ -10,23 +10,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
+import { runUpdate } from '../../../src/lifecycle/update';
 import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import {
     runRollback,
-    runSnapshotRollback,
-    runRollbackToVersion,
-    findSnapshotByVersion
+    runSnapshotRollback
 } from '../../../src/lifecycle/rollback';
-import { runUninstall, parseBooleanAnswer, getUninstallRollbackItems } from '../../../src/lifecycle/uninstall';
+import { runUninstall } from '../../../src/lifecycle/uninstall';
 import {
     removePathRecursive,
-    getUpdateSentinelPath,
-    getUninstallSentinelPath,
-    createRollbackSnapshot,
-    writeRollbackRecords,
-    readRollbackRecords,
-    restoreRollbackSnapshot
+    getUpdateSentinelPath
 } from '../../../src/lifecycle/common';
 import { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } from '../../../src/materialization/content-builders';
 
@@ -142,24 +135,6 @@ function injectBundleUpdate(bundleRoot: string, updateMarker: string, nextVersio
     fs.writeFileSync(templateClaudePath, updatedTemplate, 'utf8');
 }
 
-/** Collect all files (relative) under a directory for snapshot comparison. */
-function collectRelativeFiles(rootDir: string): string[] {
-    const results: string[] = [];
-    function walk(dir: string) {
-        if (!fs.existsSync(dir)) return;
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                walk(full);
-            } else {
-                results.push(path.relative(rootDir, full).replace(/\\/g, '/'));
-            }
-        }
-    }
-    walk(rootDir);
-    return results.sort();
-}
-
 /** Take a simple content snapshot of key files for comparison. */
 function snapshotKeyFiles(projectRoot: string, fileList: string[]): Record<string, string> {
     const snapshot: Record<string, string> = {};
@@ -176,7 +151,7 @@ function snapshotKeyFiles(projectRoot: string, fileList: string[]): Record<strin
 // 1. UPDATE FAILURE PATHS
 // =========================================================================
 
-describe('Update failure-path tests (T-070)', () => {
+describe('Update failure-path tests', () => {
     const repoRoot = findRepoRoot();
 
     it('rolls back on verify failure and restores filesystem state', () => {
@@ -295,7 +270,9 @@ describe('Update failure-path tests (T-070)', () => {
                 thrown = e as Error;
             }
 
-            assert.ok(thrown, 'Should throw on double failure');
+            if (thrown === null) {
+                throw new Error('Should throw on double failure');
+            }
             // Error message should mention both failures
             assert.ok(
                 thrown.message.includes('INSTALL_FAIL_PRIMARY'),
@@ -421,7 +398,7 @@ describe('Update failure-path tests (T-070)', () => {
 // 2. CHECK-UPDATE / PARTIAL SYNC FAILURE PATHS
 // =========================================================================
 
-describe('Check-update partial sync failure paths (T-070)', () => {
+describe('Check-update partial sync failure paths', () => {
     const repoRoot = findRepoRoot();
 
     it('restores all synced items after updateRunner failure (filesystem verification)', async () => {
@@ -430,8 +407,6 @@ describe('Check-update partial sync failure paths (T-070)', () => {
         fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
         fs.writeFileSync(path.join(bundle, 'VERSION'), '0.0.1');
         try {
-            // Capture pre-sync state of bundle files
-            const filesBefore = collectRelativeFiles(bundle);
             const versionBefore = fs.readFileSync(path.join(bundle, 'VERSION'), 'utf8');
 
             await assert.rejects(
@@ -507,7 +482,7 @@ describe('Check-update partial sync failure paths (T-070)', () => {
 // 3. ROLLBACK FAILURE PATHS
 // =========================================================================
 
-describe('Rollback safety snapshot and failure paths (T-070)', () => {
+describe('Rollback safety snapshot and failure paths', () => {
     const repoRoot = findRepoRoot();
 
     it('safety snapshot is activated and restores state when snapshot-mode restore fails', async () => {
@@ -649,7 +624,9 @@ describe('Rollback safety snapshot and failure paths (T-070)', () => {
                 thrown = e as Error;
             }
 
-            assert.ok(thrown, 'Should throw on double failure');
+            if (thrown === null) {
+                throw new Error('Should throw on double failure');
+            }
             assert.ok(
                 thrown.message.includes('INSTALL_FAIL_FOR_DOUBLE'),
                 'Should mention original error'
@@ -811,8 +788,6 @@ describe('Rollback safety snapshot and failure paths (T-070)', () => {
                 skipManifestValidation: true
             });
 
-            const v1 = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
-
             // Update to v8.0.0
             const source1 = path.join(projectRoot, 'source1');
             copyDirRecursive(bundleRoot, source1);
@@ -956,7 +931,7 @@ describe('Rollback safety snapshot and failure paths (T-070)', () => {
 // 4. UNINSTALL FAILURE / RECOVERY PATHS
 // =========================================================================
 
-describe('Uninstall failure and recovery paths (T-070)', () => {
+describe('Uninstall failure and recovery paths', () => {
     const repoRoot = findRepoRoot();
 
     it('uninstall after partial update: workspace is cleanly uninstalled', () => {
@@ -1082,7 +1057,9 @@ describe('Uninstall failure and recovery paths (T-070)', () => {
                 thrown = e as Error;
             }
 
-            assert.ok(thrown, 'Should throw on failure');
+            if (thrown === null) {
+                throw new Error('Should throw on failure');
+            }
             // The error should reference either the primary failure or a rollback chain
             assert.ok(
                 thrown.message.includes('PRIMARY_UNINSTALL_FAIL') ||

@@ -2246,7 +2246,7 @@ describe('gates/completion — stage and evidence validation', () => {
             )), JSON.stringify(result, null, 2));
         });
 
-        // T-1005: Receipt field presence enforcement tests
+        // Receipt field presence enforcement tests.
         it('fails when receipt is missing reviewer_execution_mode', () => {
             const events = [
                 makeEvent('COMPILE_GATE_PASSED', 0),

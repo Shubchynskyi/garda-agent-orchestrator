@@ -13,8 +13,7 @@ import {
 describe('runInstall — preserve/update semantics and IDE settings', () => {
     const repoRoot = findRepoRoot();
 
-    // T-1009: preserve user-retained entrypoints on update
-    it('preserves pre-existing extra root entrypoints when ActiveAgentFiles is narrower (T-1009)', () => {
+    it('preserves pre-existing extra root entrypoints when ActiveAgentFiles is narrower', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {
@@ -75,7 +74,7 @@ describe('runInstall — preserve/update semantics and IDE settings', () => {
         }
     });
 
-    it('preserves pre-existing provider bridge files across update (T-1009)', () => {
+    it('preserves pre-existing provider bridge files across update', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {
@@ -153,7 +152,7 @@ describe('runInstall — preserve/update semantics and IDE settings', () => {
         }
     });
 
-    it('removes inactive managed provider files when ProviderMinimalism is enabled (T-061)', () => {
+    it('removes inactive managed provider files when ProviderMinimalism is enabled', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {
@@ -216,7 +215,7 @@ describe('runInstall — preserve/update semantics and IDE settings', () => {
         }
     });
 
-    it('does not create new files for entrypoints that never existed on disk (T-1009)', () => {
+    it('does not create new files for entrypoints that never existed on disk', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {
@@ -251,7 +250,7 @@ describe('runInstall — preserve/update semantics and IDE settings', () => {
         }
     });
 
-    it('preserves extra entrypoints across reinit-style update with preserveExisting (T-1009)', () => {
+    it('preserves extra entrypoints across reinit-style update with preserveExisting', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {
@@ -320,7 +319,7 @@ describe('runInstall — preserve/update semantics and IDE settings', () => {
         }
     });
 
-    it('does not preserve files without managed markers (T-1009)', () => {
+    it('does not preserve files without managed markers', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             fs.writeFileSync(path.join(projectRoot, 'GEMINI.md'), '# My custom Gemini config\n', 'utf8');
@@ -358,7 +357,7 @@ describe('runInstall — preserve/update semantics and IDE settings', () => {
         }
     });
 
-    it('does not overwrite user-owned provider bridges without managed markers during cascaded preservation (T-1009)', () => {
+    it('does not overwrite user-owned provider bridges without managed markers during cascaded preservation', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {

@@ -9,8 +9,7 @@ import { runUpdate } from '../../../src/lifecycle/update';
 import {
     findSnapshotByVersion,
     runRollback,
-    runRollbackToVersion,
-    runSnapshotRollback
+    runRollbackToVersion
 } from '../../../src/lifecycle/rollback';
 import { removePathRecursive } from '../../../src/lifecycle/common';
 
@@ -159,7 +158,7 @@ describe('runRollback (snapshot mode)', () => {
         }
     });
 
-    it('preserves project-memory user content across snapshot rollback (T-076)', async () => {
+    it('preserves project-memory user content across snapshot rollback', async () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             // Initial materialization
@@ -262,8 +261,6 @@ describe('runRollback (version mode)', () => {
                 skipVerify: true,
                 skipManifestValidation: true
             });
-
-            const baselineVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
 
             // Create "older version" source
             const olderSource = path.join(projectRoot, 'older-source');
@@ -674,7 +671,7 @@ describe('findSnapshotByVersion', () => {
 });
 
 
-describe('rollback ownership boundaries (T-013)', () => {
+describe('rollback ownership boundaries', () => {
     it('rejects snapshot path that escapes target root via absolute path', async () => {
         const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-rb-boundary-'));
         const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
@@ -737,7 +734,7 @@ describe('rollback ownership boundaries (T-013)', () => {
 });
 
 
-describe('rollback dry-run preview (T-013)', () => {
+describe('rollback dry-run preview', () => {
     const repoRoot = findRepoRoot();
 
     it('version rollback dry-run returns previewAffectedItems', async () => {

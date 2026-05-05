@@ -443,7 +443,7 @@ describe('runUninstall', () => {
         }
     });
 
-    it('preserves project-memory alongside runtime artifacts when keepRuntimeArtifacts is yes (T-072)', () => {
+    it('preserves project-memory alongside runtime artifacts when keepRuntimeArtifacts is yes', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {
             // Ensure project-memory has user content
@@ -476,7 +476,7 @@ describe('runUninstall', () => {
         }
     });
 
-    it('does not preserve project-memory when keepRuntimeArtifacts is no (T-072)', () => {
+    it('does not preserve project-memory when keepRuntimeArtifacts is no', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -940,7 +940,7 @@ describe('runUninstall', () => {
 });
 
 
-describe('uninstall ownership boundaries (T-013)', () => {
+describe('uninstall ownership boundaries', () => {
     const repoRoot = findRepoRoot();
 
     it('rejects init answers path that escapes target root', () => {
@@ -986,7 +986,7 @@ describe('uninstall ownership boundaries (T-013)', () => {
 });
 
 
-describe('uninstall dry-run preview (T-013)', () => {
+describe('uninstall dry-run preview', () => {
     const repoRoot = findRepoRoot();
 
     it('dry-run returns previewAffectedFiles with specific paths', () => {

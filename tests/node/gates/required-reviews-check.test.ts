@@ -204,7 +204,7 @@ describe('gates/required-reviews-check', () => {
         });
     });
 
-    describe('detectZeroDiffFromPreflight (T-902)', () => {
+    describe('detectZeroDiffFromPreflight', () => {
         it('returns true for zero-diff preflight with guard block', () => {
             const preflight = {
                 changed_files: [],
@@ -253,7 +253,7 @@ describe('gates/required-reviews-check', () => {
         });
     });
 
-    describe('validateZeroDiffForReviewGate (T-902)', () => {
+    describe('validateZeroDiffForReviewGate', () => {
         it('returns NOT_APPLICABLE when diff is present', () => {
             const preflight = {
                 changed_files: ['src/index.ts'],

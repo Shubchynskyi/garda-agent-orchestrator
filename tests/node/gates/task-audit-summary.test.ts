@@ -875,7 +875,7 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.workflow?.review_execution_policy_mode, 'code_first_optional');
         });
 
-        it('keeps legacy compatibility mode for pre-T-147 preflight artifacts even when live config changed later', () => {
+        it('keeps legacy compatibility mode for old preflight artifacts even when live config changed later', () => {
             writeWorkflowConfig(tmpDir, false, 'strict_sequential');
             writeEvent(eventsDir, TASK_ID, {
                 timestamp_utc: '2026-01-01T00:00:00.000Z',

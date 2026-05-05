@@ -9,11 +9,9 @@ import {
     formatStatusSnapshot,
     formatStatusSnapshotCompact,
     resolveInitAnswersPath
-} from '../../../src/validators/status';
+} from '../../../src/validators';
 import { buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
-import {
-    writeProtectedControlPlaneManifest
-} from '../../../src/gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../../../src/gates/helpers';
 
 const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
@@ -95,7 +93,7 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
     writeStatusFixtureFile(path.join(tmpDir, 'TASK.md'), '# Tasks\n');
     writeStatusFixtureFile(path.join(liveRulesPath, '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
 
-    // T-1006: create entrypoint files and shared router for compliance checks
+    // Create entrypoint files and shared router for compliance checks.
     writeStatusFixtureFile(
         path.join(tmpDir, '.agents', 'workflows', 'start-task.md'),
         [MANAGED_START, '# Start Task', 'Shared router.', MANAGED_END].join('\n')

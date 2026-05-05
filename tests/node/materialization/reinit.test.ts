@@ -316,7 +316,7 @@ describe('runReinit', () => {
         }
     });
 
-    it('preserves project-memory user content when init-answers change (T-076)', () => {
+    it('preserves project-memory user content when init-answers change', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
@@ -378,7 +378,7 @@ describe('runReinit', () => {
         }
     });
 
-    it('preserves ActiveAgentFiles on reinit (T-047)', () => {
+    it('preserves ActiveAgentFiles on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');

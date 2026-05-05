@@ -8,6 +8,8 @@ import * as path from 'node:path';
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
 
 const RETRYABLE_WINDOWS_CLEANUP_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
+const SPAWN_OUTPUT_TAIL_LENGTH = 4000;
+const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
 
 function getErrorCode(error: unknown): string {
     return error && typeof error === 'object' && 'code' in error
@@ -125,6 +127,34 @@ function spawnNpm(args: string[], cwd: string): childProcess.SpawnSyncReturns<st
     });
 }
 
+function formatSpawnFailure(label: string, result: childProcess.SpawnSyncReturns<string>): string {
+    const lines = [`${label} failed:`];
+    if (result.error) lines.push(`error=${result.error.message}`);
+    if (result.status !== null) lines.push(`exit=${result.status}`);
+    if (result.signal) lines.push(`signal=${result.signal}`);
+    if (result.stdout) lines.push(`stdout:\n${tailOutput(result.stdout)}`);
+    if (result.stderr) lines.push(`stderr:\n${tailOutput(result.stderr)}`);
+    return lines.join('\n');
+}
+
+function tailOutput(output: string): string {
+    if (output.length <= SPAWN_OUTPUT_TAIL_LENGTH) {
+        return output;
+    }
+    return `[truncated to last ${SPAWN_OUTPUT_TAIL_LENGTH} chars]\n${output.slice(-SPAWN_OUTPUT_TAIL_LENGTH)}`;
+}
+
+function assertNoConsumerInstallLifecycleScripts(packageJson: { scripts?: Record<string, string> }): void {
+    const scripts = packageJson.scripts || {};
+    for (const scriptName of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
+        assert.equal(
+            scripts[scriptName],
+            undefined,
+            `packed package must not run ${scriptName} during consumer install`
+        );
+    }
+}
+
 function buildPublishRuntimeInRepo(repoRoot: string): void {
     const result = childProcess.spawnSync(process.execPath, [getTypescriptCliPath(repoRoot), '-p', 'tsconfig.build.json'], {
         cwd: repoRoot,
@@ -148,12 +178,11 @@ function npmPack(repoRoot: string): string {
     const result = spawnNpm(['pack', '--ignore-scripts', '--pack-destination', repoRoot], repoRoot);
 
     if (result.status !== 0) {
-        throw new Error(`npm pack failed:\n${result.stderr || result.stdout}`);
+        throw new Error(formatSpawnFailure('npm pack', result));
     }
 
     const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
-    const tarballFilename = lines[lines.length - 1].trim();
-    return tarballFilename;
+    return lines[lines.length - 1].trim();
 }
 
 function npmInstallTarball(tarballPath: string, installDir: string): void {
@@ -164,10 +193,18 @@ function npmInstallTarball(tarballPath: string, installDir: string): void {
         'utf8'
     );
 
-    const result = spawnNpm(['install', '--no-fund', '--no-audit', '--no-progress', tarballPath], installDir);
+    const result = spawnNpm([
+        'install',
+        '--ignore-scripts',
+        '--prefer-offline',
+        '--no-fund',
+        '--no-audit',
+        '--no-progress',
+        tarballPath
+    ], installDir);
 
     if (result.status !== 0) {
-        throw new Error(`npm install failed:\n${result.stderr || result.stdout}`);
+        throw new Error(formatSpawnFailure('npm install', result));
     }
 }
 
@@ -192,6 +229,7 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
     const installRoot = path.join(tempRoot, 'install-root');
 
     try {
+        assertNoConsumerInstallLifecycleScripts(packageJson);
         copyPackFixture(repoRoot, fixtureRoot);
 
         const tarballFilename = npmPack(fixtureRoot);
@@ -230,7 +268,7 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
         fs.mkdirSync(workspaceRoot, { recursive: true });
         const statusResult = runCli(cliScript, ['status', '--target-root', workspaceRoot], workspaceRoot);
         assert.equal(statusResult.status, 0, `status failed: ${statusResult.stderr || statusResult.stdout}`);
-        assert.match(statusResult.stdout, /GARDA_STATUS|GARDA_STATUS/);
+        assert.match(statusResult.stdout, /GARDA_STATUS/);
 
         // 5. No TypeScript stripping warnings from node_modules
         const combinedOutput = [

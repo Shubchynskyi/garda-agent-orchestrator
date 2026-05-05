@@ -364,7 +364,7 @@ describe('runInstall — core deploy and invariants', () => {
         }
     });
 
-    it('migrates legacy TASK.md Depth column during install sync (T-065)', () => {
+    it('migrates legacy TASK.md Depth column during install sync', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const answersPath = writeInitAnswers(bundleRoot, {

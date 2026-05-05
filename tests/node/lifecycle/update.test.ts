@@ -8,8 +8,7 @@ import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
 import { getLifecycleOperationLockPath, removePathRecursive, writeUpdateSentinel } from '../../../src/lifecycle/common';
-import { formatManifestResult, validateManifest } from '../../../src/validators/validate-manifest';
-import { formatVerifyResult, runVerify } from '../../../src/validators/verify';
+import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
 
 type CapturedMaterializationOptions = {
     claudeOrchestratorFullAccess?: boolean;
@@ -343,7 +342,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('does not bypass foreign-host lifecycle locks when legacy update sentinel is present (T-230)', () => {
+    it('does not bypass foreign-host lifecycle locks when legacy update sentinel is present', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             seedLifecycleOperationLock(projectRoot, process.pid, 'foreign-build-host');
@@ -454,7 +453,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('rematerializes live/ content during update (T-066)', () => {
+    it('rematerializes live/ content during update', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             // Seed stale live/ content to simulate a previous version
@@ -541,7 +540,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('preserves explicit workflow-config values during update (T-208)', () => {
+    it('preserves explicit workflow-config values during update', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
@@ -596,7 +595,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('preserves legacy workflow-config omission for review_execution_policy during update (T-147)', () => {
+    it('preserves legacy workflow-config omission for review_execution_policy during update', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
@@ -644,7 +643,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('materializes legacy-compatible workflow-config when update refreshes a missing config (T-147)', () => {
+    it('materializes legacy-compatible workflow-config when update refreshes a missing config', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
@@ -735,7 +734,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('reports SKIPPED_NO_RUNNER for verify/manifest/contractMigrations when no runners provided (T-067)', () => {
+    it('reports SKIPPED_NO_RUNNER for verify/manifest/contractMigrations when no runners provided', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const result = runUpdate({
@@ -766,7 +765,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('reports PASS for verify/manifest/contractMigrations when runners succeed (T-067)', () => {
+    it('reports PASS for verify/manifest/contractMigrations when runners succeed', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             let verifyCalled = false;
@@ -916,7 +915,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('preserves project-memory user content across update (T-076)', () => {
+    it('preserves project-memory user content across update', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             // First update materializes workspace including project-memory seed
@@ -961,7 +960,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('regenerates 15-project-memory.md from user content during update (T-076)', () => {
+    it('regenerates 15-project-memory.md from user content during update', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             runUpdate({
@@ -998,7 +997,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('produces valid stub 15-project-memory.md when project-memory has only templates (T-076)', () => {
+    it('produces valid stub 15-project-memory.md when project-memory has only templates', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             // Single update — project-memory seeded with templates only
@@ -1023,7 +1022,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('reports SKIPPED for verify/manifest when skip flags are set even with runners (T-067)', () => {
+    it('reports SKIPPED for verify/manifest when skip flags are set even with runners', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             let verifyCalled = false;

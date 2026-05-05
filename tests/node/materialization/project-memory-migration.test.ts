@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -12,7 +12,6 @@ import {
     MEANINGFUL_DIFF_THRESHOLD,
     migrateContextRulesToProjectMemory,
     MIGRATION_MARKER,
-    MIGRATION_RULE_MAP,
     buildMigrationReportLines
 } from '../../../src/materialization/project-memory-migration';
 import { runInit } from '../../../src/materialization/init';
@@ -224,7 +223,7 @@ const LEGACY_WRAPPED_CUSTOMIZED_30 = `${LEGACY_DEFAULT_30}
 `;
 
 const LEGACY_INDENTED_CONTINUATION_30 = TEMPLATE_30.replace(
-    /- Prefer intent-first helper names such as `resolve\*`, `read\*`, `parse\*`,\r?\n  `build\*`, `format\*`, and `print\*`\./,
+    /- Prefer intent-first helper names such as `resolve\*`, `read\*`, `parse\*`,\r?\n {2}`build\*`, `format\*`, and `print\*`\./,
     '- Prefer intent-first helper names such as `resolve*`, `read*`, `parse*`,\n  `build*`, `format*`, and `print*`.\n  Keep transport adapters suffixed with `Gateway` so boundary wiring stays obvious.'
 );
 
@@ -233,14 +232,14 @@ const LEGACY_INDENTED_CONTINUATION_30 = TEMPLATE_30.replace(
 // ──────────────────────────────────────────────────
 
 describe('getMeaningfulLines', () => {
-    it('strips HTML comments and empty lines', () => {
+    test('strips HTML comments and empty lines', () => {
         const text = '# Heading\n\n<!-- comment -->\n\nReal content here.\n';
         const lines = getMeaningfulLines(text);
         assert.ok(!lines.some(l => l.includes('comment')));
         assert.ok(lines.includes('Real content here.'));
     });
 
-    it('strips Project Discovery Snapshot section', () => {
+    test('strips Project Discovery Snapshot section', () => {
         const text = '## Foo\nfoo content\n\n## Project Discovery Snapshot\ngenerated stuff\nmore generated\n\n## Bar\nbar content\n';
         const lines = getMeaningfulLines(text);
         assert.ok(!lines.some(l => l.includes('generated')));
@@ -248,7 +247,7 @@ describe('getMeaningfulLines', () => {
         assert.ok(lines.includes('bar content'));
     });
 
-    it('excludes headings, code fences, table separators, and TODO markers', () => {
+    test('excludes headings, code fences, table separators, and TODO markers', () => {
         const text = '## Section\n```bash\nnpm test\n```\n|---|---|\nTODO\n`TODO`\n---\nReal line\n';
         const lines = getMeaningfulLines(text);
         assert.ok(!lines.includes('```bash'));
@@ -262,17 +261,17 @@ describe('getMeaningfulLines', () => {
 });
 
 describe('countMeaningfulAddedLines', () => {
-    it('returns 0 for identical content', () => {
+    test('returns 0 for identical content', () => {
         assert.equal(countMeaningfulAddedLines(TEMPLATE_10, TEMPLATE_10), 0);
     });
 
-    it('detects added lines in user-authored content', () => {
+    test('detects added lines in user-authored content', () => {
         const count = countMeaningfulAddedLines(USER_AUTHORED_10, TEMPLATE_10);
         assert.ok(count > MEANINGFUL_DIFF_THRESHOLD,
             `Expected >${MEANINGFUL_DIFF_THRESHOLD} added lines, got ${count}`);
     });
 
-    it('returns low count for minor template tweaks', () => {
+    test('returns low count for minor template tweaks', () => {
         const tweaked = TEMPLATE_10.replace('TODO', 'monolith') + '\n<!-- minor -->\n';
         const count = countMeaningfulAddedLines(tweaked, TEMPLATE_10);
         assert.ok(count <= MEANINGFUL_DIFF_THRESHOLD,
@@ -283,7 +282,7 @@ describe('countMeaningfulAddedLines', () => {
 describe('isProjectMemoryOnlySeeds', () => {
     const repoRoot = findRepoRoot();
 
-    it('returns true for template-seeded directory', () => {
+    test('returns true for template-seeded directory', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -294,7 +293,7 @@ describe('isProjectMemoryOnlySeeds', () => {
         }
     });
 
-    it('returns false when a file has real content', () => {
+    test('returns false when a file has real content', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -307,7 +306,7 @@ describe('isProjectMemoryOnlySeeds', () => {
         }
     });
 
-    it('returns true for empty directory', () => {
+    test('returns true for empty directory', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -320,7 +319,7 @@ describe('isProjectMemoryOnlySeeds', () => {
 });
 
 describe('extractMigrationContent', () => {
-    it('removes Purpose and Project Discovery Snapshot sections', () => {
+    test('removes Purpose and Project Discovery Snapshot sections', () => {
         const input = [
             '# Architecture',
             '',
@@ -344,24 +343,24 @@ describe('extractMigrationContent', () => {
         assert.ok(output.includes('modular monolith'));
     });
 
-    it('uses the target heading for the H1', () => {
+    test('uses the target heading for the H1', () => {
         const output = extractMigrationContent('# Code Style\n\n## Naming\nkebab-case\n', 'Conventions');
         assert.ok(output.startsWith('# Conventions'));
         assert.ok(!output.includes('# Code Style'));
     });
 
-    it('includes migration provenance comment', () => {
+    test('includes migration provenance comment', () => {
         const output = extractMigrationContent('# Arch\n\n## Shape\nmonolith\n', 'Architecture');
         assert.ok(output.includes('Migrated from agent-rules'));
     });
 
-    it('returns empty string when only boilerplate sections remain', () => {
+    test('returns empty string when only boilerplate sections remain', () => {
         const input = '# Context\n\n## Purpose\nTemplate text.\n\n## Project Discovery Snapshot\ngenerated\n';
         const output = extractMigrationContent(input, 'Project Context');
         assert.equal(output, '');
     });
 
-    it('drops sections whose body is only HTML comments', () => {
+    test('drops sections whose body is only HTML comments', () => {
         const input = '# Context\n\n## Domain\n<!-- placeholder -->\n\n## Goals\nReal goal here.\n';
         const output = extractMigrationContent(input, 'Project Context');
         assert.ok(!output.includes('## Domain'));
@@ -369,7 +368,7 @@ describe('extractMigrationContent', () => {
         assert.ok(output.includes('Real goal here.'));
     });
 
-    it('keeps only novel legacy code-style refinements when migrating conventions', () => {
+    test('keeps only novel legacy code-style refinements when migrating conventions', () => {
         const output = extractMigrationContent(LEGACY_CUSTOMIZED_30, 'Conventions', {
             ruleFile: '30-code-style.md',
             templateContent: TEMPLATE_30
@@ -383,7 +382,7 @@ describe('extractMigrationContent', () => {
         assert.ok(!output.includes('## Style Priority Order'));
     });
 
-    it('preserves wrapped custom bullet indentation for legacy code-style refinements', () => {
+    test('preserves wrapped custom bullet indentation for legacy code-style refinements', () => {
         const output = extractMigrationContent(LEGACY_WRAPPED_CUSTOMIZED_30, 'Conventions', {
             ruleFile: '30-code-style.md',
             templateContent: TEMPLATE_30
@@ -394,7 +393,7 @@ describe('extractMigrationContent', () => {
         assert.ok(output.includes('  context on the next line for maintainers reading generated conventions.'));
     });
 
-    it('preserves the parent bullet when a novel refinement is an indented continuation under a template bullet', () => {
+    test('preserves the parent bullet when a novel refinement is an indented continuation under a template bullet', () => {
         const output = extractMigrationContent(LEGACY_INDENTED_CONTINUATION_30, 'Conventions', {
             ruleFile: '30-code-style.md',
             templateContent: TEMPLATE_30
@@ -413,7 +412,7 @@ describe('extractMigrationContent', () => {
 describe('migrateContextRulesToProjectMemory', () => {
     const repoRoot = findRepoRoot();
 
-    it('skips when marker file exists (T-075 idempotency)', () => {
+    test('skips when marker file exists (idempotency)', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -434,7 +433,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('skips when project-memory dir does not exist', () => {
+    test('skips when project-memory dir does not exist', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const result = migrateContextRulesToProjectMemory({
@@ -449,7 +448,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('skips when project-memory already has user content', () => {
+    test('skips when project-memory already has user content', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -469,7 +468,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('migrates user-authored content from legacy context rules (T-075)', () => {
+    test('migrates user-authored content from legacy context rules', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // Seed project-memory with templates
@@ -504,7 +503,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('migrates from live-existing context rules (T-075)', () => {
+    test('migrates from live-existing context rules', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // Seed project-memory with templates
@@ -535,7 +534,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('writes marker file after migration (T-075)', () => {
+    test('writes marker file after migration', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -561,7 +560,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('writes marker even when no rules qualify for migration (T-075)', () => {
+    test('writes marker even when no rules qualify for migration', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -582,7 +581,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('does not overwrite in dryRun mode', () => {
+    test('does not overwrite in dryRun mode', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -609,7 +608,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('does not migrate rules with minimal template tweaks (T-075)', () => {
+    test('does not migrate rules with minimal template tweaks', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -636,7 +635,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('does not migrate legacy default code-style bootstrap content after template promotion', () => {
+    test('does not migrate legacy default code-style bootstrap content after template promotion', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -669,7 +668,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('migrates customized legacy code-style content that still retains old bootstrap markers', () => {
+    test('migrates customized legacy code-style content that still retains old bootstrap markers', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -710,7 +709,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('migrates concise legacy code-style refinements even below the generic diff threshold', () => {
+    test('migrates concise legacy code-style refinements even below the generic diff threshold', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -740,7 +739,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('falls through from legacy bootstrap defaults to user-authored live code-style content', () => {
+    test('falls through from legacy bootstrap defaults to user-authored live code-style content', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -775,7 +774,7 @@ describe('migrateContextRulesToProjectMemory', () => {
         }
     });
 
-    it('does not migrate legacy bootstrap files that only copy newer default style sections', () => {
+    test('does not migrate legacy bootstrap files that only copy newer default style sections', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -809,10 +808,10 @@ describe('migrateContextRulesToProjectMemory', () => {
 // Integration: migration through runInit
 // ──────────────────────────────────────────────────
 
-describe('runInit with T-075 migration', () => {
+describe('runInit with project-memory migration', () => {
     const repoRoot = findRepoRoot();
 
-    it('includes migration in init report (T-075)', () => {
+    test('includes migration in init report', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // First init to seed project-memory
@@ -853,7 +852,7 @@ describe('runInit with T-075 migration', () => {
         }
     });
 
-    it('migration runs exactly once across multiple inits (T-075)', () => {
+    test('migration runs exactly once across multiple inits', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // First init — seeds project-memory
@@ -899,7 +898,7 @@ describe('runInit with T-075 migration', () => {
         }
     });
 
-    it('migrated content appears in 15-project-memory.md summary (T-075)', () => {
+    test('migrated content appears in 15-project-memory.md summary', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             // First init — seeds project-memory
@@ -946,12 +945,12 @@ describe('runInit with T-075 migration', () => {
 // ──────────────────────────────────────────────────
 
 describe('buildMigrationReportLines', () => {
-    it('reports already_migrated status', () => {
+    test('reports already_migrated status', () => {
         const lines = buildMigrationReportLines({ status: 'already_migrated', migratedFiles: [] });
         assert.ok(lines.some(l => l.includes('marker file present')));
     });
 
-    it('reports migrated status with file table', () => {
+    test('reports migrated status with file table', () => {
         const lines = buildMigrationReportLines({
             status: 'migrated',
             migratedFiles: [{
@@ -966,7 +965,7 @@ describe('buildMigrationReportLines', () => {
         assert.ok(lines.some(l => l.includes('context.md')));
     });
 
-    it('reports no_significant_content status', () => {
+    test('reports no_significant_content status', () => {
         const lines = buildMigrationReportLines({ status: 'no_significant_content', migratedFiles: [] });
         assert.ok(lines.some(l => l.includes('no migration needed')));
     });

@@ -135,7 +135,7 @@ describe('boundary validation', () => {
             fs.writeFileSync(child, 'ok', 'utf8');
 
             const realRoot = fs.realpathSync.native(root);
-            let aliasMatchesRoot = false;
+            let aliasMatchesRoot: boolean;
             try {
                 aliasMatchesRoot = fs.realpathSync.native(aliasRoot) === realRoot;
             } catch {
@@ -202,7 +202,7 @@ describe('resolveRealPath', () => {
         const dir = mkTmpDir();
         try {
             const real = resolveRealPath(dir);
-            assert.equal(real, fs.realpathSync(path.resolve(dir)));
+            assert.equal(real, fs.realpathSync.native(path.resolve(dir)));
         } finally {
             removePathRecursive(dir);
         }
@@ -213,7 +213,7 @@ describe('resolveRealPath', () => {
         try {
             const nonExistent = path.join(dir, 'does', 'not', 'exist');
             const result = resolveRealPath(nonExistent);
-            const realDir = fs.realpathSync(path.resolve(dir));
+            const realDir = fs.realpathSync.native(path.resolve(dir));
             assert.equal(result, path.join(realDir, 'does', 'not', 'exist'));
         } finally {
             removePathRecursive(dir);
@@ -439,7 +439,7 @@ describe('symlink/junction escape detection', { skip: !symlinkSupported && 'Syml
 
             // Attempt to create a case-variant symlink alias outside the root.
             // On case-insensitive filesystems this will fail because cASErOOT == CaseRoot.
-            let aliasCreated = false;
+            let aliasCreated: boolean;
             try {
                 fs.symlinkSync(root, aliasDir, 'junction');
                 aliasCreated = true;
