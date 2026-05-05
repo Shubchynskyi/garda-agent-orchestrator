@@ -105,6 +105,8 @@ describe('spawnStreamed', () => {
         });
         assert.equal(result.stdoutTruncated, false);
         assert.equal(result.stderrTruncated, false);
+        assert.equal(result.stdoutOriginalBytes, Buffer.byteLength(result.stdout, 'utf8'));
+        assert.equal(result.stderrOriginalBytes, 0);
     });
 
     it('sets stdoutTruncated when stdout exceeds maxBuffer', async () => {
@@ -116,31 +118,34 @@ describe('spawnStreamed', () => {
         });
         assert.equal(result.stdoutTruncated, true);
         assert.equal(result.stderrTruncated, false);
-        // Buffered portion must be <= maxBuffer bytes
-        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+        assert.equal(result.stdoutOriginalBytes, 200);
+        assert.match(result.stdout, /output truncated; omitted \d+ bytes/);
+        assert.ok(result.stdout.startsWith('0123456789'));
+        assert.ok(result.stdout.endsWith('0123456789'));
     });
 
-    it('retains the buffered prefix of an overflowing stdout chunk', async () => {
+    it('retains the buffered head and tail of an overflowing stdout chunk', async () => {
         const payload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(8);
         const result = await spawnStreamed(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(payload)})`], {
             timeoutMs: 5000,
             maxBuffer: 64
         });
         assert.equal(result.stdoutTruncated, true);
-        assert.ok(result.stdout.length > 0, 'expected buffered prefix to be retained');
-        assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
-        assert.equal(payload.startsWith(result.stdout), true);
+        assert.ok(result.stdout.startsWith('ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF'));
+        assert.ok(result.stdout.endsWith('UVWXYZ'));
+        assert.match(result.stdout, /output truncated; omitted \d+ bytes/);
     });
 
-    it('retains a valid UTF-8 stdout prefix at multibyte boundaries', async () => {
+    it('retains valid UTF-8 stdout head and tail at multibyte boundaries', async () => {
         const payload = '😀AB'.repeat(20);
         const result = await spawnStreamed(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(payload)})`], {
             timeoutMs: 5000,
-            maxBuffer: 5
+            capturePolicy: { mode: 'head-tail', maxBytes: 10, headBytes: 5, tailBytes: 5 }
         });
         assert.equal(result.stdoutTruncated, true);
-        assert.equal(result.stdout, '😀A');
-        assert.equal(Buffer.byteLength(result.stdout, 'utf8'), 5);
+        assert.ok(result.stdout.startsWith('😀A'));
+        assert.ok(result.stdout.endsWith('AB'));
+        assert.match(result.stdout, /output truncated; omitted \d+ bytes/);
     });
 
     it('sets stderrTruncated when stderr exceeds maxBuffer', async () => {
@@ -151,18 +156,22 @@ describe('spawnStreamed', () => {
         });
         assert.equal(result.stderrTruncated, true);
         assert.equal(result.stdoutTruncated, false);
-        assert.ok(Buffer.byteLength(result.stderr, 'utf8') <= 64);
+        assert.equal(result.stderrOriginalBytes, 200);
+        assert.match(result.stderr, /output truncated; omitted \d+ bytes/);
+        assert.ok(result.stderr.startsWith('0123456789'));
+        assert.ok(result.stderr.endsWith('0123456789'));
     });
 
-    it('retains a valid UTF-8 stderr prefix at multibyte boundaries', async () => {
+    it('retains valid UTF-8 stderr head and tail at multibyte boundaries', async () => {
         const payload = '😀AB'.repeat(20);
         const result = await spawnStreamed(process.execPath, ['-e', `process.stderr.write(${JSON.stringify(payload)})`], {
             timeoutMs: 5000,
-            maxBuffer: 5
+            capturePolicy: { mode: 'head-tail', maxBytes: 10, headBytes: 5, tailBytes: 5 }
         });
         assert.equal(result.stderrTruncated, true);
-        assert.equal(result.stderr, '😀A');
-        assert.equal(Buffer.byteLength(result.stderr, 'utf8'), 5);
+        assert.ok(result.stderr.startsWith('😀A'));
+        assert.ok(result.stderr.endsWith('AB'));
+        assert.match(result.stderr, /output truncated; omitted \d+ bytes/);
     });
 
     it('delivers callbacks for all chunks even when buffer is truncated', async () => {
@@ -201,6 +210,8 @@ describe('spawnStreamed', () => {
         assert.equal(result.cancelled, true);
         assert.equal(result.stdoutTruncated, false);
         assert.equal(result.stderrTruncated, false);
+        assert.equal(result.stdoutOriginalBytes, 0);
+        assert.equal(result.stderrOriginalBytes, 0);
     });
 });
 
@@ -407,6 +418,7 @@ describe('shell-surface hardening', () => {
             assert.equal(result.exitCode, 0);
             assert.equal(result.stdoutTruncated, false);
             assert.equal(result.stderrTruncated, false);
+            assert.equal(result.stderrOriginalBytes, 0);
         } finally {
             fixture.cleanup();
         }
@@ -418,36 +430,41 @@ describe('shell-surface hardening', () => {
         try {
             const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 64 });
             assert.equal(result.stdoutTruncated, true);
-            assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
+            assert.equal(result.stdoutOriginalBytes, 200);
+            assert.match(result.stdout, /output truncated; omitted \d+ bytes/);
         } finally {
             fixture.cleanup();
         }
     });
 
-    it('spawnShellCommand retains the buffered prefix of an overflowing stdout chunk', async () => {
+    it('spawnShellCommand retains the buffered head and tail of an overflowing stdout chunk', async () => {
         if (process.platform !== 'win32') return;
         const payload = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(8);
         const fixture = createNodeBatchFixture(`process.stdout.write(${JSON.stringify(payload)})`);
         try {
             const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 64 });
             assert.equal(result.stdoutTruncated, true);
-            assert.ok(result.stdout.length > 0, 'expected buffered prefix to be retained');
-            assert.ok(Buffer.byteLength(result.stdout, 'utf8') <= 64);
-            assert.equal(payload.startsWith(result.stdout), true);
+            assert.ok(result.stdout.startsWith('ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF'));
+            assert.ok(result.stdout.endsWith('UVWXYZ'));
+            assert.match(result.stdout, /output truncated; omitted \d+ bytes/);
         } finally {
             fixture.cleanup();
         }
     });
 
-    it('spawnShellCommand retains a valid UTF-8 stdout prefix at multibyte boundaries', async () => {
+    it('spawnShellCommand retains valid UTF-8 stdout head and tail at multibyte boundaries', async () => {
         if (process.platform !== 'win32') return;
         const payload = '😀AB'.repeat(20);
         const fixture = createNodeBatchFixture(`process.stdout.write(${JSON.stringify(payload)})`);
         try {
-            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 5 });
+            const result = await spawnShellCommand(fixture.scriptPath, [], {
+                timeoutMs: 5000,
+                capturePolicy: { mode: 'head-tail', maxBytes: 10, headBytes: 5, tailBytes: 5 }
+            });
             assert.equal(result.stdoutTruncated, true);
-            assert.equal(result.stdout, '😀A');
-            assert.equal(Buffer.byteLength(result.stdout, 'utf8'), 5);
+            assert.ok(result.stdout.startsWith('😀A'));
+            assert.ok(result.stdout.endsWith('AB'));
+            assert.match(result.stdout, /output truncated; omitted \d+ bytes/);
         } finally {
             fixture.cleanup();
         }
@@ -459,21 +476,26 @@ describe('shell-surface hardening', () => {
         try {
             const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 64 });
             assert.equal(result.stderrTruncated, true);
-            assert.ok(Buffer.byteLength(result.stderr, 'utf8') <= 64);
+            assert.equal(result.stderrOriginalBytes, 200);
+            assert.match(result.stderr, /output truncated; omitted \d+ bytes/);
         } finally {
             fixture.cleanup();
         }
     });
 
-    it('spawnShellCommand retains a valid UTF-8 stderr prefix at multibyte boundaries', async () => {
+    it('spawnShellCommand retains valid UTF-8 stderr head and tail at multibyte boundaries', async () => {
         if (process.platform !== 'win32') return;
         const payload = '😀AB'.repeat(20);
         const fixture = createNodeBatchFixture(`process.stderr.write(${JSON.stringify(payload)})`);
         try {
-            const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 5000, maxBuffer: 5 });
+            const result = await spawnShellCommand(fixture.scriptPath, [], {
+                timeoutMs: 5000,
+                capturePolicy: { mode: 'head-tail', maxBytes: 10, headBytes: 5, tailBytes: 5 }
+            });
             assert.equal(result.stderrTruncated, true);
-            assert.equal(result.stderr, '😀A');
-            assert.equal(Buffer.byteLength(result.stderr, 'utf8'), 5);
+            assert.ok(result.stderr.startsWith('😀A'));
+            assert.ok(result.stderr.endsWith('AB'));
+            assert.match(result.stderr, /output truncated; omitted \d+ bytes/);
         } finally {
             fixture.cleanup();
         }
@@ -533,6 +555,8 @@ describe('shell-surface hardening', () => {
             assert.equal(result.cancelled, true);
             assert.equal(result.stdoutTruncated, false);
             assert.equal(result.stderrTruncated, false);
+            assert.equal(result.stdoutOriginalBytes, 0);
+            assert.equal(result.stderrOriginalBytes, 0);
         } finally {
             fixture.cleanup();
         }

@@ -325,6 +325,54 @@ test('pruneAggregateLog keeps most recent lines when over limit', () => {
     }
 });
 
+test('pruneAggregateLog prunes protected aggregate lines without full-file reads', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-prune-protected-streaming-'));
+    try {
+        const allTasksPath = path.join(tempDir, 'all-tasks.jsonl');
+        const lines = Array.from({ length: 1200 }, (_, i) =>
+            JSON.stringify({
+                seq: i,
+                task_id: i % 100 === 0 ? 'T-999' : `T-${String(i).padStart(3, '0')}`,
+                message: 'x'.repeat(80)
+            })
+        );
+        fs.writeFileSync(allTasksPath, lines.join('\n') + '\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalReadFileSync = realFs.readFileSync;
+        try {
+            realFs.readFileSync = function (...args: any[]) {
+                if (args[0] === allTasksPath) {
+                    throw new Error('protected aggregate prune must not read the whole aggregate file');
+                }
+                return originalReadFileSync.apply(realFs, args);
+            };
+
+            const result = pruneAggregateLog(allTasksPath, 50, undefined, new Set(['T-999']));
+            assert.equal(result.pruned, true);
+            assert.equal(result.lines_before, 1200);
+            assert.ok(result.lines_after >= 50, 'protected lines can make retained output exceed maxLines');
+        } finally {
+            realFs.readFileSync = originalReadFileSync;
+        }
+
+        const remaining = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter(l => l.trim())
+            .map((line) => JSON.parse(line) as { seq: number; task_id: string });
+        assert.ok(
+            remaining.filter((entry) => entry.task_id === 'T-999').length >= 12,
+            'all protected task lines should remain'
+        );
+        assert.ok(
+            remaining.some((entry) => entry.seq >= 1150),
+            'recent unprotected lines should remain after pruning'
+        );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('pruneAggregateLog preserves the aggregate when final rename fails', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agg-prune-rename-failure-'));
     try {

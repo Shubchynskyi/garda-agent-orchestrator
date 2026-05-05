@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 import { writeFileAtomically } from '../core/filesystem';
 import {
@@ -76,6 +77,87 @@ function countLinesStreaming(filePath: string): number {
     }
 }
 
+function pruneAggregateLogWithProtectedTasksStreaming(
+    allTasksPath: string,
+    maxLines: number,
+    linesBefore: number,
+    protectedTaskIds: ReadonlySet<string>
+): AggregateRetentionResult {
+    const removableTarget = linesBefore - maxLines;
+    if (removableTarget <= 0) {
+        return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
+    }
+
+    const tempPath = `${allTasksPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let readFd: number | null = null;
+    let writeFd: number | null = null;
+    let removable = removableTarget;
+    let keptLines = 0;
+    let pruned = false;
+    const decoder = new StringDecoder('utf8');
+    let pending = '';
+
+    function processLine(line: string): void {
+        if (line.trim().length === 0) {
+            return;
+        }
+        const taskId = parseAggregateTaskId(line);
+        const protectedLine = taskId ? protectedTaskIds.has(taskId) : true;
+        if (!protectedLine && removable > 0) {
+            removable -= 1;
+            pruned = true;
+            return;
+        }
+        fs.writeSync(writeFd!, `${line}\n`, undefined, 'utf8');
+        keptLines += 1;
+    }
+
+    try {
+        readFd = fs.openSync(allTasksPath, 'r');
+        writeFd = fs.openSync(tempPath, 'wx');
+        const buf = Buffer.alloc(AGGREGATE_PRUNE_CHUNK_SIZE);
+        let position = 0;
+        while (true) {
+            const bytesRead = fs.readSync(readFd, buf, 0, buf.length, position);
+            if (bytesRead === 0) break;
+            pending += decoder.write(buf.subarray(0, bytesRead));
+            let newlineIndex = pending.indexOf('\n');
+            while (newlineIndex >= 0) {
+                const line = pending.slice(0, newlineIndex).replace(/\r$/, '');
+                processLine(line);
+                pending = pending.slice(newlineIndex + 1);
+                newlineIndex = pending.indexOf('\n');
+            }
+            position += bytesRead;
+        }
+        pending += decoder.end();
+        if (pending.length > 0) {
+            processLine(pending.replace(/\r$/, ''));
+        }
+        fs.closeSync(readFd);
+        readFd = null;
+        fs.closeSync(writeFd);
+        writeFd = null;
+
+        if (!pruned) {
+            fs.rmSync(tempPath, { force: true });
+            return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
+        }
+
+        fs.renameSync(tempPath, allTasksPath);
+        return { pruned: true, lines_before: linesBefore, lines_after: keptLines };
+    } catch {
+        if (readFd !== null) {
+            try { fs.closeSync(readFd); } catch { /* ignore cleanup failure */ }
+        }
+        if (writeFd !== null) {
+            try { fs.closeSync(writeFd); } catch { /* ignore cleanup failure */ }
+        }
+        try { fs.rmSync(tempPath, { force: true }); } catch { /* ignore cleanup failure */ }
+        return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
+    }
+}
+
 export function pruneAggregateLog(
     allTasksPath: string,
     maxLines: number = DEFAULT_AGGREGATE_MAX_LINES,
@@ -96,34 +178,7 @@ export function pruneAggregateLog(
     }
 
     if (protectedTaskIds.size > 0) {
-        try {
-            const lines = fs.readFileSync(allTasksPath, 'utf8')
-                .split('\n')
-                .filter((line) => line.trim().length > 0);
-            if (lines.length <= maxLines) {
-                return { pruned: false, lines_before: lines.length, lines_after: lines.length };
-            }
-            let removable = lines.length - maxLines;
-            const keptLines: string[] = [];
-            let pruned = false;
-            for (const line of lines) {
-                const taskId = parseAggregateTaskId(line);
-                const protectedLine = taskId ? protectedTaskIds.has(taskId) : true;
-                if (!protectedLine && removable > 0) {
-                    removable -= 1;
-                    pruned = true;
-                    continue;
-                }
-                keptLines.push(line);
-            }
-            if (!pruned) {
-                return { pruned: false, lines_before: lines.length, lines_after: lines.length };
-            }
-            writeFileAtomically(allTasksPath, keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '', { encoding: 'utf8' });
-            return { pruned: true, lines_before: lines.length, lines_after: keptLines.length };
-        } catch {
-            return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
-        }
+        return pruneAggregateLogWithProtectedTasksStreaming(allTasksPath, maxLines, linesBefore, protectedTaskIds);
     }
 
     const linesToSkip = linesBefore - maxLines;
