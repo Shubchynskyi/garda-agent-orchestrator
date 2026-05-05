@@ -1053,6 +1053,32 @@ describe('classifyScopeCategory', () => {
         assert.equal(result.category, 'audit-only');
     });
 
+    it('classifies protected runtime source files as code before audit-only', () => {
+        const result = classifyScopeCategory(
+            ['src/gates/next-step.ts'],
+            codeLikeRegexes,
+            runtimeRoots,
+            { protectedControlPlaneRoots: ['src/gates/'] }
+        );
+        assert.equal(result.category, 'code');
+        assert.ok(result.reasons.includes('code_files=1'));
+    });
+
+    it('classifies protected runtime source plus tests as mixed', () => {
+        const result = classifyScopeCategory(
+            ['src/gates/next-step.ts', 'tests/node/gates/next-step.test.ts'],
+            codeLikeRegexes,
+            runtimeRoots,
+            {
+                protectedControlPlaneRoots: ['src/gates/'],
+                testTriggerRegexes: ['(^|/)(tests?)/', '\\.(spec|test)\\.(ts|tsx|js|jsx)$']
+            }
+        );
+        assert.equal(result.category, 'mixed');
+        assert.ok(result.reasons.includes('code=1'));
+        assert.ok(result.reasons.includes('tests=1'));
+    });
+
     it('classifies mixed code+docs as mixed', () => {
         const result = classifyScopeCategory(['src/main.ts', 'README.md'], codeLikeRegexes, runtimeRoots);
         assert.equal(result.category, 'mixed');

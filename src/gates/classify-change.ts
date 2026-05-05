@@ -628,6 +628,10 @@ export function classifyScopeCategory(
         const isConfig = testPrecompiled(file, CONFIG_LIKE_COMPILED);
         const isAudit = testPrecompiled(file, AUDIT_ONLY_COMPILED);
         const isProtectedControlPlane = testPathPrefix(file, options.protectedControlPlaneRoots || []);
+        if (isCode && isProtectedControlPlane) {
+            codeCount++;
+            continue;
+        }
         if (isAudit || isProtectedControlPlane) {
             auditCount++;
             continue;
