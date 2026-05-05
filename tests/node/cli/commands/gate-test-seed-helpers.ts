@@ -935,6 +935,7 @@ export function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskMode
         taskModePath,
         loadedRuleFiles: [
             '00-core.md',
+            '15-project-memory.md',
             '40-commands.md',
             '80-task-workflow.md',
             '90-skill-catalog.md'
@@ -963,6 +964,7 @@ export function loadPostPreflightRulePack(
         taskModePath,
         loadedRuleFiles: [
             '00-core.md',
+            '15-project-memory.md',
             '35-strict-coding-rules.md',
             '40-commands.md',
             '50-structure-and-docs.md',

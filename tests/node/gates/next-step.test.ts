@@ -90,6 +90,7 @@ function makeTempRepo(): string {
     });
     for (const ruleFile of [
         '00-core.md',
+        '15-project-memory.md',
         '30-code-style.md',
         '35-strict-coding-rules.md',
         '40-commands.md',
@@ -279,6 +280,7 @@ function seedPostPreflightRulePack(repoRoot: string, taskId: string, preflightPa
         preflightPath,
         loadedRuleFiles: [
             '00-core.md',
+            '15-project-memory.md',
             '30-code-style.md',
             '35-strict-coding-rules.md',
             '40-commands.md',
@@ -2331,6 +2333,7 @@ describe('gates/next-step', () => {
         assert.ok(!missingPostPreflight.commands[0].command.includes('<task-specific-rule-file>'));
         assert.deepEqual(getLoadedRuleFileBasenames(missingPostPreflight.commands[0].command), [
             '00-core.md',
+            '15-project-memory.md',
             '40-commands.md',
             '80-task-workflow.md',
             '90-skill-catalog.md'
@@ -2524,6 +2527,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('<task-specific-rule-file>'));
         assert.deepEqual(getLoadedRuleFileBasenames(result.commands[0].command), [
             '00-core.md',
+            '15-project-memory.md',
             '35-strict-coding-rules.md',
             '40-commands.md',
             '50-structure-and-docs.md',

@@ -3,6 +3,13 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { parseTaskMdTableRow } from '../../core/task-md-table';
+import {
+    PROJECT_MEMORY_FOCUSED_FILE_NAMES,
+    PROJECT_MEMORY_READ_FIRST_FILE_NAMES,
+    PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,
+    resolveLiveProjectMemoryDir,
+    resolveProjectMemoryBootstrapReportPath
+} from '../../core/project-memory';
 import { getWorkspaceSnapshot } from '../../gates/compile-gate';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 import {
@@ -48,6 +55,20 @@ interface ExistingTaskArtifacts {
     review_artifacts_omitted_count: number;
     timeline_exists: boolean;
     timeline_path: string;
+}
+
+interface ProjectMemoryBrief {
+    status: 'ready' | 'partial' | 'missing';
+    read_strategy: 'index_first';
+    directory: string;
+    summary_rule: string;
+    bootstrap_report_path: string;
+    read_first: string[];
+    suggested_files: string[];
+    missing_files: string[];
+    warnings: string[];
+    unknown_custom_stack_fallback: string;
+    task_start_guidance: string[];
 }
 
 interface BoundedListResult<T> {
@@ -113,6 +134,14 @@ function toPortableRepoPath(targetRoot: string, filePath: string): string {
     return filePath.replace(/\\/g, '/');
 }
 
+function fileExists(filePath: string): boolean {
+    try {
+        return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+    } catch {
+        return false;
+    }
+}
+
 function boundList<T>(items: T[], limit: number): BoundedListResult<T> {
     const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : items.length;
     const boundedItems = items.slice(0, normalizedLimit);
@@ -157,6 +186,151 @@ function normalizeTaskRow(taskPath: string, taskId: string): TaskQueueRow | null
         };
     }
     return null;
+}
+
+function addUnique<T>(items: T[], value: T): void {
+    if (!items.includes(value)) {
+        items.push(value);
+    }
+}
+
+function matchesAnySignal(text: string, signals: readonly string[]): boolean {
+    return signals.some((signal) => text.includes(signal));
+}
+
+function inferProjectMemorySuggestedFileNames(
+    taskRow: TaskQueueRow,
+    changedFiles: readonly string[]
+): string[] {
+    const signalText = [
+        taskRow.area,
+        taskRow.title,
+        taskRow.notes,
+        ...changedFiles
+    ].join('\n').toLowerCase();
+    const suggested: string[] = [];
+    const add = (fileName: string) => {
+        if ((PROJECT_MEMORY_FOCUSED_FILE_NAMES as readonly string[]).includes(fileName)) {
+            addUnique(suggested, fileName);
+        }
+    };
+
+    if (matchesAnySignal(signalText, ['unknown stack', 'custom stack', 'unrecognized stack', 'unrecognised stack'])) {
+        add('stack.md');
+        add('commands.md');
+        add('module-map.md');
+    }
+    if (matchesAnySignal(signalText, ['architecture', 'boundary', 'component', 'integration', 'module', 'decision', 'adr'])) {
+        add('architecture.md');
+        add('decisions.md');
+        add('module-map.md');
+        add('risks.md');
+    }
+    if (matchesAnySignal(signalText, [
+        'workflow', 'orchestrator', 'gate', 'lifecycle', 'preflight', 'review', 'cli',
+        'command', 'setup', 'install', 'update', 'materialization', 'materialisation',
+        'template', 'agent-rules', 'task-entry', 'task entry'
+    ])) {
+        add('commands.md');
+        add('module-map.md');
+        add('risks.md');
+        add('decisions.md');
+    }
+    if (matchesAnySignal(signalText, ['stack', 'runtime', 'framework', 'language', 'dependency', 'package manager', 'skill pack'])) {
+        add('stack.md');
+        add('commands.md');
+        add('module-map.md');
+    }
+    if (matchesAnySignal(signalText, ['style', 'convention', 'format', 'lint', 'naming'])) {
+        add('conventions.md');
+        add('stack.md');
+    }
+    if (matchesAnySignal(signalText, ['security', 'secret', 'auth', 'permission', 'token'])) {
+        add('risks.md');
+        add('architecture.md');
+        add('commands.md');
+    }
+    if (matchesAnySignal(signalText, ['test', 'spec', 'fixture', 'coverage', 'validation'])) {
+        add('commands.md');
+        add('conventions.md');
+        add('module-map.md');
+    }
+    if (matchesAnySignal(signalText, ['docs', 'readme', 'documentation'])) {
+        add('context.md');
+        add('module-map.md');
+        add('conventions.md');
+    }
+
+    if (suggested.length === 0) {
+        add('module-map.md');
+        add('architecture.md');
+        add('commands.md');
+        add('risks.md');
+    }
+
+    return suggested.slice(0, 4);
+}
+
+function buildProjectMemoryBrief(
+    targetRoot: string,
+    bundleRoot: string,
+    taskRow: TaskQueueRow,
+    changedFiles: readonly string[]
+): ProjectMemoryBrief {
+    const memoryDir = resolveLiveProjectMemoryDir(bundleRoot);
+    const readFirst = PROJECT_MEMORY_READ_FIRST_FILE_NAMES.map((fileName) => (
+        toPortableRepoPath(targetRoot, path.join(memoryDir, fileName))
+    ));
+    const suggestedFileNames = inferProjectMemorySuggestedFileNames(taskRow, changedFiles);
+    const suggestedFiles = suggestedFileNames.map((fileName) => (
+        toPortableRepoPath(targetRoot, path.join(memoryDir, fileName))
+    ));
+    const summaryRulePath = path.join(bundleRoot, PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH);
+    const bootstrapReportPath = resolveProjectMemoryBootstrapReportPath(bundleRoot);
+    const missingFiles = [...readFirst, ...suggestedFiles, toPortableRepoPath(targetRoot, summaryRulePath)]
+        .filter((displayPath) => fileExists(path.join(targetRoot, ...displayPath.split('/'))) === false);
+    const directoryMissing = !fs.existsSync(memoryDir) || !fs.statSync(memoryDir).isDirectory();
+    const readFirstMissing = readFirst.filter((displayPath) => fileExists(path.join(targetRoot, ...displayPath.split('/'))) === false);
+    const summaryMissing = !fileExists(summaryRulePath);
+    const suggestedMissing = suggestedFiles.filter((displayPath) => fileExists(path.join(targetRoot, ...displayPath.split('/'))) === false);
+    const warnings: string[] = [];
+    const agentInitPointer = 'Run `node garda-agent-orchestrator/bin/garda.js agent-init --target-root "."` or update/reinit to materialize project memory.';
+
+    if (directoryMissing) {
+        warnings.push(`Project memory directory is missing. ${agentInitPointer}`);
+    } else if (readFirstMissing.length > 0) {
+        warnings.push(`Project memory read-first files are missing: ${readFirstMissing.join(', ')}. ${agentInitPointer}`);
+    }
+    if (summaryMissing) {
+        warnings.push(`Generated project-memory summary rule is missing: ${toPortableRepoPath(targetRoot, summaryRulePath)}. ${agentInitPointer}`);
+    }
+    if (!directoryMissing && suggestedMissing.length > 0) {
+        warnings.push(`Some task-suggested project-memory files are missing: ${suggestedMissing.join(', ')}. Inspect source evidence as fallback.`);
+    }
+
+    return {
+        status: directoryMissing
+            ? 'missing'
+            : (readFirstMissing.length > 0 || summaryMissing || suggestedMissing.length > 0) ? 'partial' : 'ready',
+        read_strategy: 'index_first',
+        directory: toPortableRepoPath(targetRoot, memoryDir),
+        summary_rule: toPortableRepoPath(targetRoot, summaryRulePath),
+        bootstrap_report_path: toPortableRepoPath(targetRoot, bootstrapReportPath),
+        read_first: readFirst,
+        suggested_files: suggestedFiles,
+        missing_files: [...new Set(missingFiles)],
+        warnings,
+        unknown_custom_stack_fallback: [
+            'If the stack is unknown or custom, read stack.md, commands.md, and module-map.md,',
+            'then inspect repository evidence before applying any framework-specific defaults.'
+        ].join(' '),
+        task_start_guidance: [
+            'Read the generated summary rule as orientation after TASK_ENTRY rule loading.',
+            'Read README.md and compact.md first.',
+            'Read only the suggested focused memory files for this task.',
+            'Treat memory as orientation, not proof; inspect source/tests/config before changing behavior.'
+        ]
+    };
 }
 
 function listTaskArtifacts(targetRoot: string, taskId: string): ExistingTaskArtifacts {
@@ -697,6 +871,7 @@ function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: st
     const existingChangedFiles = Array.isArray(preflightPayload?.changed_files)
         ? preflightPayload?.changed_files.map((entry) => String(entry)).filter(Boolean)
         : readPlannedChangedFiles(taskModePayload);
+    const projectMemory = buildProjectMemoryBrief(targetRoot, bundleRoot, taskRow, existingChangedFiles);
     const boundedPreflightChangedFiles = boundList(existingChangedFiles, MAX_PREPROMPT_CHANGED_FILES);
     const startupScopeBlocker = buildStartupScopeBlocker(
         existingChangedFiles,
@@ -726,6 +901,7 @@ function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: st
         schema_version: 2,
         command: 'preprompt task',
         rule_search_required: false,
+        project_memory: projectMemory,
         task: {
             ...taskRow,
             timeline_event_count: eventTypes.length,
@@ -777,6 +953,63 @@ function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPath?: st
             post_implementation_commands: preflightPayload ? postImplementationCommands : []
         }
     };
+}
+
+function formatTaskBriefText(result: Record<string, unknown>): string {
+    const task = result.task as Record<string, unknown>;
+    const projectMemory = result.project_memory as ProjectMemoryBrief | undefined;
+    const commands = result.commands as Record<string, unknown>;
+    const optionalSkillTaskStartBlocker = getOptionalSkillTaskStartBlocker(result);
+    const lines = [
+        'GARDA_PREPROMPT_TASK',
+        `Task: ${String(task?.id || '')}`,
+        `CurrentStage: ${String(task?.current_stage || 'unknown')}`
+    ];
+    if (projectMemory) {
+        lines.push(
+            `ProjectMemoryStatus: ${projectMemory.status}`,
+            `ProjectMemorySummaryRule: ${projectMemory.summary_rule}`,
+            'ProjectMemoryReadFirst:',
+            ...projectMemory.read_first.map((entry) => `  - ${entry}`),
+            'ProjectMemorySuggested:',
+            ...(projectMemory.suggested_files.length > 0
+                ? projectMemory.suggested_files.map((entry) => `  - ${entry}`)
+                : ['  none']),
+            `ProjectMemoryFallback: ${projectMemory.unknown_custom_stack_fallback}`
+        );
+        if (projectMemory.warnings.length > 0) {
+            lines.push(
+                'ProjectMemoryWarnings:',
+                ...projectMemory.warnings.map((entry) => `  - ${entry}`)
+            );
+        }
+    }
+    if (optionalSkillTaskStartBlocker) {
+        lines.push(`OptionalSkillTaskStartBlocker: ${optionalSkillTaskStartBlocker}`);
+    }
+    const startupScopeBlocker = String(commands?.startup_scope_blocker || '').trim();
+    if (startupScopeBlocker) {
+        lines.push(`StartupScopeBlocker: ${startupScopeBlocker}`);
+    }
+    const startupCommands = Array.isArray(commands?.startup_commands) ? commands.startup_commands : [];
+    lines.push(
+        'StartupCommands:',
+        ...(startupCommands.length > 0
+            ? startupCommands.map((entry) => `  - ${String(entry)}`)
+            : ['  none'])
+    );
+    const postImplementationCommands = Array.isArray(commands?.post_implementation_commands)
+        ? commands.post_implementation_commands
+        : [];
+    if (postImplementationCommands.length > 0) {
+        lines.push(
+            'PostImplementationCommands:',
+            ...postImplementationCommands.map((entry) => `  - ${String(entry)}`)
+        );
+    } else if (String(commands?.post_implementation_sequence_blocker || '').trim()) {
+        lines.push(`PostImplementationBlocker: ${String(commands.post_implementation_sequence_blocker).trim()}`);
+    }
+    return `${lines.join('\n')}\n`;
 }
 
 function getOptionalSkillTaskStartBlocker(result: Record<string, unknown>): string | null {
@@ -854,7 +1087,7 @@ export function handlePreprompt(commandArgv: string[], packageJson: PackageJsonL
         }
         return;
     }
-    console.log(JSON.stringify(result, null, 2));
+    console.log(formatTaskBriefText(result));
     if (optionalSkillTaskStartBlocker) {
         process.exitCode = EXIT_GATE_FAILURE;
     }

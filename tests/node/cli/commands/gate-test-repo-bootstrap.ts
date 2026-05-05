@@ -26,6 +26,7 @@ export function seedRuleFiles(repoRoot: string): void {
     fs.mkdirSync(rulesRoot, { recursive: true });
     const ruleFiles = [
         '00-core.md',
+        '15-project-memory.md',
         '30-code-style.md',
         '35-strict-coding-rules.md',
         '40-commands.md',

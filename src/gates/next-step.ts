@@ -3754,6 +3754,7 @@ function buildTaskEntryRulePackCommand(repoRoot: string, cliPrefix: string, task
         `--task-id "${taskId}"`,
         '--stage "TASK_ENTRY"',
         `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/00-core.md')}"`,
+        `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/15-project-memory.md')}"`,
         `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/40-commands.md')}"`,
         `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/80-task-workflow.md')}"`,
         `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/90-skill-catalog.md')}"`,
@@ -3787,6 +3788,7 @@ function getPostPreflightRuleFileNames(
 ): string[] {
     const fileNames = new Set<string>([
         '00-core.md',
+        '15-project-memory.md',
         '40-commands.md',
         '80-task-workflow.md',
         '90-skill-catalog.md'

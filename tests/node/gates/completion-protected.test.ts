@@ -43,6 +43,7 @@ describe('gates/completion — protected control-plane', () => {
 
             const requiredRuleFiles = [
                 writeRuleFile(repoRoot, '00-core.md'),
+                writeRuleFile(repoRoot, '15-project-memory.md'),
                 writeRuleFile(repoRoot, '40-commands.md'),
                 writeRuleFile(repoRoot, '80-task-workflow.md'),
                 writeRuleFile(repoRoot, '90-skill-catalog.md')

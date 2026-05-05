@@ -43,6 +43,17 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
+## Project Memory Task Entry Protocol
+- `TASK_ENTRY` rule-pack includes `15-project-memory.md` as generated project-memory orientation.
+- After `TASK_ENTRY` rule loading, read source memory through the index-first protocol:
+  1. `garda-agent-orchestrator/live/docs/project-memory/README.md`
+  2. `garda-agent-orchestrator/live/docs/project-memory/compact.md`
+  3. only the focused memory files relevant to the current task.
+- Do not read every project-memory file by default; use `preprompt task` suggestions or `compact.md` task routing to choose a small focused set.
+- Memory is orientation, not proof. Validate against source, tests, config, and mandatory gates before changing behavior.
+- Project-memory writes are not automatic task-start behavior. Update memory only when workflow mode and explicit operator approval allow it.
+- Unknown or custom stack fallback: read `stack.md`, `commands.md`, and `module-map.md`, then inspect repository evidence instead of applying framework-specific assumptions.
+
 ## Integrity Priority Rules
 - Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
 - Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.

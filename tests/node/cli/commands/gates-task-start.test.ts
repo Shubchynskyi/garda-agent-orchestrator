@@ -108,6 +108,7 @@ function seedRuleFiles(repoRoot: string): void {
     fs.mkdirSync(rulesRoot, { recursive: true });
     const ruleFiles = [
         '00-core.md',
+        '15-project-memory.md',
         '30-code-style.md',
         '35-strict-coding-rules.md',
         '40-commands.md',
@@ -196,6 +197,7 @@ function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = 
         taskModePath,
         loadedRuleFiles: [
             '00-core.md',
+            '15-project-memory.md',
             '40-commands.md',
             '80-task-workflow.md',
             '90-skill-catalog.md'
@@ -1002,7 +1004,7 @@ describe('cli/commands/gates — task-start', () => {
             taskId,
             stage: 'POST_PREFLIGHT',
             preflightPath,
-            loadedRuleFiles: ['00-core.md', '40-commands.md', '80-task-workflow.md', '90-skill-catalog.md'],
+            loadedRuleFiles: ['00-core.md', '15-project-memory.md', '40-commands.md', '80-task-workflow.md', '90-skill-catalog.md'],
             emitMetrics: false
         });
 
@@ -1016,10 +1018,10 @@ describe('cli/commands/gates — task-start', () => {
         assert.match(remediationCommand, new RegExp(`--task-id.*${taskId}`));
         assert.match(remediationCommand, /--stage.*POST_PREFLIGHT/);
         assert.match(remediationCommand, /--preflight-path/);
-        // 7 required files total: Set union of 4 entry files and 5 code-review-depth-2 files
-        // (2 overlap: 00-core.md, 80-task-workflow.md), net result = 7 unique files
+        // 8 required files total: Set union of 5 entry files and 5 code-review-depth-2 files
+        // (2 overlap: 00-core.md, 80-task-workflow.md), net result = 8 unique files
         const loadedRuleFileMatches = remediationCommand.match(/--loaded-rule-file/g);
-        assert.equal(loadedRuleFileMatches?.length ?? 0, 7, 'Expected 7 --loaded-rule-file flags (union of entry + code-review-specific sets)');
+        assert.equal(loadedRuleFileMatches?.length ?? 0, 8, 'Expected 8 --loaded-rule-file flags (union of entry + code-review-specific sets)');
         // The 3 files that were deliberately omitted must appear in the remediation command
         assert.match(remediationCommand, /35-strict-coding-rules\.md/);
         assert.match(remediationCommand, /50-structure-and-docs\.md/);

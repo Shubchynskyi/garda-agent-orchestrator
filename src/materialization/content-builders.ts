@@ -50,6 +50,7 @@ function buildBundleRelativePath(relativePath: string, bundleName = resolveBundl
 function buildTaskEntryRuleFileFlags(bundleName = resolveBundleName()): string {
     return [
         `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/00-core.md', bundleName)}"`,
+        `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/15-project-memory.md', bundleName)}"`,
         `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/40-commands.md', bundleName)}"`,
         `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/80-task-workflow.md', bundleName)}"`,
         `--loaded-rule-file "${buildBundleRelativePath('live/docs/agent-rules/90-skill-catalog.md', bundleName)}"`

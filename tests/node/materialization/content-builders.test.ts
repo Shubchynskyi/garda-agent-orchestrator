@@ -41,6 +41,7 @@ import {
 
 const TASK_ENTRY_RULE_FILE_SNIPPETS = Object.freeze([
     '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"',
+    '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md"',
     '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md"',
     '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md"',
     '--loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"'

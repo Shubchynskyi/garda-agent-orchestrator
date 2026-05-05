@@ -173,6 +173,7 @@ function seedRuleFiles(repoRoot: string): void {
     fs.mkdirSync(rulesRoot, { recursive: true });
     const ruleFiles = [
         '00-core.md',
+        '15-project-memory.md',
         '30-code-style.md',
         '35-strict-coding-rules.md',
         '40-commands.md',
@@ -944,6 +945,7 @@ function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = 
         taskModePath,
         loadedRuleFiles: [
             '00-core.md',
+            '15-project-memory.md',
             '40-commands.md',
             '80-task-workflow.md',
             '90-skill-catalog.md'
@@ -972,6 +974,7 @@ function loadPostPreflightRulePack(
         taskModePath,
         loadedRuleFiles: [
             '00-core.md',
+            '15-project-memory.md',
             '35-strict-coding-rules.md',
             '40-commands.md',
             '50-structure-and-docs.md',

@@ -6,6 +6,7 @@ import * as childProcess from 'node:child_process';
 
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
 import { COMMAND_SUMMARY } from '../../../../src/cli/commands/cli-helpers';
+import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
 import { computeOptionalSkillTaskTextSha256 } from '../../../../src/runtime/optional-skill-selection';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
 import {
@@ -102,6 +103,30 @@ function seedNodeBackendOptionalSkillFixture(
     }
 }
 
+function seedProjectMemoryFixture(repoRoot: string): void {
+    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const memoryRoot = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+    const rulesRoot = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
+    fs.mkdirSync(memoryRoot, { recursive: true });
+    fs.mkdirSync(rulesRoot, { recursive: true });
+    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
+        fs.writeFileSync(
+            path.join(memoryRoot, fileName),
+            [
+                `# ${fileName}`,
+                '',
+                `Durable fixture content for ${fileName}.`
+            ].join('\n'),
+            'utf8'
+        );
+    }
+    fs.writeFileSync(
+        path.join(rulesRoot, '15-project-memory.md'),
+        '# Project Memory Summary\n\nGenerated fixture summary.\n',
+        'utf8'
+    );
+}
+
 test('COMMAND_SUMMARY includes preprompt', () => {
     assert.equal(
         COMMAND_SUMMARY.find((entry) => entry[0] === 'preprompt')?.[1],
@@ -133,6 +158,10 @@ test('preprompt task --json returns read-only startup context for a queued task'
         assert.equal(result.exitCode, 0);
         const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
         assert.equal(payload.rule_search_required, false);
+        const projectMemory = payload.project_memory as Record<string, unknown>;
+        assert.ok(Array.isArray(projectMemory.read_first));
+        assert.ok((projectMemory.read_first as string[]).some((entry) => entry.endsWith('/README.md')));
+        assert.ok((projectMemory.warnings as string[]).some((entry) => entry.includes('agent-init')));
         assert.equal((payload.task as Record<string, unknown>).id, taskId);
         assert.equal((payload.commands as Record<string, unknown>).startup_pending, true);
         assert.equal((payload.commands as Record<string, unknown>).post_implementation_sequence_available, false);
@@ -144,6 +173,104 @@ test('preprompt task --json returns read-only startup context for a queued task'
         assert.ok(startupCommands[0].includes('--provider "Codex"'));
         assert.ok(startupCommands.some((line) => line.includes('gate classify-change')));
         assert.ok(startupCommands.some((line) => line.includes('load-rule-pack') && line.includes('POST_PREFLIGHT')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json exposes project-memory read-first and focused suggestions', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-402';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        seedInitAnswers(repoRoot, 'Codex');
+        seedProjectMemoryFixture(repoRoot);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'test | Update app flow',
+                'workflow | Surface task-entry project memory guidance'
+            ),
+            'utf8'
+        );
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const projectMemory = payload.project_memory as Record<string, unknown>;
+        assert.equal(projectMemory.status, 'ready');
+        assert.deepEqual(projectMemory.read_strategy, 'index_first');
+        assert.ok((projectMemory.summary_rule as string).endsWith('/15-project-memory.md'));
+        assert.deepEqual(projectMemory.read_first, [
+            'garda-agent-orchestrator/live/docs/project-memory/README.md',
+            'garda-agent-orchestrator/live/docs/project-memory/compact.md'
+        ]);
+        const suggestedFiles = projectMemory.suggested_files as string[];
+        assert.ok(suggestedFiles.includes('garda-agent-orchestrator/live/docs/project-memory/commands.md'));
+        assert.ok(suggestedFiles.includes('garda-agent-orchestrator/live/docs/project-memory/module-map.md'));
+        assert.ok(suggestedFiles.length < PROJECT_MEMORY_REQUIRED_FILE_NAMES.length);
+        assert.deepEqual(projectMemory.warnings, []);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task project-memory suggestions vary by task area', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-403';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        seedInitAnswers(repoRoot, 'Codex');
+        seedProjectMemoryFixture(repoRoot);
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'test | Update app flow',
+                'architecture | Redesign component boundary decision'
+            ),
+            'utf8'
+        );
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const projectMemory = payload.project_memory as Record<string, unknown>;
+        const suggestedFiles = projectMemory.suggested_files as string[];
+        assert.ok(suggestedFiles.includes('garda-agent-orchestrator/live/docs/project-memory/architecture.md'));
+        assert.ok(suggestedFiles.includes('garda-agent-orchestrator/live/docs/project-memory/decisions.md'));
+        assert.ok(!suggestedFiles.includes('garda-agent-orchestrator/live/docs/project-memory/conventions.md'));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task text output includes ProjectMemoryReadFirst', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-404';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟦 TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+        seedProjectMemoryFixture(repoRoot);
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const output = result.logs.join('\n');
+        assert.ok(output.includes('ProjectMemoryReadFirst:'));
+        assert.ok(output.includes('garda-agent-orchestrator/live/docs/project-memory/README.md'));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -199,6 +326,48 @@ test('preprompt task --json derives post-implementation commands from current pr
             'tests/node/cli/commands/preprompt-command.test.ts'
         ]);
         assert.equal(latestPreflight.changed_files_truncated, false);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task text output includes post-implementation commands from current preflight', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-137';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        seedInitAnswers(repoRoot, 'Codex');
+        writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            changed_files: [
+                'src/cli/commands/preprompt-command.ts',
+                'tests/node/cli/commands/preprompt-command.test.ts'
+            ]
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const output = result.logs.join('\n');
+        assert.match(output, /PostImplementationCommands:/);
+        assert.match(output, /gate compile-gate/);
+        assert.match(output, /build-review-context --review-type "code"/);
+        assert.match(output, /build-review-context --review-type "test"/);
+        assert.match(output, /required-reviews-check/);
+        assert.match(output, /completion-gate/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -296,6 +465,35 @@ test('preprompt task --json does not invent --use-staged for an unstaged-only di
             String(commands.startup_scope_blocker || ''),
             /explicit --changed-file entries|stage only the intended task diff/i
         );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task text output reports dirty-workspace startup blocker', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-137';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟦 TODO');
+        seedInitAnswers(repoRoot, 'Codex');
+        childProcess.execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+        childProcess.execFileSync('git', ['config', 'user.email', 'tests@example.com'], { cwd: repoRoot, stdio: 'ignore' });
+        childProcess.execFileSync('git', ['config', 'user.name', 'Preprompt Tests'], { cwd: repoRoot, stdio: 'ignore' });
+        childProcess.execFileSync('git', ['add', '.'], { cwd: repoRoot, stdio: 'ignore' });
+        childProcess.execFileSync('git', ['commit', '-m', 'initial'], { cwd: repoRoot, stdio: 'ignore' });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 1;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const output = result.logs.join('\n');
+        assert.match(output, /GARDA_PREPROMPT_TASK/);
+        assert.match(output, /StartupScopeBlocker:/);
+        assert.match(output, /explicit --changed-file entries|stage only the intended task diff/i);
+        assert.ok(!output.includes('gate classify-change --task-id "T-137" --use-staged'));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -551,6 +749,58 @@ test('preprompt task --json blocks required optional-skill policy until the curr
             String(optionalSkills.selected_installed_skill_activation_blocker || ''),
             /requires a current materialized selection artifact/i
         );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task text output reports required optional-skill blocker before exiting non-zero', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        writePreflight(repoRoot, taskId, {
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'required',
+            includePersistedHeadlines: true
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        const output = result.logs.join('\n');
+        assert.match(output, /GARDA_PREPROMPT_TASK/);
+        assert.match(output, /OptionalSkillTaskStartBlocker:/);
+        assert.match(output, /requires a materialized current-cycle selection artifact/i);
+        assert.deepEqual(result.errors, []);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

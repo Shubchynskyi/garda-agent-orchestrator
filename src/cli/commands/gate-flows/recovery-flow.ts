@@ -38,6 +38,7 @@ import { resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing'
 
 const TASK_ENTRY_RULE_FILES = Object.freeze([
     '00-core.md',
+    '15-project-memory.md',
     '40-commands.md',
     '80-task-workflow.md',
     '90-skill-catalog.md'
