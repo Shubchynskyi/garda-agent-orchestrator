@@ -127,10 +127,11 @@ function makeTempRepo(): string {
             'LatestFailedReview: {{LATEST_FAILED_REVIEW}}',
             '',
             '## Instructions',
-            '1. Split into child tasks.',
+            '1. Move the parent task to DECOMPOSED and split into child tasks.',
             '',
             '## Constraints',
             '- Do not mark the parent DONE merely because child tasks were created.',
+            '- Do not leave the parent in ordinary BLOCKED after child tasks are created; use DECOMPOSED.',
             ''
         ].join('\n'),
         'utf8'
@@ -1148,6 +1149,215 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('NextGate: child-task'));
     });
 
+    it('routes decomposed parent tasks to nonnumeric child task IDs', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-520 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-NEXT-1`; continue there. |',
+            '| T-NEXT-1 | 🟦 TODO | P1 | workflow | Child | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-520', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-NEXT-1"'));
+    });
+
+    it('routes decomposed parents to exact-case arbitrary valid child task IDs', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-530 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `my_task.v2` and `T-next-1`; continue with the first unfinished child. |',
+            '| my_task.v2 | 🟩 DONE | P1 | workflow | First child | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-next-1 | 🟦 TODO | P1 | workflow | Mixed-case child | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-530', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-next-1"'));
+        assert.equal(result.commands[0].command.includes('T-NEXT-1'), false);
+    });
+
+    it('preserves parent note order for arbitrary valid child task IDs', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-540 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `A` and `LONG-CHILD`; continue with the first unfinished child. |',
+            '| A | 🟦 TODO | P1 | workflow | Short child | gpt-5.4 | 2026-05-05 | strict | First. |',
+            '| LONG-CHILD | 🟦 TODO | P1 | workflow | Long child | gpt-5.4 | 2026-05-05 | strict | Later. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-540', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "A"'));
+    });
+
+    it('preserves range prefix casing for numeric child task IDs', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-550 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `t-1` through `t-3`; continue through the range. |',
+            '| t-1 | 🟩 DONE | P1 | workflow | First | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| t-2 | 🟦 TODO | P1 | workflow | Second | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            '| t-3 | 🟦 TODO | P1 | workflow | Third | gpt-5.4 | 2026-05-05 | strict | Later. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-550', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "t-2"'));
+        assert.equal(result.commands[0].command.includes('T-2'), false);
+    });
+
+    it('does not pad variable-width numeric child task ranges', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-552 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-9` through `T-11`. |',
+            '| T-9 | TODO | P1 | workflow | First | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            '| T-10 | TODO | P1 | workflow | Second | gpt-5.4 | 2026-05-05 | strict | Later. |',
+            '| T-11 | TODO | P1 | workflow | Third | gpt-5.4 | 2026-05-05 | strict | Later. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-552', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0].command.includes('next-step "T-9"'));
+        assert.equal(result.commands[0].command.includes('T-09'), false);
+    });
+
+    it('does not synthesize mixed-prefix numeric child task ranges', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-554 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-001` through `t-003`. |',
+            '| T-001 | DONE | P1 | workflow | First | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| t-002 | TODO | P1 | workflow | Mixed middle | gpt-5.4 | 2026-05-05 | strict | Should not be synthesized. |',
+            '| t-003 | TODO | P1 | workflow | Literal endpoint | gpt-5.4 | 2026-05-05 | strict | Endpoint. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-554', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0].command.includes('next-step "t-003"'));
+        assert.equal(result.commands[0].command.includes('t-002'), false);
+    });
+
+    it('does not treat malformed status substrings as lifecycle tokens', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-560 | NOT_DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-561`. |',
+            '| T-561 | TODO | P1 | workflow | Child | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-560', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.status, 'DECOMPOSED');
+        assert.notEqual(result.next_gate, 'child-task');
+        assert.equal(text.includes('next-step "T-561"'), false);
+    });
+
+    it('does not treat suffixed status tokens as lifecycle tokens', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-562 | DECOMPOSED/blocked | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-563`. |',
+            '| T-563 | DONE-ish | P1 | workflow | Child | gpt-5.4 | 2026-05-05 | strict | Not canonical. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-562', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.status, 'DECOMPOSED');
+        assert.notEqual(result.next_gate, 'child-task');
+        assert.equal(text.includes('next-step "T-563"'), false);
+    });
+
+    it('does not skip children whose status only contains DONE as a substring', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-570 | DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-571` through `T-572`. |',
+            '| T-571 | UNDONE | P1 | workflow | Child | gpt-5.4 | 2026-05-05 | strict | Not complete. |',
+            '| T-572 | TODO | P1 | workflow | Later child | gpt-5.4 | 2026-05-05 | strict | Later. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-570', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0].command.includes('next-step "T-571"'));
+    });
+
+    it('fails closed when requested task ID casing differs from TASK.md', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-580 | DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-581`. |',
+            '| T-581 | TODO | P1 | workflow | Child | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 't-580', repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'task-id-casing');
+        assert.ok(result.commands[0].command.includes('next-step "T-580"'));
+    });
+
     it('routes legacy BLOCKED split umbrella tasks through nested decomposed children', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -1196,6 +1406,26 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, null);
         assert.equal(result.commands.length, 0);
         assert.ok(result.reason.includes('No unfinished child task'));
+    });
+
+    it('does not treat ordinary blocked task notes as decomposed parents', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-610 | 🟥 BLOCKED | P1 | workflow | Blocked parent | gpt-5.4 | 2026-05-05 | strict | Blocked on umbrella finding in `T-611`; do not continue the monolithic implementation until security approves. |',
+            '| T-611 | 🟦 TODO | P1 | workflow | Mentioned task | gpt-5.4 | 2026-05-05 | strict | Mentioned only. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-610', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.status, 'DECOMPOSED');
+        assert.notEqual(result.next_gate, 'child-task');
+        assert.equal(text.includes('next-step "T-611"'), false);
     });
 
     it('blocks next-step when non-test review attempts exceed review cycle guard total limit', () => {

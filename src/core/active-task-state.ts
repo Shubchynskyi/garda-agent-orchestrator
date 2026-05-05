@@ -5,22 +5,63 @@ import { assertValidTaskId } from '../gate-runtime/task-events-helpers';
 
 const ACTIVE_TASK_RUNTIME_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
-function isActiveTaskStatus(statusCell: string): boolean {
-    const normalized = String(statusCell || '').trim().toUpperCase();
-    return normalized.includes('IN_PROGRESS')
-        || normalized.includes('IN_REVIEW')
-        || String(statusCell || '').includes('🟨')
-        || String(statusCell || '').includes('🟧');
+export const TASK_QUEUE_STATUS_MARKERS: Readonly<Record<string, string>> = Object.freeze({
+    TODO: '🟦',
+    IN_PROGRESS: '🟨',
+    IN_REVIEW: '🟧',
+    DONE: '🟩',
+    BLOCKED: '🟥',
+    DECOMPOSED: '🟪'
+});
+
+export function normalizeTaskQueueStatusCell(statusCell: string | null): string {
+    return String(statusCell || '').trim().toUpperCase();
 }
 
-function isTerminalTaskStatus(statusCell: string): boolean {
-    const normalized = String(statusCell || '').trim().toUpperCase();
-    return normalized.includes('DONE')
-        || normalized.includes('BLOCKED')
-        || normalized.includes('DECOMPOSED')
-        || String(statusCell || '').includes('🟩')
-        || String(statusCell || '').includes('🟥')
-        || String(statusCell || '').includes('🟪');
+export function readTaskQueueStatusToken(statusCell: string | null): string | null {
+    const normalized = normalizeTaskQueueStatusCell(statusCell);
+    for (const [status, marker] of Object.entries(TASK_QUEUE_STATUS_MARKERS)) {
+        if (normalized === status || normalized === `${marker} ${status}`) {
+            return status;
+        }
+    }
+    return null;
+}
+
+export function formatTaskQueueStatusCell(existingCell: string, nextStatus: string): string {
+    const normalizedStatus = normalizeTaskQueueStatusCell(nextStatus);
+    const leadingWhitespace = existingCell.match(/^\s*/)?.[0] ?? ' ';
+    const trailingWhitespace = existingCell.match(/\s*$/)?.[0] ?? ' ';
+    const hasMarker = Object.values(TASK_QUEUE_STATUS_MARKERS).some((marker) => existingCell.includes(marker));
+    const formattedStatus = hasMarker && TASK_QUEUE_STATUS_MARKERS[normalizedStatus]
+        ? `${TASK_QUEUE_STATUS_MARKERS[normalizedStatus]} ${normalizedStatus}`
+        : normalizedStatus;
+    return `${leadingWhitespace}${formattedStatus}${trailingWhitespace}`;
+}
+
+export function isTaskQueueActiveStatus(statusCell: string | null): boolean {
+    const statusToken = readTaskQueueStatusToken(statusCell);
+    return statusToken === 'IN_PROGRESS'
+        || statusToken === 'IN_REVIEW';
+}
+
+export function isTaskQueueDoneStatus(statusCell: string | null): boolean {
+    return readTaskQueueStatusToken(statusCell) === 'DONE';
+}
+
+export function isTaskQueueBlockedStatus(statusCell: string | null): boolean {
+    return readTaskQueueStatusToken(statusCell) === 'BLOCKED';
+}
+
+export function isTaskQueueDecomposedStatus(statusCell: string | null): boolean {
+    return readTaskQueueStatusToken(statusCell) === 'DECOMPOSED';
+}
+
+export function isTaskQueueTerminalStatus(statusCell: string | null): boolean {
+    const statusToken = readTaskQueueStatusToken(statusCell);
+    return statusToken === 'DONE'
+        || statusToken === 'BLOCKED'
+        || statusToken === 'DECOMPOSED';
 }
 
 export interface RuntimeTaskState {
@@ -103,7 +144,7 @@ export function collectRuntimeTaskState(bundleRoot: string): RuntimeTaskState {
                     const nextStatus = String((details as Record<string, unknown>).new_status || '').trim();
                     if (nextStatus) {
                         latestStatus = nextStatus;
-                        if (isTerminalTaskStatus(nextStatus)) {
+                        if (isTaskQueueTerminalStatus(nextStatus)) {
                             latestTerminalSequence = latestEventSequence;
                         }
                     }
@@ -116,11 +157,11 @@ export function collectRuntimeTaskState(bundleRoot: string): RuntimeTaskState {
             const withinRuntimeGrace = timelineMtimeMs > 0
                 && (Date.now() - timelineMtimeMs) <= ACTIVE_TASK_RUNTIME_GRACE_MS;
             const hasFreshLifecycleRestart = withinRuntimeGrace && latestRestartSequence > latestTerminalSequence;
-            if (parseFailed || isActiveTaskStatus(latestStatus || '')) {
+            if (parseFailed || isTaskQueueActiveStatus(latestStatus || '')) {
                 activeTaskIds.add(taskId);
             } else if (hasFreshLifecycleRestart) {
                 activeTaskIds.add(taskId);
-            } else if (isTerminalTaskStatus(latestStatus || '') || hasCompletionGatePass) {
+            } else if (isTaskQueueTerminalStatus(latestStatus || '') || hasCompletionGatePass) {
                 terminalTaskIds.add(taskId);
             } else if (hasLifecycleEvidence) {
                 ambiguousTaskIds.add(taskId);
@@ -196,7 +237,7 @@ export function resolveActiveTaskIds(targetRoot: string, bundleRoot: string, exp
             continue;
         }
 
-        if (isActiveTaskStatus(cells[1] || '')) {
+        if (isTaskQueueActiveStatus(cells[1] || '')) {
             taskMdActiveTaskIds.add(taskId);
         }
     }

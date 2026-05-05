@@ -116,6 +116,11 @@ import {
     resolveReviewScratchRoot
 } from './review-scratch-paths';
 import {
+    isTaskQueueBlockedStatus,
+    isTaskQueueDecomposedStatus,
+    isTaskQueueDoneStatus
+} from '../core/active-task-state';
+import {
     parseTaskMdTableRow
 } from '../core/task-md-table';
 
@@ -264,30 +269,19 @@ interface DecomposedChildRoute {
     chain: string[];
 }
 
-const TASK_QUEUE_DONE_STATUS_PATTERN = /\bDONE\b/i;
-const TASK_QUEUE_DECOMPOSED_STATUS_PATTERN = /\bDECOMPOSED\b/i;
-const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks|umbrella\s+finding|do\s+not\s+continue\s+the\s+monolithic)\b/i;
-
-function normalizeTaskQueueStatusCell(statusCell: string | null): string {
-    return String(statusCell || '').trim().toUpperCase();
+interface ChildTaskIdMention {
+    taskId: string;
+    index: number;
 }
 
-function isTaskQueueDoneStatus(statusCell: string | null): boolean {
-    return TASK_QUEUE_DONE_STATUS_PATTERN.test(normalizeTaskQueueStatusCell(statusCell))
-        || String(statusCell || '').includes('🟩');
-}
-
-function isTaskQueueDecomposedStatus(statusCell: string | null): boolean {
-    return TASK_QUEUE_DECOMPOSED_STATUS_PATTERN.test(normalizeTaskQueueStatusCell(statusCell))
-        || String(statusCell || '').includes('🟪');
-}
+const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks)\b/i;
+const TASK_QUEUE_TASK_ID_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
     if (!entry) {
         return false;
     }
-    const status = normalizeTaskQueueStatusCell(entry.status);
-    if (!status.includes('BLOCKED') && !String(entry.status || '').includes('🟥')) {
+    if (!isTaskQueueBlockedStatus(entry.status)) {
         return false;
     }
     return TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN.test(String(entry.notes || ''));
@@ -297,35 +291,55 @@ function isDecomposedParentTask(entry: TaskQueueEntry | null): boolean {
     return Boolean(entry && (isTaskQueueDecomposedStatus(entry.status) || isLegacySplitParentTask(entry)));
 }
 
-function appendTaskIdIfMissing(taskIds: string[], taskId: string): void {
-    if (!taskIds.includes(taskId)) {
-        taskIds.push(taskId);
+function escapeRegExpLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function appendTaskMentionIfMissing(taskMentions: ChildTaskIdMention[], taskId: string, index: number): void {
+    if (!taskMentions.some((mention) => mention.taskId === taskId)) {
+        taskMentions.push({ taskId, index });
     }
 }
 
-function extractChildTaskIds(notes: string | null): string[] {
+function extractChildTaskIds(notes: string | null, knownTaskIds: Iterable<string>): string[] {
     const text = String(notes || '');
-    const taskIds: string[] = [];
-    const rangePattern = /\bT-(\d+)\s*(?:through|to|-|–|—)\s*T-(\d+)\b/giu;
+    const taskMentions: ChildTaskIdMention[] = [];
+    const rangePattern = /\b([Tt]-)(\d+)\b[\s`*_]*(?:through|to|-|–|—)[\s`*_]*\b([Tt]-)(\d+)\b/gu;
     let rangeMatch: RegExpExecArray | null;
     while ((rangeMatch = rangePattern.exec(text)) !== null) {
-        const start = Number(rangeMatch[1]);
-        const end = Number(rangeMatch[2]);
+        const startPrefix = rangeMatch[1];
+        const startRaw = rangeMatch[2];
+        const endPrefix = rangeMatch[3];
+        const endRaw = rangeMatch[4];
+        if (startPrefix !== endPrefix) {
+            continue;
+        }
+        const start = Number(startRaw);
+        const end = Number(endRaw);
         if (!Number.isInteger(start) || !Number.isInteger(end) || Math.abs(end - start) > 100) {
             continue;
         }
         const step = start <= end ? 1 : -1;
+        const width = startRaw.length === endRaw.length ? startRaw.length : 0;
+        let offset = 0;
         for (let value = start; step > 0 ? value <= end : value >= end; value += step) {
-            appendTaskIdIfMissing(taskIds, `T-${value}`);
+            const valueText = width > 0 ? String(Math.abs(value)).padStart(width, '0') : String(Math.abs(value));
+            const signedValueText = value < 0 ? `-${valueText}` : valueText;
+            appendTaskMentionIfMissing(taskMentions, `${startPrefix}${signedValueText}`, rangeMatch.index + offset);
+            offset += 1;
         }
     }
 
-    const taskIdPattern = /\bT-\d+\b/giu;
-    let taskIdMatch: RegExpExecArray | null;
-    while ((taskIdMatch = taskIdPattern.exec(text)) !== null) {
-        appendTaskIdIfMissing(taskIds, taskIdMatch[0].toUpperCase());
+    for (const taskId of knownTaskIds) {
+        const taskIdPattern = new RegExp(`(^|[^A-Za-z0-9._-])${escapeRegExpLiteral(taskId)}(?=$|[^A-Za-z0-9._-])`, 'u');
+        const taskIdMatch = taskIdPattern.exec(text);
+        if (taskIdMatch) {
+            appendTaskMentionIfMissing(taskMentions, taskId, taskIdMatch.index + taskIdMatch[1].length);
+        }
     }
-    return taskIds;
+    return taskMentions
+        .sort((left, right) => left.index - right.index)
+        .map((mention) => mention.taskId);
 }
 
 function resolveNextUnfinishedChildRoute(
@@ -338,7 +352,7 @@ function resolveNextUnfinishedChildRoute(
     }
     visited.add(parentTaskId);
     const parentEntry = taskEntries.get(parentTaskId);
-    const childTaskIds = extractChildTaskIds(parentEntry?.notes || null)
+    const childTaskIds = extractChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
         .filter((childTaskId) => childTaskId !== parentTaskId);
 
     for (const childTaskId of childTaskIds) {
@@ -2603,12 +2617,14 @@ function readTaskQueueEntries(repoRoot: string): Map<string, TaskQueueEntry> {
             continue;
         }
         const cells = parseTaskMdTableRow(line);
-        if (cells.length < 2 || !/^T-\d+$/iu.test(cells[0].trimmed)) {
+        const rawTaskId = cells[0].trimmed;
+        if (cells.length < 2 || rawTaskId.toUpperCase() === 'ID' || !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)) {
             continue;
         }
         if (cells.length < 8) {
-            entries.set(cells[0].trimmed.toUpperCase(), {
-                taskId: cells[0].trimmed.toUpperCase(),
+            const taskId = rawTaskId;
+            entries.set(taskId, {
+                taskId,
                 status: cells[1]?.trimmed || null,
                 title: null,
                 profile: null,
@@ -2616,7 +2632,7 @@ function readTaskQueueEntries(repoRoot: string): Map<string, TaskQueueEntry> {
             });
             continue;
         }
-        const taskId = cells[0].trimmed.toUpperCase();
+        const taskId = rawTaskId;
         entries.set(taskId, {
                 taskId,
                 status: cells[1]?.trimmed || null,
@@ -2626,6 +2642,16 @@ function readTaskQueueEntries(repoRoot: string): Map<string, TaskQueueEntry> {
         });
     }
     return entries;
+}
+
+function resolveTaskQueueCaseMismatch(taskEntries: Map<string, TaskQueueEntry>, taskId: string): string | null {
+    const normalizedTaskId = taskId.toLowerCase();
+    for (const entryTaskId of taskEntries.keys()) {
+        if (entryTaskId !== taskId && entryTaskId.toLowerCase() === normalizedTaskId) {
+            return entryTaskId;
+        }
+    }
+    return null;
 }
 
 function resolveDefaultDepthFromTaskQueue(taskEntry: TaskQueueEntry | null): string {
@@ -3784,6 +3810,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const taskMode = safeReadJson(path.join(reviewsRoot, `${taskId}-task-mode.json`));
     const taskEntries = readTaskQueueEntries(repoRoot);
     const taskEntry = taskEntries.get(taskId) || null;
+    const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
     try {
@@ -3911,6 +3938,28 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         warnings: [] as string[],
         sourceRuntimeStaleness
     };
+
+    if (taskIdCaseMismatch) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'task-id-casing',
+            title: 'Task ID casing does not match TASK.md.',
+            reason:
+                `Requested task id ${formatNextStepInlineValue(taskId)} matches TASK.md row ` +
+                `${formatNextStepInlineValue(taskIdCaseMismatch)} only by case. ` +
+                'Use the exact TASK.md task id before any lifecycle gate so artifacts cannot fork into a parallel casing namespace.',
+            commands: [
+                buildCommand(
+                    'Rerun navigator with TASK.md casing',
+                    `${cliPrefix} next-step "${taskIdCaseMismatch}" --repo-root "."`
+                )
+            ],
+            missingArtifacts: [],
+            presentArtifacts: coreArtifacts.present,
+            finalReport: null
+        });
+    }
 
     if (!isGatePassed(summary, 'completion-gate') && isDecomposedParentTask(taskEntry)) {
         const childRoute = resolveNextUnfinishedChildRoute(taskEntries, taskId);

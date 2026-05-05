@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { formatTaskQueueStatusCell, normalizeTaskQueueStatusCell, readTaskQueueStatusToken } from '../../../core/active-task-state';
 import { parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../core/task-md-table';
 import * as gateHelpers from '../../../gates/helpers';
 
@@ -13,7 +14,6 @@ export function readTaskQueueStatus(repoRoot: string, taskId: string): string | 
         return null;
     }
 
-    const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED|DECOMPOSED)\b/i;
     const lines = fs.readFileSync(taskPath, 'utf8').split('\n');
     for (const rawLine of lines) {
         const trimmed = rawLine.trim();
@@ -24,31 +24,10 @@ export function readTaskQueueStatus(repoRoot: string, taskId: string): string | 
         if (cells.length < 2 || cells[0].trimmed !== taskId) {
             continue;
         }
-        const statusMatch = statusPattern.exec(cells[1].trimmed);
-        return statusMatch ? statusMatch[1].toUpperCase() : null;
+        return readTaskQueueStatusToken(cells[1].trimmed);
     }
 
     return null;
-}
-
-const TASK_QUEUE_STATUS_MARKERS: Record<string, string> = Object.freeze({
-    TODO: '🟦',
-    IN_PROGRESS: '🟨',
-    IN_REVIEW: '🟧',
-    DONE: '🟩',
-    BLOCKED: '🟥',
-    DECOMPOSED: '🟪'
-});
-
-function formatTaskQueueStatusCell(existingCell: string, nextStatus: string): string {
-    const normalizedStatus = String(nextStatus || '').trim().toUpperCase();
-    const leadingWhitespace = existingCell.match(/^\s*/)?.[0] ?? ' ';
-    const trailingWhitespace = existingCell.match(/\s*$/)?.[0] ?? ' ';
-    const hasMarker = Object.values(TASK_QUEUE_STATUS_MARKERS).some((marker) => existingCell.includes(marker));
-    const formattedStatus = hasMarker && TASK_QUEUE_STATUS_MARKERS[normalizedStatus]
-        ? `${TASK_QUEUE_STATUS_MARKERS[normalizedStatus]} ${normalizedStatus}`
-        : normalizedStatus;
-    return `${leadingWhitespace}${formattedStatus}${trailingWhitespace}`;
 }
 
 export function syncTaskQueueStatus(repoRoot: string, taskId: string, nextStatus: string): boolean {
@@ -73,7 +52,7 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             task_path: gateHelpers.normalizePath(taskPath),
             task_id: taskId,
             previous_status: null,
-            next_status: String(nextStatus || '').trim().toUpperCase(),
+            next_status: normalizeTaskQueueStatusCell(nextStatus),
             error_message: null
         };
     }
@@ -81,7 +60,7 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
     const originalContent = fs.readFileSync(taskPath, 'utf8');
     const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
     const lines = originalContent.split(/\r?\n/);
-    const normalizedNextStatus = String(nextStatus || '').trim().toUpperCase();
+    const normalizedNextStatus = normalizeTaskQueueStatusCell(nextStatus);
     let changed = false;
     let taskFound = false;
     let previousStatus: string | null = null;
@@ -98,8 +77,7 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
         }
 
         taskFound = true;
-        const statusMatch = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED|DECOMPOSED)\b/i.exec(cells[1].trimmed);
-        previousStatus = statusMatch ? statusMatch[1].toUpperCase() : null;
+        previousStatus = readTaskQueueStatusToken(cells[1].trimmed);
         const updatedStatusCell = formatTaskQueueStatusCell(cells[1].raw, normalizedNextStatus);
         if (updatedStatusCell !== cells[1].raw) {
             const updatedLine = replaceTaskMdTableCell(rawLine, 1, updatedStatusCell);
