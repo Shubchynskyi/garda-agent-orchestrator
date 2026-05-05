@@ -3998,6 +3998,52 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
+    if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
+        const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
+        if (finalReport) {
+            return buildResult({
+                ...resultBase,
+                status: 'DONE',
+                nextGate: null,
+                title: 'Task gate flow is complete.',
+                reason: 'Completion gate passed and the canonical final closeout is materialized. Deliver the final report in the required order below; do not auto-commit without explicit user approval.',
+                commands: [],
+                finalReport
+            });
+        }
+        return buildResult({
+            ...resultBase,
+            status: 'READY',
+            nextGate: 'task-audit-summary',
+            title: 'Materialize final closeout before stopping.',
+            reason: 'Completion gate passed, but the canonical final closeout artifacts are not materialized yet. Run task-audit-summary to materialize the final report order and commit guidance before stopping.',
+            commands: [
+                buildCommand(
+                    'Build final audit summary',
+                    `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
+                )
+            ],
+            finalReport: null
+        });
+    }
+
+    if (isTaskQueueDoneStatus(taskEntry?.status || null)) {
+        return buildResult({
+            ...resultBase,
+            status: 'DONE',
+            nextGate: null,
+            title: 'Task is already marked DONE in TASK.md.',
+            reason:
+                `TASK.md marks ${formatNextStepInlineValue(taskId)} as DONE. ` +
+                'Treat this task as terminal and do not run stale lifecycle recovery, classify, compile, review, full-suite, or completion gates. ' +
+                'Reopen the TASK.md row to TODO or IN_PROGRESS before starting a new lifecycle cycle for this task.',
+            commands: [],
+            missingArtifacts: [],
+            presentArtifacts: coreArtifacts.present,
+            finalReport: null
+        });
+    }
+
     if (!isGatePassed(summary, 'completion-gate') && isDecomposedParentTask(taskEntry)) {
         const childRoute = resolveNextUnfinishedChildRoute(taskEntries, taskId);
         const decomposedReason = isTaskQueueDecomposedStatus(taskEntry?.status || null)
@@ -4035,35 +4081,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [],
             missingArtifacts: [],
             presentArtifacts: coreArtifacts.present,
-            finalReport: null
-        });
-    }
-
-    if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
-        const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
-        if (finalReport) {
-            return buildResult({
-                ...resultBase,
-                status: 'DONE',
-                nextGate: null,
-                title: 'Task gate flow is complete.',
-                reason: 'Completion gate passed and the canonical final closeout is materialized. Deliver the final report in the required order below; do not auto-commit without explicit user approval.',
-                commands: [],
-                finalReport
-            });
-        }
-        return buildResult({
-            ...resultBase,
-            status: 'READY',
-            nextGate: 'task-audit-summary',
-            title: 'Materialize final closeout before stopping.',
-            reason: 'Completion gate passed, but the canonical final closeout artifacts are not materialized yet. Run task-audit-summary to materialize the final report order and commit guidance before stopping.',
-            commands: [
-                buildCommand(
-                    'Build final audit summary',
-                    `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
-                )
-            ],
             finalReport: null
         });
     }

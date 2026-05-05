@@ -1428,6 +1428,59 @@ describe('gates/next-step', () => {
         assert.equal(text.includes('next-step "T-611"'), false);
     });
 
+    it('short-circuits DONE task rows before stale lifecycle recovery', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-620 | 🟩 DONE | P1 | review | Closed parent | gpt-5.4 | 2026-05-05 | strict | Parent umbrella closed after split children completed. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, 'T-620');
+        writePreflight(repoRoot, 'T-620', { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, 'T-620');
+        writeReviewEvidence(repoRoot, 'T-620', 'code', { verdict: 'fail' });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const staleParentChange = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-620', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'DONE');
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.deepEqual(result.missing_artifacts, []);
+        assert.match(result.reason, /TASK\.md marks "T-620" as DONE/);
+        assert.match(result.reason, /do not run stale lifecycle recovery/);
+        assert.equal(text.includes('classify-change'), false);
+        assert.equal(text.includes('compile-gate'), false);
+    });
+
+    it('does not short-circuit reopened TODO rows with stale lifecycle evidence', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-622 | 🟦 TODO | P1 | review | Reopened parent | gpt-5.4 | 2026-05-05 | strict | Reopened for another lifecycle cycle. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, 'T-622');
+        writePreflight(repoRoot, 'T-622', { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, 'T-622');
+        writeReviewEvidence(repoRoot, 'T-622', 'code', { verdict: 'fail' });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reopenedParentChange = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-622', repoRoot });
+
+        assert.notEqual(result.status, 'DONE');
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /Preflight scope is stale/);
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+    });
+
     it('blocks next-step when non-test review attempts exceed review cycle guard total limit', () => {
         const repoRoot = makeTempRepo();
         writeJson(
@@ -4041,6 +4094,33 @@ describe('gates/next-step', () => {
 
         assert.equal(result.status, 'READY');
         assert.equal(result.next_gate, 'task-audit-summary');
+        assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
+        assert.match(result.reason, /final closeout artifacts are not materialized/i);
+    });
+
+    it('keeps current completed DONE rows ready for task-audit-summary until final closeout is materialized', () => {
+        const repoRoot = makeTempRepo();
+        const taskId = 'T-624';
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-624 | 🟩 DONE | P1 | workflow | Closed task | gpt-5.4 | 2026-05-05 | strict | Completion gate updated the queue row before final closeout. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, taskId);
+        writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, taskId);
+        seedReviewGatePass(repoRoot, taskId);
+        seedDocImpactPass(repoRoot, taskId);
+        seedCompletionPass(repoRoot, taskId);
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.equal(result.status, 'READY');
+        assert.equal(result.next_gate, 'task-audit-summary');
+        assert.equal(result.final_report, null);
         assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
         assert.match(result.reason, /final closeout artifacts are not materialized/i);
     });
