@@ -24,6 +24,11 @@ import {
     REVIEW_CYCLE_GUARD_ACTIONS,
     normalizeReviewCycleGuardConfig
 } from '../core/review-cycle-guard';
+import {
+    PROJECT_MEMORY_MAINTENANCE_MODES,
+    PROJECT_MEMORY_READ_STRATEGIES,
+    buildDefaultWorkflowConfig
+} from '../core/workflow-config';
 
 interface IntegerArrayOptions {
     allowScalar?: boolean;
@@ -583,7 +588,7 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard'] as const;
+    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -659,6 +664,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         if (raw.review_cycle_guard !== undefined) {
             normalized.review_cycle_guard = validateReviewCycleGuardSection(raw.review_cycle_guard);
         }
+        if (raw.project_memory_maintenance !== undefined) {
+            normalized.project_memory_maintenance = validateProjectMemoryMaintenanceSection(raw.project_memory_maintenance);
+        }
         return normalized;
     }
 
@@ -688,7 +696,86 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     if (raw.review_cycle_guard !== undefined) {
         normalized.review_cycle_guard = validateReviewCycleGuardSection(raw.review_cycle_guard);
     }
+    if (raw.project_memory_maintenance !== undefined) {
+        normalized.project_memory_maintenance = validateProjectMemoryMaintenanceSection(raw.project_memory_maintenance);
+    }
     return normalized;
+}
+
+function validateProjectMemoryMaintenanceSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.project_memory_maintenance');
+    const sectionKnownKeys = [
+        'enabled',
+        'mode',
+        'run_before_final_closeout',
+        'require_user_approval_for_writes',
+        'max_compact_summary_chars',
+        'read_strategy',
+        'impact_artifact_retention_days'
+    ];
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.project_memory_maintenance'
+    );
+    assertNoUnknownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.project_memory_maintenance'
+    );
+
+    const defaults = buildDefaultWorkflowConfig().project_memory_maintenance as unknown as Record<string, unknown>;
+    const normalizedInput = {
+        ...defaults,
+        ...section
+    };
+
+    normalizedInput.enabled = normalizeBooleanLike(
+        normalizedInput.enabled,
+        'workflow-config.project_memory_maintenance.enabled'
+    );
+    const mode = normalizeNonEmptyString(
+        normalizedInput.mode,
+        'workflow-config.project_memory_maintenance.mode'
+    ).toLowerCase();
+    if (!PROJECT_MEMORY_MAINTENANCE_MODES.includes(mode as typeof PROJECT_MEMORY_MAINTENANCE_MODES[number])) {
+        throw new Error(
+            'workflow-config.project_memory_maintenance.mode must be one of: '
+            + `${PROJECT_MEMORY_MAINTENANCE_MODES.join(', ')}.`
+        );
+    }
+    normalizedInput.mode = mode;
+    normalizedInput.run_before_final_closeout = normalizeBooleanLike(
+        normalizedInput.run_before_final_closeout,
+        'workflow-config.project_memory_maintenance.run_before_final_closeout'
+    );
+    normalizedInput.require_user_approval_for_writes = normalizeBooleanLike(
+        normalizedInput.require_user_approval_for_writes,
+        'workflow-config.project_memory_maintenance.require_user_approval_for_writes'
+    );
+    normalizedInput.max_compact_summary_chars = normalizeInteger(
+        normalizedInput.max_compact_summary_chars,
+        'workflow-config.project_memory_maintenance.max_compact_summary_chars',
+        { minimum: 2000 }
+    );
+    const readStrategy = normalizeNonEmptyString(
+        normalizedInput.read_strategy,
+        'workflow-config.project_memory_maintenance.read_strategy'
+    ).toLowerCase();
+    if (!PROJECT_MEMORY_READ_STRATEGIES.includes(readStrategy as typeof PROJECT_MEMORY_READ_STRATEGIES[number])) {
+        throw new Error(
+            'workflow-config.project_memory_maintenance.read_strategy must be one of: '
+            + `${PROJECT_MEMORY_READ_STRATEGIES.join(', ')}.`
+        );
+    }
+    normalizedInput.read_strategy = readStrategy;
+    normalizedInput.impact_artifact_retention_days = normalizeInteger(
+        normalizedInput.impact_artifact_retention_days,
+        'workflow-config.project_memory_maintenance.impact_artifact_retention_days',
+        { minimum: 1 }
+    );
+
+    return normalizedInput;
 }
 
 function validateScopeBudgetGuardSection(input: unknown): Record<string, unknown> {

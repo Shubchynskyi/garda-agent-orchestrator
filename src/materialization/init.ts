@@ -209,7 +209,7 @@ export function runInit(options: RunInitOptions) {
     const discoveryLines = buildProjectDiscoveryLines(discovery, timestampIso);
     const discoveryOverlay = buildDiscoveryOverlaySection(discovery);
 
-    // Seed project-memory from template only when absent (preserve user content on reinit/update)
+    // Seed project-memory from template and add later missing seed files without overwriting user content.
     const seedOnlyDirectories = ['docs/project-memory'];
     let seededDirs = 0;
 
@@ -218,7 +218,14 @@ export function runInit(options: RunInitOptions) {
         if (!pathExists(srcDir)) continue;
 
         const destDir = path.join(liveRoot, relDir);
-        if (pathExists(destDir)) continue;
+        if (pathExists(destDir)) {
+            if (!dryRun) {
+                copyDirectoryRecursive(srcDir, destDir, {
+                    shouldCopyFile: (_srcPath, destPath) => !pathExists(destPath)
+                });
+            }
+            continue;
+        }
 
         if (!dryRun) {
             ensureDirectory(destDir);

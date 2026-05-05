@@ -359,7 +359,8 @@ export function generateProjectMemorySummary(projectMemoryDir: string, timestamp
             '## Status', '',
             '`docs/project-memory/` contains no content files yet.',
             'Populate it with project knowledge to enable this summary.', '',
-            'Available category templates: `context.md`, `architecture.md`, `conventions.md`, `stack.md`, `decisions.md`.'
+            'Read-first files: `README.md`, then `compact.md`.',
+            'Available category templates: `context.md`, `stack.md`, `architecture.md`, `module-map.md`, `commands.md`, `conventions.md`, `decisions.md`, `risks.md`.'
         ].join('\r\n');
     }
 
@@ -391,7 +392,9 @@ export function generateProjectMemorySummary(projectMemoryDir: string, timestamp
         lines.push(
             '## Status', '',
             'All `docs/project-memory/` files exist but contain only placeholder templates.',
-            'Fill in the sections with real project knowledge to enable this summary.', ''
+            'Fill in the sections with real project knowledge to enable this summary.', '',
+            'Read-first files: `README.md`, then `compact.md`.',
+            'Available category templates: `context.md`, `stack.md`, `architecture.md`, `module-map.md`, `commands.md`, `conventions.md`, `decisions.md`, `risks.md`.', ''
         );
     }
 

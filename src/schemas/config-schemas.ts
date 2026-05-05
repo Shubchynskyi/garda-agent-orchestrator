@@ -16,6 +16,10 @@ import {
     COLLECTED_VIA_VALUES
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
+import {
+    PROJECT_MEMORY_MAINTENANCE_MODES,
+    PROJECT_MEMORY_READ_STRATEGIES
+} from '../core/workflow-config';
 
 const REVIEW_CAPABILITY_KEYS = [
     'code', 'db', 'security', 'refactor',
@@ -250,7 +254,7 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'garda-agent-orchestrator/workflow-config.schema.json',
     title: 'Workflow Configuration',
-    description: 'Optional workflow settings including post-task full-suite validation.',
+    description: 'Optional workflow settings including post-task full-suite validation and project-memory maintenance.',
     type: 'object',
     properties: {
         full_suite_validation: {
@@ -330,6 +334,54 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                 }
             },
             required: ['enabled', 'action', 'max_failed_non_test_reviews', 'max_total_non_test_reviews', 'excluded_review_types'],
+            additionalProperties: false
+        },
+        project_memory_maintenance: {
+            type: 'object',
+            description: 'Repo-local project-memory maintenance settings. Disabled by default; check/update/strict enforcement is introduced by later gates.',
+            properties: {
+                enabled: {
+                    type: 'boolean',
+                    description: 'Enable project-memory maintenance checks.'
+                },
+                mode: {
+                    type: 'string',
+                    enum: [...PROJECT_MEMORY_MAINTENANCE_MODES],
+                    description: 'Maintenance mode: off, check, update, or strict.'
+                },
+                run_before_final_closeout: {
+                    type: 'boolean',
+                    description: 'Run memory impact checks before final closeout when supported by task flow.'
+                },
+                require_user_approval_for_writes: {
+                    type: 'boolean',
+                    description: 'Require explicit operator approval before agent writes user-owned memory files.'
+                },
+                max_compact_summary_chars: {
+                    type: 'integer',
+                    minimum: 2000,
+                    description: 'Maximum allowed characters in project-memory/compact.md.'
+                },
+                read_strategy: {
+                    type: 'string',
+                    enum: [...PROJECT_MEMORY_READ_STRATEGIES],
+                    description: 'Project-memory read strategy. The current strategy requires README.md, then compact.md, then focused files.'
+                },
+                impact_artifact_retention_days: {
+                    type: 'integer',
+                    minimum: 1,
+                    description: 'Days to retain future project-memory impact artifacts.'
+                }
+            },
+            required: [
+                'enabled',
+                'mode',
+                'run_before_final_closeout',
+                'require_user_approval_for_writes',
+                'max_compact_summary_chars',
+                'read_strategy',
+                'impact_artifact_retention_days'
+            ],
             additionalProperties: false
         }
     },

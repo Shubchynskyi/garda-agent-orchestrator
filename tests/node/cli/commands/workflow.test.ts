@@ -67,6 +67,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('FullSuiteCommand: npm test'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
+        assert.ok(output.includes('Project memory maintenance: disabled read_strategy=index_first'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -137,6 +138,39 @@ test('workflow set updates review cycle guard settings deterministically', () =>
     }
 });
 
+test('workflow set updates project memory maintenance settings deterministically', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--project-memory-enabled', 'true',
+            '--project-memory-mode', 'update',
+            '--project-memory-run-before-final-closeout', 'false',
+            '--project-memory-require-user-approval-for-writes', 'false',
+            '--project-memory-max-compact-summary-chars', '9000',
+            '--project-memory-read-strategy', 'index_first',
+            '--project-memory-impact-artifact-retention-days', '45'
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=9000'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.project_memory_maintenance.enabled, true);
+        assert.equal(parsedConfig.project_memory_maintenance.mode, 'update');
+        assert.equal(parsedConfig.project_memory_maintenance.run_before_final_closeout, false);
+        assert.equal(parsedConfig.project_memory_maintenance.require_user_approval_for_writes, false);
+        assert.equal(parsedConfig.project_memory_maintenance.max_compact_summary_chars, 9000);
+        assert.equal(parsedConfig.project_memory_maintenance.read_strategy, 'index_first');
+        assert.equal(parsedConfig.project_memory_maintenance.impact_artifact_retention_days, 45);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow validate and explain include workflow guard diagnostics', () => {
     const bundleRoot = createBundleRoot();
 
@@ -147,6 +181,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         ], PACKAGE_JSON)).output;
         assert.ok(validateOutput.includes('Action: validate'));
         assert.ok(validateOutput.includes('Status: PASS'));
+        assert.ok(validateOutput.includes('Project memory maintenance: disabled'));
 
         const explainOutput = captureConsole(() => handleWorkflow([
             'explain',
@@ -186,8 +221,11 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.scope, 'repo-local');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');
+        assert.equal(parsed.project_memory_maintenance.enabled, false);
+        assert.equal(parsed.project_memory_maintenance.mode, 'check');
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
+        assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: disabled read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -451,6 +489,23 @@ test('workflow set rejects invalid review execution policy modes', () => {
                 '--review-execution-policy', 'totally_serialized'
             ], PACKAGE_JSON),
             /--review-execution-policy must be one of/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects invalid project memory maintenance modes', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--project-memory-mode', 'audit'
+            ], PACKAGE_JSON),
+            /--project-memory-mode must be one of/
         );
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });

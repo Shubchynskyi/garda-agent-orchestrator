@@ -682,7 +682,39 @@ describe('runInit', () => {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
             assert.ok(fs.existsSync(pmDir), 'project-memory should be seeded from template on first install');
             assert.ok(fs.existsSync(path.join(pmDir, 'README.md')), 'project-memory/README.md should exist');
+            assert.ok(fs.existsSync(path.join(pmDir, 'compact.md')), 'project-memory/compact.md should exist');
+            assert.ok(fs.existsSync(path.join(pmDir, 'module-map.md')), 'project-memory/module-map.md should exist');
+            assert.ok(fs.existsSync(path.join(pmDir, 'commands.md')), 'project-memory/commands.md should exist');
+            assert.ok(fs.existsSync(path.join(pmDir, 'risks.md')), 'project-memory/risks.md should exist');
             assert.equal(result.seedOnlyDirectoriesSeeded, 1);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('adds missing project-memory seed files without overwriting user-owned files', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'README.md'), '# Custom Project Memory\n', 'utf8');
+            fs.writeFileSync(path.join(pmDir, 'context.md'), '# Custom Context\nKeep this local fact.\n', 'utf8');
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            assert.equal(result.seedOnlyDirectoriesSeeded, 0);
+            assert.equal(fs.readFileSync(path.join(pmDir, 'README.md'), 'utf8'), '# Custom Project Memory\n');
+            assert.equal(fs.readFileSync(path.join(pmDir, 'context.md'), 'utf8'), '# Custom Context\nKeep this local fact.\n');
+            assert.ok(fs.existsSync(path.join(pmDir, 'compact.md')));
+            assert.ok(fs.existsSync(path.join(pmDir, 'module-map.md')));
+            assert.ok(fs.existsSync(path.join(pmDir, 'commands.md')));
+            assert.ok(fs.existsSync(path.join(pmDir, 'risks.md')));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
@@ -838,6 +870,10 @@ describe('runInit', () => {
             assert.ok(content.includes('DO NOT EDIT'));
             assert.ok(content.includes('placeholder templates') || content.includes('no content'),
                 'stub must indicate placeholder state');
+            assert.ok(content.includes('Read-first files: `README.md`, then `compact.md`.'));
+            assert.ok(content.includes('`module-map.md`'));
+            assert.ok(content.includes('`commands.md`'));
+            assert.ok(content.includes('`risks.md`'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

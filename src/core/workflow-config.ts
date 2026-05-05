@@ -26,11 +26,29 @@ export interface FullSuiteValidationConfig {
     [key: string]: unknown;
 }
 
+export const PROJECT_MEMORY_MAINTENANCE_MODES = Object.freeze(['off', 'check', 'update', 'strict'] as const);
+export type ProjectMemoryMaintenanceMode = typeof PROJECT_MEMORY_MAINTENANCE_MODES[number];
+
+export const PROJECT_MEMORY_READ_STRATEGIES = Object.freeze(['index_first'] as const);
+export type ProjectMemoryReadStrategy = typeof PROJECT_MEMORY_READ_STRATEGIES[number];
+
+export interface ProjectMemoryMaintenanceConfig {
+    enabled: boolean;
+    mode: ProjectMemoryMaintenanceMode;
+    run_before_final_closeout: boolean;
+    require_user_approval_for_writes: boolean;
+    max_compact_summary_chars: number;
+    read_strategy: ProjectMemoryReadStrategy;
+    impact_artifact_retention_days: number;
+    [key: string]: unknown;
+}
+
 export interface WorkflowConfigData {
     full_suite_validation: FullSuiteValidationConfig;
     review_execution_policy: ReviewExecutionPolicyConfig;
     scope_budget_guard: ScopeBudgetGuardConfig;
     review_cycle_guard: ReviewCycleGuardConfig;
+    project_memory_maintenance: ProjectMemoryMaintenanceConfig;
     [key: string]: unknown;
 }
 
@@ -60,7 +78,16 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
     }),
     review_execution_policy: Object.freeze(buildDefaultReviewExecutionPolicyConfig()),
     scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,
-    review_cycle_guard: DEFAULT_REVIEW_CYCLE_GUARD_CONFIG
+    review_cycle_guard: DEFAULT_REVIEW_CYCLE_GUARD_CONFIG,
+    project_memory_maintenance: Object.freeze({
+        enabled: false,
+        mode: 'check',
+        run_before_final_closeout: true,
+        require_user_approval_for_writes: true,
+        max_compact_summary_chars: 12000,
+        read_strategy: 'index_first',
+        impact_artifact_retention_days: 30
+    })
 });
 
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {

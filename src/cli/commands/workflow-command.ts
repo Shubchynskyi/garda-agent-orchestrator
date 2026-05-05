@@ -15,6 +15,11 @@ import {
 import {
     buildDefaultWorkflowConfig,
     hasMaterializedWorkflowConfigBaseline,
+    PROJECT_MEMORY_MAINTENANCE_MODES,
+    PROJECT_MEMORY_READ_STRATEGIES,
+    type ProjectMemoryMaintenanceConfig,
+    type ProjectMemoryMaintenanceMode,
+    type ProjectMemoryReadStrategy,
     type WorkflowConfigData
 } from '../../core/workflow-config';
 import {
@@ -46,6 +51,7 @@ type WorkflowFileConfigData = {
     review_execution_policy?: WorkflowConfigData['review_execution_policy'];
     scope_budget_guard?: WorkflowConfigData['scope_budget_guard'];
     review_cycle_guard?: WorkflowConfigData['review_cycle_guard'];
+    project_memory_maintenance?: WorkflowConfigData['project_memory_maintenance'];
     [key: string]: unknown;
 };
 
@@ -80,10 +86,12 @@ interface WorkflowCommandResultBase {
     review_execution_policy: WorkflowReviewExecutionPolicyView;
     scope_budget_guard: ScopeBudgetGuardConfig;
     review_cycle_guard: ReviewCycleGuardConfig;
+    project_memory_maintenance: ProjectMemoryMaintenanceConfig;
     visible_summary_line: string;
     review_execution_policy_summary_line: string;
     scope_budget_guard_summary_line: string;
     review_cycle_guard_summary_line: string;
+    project_memory_maintenance_summary_line: string;
 }
 
 interface WorkflowShowResult extends WorkflowCommandResultBase {
@@ -135,7 +143,14 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--review-cycle-max-failed-non-test-reviews': { key: 'reviewCycleMaxFailedNonTestReviews', type: 'string' },
     '--review-cycle-max-total-non-test-reviews': { key: 'reviewCycleMaxTotalNonTestReviews', type: 'string' },
     '--review-cycle-excluded-review-types': { key: 'reviewCycleExcludedReviewTypes', type: 'string' },
-    '--review-cycle-auto-split-enabled': { key: 'reviewCycleAutoSplitEnabled', type: 'string' }
+    '--review-cycle-auto-split-enabled': { key: 'reviewCycleAutoSplitEnabled', type: 'string' },
+    '--project-memory-enabled': { key: 'projectMemoryEnabled', type: 'string' },
+    '--project-memory-mode': { key: 'projectMemoryMode', type: 'string' },
+    '--project-memory-run-before-final-closeout': { key: 'projectMemoryRunBeforeFinalCloseout', type: 'string' },
+    '--project-memory-require-user-approval-for-writes': { key: 'projectMemoryRequireUserApprovalForWrites', type: 'string' },
+    '--project-memory-max-compact-summary-chars': { key: 'projectMemoryMaxCompactSummaryChars', type: 'string' },
+    '--project-memory-read-strategy': { key: 'projectMemoryReadStrategy', type: 'string' },
+    '--project-memory-impact-artifact-retention-days': { key: 'projectMemoryImpactArtifactRetentionDays', type: 'string' }
 };
 
 function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoots {
@@ -155,13 +170,22 @@ function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoot
     };
 }
 
+function cloneProjectMemoryMaintenanceConfig(
+    config: ProjectMemoryMaintenanceConfig
+): ProjectMemoryMaintenanceConfig {
+    return JSON.parse(JSON.stringify(config)) as ProjectMemoryMaintenanceConfig;
+}
+
 function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFileConfigData {
     const defaultConfig = buildDefaultWorkflowConfig() as WorkflowConfigData;
     return {
         ...config,
         full_suite_validation: config.full_suite_validation,
         scope_budget_guard: normalizeScopeBudgetGuardConfig(config.scope_budget_guard ?? defaultConfig.scope_budget_guard),
-        review_cycle_guard: normalizeReviewCycleGuardConfig(config.review_cycle_guard ?? defaultConfig.review_cycle_guard)
+        review_cycle_guard: normalizeReviewCycleGuardConfig(config.review_cycle_guard ?? defaultConfig.review_cycle_guard),
+        project_memory_maintenance: cloneProjectMemoryMaintenanceConfig(
+            config.project_memory_maintenance ?? defaultConfig.project_memory_maintenance
+        )
     };
 }
 
@@ -172,7 +196,8 @@ function readWorkflowConfigState(configPath: string, bundleRoot: string): Workfl
             rawConfig: null,
             config: normalizeWorkflowFileConfig({
                 full_suite_validation: defaultConfig.full_suite_validation,
-                scope_budget_guard: defaultConfig.scope_budget_guard
+                scope_budget_guard: defaultConfig.scope_budget_guard,
+                project_memory_maintenance: defaultConfig.project_memory_maintenance
             }),
             exists: false,
             missingReviewExecutionPolicyMode: hasMaterializedWorkflowConfigBaseline(bundleRoot)
@@ -242,6 +267,10 @@ function buildReviewCycleGuardLine(config: ReviewCycleGuardConfig): string {
     return `Review cycle guard: ${config.enabled ? config.action : 'disabled'} max_failed_non_test_reviews=${config.max_failed_non_test_reviews} max_total_non_test_reviews=${config.max_total_non_test_reviews} excluded=${config.excluded_review_types.join(',')} auto_split_enabled=${config.auto_split_enabled}`;
 }
 
+function buildProjectMemoryMaintenanceLine(config: ProjectMemoryMaintenanceConfig): string {
+    return `Project memory maintenance: ${config.enabled ? config.mode : 'disabled'} read_strategy=${config.read_strategy} max_compact_summary_chars=${config.max_compact_summary_chars} require_user_approval_for_writes=${config.require_user_approval_for_writes}`;
+}
+
 function buildWorkflowShowResult(
     roots: WorkflowCommandRoots,
     state: WorkflowConfigState
@@ -249,6 +278,9 @@ function buildWorkflowShowResult(
     const reviewExecutionPolicy = buildReviewExecutionPolicyView(state);
     const scopeBudgetGuard = normalizeScopeBudgetGuardConfig(state.config.scope_budget_guard);
     const reviewCycleGuard = normalizeReviewCycleGuardConfig(state.config.review_cycle_guard);
+    const projectMemoryMaintenance = cloneProjectMemoryMaintenanceConfig(
+        state.config.project_memory_maintenance ?? buildDefaultWorkflowConfig().project_memory_maintenance
+    );
     return {
         action: 'show',
         scope: 'repo-local',
@@ -260,10 +292,12 @@ function buildWorkflowShowResult(
         review_execution_policy: reviewExecutionPolicy,
         scope_budget_guard: scopeBudgetGuard,
         review_cycle_guard: reviewCycleGuard,
+        project_memory_maintenance: projectMemoryMaintenance,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
         review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
         scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard),
-        review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard)
+        review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard),
+        project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceLine(projectMemoryMaintenance)
     };
 }
 
@@ -276,6 +310,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     const reviewExecutionPolicy = result.review_execution_policy;
     const scopeBudgetGuard = result.scope_budget_guard;
     const reviewCycleGuard = result.review_cycle_guard;
+    const projectMemoryMaintenance = result.project_memory_maintenance;
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
     lines.push(`Action: ${result.action}`);
@@ -288,6 +323,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(result.review_execution_policy_summary_line);
     lines.push(result.scope_budget_guard_summary_line);
     lines.push(result.review_cycle_guard_summary_line);
+    lines.push(result.project_memory_maintenance_summary_line);
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
@@ -311,10 +347,18 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ReviewCycleGuardMaxTotalNonTestReviews: ${reviewCycleGuard.max_total_non_test_reviews}`);
     lines.push(`ReviewCycleGuardExcludedReviewTypes: ${reviewCycleGuard.excluded_review_types.join(', ')}`);
     lines.push(`ReviewCycleGuardAutoSplitEnabled: ${reviewCycleGuard.auto_split_enabled}`);
+    lines.push(`ProjectMemoryMaintenanceEnabled: ${projectMemoryMaintenance.enabled}`);
+    lines.push(`ProjectMemoryMaintenanceMode: ${projectMemoryMaintenance.mode}`);
+    lines.push(`ProjectMemoryMaintenanceRunBeforeFinalCloseout: ${projectMemoryMaintenance.run_before_final_closeout}`);
+    lines.push(`ProjectMemoryMaintenanceRequireUserApprovalForWrites: ${projectMemoryMaintenance.require_user_approval_for_writes}`);
+    lines.push(`ProjectMemoryMaintenanceMaxCompactSummaryChars: ${projectMemoryMaintenance.max_compact_summary_chars}`);
+    lines.push(`ProjectMemoryMaintenanceReadStrategy: ${projectMemoryMaintenance.read_strategy}`);
+    lines.push(`ProjectMemoryMaintenanceImpactArtifactRetentionDays: ${projectMemoryMaintenance.impact_artifact_retention_days}`);
     lines.push('Tip: run "workflow set --full-suite-enabled true|false" to change the repo-local mode.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}>" to change review launch ordering.`);
     lines.push('Tip: run "workflow set --scope-budget-enabled true|false" to change the scope budget guard.');
     lines.push('Tip: run "workflow set --review-cycle-enabled true|false" to change the review cycle guard.');
+    lines.push('Tip: run "workflow set --project-memory-enabled true|false" to change project memory maintenance checks.');
     return lines.join('\n');
 }
 
@@ -366,6 +410,22 @@ function parseReviewCycleAction(value: string): ReviewCycleGuardConfig['action']
         throw new Error(`--review-cycle-action must be one of: ${REVIEW_CYCLE_GUARD_ACTIONS.join(', ')}.`);
     }
     return normalized as ReviewCycleGuardConfig['action'];
+}
+
+function parseProjectMemoryMaintenanceMode(value: string): ProjectMemoryMaintenanceMode {
+    const normalized = value.trim().toLowerCase();
+    if (!PROJECT_MEMORY_MAINTENANCE_MODES.includes(normalized as ProjectMemoryMaintenanceMode)) {
+        throw new Error(`--project-memory-mode must be one of: ${PROJECT_MEMORY_MAINTENANCE_MODES.join(', ')}.`);
+    }
+    return normalized as ProjectMemoryMaintenanceMode;
+}
+
+function parseProjectMemoryReadStrategy(value: string): ProjectMemoryReadStrategy {
+    const normalized = value.trim().toLowerCase();
+    if (!PROJECT_MEMORY_READ_STRATEGIES.includes(normalized as ProjectMemoryReadStrategy)) {
+        throw new Error(`--project-memory-read-strategy must be one of: ${PROJECT_MEMORY_READ_STRATEGIES.join(', ')}.`);
+    }
+    return normalized as ProjectMemoryReadStrategy;
 }
 
 function parseProfileList(value: string): string[] {
@@ -545,13 +605,63 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.review_cycle_guard = nextReviewCycleGuard;
 
+    const nextProjectMemoryMaintenance = cloneProjectMemoryMaintenanceConfig(
+        nextConfig.project_memory_maintenance ?? buildDefaultWorkflowConfig().project_memory_maintenance
+    );
+    if (typeof options.projectMemoryEnabled === 'string') {
+        nextProjectMemoryMaintenance.enabled = parseBooleanText(
+            options.projectMemoryEnabled,
+            '--project-memory-enabled'
+        );
+        changedFields.push('project_memory_maintenance.enabled');
+    }
+    if (typeof options.projectMemoryMode === 'string') {
+        nextProjectMemoryMaintenance.mode = parseProjectMemoryMaintenanceMode(options.projectMemoryMode);
+        changedFields.push('project_memory_maintenance.mode');
+    }
+    if (typeof options.projectMemoryRunBeforeFinalCloseout === 'string') {
+        nextProjectMemoryMaintenance.run_before_final_closeout = parseBooleanText(
+            options.projectMemoryRunBeforeFinalCloseout,
+            '--project-memory-run-before-final-closeout'
+        );
+        changedFields.push('project_memory_maintenance.run_before_final_closeout');
+    }
+    if (typeof options.projectMemoryRequireUserApprovalForWrites === 'string') {
+        nextProjectMemoryMaintenance.require_user_approval_for_writes = parseBooleanText(
+            options.projectMemoryRequireUserApprovalForWrites,
+            '--project-memory-require-user-approval-for-writes'
+        );
+        changedFields.push('project_memory_maintenance.require_user_approval_for_writes');
+    }
+    if (typeof options.projectMemoryMaxCompactSummaryChars === 'string') {
+        nextProjectMemoryMaintenance.max_compact_summary_chars = parseIntegerText(
+            options.projectMemoryMaxCompactSummaryChars,
+            '--project-memory-max-compact-summary-chars',
+            2000
+        );
+        changedFields.push('project_memory_maintenance.max_compact_summary_chars');
+    }
+    if (typeof options.projectMemoryReadStrategy === 'string') {
+        nextProjectMemoryMaintenance.read_strategy = parseProjectMemoryReadStrategy(options.projectMemoryReadStrategy);
+        changedFields.push('project_memory_maintenance.read_strategy');
+    }
+    if (typeof options.projectMemoryImpactArtifactRetentionDays === 'string') {
+        nextProjectMemoryMaintenance.impact_artifact_retention_days = parseIntegerText(
+            options.projectMemoryImpactArtifactRetentionDays,
+            '--project-memory-impact-artifact-retention-days',
+            1
+        );
+        changedFields.push('project_memory_maintenance.impact_artifact_retention_days');
+    }
+    nextConfig.project_memory_maintenance = nextProjectMemoryMaintenance;
+
     if (changedFields.length === 0) {
         throw new Error(
             "Workflow setting flags are required for 'workflow set'. "
             + 'Use --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --review-execution-policy, '
-            + '--scope-budget-* flags, or --review-cycle-* flags.'
+            + '--scope-budget-* flags, --review-cycle-* flags, or --project-memory-* flags.'
         );
     }
 
@@ -559,7 +669,8 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         normalizeWorkflowFileConfig(validateWorkflowConfig(state.rawConfig ?? {
             full_suite_validation: state.config.full_suite_validation,
             scope_budget_guard: state.config.scope_budget_guard,
-            review_cycle_guard: state.config.review_cycle_guard
+            review_cycle_guard: state.config.review_cycle_guard,
+            project_memory_maintenance: state.config.project_memory_maintenance
         }) as WorkflowFileConfigData),
         null,
         2
@@ -609,6 +720,7 @@ function handleValidate(options: ParsedOptionsRecord): WorkflowValidateResult {
         console.log(`ConfigPath: ${roots.configPath}`);
         console.log(result.scope_budget_guard_summary_line);
         console.log(result.review_cycle_guard_summary_line);
+        console.log(result.project_memory_maintenance_summary_line);
     }
     return result;
 }

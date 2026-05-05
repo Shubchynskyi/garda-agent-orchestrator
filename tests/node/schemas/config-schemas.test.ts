@@ -223,6 +223,30 @@ test('workflow-config schema allows future full_suite_validation knobs', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('workflow-config schema accepts project memory maintenance defaults', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const result = validateAgainstSchema(data, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+    assert.deepEqual(data.project_memory_maintenance, {
+        enabled: false,
+        mode: 'check',
+        run_before_final_closeout: true,
+        require_user_approval_for_writes: true,
+        max_compact_summary_chars: 12000,
+        read_strategy: 'index_first',
+        impact_artifact_retention_days: 30
+    });
+});
+
+test('workflow-config schema rejects invalid project memory maintenance mode', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (clone.project_memory_maintenance as Record<string, unknown>).mode = 'audit';
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.path.includes('project_memory_maintenance.mode')));
+});
+
 test('template garda.config.json validates against root schema', () => {
     const data = readTemplateConfig('garda.config.json');
     const result = validateAgainstSchema(data, gardaConfigSchema);

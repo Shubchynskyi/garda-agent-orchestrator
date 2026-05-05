@@ -74,6 +74,15 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
             max_total_non_test_reviews: '9',
             excluded_review_types: ['Test', 'test'],
             auto_split_enabled: 'true'
+        },
+        project_memory_maintenance: {
+            enabled: 'true',
+            mode: 'UPDATE',
+            run_before_final_closeout: 'false',
+            require_user_approval_for_writes: 'yes',
+            max_compact_summary_chars: '9000',
+            read_strategy: 'INDEX_FIRST',
+            impact_artifact_retention_days: '45'
         }
     });
 
@@ -93,6 +102,69 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
     assert.equal(reviewCycleGuard.max_total_non_test_reviews, 9);
     assert.deepEqual(reviewCycleGuard.excluded_review_types, ['test']);
     assert.equal(reviewCycleGuard.auto_split_enabled, true);
+
+    const projectMemory = normalized.project_memory_maintenance as Record<string, unknown>;
+    assert.equal(projectMemory.enabled, true);
+    assert.equal(projectMemory.mode, 'update');
+    assert.equal(projectMemory.run_before_final_closeout, false);
+    assert.equal(projectMemory.require_user_approval_for_writes, true);
+    assert.equal(projectMemory.max_compact_summary_chars, 9000);
+    assert.equal(projectMemory.read_strategy, 'index_first');
+    assert.equal(projectMemory.impact_artifact_retention_days, 45);
+});
+
+test('validateWorkflowConfig rejects invalid project memory maintenance values', () => {
+    const makeConfig = (projectMemory: Record<string, unknown>) => ({
+        full_suite_validation: {
+            enabled: false,
+            command: 'npm test',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        },
+        project_memory_maintenance: projectMemory
+    });
+
+    assert.throws(
+        () => validateWorkflowConfig(makeConfig({
+            enabled: true,
+            mode: 'audit',
+            run_before_final_closeout: true,
+            require_user_approval_for_writes: true,
+            max_compact_summary_chars: 9000,
+            read_strategy: 'index_first',
+            impact_artifact_retention_days: 30
+        })),
+        /project_memory_maintenance\.mode must be one of/
+    );
+    assert.throws(
+        () => validateWorkflowConfig(makeConfig({
+            enabled: true,
+            mode: 'check',
+            run_before_final_closeout: true,
+            require_user_approval_for_writes: true,
+            max_compact_summary_chars: 1999,
+            read_strategy: 'index_first',
+            impact_artifact_retention_days: 30
+        })),
+        /max_compact_summary_chars must be >= 2000/
+    );
+    assert.throws(
+        () => validateWorkflowConfig(makeConfig({
+            enabled: true,
+            mode: 'check',
+            run_before_final_closeout: true,
+            require_user_approval_for_writes: true,
+            max_compact_summary_chars: 9000,
+            read_strategy: 'full_scan',
+            impact_artifact_retention_days: 30
+        })),
+        /project_memory_maintenance\.read_strategy must be one of/
+    );
 });
 
 test('validateOutputFiltersConfig accepts context-driven parser controls from the tracked template', () => {

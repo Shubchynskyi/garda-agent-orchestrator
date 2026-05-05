@@ -18,9 +18,10 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 ## Project Memory — Storage Directive
 1. Durable project knowledge (architecture, conventions, stack details, domain constraints, design decisions) must be written to `garda-agent-orchestrator/live/docs/project-memory/`.
 2. Do not embed durable project knowledge in orchestrator-managed rule files (`agent-rules/*.md`), config JSON, root entrypoints, or `TASK.md`.
-3. The `project-memory/` directory is user-owned; the materializer never overwrites its contents after initial seed.
-4. Canonical files: `context.md`, `architecture.md`, `conventions.md`, `stack.md`, `decisions.md`. Add new files in lowercase kebab-case `.md` format when an existing category does not fit.
-5. Agents may read `project-memory/` at any time for context. Write access requires explicit user approval or a task instruction that authorises the update.
+3. The `project-memory/` directory is user-owned; lifecycle materialization may add missing seed files, but must not overwrite, merge, or delete existing files.
+4. When reading project memory, start with `README.md`, then `compact.md`, then only the focused memory files relevant to the task.
+5. Canonical focused files: `context.md`, `stack.md`, `architecture.md`, `module-map.md`, `commands.md`, `conventions.md`, `decisions.md`, `risks.md`. Add new files in lowercase kebab-case `.md` format when an existing category does not fit.
+6. Agents may read `project-memory/` at any time for context. Write access requires explicit user approval or a task instruction that authorises the update.
 
 ## Mandatory Infrastructure Integrity
 1. Mandatory gate/tooling failures (e.g., `Unknown gate`, missing CLI capability, missing local build dependencies, stale bundle mismatch, unreadable gate artifact paths) are critical infrastructure defects.
