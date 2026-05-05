@@ -57,6 +57,15 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
     lines.push(`OrdinaryDocPathsNeedsConfirmation: ${result.ordinaryDocPathsNeedsConfirmation ? 'True' : 'False'}`);
     lines.push(`OrdinaryDocPathsConfig: ${result.ordinaryDocPathsConfigPath}`);
     lines.push(`OrdinaryDocPathsEdit: ${result.ordinaryDocPathsEditHint}`);
+    lines.push(`ProjectMemory: initialized=${result.projectMemoryInitialized}; validated=${result.projectMemoryValidated}; mode=${result.projectMemoryMode}`);
+    lines.push(`ProjectMemoryDir: ${result.projectMemoryDir}`);
+    lines.push('ProjectMemoryReadFirst:');
+    lines.push(...result.projectMemoryReadFirst.map((entry) => `  - ${entry}`));
+    lines.push(`ProjectMemorySummary: ${result.projectMemorySummaryRule}`);
+    lines.push(`ProjectMemoryBootstrapReport: ${result.projectMemoryBootstrapReport}`);
+    for (const warning of result.projectMemoryWarnings) {
+        lines.push(`ProjectMemoryWarning: ${warning}`);
+    }
     lines.push(`ActiveAgentFiles: ${result.activeAgentFiles.join(', ')}`);
     lines.push(`AgentInitStatePath: ${result.agentInitStatePath}`);
     lines.push(`AgentInit: ${result.readyForTasks ? 'PASS' : 'FAIL'}`);
@@ -83,6 +92,12 @@ export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>):
     }
     if (!result.manifestPassed) {
         blockers.push('manifest validation failed');
+    }
+    if (!result.projectMemoryInitialized) {
+        blockers.push('project memory bootstrap is incomplete');
+    }
+    if (!result.projectMemoryValidated) {
+        blockers.push('project memory validation failed');
     }
 
     return `Next: resolve blockers and rerun agent-init (${blockers.join('; ')})`;

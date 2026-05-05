@@ -21,6 +21,14 @@ export interface AgentInitState {
     ManifestValidationPassed: boolean;
     ActiveAgentFiles: string[];
     LastSeededFullSuiteCommand: string | null;
+    ProjectMemoryInitialized: boolean;
+    ProjectMemoryValidated: boolean;
+    ProjectMemoryMode: string | null;
+    ProjectMemoryDir: string | null;
+    ProjectMemoryReadFirst: string[];
+    ProjectMemorySummaryRule: string | null;
+    ProjectMemoryBootstrapReport: string | null;
+    ProjectMemoryWarnings: string[];
 }
 
 interface AgentInitStateReadResult {
@@ -121,7 +129,19 @@ export function validateAgentInitState(input: unknown): AgentInitState {
         VerificationPassed: normalizeBoolean(raw.VerificationPassed, 'VerificationPassed'),
         ManifestValidationPassed: normalizeBoolean(raw.ManifestValidationPassed, 'ManifestValidationPassed'),
         ActiveAgentFiles: normalizeOptionalStringArray(raw.ActiveAgentFiles, 'ActiveAgentFiles'),
-        LastSeededFullSuiteCommand: normalizeOptionalString(raw.LastSeededFullSuiteCommand)
+        LastSeededFullSuiteCommand: normalizeOptionalString(raw.LastSeededFullSuiteCommand),
+        ProjectMemoryInitialized: raw.ProjectMemoryInitialized === undefined
+            ? false
+            : normalizeBoolean(raw.ProjectMemoryInitialized, 'ProjectMemoryInitialized'),
+        ProjectMemoryValidated: raw.ProjectMemoryValidated === undefined
+            ? false
+            : normalizeBoolean(raw.ProjectMemoryValidated, 'ProjectMemoryValidated'),
+        ProjectMemoryMode: normalizeOptionalString(raw.ProjectMemoryMode),
+        ProjectMemoryDir: normalizeOptionalString(raw.ProjectMemoryDir),
+        ProjectMemoryReadFirst: normalizeOptionalStringArray(raw.ProjectMemoryReadFirst, 'ProjectMemoryReadFirst'),
+        ProjectMemorySummaryRule: normalizeOptionalString(raw.ProjectMemorySummaryRule),
+        ProjectMemoryBootstrapReport: normalizeOptionalString(raw.ProjectMemoryBootstrapReport),
+        ProjectMemoryWarnings: normalizeOptionalStringArray(raw.ProjectMemoryWarnings, 'ProjectMemoryWarnings')
     };
 }
 
@@ -142,6 +162,14 @@ export function createAgentInitState(overrides: Partial<AgentInitState> = {}): A
         ManifestValidationPassed: false,
         ActiveAgentFiles: [],
         LastSeededFullSuiteCommand: null,
+        ProjectMemoryInitialized: false,
+        ProjectMemoryValidated: false,
+        ProjectMemoryMode: null,
+        ProjectMemoryDir: null,
+        ProjectMemoryReadFirst: [],
+        ProjectMemorySummaryRule: null,
+        ProjectMemoryBootstrapReport: null,
+        ProjectMemoryWarnings: [],
         ...overrides
     });
 }
@@ -192,7 +220,31 @@ export function buildRefreshAgentInitState(options: BuildRefreshAgentInitStateOp
         ActiveAgentFiles: activeAgentFiles,
         LastSeededFullSuiteCommand: canPreserve
             ? preservedState!.LastSeededFullSuiteCommand
-            : null
+            : null,
+        ProjectMemoryInitialized: canPreserve
+            ? preservedState!.ProjectMemoryInitialized
+            : false,
+        ProjectMemoryValidated: canPreserve
+            ? preservedState!.ProjectMemoryValidated
+            : false,
+        ProjectMemoryMode: canPreserve
+            ? preservedState!.ProjectMemoryMode
+            : null,
+        ProjectMemoryDir: canPreserve
+            ? preservedState!.ProjectMemoryDir
+            : null,
+        ProjectMemoryReadFirst: canPreserve
+            ? preservedState!.ProjectMemoryReadFirst
+            : [],
+        ProjectMemorySummaryRule: canPreserve
+            ? preservedState!.ProjectMemorySummaryRule
+            : null,
+        ProjectMemoryBootstrapReport: canPreserve
+            ? preservedState!.ProjectMemoryBootstrapReport
+            : null,
+        ProjectMemoryWarnings: canPreserve
+            ? preservedState!.ProjectMemoryWarnings
+            : []
     });
 }
 

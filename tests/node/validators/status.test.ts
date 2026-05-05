@@ -113,6 +113,17 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
             OrdinaryDocPathsConfirmed: true,
             OrdinaryDocPaths: ['CHANGELOG.md'],
             LastSeededFullSuiteCommand: null,
+            ProjectMemoryInitialized: true,
+            ProjectMemoryValidated: true,
+            ProjectMemoryMode: 'check',
+            ProjectMemoryDir: 'live/docs/project-memory',
+            ProjectMemoryReadFirst: [
+                'live/docs/project-memory/README.md',
+                'live/docs/project-memory/compact.md'
+            ],
+            ProjectMemorySummaryRule: 'live/docs/agent-rules/15-project-memory.md',
+            ProjectMemoryBootstrapReport: 'runtime/project-memory/bootstrap-report.json',
+            ProjectMemoryWarnings: [],
             ...options.agentInitState
         };
         writeStatusFixtureFile(
@@ -352,6 +363,17 @@ test('buildAgentInitOutput renders compact report labels in English while preser
             ordinaryDocPathsPersisted: true,
             ordinaryDocPathsConfigPath: path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'paths.json'),
             ordinaryDocPathsEditHint: 'Edit garda-agent-orchestrator/live/config/paths.json field ordinary_doc_paths.',
+            projectMemoryInitialized: true,
+            projectMemoryValidated: true,
+            projectMemoryMode: 'check',
+            projectMemoryDir: 'live/docs/project-memory',
+            projectMemoryReadFirst: [
+                'live/docs/project-memory/README.md',
+                'live/docs/project-memory/compact.md'
+            ],
+            projectMemorySummaryRule: 'live/docs/agent-rules/15-project-memory.md',
+            projectMemoryBootstrapReport: 'runtime/project-memory/bootstrap-report.json',
+            projectMemoryWarnings: [],
             verifyResult: { passed: true },
             manifestResult: { passed: true },
             activeAgentFiles: ['AGENTS.md'],
@@ -365,8 +387,21 @@ test('buildAgentInitOutput renders compact report labels in English while preser
                 ActiveAgentFilesConfirmed: true,
                 ProjectRulesUpdated: true,
                 SkillsPromptCompleted: true,
+                OrdinaryDocPathsConfirmed: true,
+                OrdinaryDocPaths: ['CHANGELOG.md', 'docs/plan.md'],
                 VerificationPassed: true,
                 ManifestValidationPassed: true,
+                ProjectMemoryInitialized: true,
+                ProjectMemoryValidated: true,
+                ProjectMemoryMode: 'check',
+                ProjectMemoryDir: 'live/docs/project-memory',
+                ProjectMemoryReadFirst: [
+                    'live/docs/project-memory/README.md',
+                    'live/docs/project-memory/compact.md'
+                ],
+                ProjectMemorySummaryRule: 'live/docs/agent-rules/15-project-memory.md',
+                ProjectMemoryBootstrapReport: 'runtime/project-memory/bootstrap-report.json',
+                ProjectMemoryWarnings: [],
                 ActiveAgentFiles: ['AGENTS.md']
             }
         } as unknown as Parameters<typeof buildAgentInitOutput>[0]);
@@ -471,6 +506,68 @@ test('getStatusSnapshot blocks ready while ordinary document paths are unconfirm
         assert.equal(snapshot.readyForTasks, false);
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('Confirm ordinary document paths'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot blocks ready while project memory is not initialized', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md'],
+                ProjectMemoryInitialized: false,
+                ProjectMemoryValidated: true
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'PROJECT_MEMORY_PENDING');
+        assert.equal(snapshot.agentInitializationComplete, false);
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Bootstrap and validate project memory'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot blocks ready while project memory is not validated', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md'],
+                ProjectMemoryInitialized: true,
+                ProjectMemoryValidated: false
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'PROJECT_MEMORY_PENDING');
+        assert.equal(snapshot.agentInitializationComplete, false);
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('Bootstrap and validate project memory'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -5,9 +5,11 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { getSetupAnswerDefaults } from '../../../src/cli/commands/setup';
+import { buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
 import { runAgentInit } from '../../../src/lifecycle/agent-init';
 import { getStatusSnapshot } from '../../../src/validators/status';
 import { resolveInitAnswersRelativePath } from '../../../src/core/constants';
+import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 
 const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
 
@@ -28,6 +30,31 @@ function readWorkflowConfig(bundleRoot: string): Record<string, unknown> {
     return JSON.parse(
         fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), 'utf8')
     ) as Record<string, unknown>;
+}
+
+function seedProjectMemoryTemplates(bundleRoot: string) {
+    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
+        writeText(
+            path.join(bundleRoot, 'template', 'docs', 'project-memory', fileName),
+            `# ${fileName}\n\n<!-- Fill with real project memory. -->\n`
+        );
+    }
+}
+
+function seedReadyProjectMemory(bundleRoot: string) {
+    seedProjectMemoryTemplates(bundleRoot);
+    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
+        writeText(
+            path.join(bundleRoot, 'live', 'docs', 'project-memory', fileName),
+            [
+                `# ${fileName}`,
+                '',
+                '## Repository Facts',
+                `Repository-specific project memory fixture for ${fileName}.`,
+                'This file is intentionally different from the project-memory template seed.'
+            ].join('\n')
+        );
+    }
 }
 
 function makeCompliantEntrypoint(name: string): string {
@@ -58,6 +85,7 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         });
         fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n', 'utf8');
         fs.writeFileSync(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n', 'utf8');
+        seedReadyProjectMemory(bundleRoot);
 
         const result = runAgentInit({
             targetRoot: workspaceRoot,
@@ -98,6 +126,216 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
     }
 });
 
+test('runAgentInit bootstraps project memory and records validation status', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-pm-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedProjectMemoryTemplates(bundleRoot);
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.projectMemoryInitialized, true);
+        assert.equal(result.projectMemoryValidated, false);
+        assert.equal(result.readyForTasks, false);
+        assert.equal(result.projectMemoryMode, 'strict');
+        assert.deepEqual(result.projectMemoryReadFirst, [
+            'live/docs/project-memory/README.md',
+            'live/docs/project-memory/compact.md'
+        ]);
+        assert.ok(result.projectMemoryWarnings.some((warning) => warning.includes('not project-specific')));
+        assert.ok(fs.existsSync(path.join(bundleRoot, 'live', 'docs', 'project-memory', 'README.md')));
+        assert.ok(fs.existsSync(path.join(bundleRoot, 'live', 'docs', 'project-memory', 'compact.md')));
+        assert.ok(fs.existsSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '15-project-memory.md')));
+        const reportPath = path.join(bundleRoot, 'runtime', 'project-memory', 'bootstrap-report.json');
+        assert.ok(fs.existsSync(reportPath));
+        const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+        assert.equal(report.validation.passed, false);
+        assert.equal(report.validation.mode, 'strict');
+
+        const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+        assert.equal(persistedState.ProjectMemoryInitialized, true);
+        assert.equal(persistedState.ProjectMemoryValidated, false);
+        assert.equal(persistedState.ProjectMemoryMode, 'strict');
+        assert.deepEqual(persistedState.ProjectMemoryReadFirst, result.projectMemoryReadFirst);
+        assert.equal(persistedState.ProjectMemorySummaryRule, 'live/docs/agent-rules/15-project-memory.md');
+        assert.equal(persistedState.ProjectMemoryBootstrapReport, 'runtime/project-memory/bootstrap-report.json');
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit does not declare ready when project memory bootstrap is incomplete', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-pm-missing-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.equal(result.projectMemoryInitialized, false);
+        assert.equal(result.projectMemoryValidated, false);
+        assert.equal(result.readyForTasks, false);
+        const output = buildAgentInitOutput(result);
+        assert.match(output, /ProjectMemoryWarning: Project memory template files are missing/);
+        assert.match(output, /project memory bootstrap is incomplete/);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit preserves existing project memory and recreates missing compact summary', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-pm-preserve-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+    const projectMemoryDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
+        writeText(path.join(projectMemoryDir, 'context.md'), '# Context\n\n## Domain\n\nPreserve this project fact.\n');
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        assert.ok(result.projectMemoryInitialized);
+        assert.equal(
+            fs.readFileSync(path.join(projectMemoryDir, 'context.md'), 'utf8'),
+            '# Context\n\n## Domain\n\nPreserve this project fact.\n'
+        );
+        assert.ok(fs.existsSync(path.join(projectMemoryDir, 'compact.md')));
+        const summary = fs.readFileSync(
+            path.join(bundleRoot, 'live', 'docs', 'agent-rules', '15-project-memory.md'),
+            'utf8'
+        );
+        assert.ok(summary.includes('Preserve this project fact.'));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildAgentInitOutput includes project memory paths and actionable warnings', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-pm-output-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedProjectMemoryTemplates(bundleRoot);
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+        const output = buildAgentInitOutput(result);
+
+        assert.match(output, /ProjectMemory: initialized=true; validated=false; mode=strict/);
+        assert.match(output, /ProjectMemoryReadFirst:/);
+        assert.match(output, /live\/docs\/project-memory\/README\.md/);
+        assert.match(output, /ProjectMemorySummary: live\/docs\/agent-rules\/15-project-memory\.md/);
+        assert.match(output, /ProjectMemoryBootstrapReport: runtime\/project-memory\/bootstrap-report\.json/);
+        assert.match(output, /ProjectMemoryWarning: .*not project-specific/);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('runAgentInit persists confirmed ordinary doc paths and reports edit guidance', () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-ordinary-docs-'));
     const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
@@ -116,6 +354,7 @@ test('runAgentInit persists confirmed ordinary doc paths and reports edit guidan
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeText(path.join(workspaceRoot, 'docs', 'plan.md'), '# Plan\n');
 
         const result = runAgentInit({
@@ -168,6 +407,7 @@ test('runAgentInit requires ordinary doc path confirmation before seeding a miss
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeJson(pathsConfigPath, {
             metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
             runtime_roots: ['src/'],
@@ -222,6 +462,7 @@ test('runAgentInit requires ordinary doc path confirmation even when config key 
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeJson(pathsConfigPath, {
             metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
             ordinary_doc_paths: ['CHANGELOG.md'],
@@ -278,6 +519,7 @@ test('runAgentInit preserves an explicit empty ordinary doc path list', () => {
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeJson(pathsConfigPath, {
             ordinary_doc_paths: [],
             metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
@@ -342,6 +584,7 @@ test('runAgentInit rejects invalid confirmed ordinary doc paths before persisten
             });
             writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
             writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+            seedReadyProjectMemory(bundleRoot);
             writeJson(pathsConfigPath, {
                 ordinary_doc_paths: ['CHANGELOG.md'],
                 metrics_path: 'garda-agent-orchestrator/runtime/metrics.jsonl',
@@ -412,6 +655,7 @@ test('setup/status/agent-init handoff keeps ActiveAgentFiles as a single pending
 
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeText(path.join(bundleRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2));
         writeText(path.join(bundleRoot, 'live', 'USAGE.md'), '# Usage\n');
         writeText(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
@@ -467,6 +711,7 @@ test('runAgentInit keeps workspace not-ready when required checkpoints are marke
             ActiveAgentFiles: 'AGENTS.md'
         });
         fs.writeFileSync(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n', 'utf8');
+        seedReadyProjectMemory(bundleRoot);
 
         const result = runAgentInit({
             targetRoot: workspaceRoot,
@@ -508,6 +753,7 @@ test('runAgentInit seeds workflow-config full-suite command from project stack w
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: false,
@@ -567,6 +813,7 @@ test('runAgentInit preserves legacy-compatible workflow-config omission when the
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
 
         runAgentInit({
@@ -612,6 +859,7 @@ test('runAgentInit preserves manual full-suite command overrides when they diffe
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: false,
@@ -684,6 +932,7 @@ test('runAgentInit preserves manual full-suite command overrides across later de
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: false,
@@ -762,6 +1011,7 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
         });
         writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
         writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,

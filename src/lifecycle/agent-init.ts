@@ -4,7 +4,7 @@ import {
     UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
     resolveBundleName
 } from '../core/constants';
-import { pathExists, readTextFile } from '../core/filesystem';
+import { pathExists, readTextFile, writeTextFile } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { isPlainObject } from '../core/config-merge';
 import { getWorkflowConfigPath, syncWorkflowConfigWithTemplate } from '../core/workflow-config';
@@ -12,9 +12,22 @@ import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answe
 import { convertActiveAgentEntrypointFilesToString, getActiveAgentEntrypointFiles } from '../materialization/common';
 import { resolveSuggestedFullSuiteValidationCommand } from '../materialization/project-discovery';
 import { runInstall } from '../materialization/install';
+import {
+    seedProjectMemoryFromTemplate,
+    validateSeededProjectMemory,
+    writeProjectMemoryBootstrapReport
+} from '../materialization/project-memory-builder';
+import { generateProjectMemorySummary } from '../materialization/rule-materialization';
 import { runVerify } from '../validators/verify';
 import { validateManifest } from '../validators/validate-manifest';
 import { createAgentInitState, readAgentInitStateSafe, writeAgentInitState } from '../runtime/agent-init-state';
+import { writeProtectedControlPlaneManifest } from '../gates/helpers';
+import {
+    PROJECT_MEMORY_READ_FIRST_FILE_NAMES,
+    PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,
+    buildProjectMemoryLiveRelativePath,
+    resolveProjectMemoryBootstrapReportPath
+} from '../core/project-memory';
 import {
     DEFAULT_ORDINARY_DOC_PATHS,
     ORDINARY_DOC_PATHS_CONFIG_KEY,
@@ -36,6 +49,14 @@ interface AgentInitState {
     ManifestValidationPassed: boolean;
     ActiveAgentFiles: string[];
     LastSeededFullSuiteCommand: string | null;
+    ProjectMemoryInitialized: boolean;
+    ProjectMemoryValidated: boolean;
+    ProjectMemoryMode: string | null;
+    ProjectMemoryDir: string | null;
+    ProjectMemoryReadFirst: string[];
+    ProjectMemorySummaryRule: string | null;
+    ProjectMemoryBootstrapReport: string | null;
+    ProjectMemoryWarnings: string[];
 }
 
 interface AgentInitInstallOptions {
@@ -89,6 +110,14 @@ export interface AgentInitResult {
     ordinaryDocPathsPersisted: boolean;
     ordinaryDocPathsConfigPath: string;
     ordinaryDocPathsEditHint: string;
+    projectMemoryInitialized: boolean;
+    projectMemoryValidated: boolean;
+    projectMemoryMode: string;
+    projectMemoryDir: string;
+    projectMemoryReadFirst: string[];
+    projectMemorySummaryRule: string;
+    projectMemoryBootstrapReport: string;
+    projectMemoryWarnings: string[];
     verifyResult: { passed: boolean };
     manifestResult: { passed: boolean };
     state: AgentInitState;
@@ -251,6 +280,67 @@ function parseBooleanYesNo(value: unknown, fieldName: string): boolean {
     throw new Error(`${fieldName} must be yes or no.`);
 }
 
+function toBundleRelativePath(bundleRoot: string, filePath: string): string {
+    return path.relative(bundleRoot, filePath).replace(/\\/g, '/');
+}
+
+function buildProjectMemoryWarnings(seedResult: ReturnType<typeof seedProjectMemoryFromTemplate>, validation: ReturnType<typeof validateSeededProjectMemory>): string[] {
+    const warnings: string[] = [];
+    const addWarning = (warning: string): void => {
+        if (!warnings.includes(warning)) {
+            warnings.push(warning);
+        }
+    };
+
+    if (seedResult.missingTemplateFiles.length > 0) {
+        addWarning(`Project memory template files are missing: ${seedResult.missingTemplateFiles.join(', ')}. Restore template/docs/project-memory and rerun agent-init.`);
+    }
+    for (const issue of validation.issues) {
+        if (issue.code === 'project_memory_placeholder_heavy') {
+            addWarning('Project memory is seeded but not project-specific. Finish AGENT_INIT_PROMPT memory enrichment before declaring the workspace ready.');
+            continue;
+        }
+        const fileSuffix = issue.file ? ` ${issue.file}` : '';
+        addWarning(`${issue.code}${fileSuffix}: ${issue.message}`);
+    }
+
+    return warnings;
+}
+
+function bootstrapProjectMemory(bundleRoot: string, timestampIso: string) {
+    const templateRoot = path.join(bundleRoot, 'template');
+    const liveRoot = path.join(bundleRoot, 'live');
+    const seedResult = seedProjectMemoryFromTemplate({ templateRoot, liveRoot });
+    const summaryPath = path.join(bundleRoot, PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH);
+    const summary = generateProjectMemorySummary(seedResult.projectMemoryDir, timestampIso);
+    writeTextFile(summaryPath, summary);
+    const validation = validateSeededProjectMemory(seedResult, { mode: 'strict' });
+    const reportResult = writeProjectMemoryBootstrapReport({
+        bundleRoot,
+        timestampIso,
+        seedResult,
+        validation,
+        summaryPath
+    });
+    const missingOrUnseededFiles = new Set([
+        ...seedResult.missingTemplateFiles,
+        ...validation.missingFiles
+    ]);
+
+    return {
+        initialized: missingOrUnseededFiles.size === 0,
+        validated: validation.passed && validation.issues.length === 0,
+        mode: validation.mode,
+        dir: buildProjectMemoryLiveRelativePath(),
+        readFirst: PROJECT_MEMORY_READ_FIRST_FILE_NAMES.map((fileName) => buildProjectMemoryLiveRelativePath(fileName)),
+        summaryRule: PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,
+        bootstrapReport: toBundleRelativePath(bundleRoot, reportResult.path || resolveProjectMemoryBootstrapReportPath(bundleRoot)),
+        warnings: buildProjectMemoryWarnings(seedResult, validation),
+        seedResult,
+        validation
+    };
+}
+
 export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
     const {
         targetRoot,
@@ -319,6 +409,7 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         ordinaryDocPaths,
         previousState
     );
+    const projectMemoryResult = bootstrapProjectMemory(normalizedBundleRoot, new Date().toISOString());
 
     const verifyResult = verifyRunner({
         targetRoot: normalizedTargetRoot,
@@ -340,9 +431,18 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         VerificationPassed: verifyResult.passed,
         ManifestValidationPassed: manifestResult.passed,
         ActiveAgentFiles: normalizedActiveFiles,
-        LastSeededFullSuiteCommand: seededFullSuiteCommand
+        LastSeededFullSuiteCommand: seededFullSuiteCommand,
+        ProjectMemoryInitialized: projectMemoryResult.initialized,
+        ProjectMemoryValidated: projectMemoryResult.validated,
+        ProjectMemoryMode: projectMemoryResult.mode,
+        ProjectMemoryDir: projectMemoryResult.dir,
+        ProjectMemoryReadFirst: projectMemoryResult.readFirst,
+        ProjectMemorySummaryRule: projectMemoryResult.summaryRule,
+        ProjectMemoryBootstrapReport: projectMemoryResult.bootstrapReport,
+        ProjectMemoryWarnings: projectMemoryResult.warnings
     }) as AgentInitState;
     const statePath = writeAgentInitState(normalizedTargetRoot, state);
+    writeProtectedControlPlaneManifest(normalizedTargetRoot);
 
     return {
         targetRoot: normalizedTargetRoot,
@@ -361,6 +461,14 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         ordinaryDocPathsPersisted: ordinaryDocPathsResult.persisted,
         ordinaryDocPathsConfigPath: ordinaryDocPathsResult.configPath,
         ordinaryDocPathsEditHint: ordinaryDocPathsResult.editHint,
+        projectMemoryInitialized: state.ProjectMemoryInitialized,
+        projectMemoryValidated: state.ProjectMemoryValidated,
+        projectMemoryMode: state.ProjectMemoryMode || projectMemoryResult.mode,
+        projectMemoryDir: state.ProjectMemoryDir || projectMemoryResult.dir,
+        projectMemoryReadFirst: state.ProjectMemoryReadFirst,
+        projectMemorySummaryRule: state.ProjectMemorySummaryRule || projectMemoryResult.summaryRule,
+        projectMemoryBootstrapReport: state.ProjectMemoryBootstrapReport || projectMemoryResult.bootstrapReport,
+        projectMemoryWarnings: state.ProjectMemoryWarnings,
         readyForTasks: (
             state.AssistantLanguageConfirmed
             && state.ActiveAgentFilesConfirmed
@@ -369,6 +477,8 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
             && state.OrdinaryDocPathsConfirmed
             && state.VerificationPassed
             && state.ManifestValidationPassed
+            && state.ProjectMemoryInitialized
+            && state.ProjectMemoryValidated
         ),
         verifyResult,
         manifestResult,

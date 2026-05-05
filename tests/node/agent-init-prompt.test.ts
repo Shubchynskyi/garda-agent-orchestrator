@@ -43,6 +43,17 @@ test('AGENT_INIT_PROMPT requires the hard agent-init command before declaring re
     assert.match(content, /Never declare the workspace ready until `node garda-agent-orchestrator\/bin\/garda\.js agent-init/i);
 });
 
+test('AGENT_INIT_PROMPT routes project-memory enrichment to source files', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
+    assert.match(content, /Enrich project memory from real repository evidence/i);
+    assert.match(content, /garda-agent-orchestrator\/live\/docs\/project-memory\/README\.md/);
+    assert.match(content, /garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md/);
+    assert.match(content, /do not edit `garda-agent-orchestrator\/live\/docs\/agent-rules\/15-project-memory\.md` directly/i);
+    assert.match(content, /do not invent domain architecture, stack details, commands, or ownership boundaries/i);
+    assert.match(content, /unknown or custom/i);
+    assert.match(content, /placeholder-heavy memory requires explicit, actionable warning/i);
+});
+
 test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositories', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
     assert.match(content, /ask the user a mandatory code-style policy question/i);

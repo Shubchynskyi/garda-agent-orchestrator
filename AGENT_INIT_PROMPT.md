@@ -85,6 +85,12 @@ node garda-agent-orchestrator/bin/garda.js install --target-root "." --init-answ
 7. Read discovery artifact and update project-context rules for this real project:
     - `garda-agent-orchestrator/live/project-discovery.md`
     - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
+    - Enrich project memory from real repository evidence after the deterministic templates exist:
+      - read `garda-agent-orchestrator/live/docs/project-memory/README.md`, then `garda-agent-orchestrator/live/docs/project-memory/compact.md`;
+      - update only `garda-agent-orchestrator/live/docs/project-memory/*.md` source files with facts found in source code, configs, tests, and durable docs;
+      - do not edit `garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md` directly; it is generated from project-memory sources by init, reinit, update, and agent-init;
+      - do not invent domain architecture, stack details, commands, or ownership boundaries that cannot be traced to repository evidence or explicit user answers;
+      - if the stack is unknown or custom, record the unknown/custom fallback in `stack.md`, `commands.md`, and `module-map.md` instead of forcing the project into a known framework template.
     - Ask the user a mandatory code-style policy question in `<assistant-language>` before finalizing `30-code-style.md`:
     - Ask this mandatory question in a deterministic format:
       - In `<assistant-language>`, ask a localized equivalent of `StylePolicy (answer must be exactly one token: default or custom):`
@@ -161,6 +167,9 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - `garda-agent-orchestrator/live/init-report.md` exists.
 - `garda-agent-orchestrator/live/project-discovery.md` exists.
 - `garda-agent-orchestrator/live/source-inventory.md` exists.
+- `garda-agent-orchestrator/live/docs/project-memory/README.md` and `garda-agent-orchestrator/live/docs/project-memory/compact.md` exist and were checked before readiness.
+- `garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md` exists as a generated read-only summary of project-memory sources.
+- `garda-agent-orchestrator/runtime/project-memory/bootstrap-report.json` exists and records project-memory bootstrap/validation status.
 - `garda-agent-orchestrator/live/version.json` exists and matches `garda-agent-orchestrator/VERSION`.
 - `garda-agent-orchestrator/live/config/token-economy.json` exists and its `enabled` flag matches `<token-economy-enabled>`.
 - if `<enforce-no-auto-commit>` is true: `.git/hooks/pre-commit` contains Garda managed commit guard block.
@@ -191,6 +200,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - Never run install before writing `garda-agent-orchestrator/runtime/init-answers.json` with all 6 required answers.
 - Do not overwrite `CollectedVia=CLI_INTERACTIVE` or `CLI_NONINTERACTIVE` when you are only reusing CLI-collected answers and normalizing the language field.
 - Never declare the workspace ready until `node garda-agent-orchestrator/bin/garda.js agent-init ...` exits PASS.
+- Never declare project-memory complete only because templates were seeded; placeholder-heavy memory requires explicit, actionable warning and project-specific enrichment from real source/docs.
 - Do not modify `garda-agent-orchestrator/AGENT_INIT_PROMPT.md` during project onboarding.
 - Update `garda-agent-orchestrator/live/USAGE.md` as part of successful onboarding; that file is expected to become project-specific.
 - Never bypass the Node CLI install flow outside this prompt.

@@ -105,8 +105,37 @@ describe('validateProjectMemoryBootstrap', () => {
             assert.equal(result.passed, true);
             assert.equal(result.templateSeedFiles.length, PROJECT_MEMORY_REQUIRED_FILE_NAMES.length);
             assert.ok(result.issues.some((issue) =>
+                issue.code === 'required_file_template_seed'
+                && issue.severity === 'warning'
+                && issue.message.includes('still matches the template seed')
+            ));
+            assert.ok(result.issues.some((issue) =>
                 issue.code === 'project_memory_placeholder_heavy'
                 && issue.severity === 'warning'
+            ));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks template-seed project memory in strict mode', () => {
+        const repoRoot = findRepoRoot();
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-pm-validator-strict-seed-'));
+        try {
+            const templateDir = path.join(repoRoot, 'template', 'docs', 'project-memory');
+            const pmDir = path.join(tmpDir, 'project-memory');
+            copyDirRecursive(templateDir, pmDir);
+
+            const result = validateProjectMemoryBootstrap(pmDir, {
+                mode: 'strict',
+                templateProjectMemoryDir: templateDir
+            });
+
+            assert.equal(result.passed, false);
+            assert.equal(result.templateSeedFiles.length, PROJECT_MEMORY_REQUIRED_FILE_NAMES.length);
+            assert.ok(result.issues.some((issue) =>
+                issue.code === 'required_file_template_seed'
+                && issue.severity === 'error'
             ));
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });

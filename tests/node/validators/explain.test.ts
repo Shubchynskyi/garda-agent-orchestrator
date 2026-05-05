@@ -78,6 +78,19 @@ test('explainFailure renders ordinary doc paths pending remediation', () => {
     assert.ok(output.includes('ordinary document paths'));
 });
 
+test('explainFailure renders executable project memory remediation command shape', () => {
+    const result = explainFailure('PROJECT_MEMORY_PENDING');
+    const output = formatExplainResult(result);
+
+    assert.equal(result.found, true);
+    assert.equal(result.failureId, 'PROJECT_MEMORY_PENDING');
+    assert.ok(output.includes('--active-agent-files'));
+    assert.ok(output.includes('--project-rules-updated'));
+    assert.ok(output.includes('--skills-prompted'));
+    assert.ok(output.includes('--ordinary-doc-paths'));
+    assert.ok(!output.includes("'garda agent-init' to seed"));
+});
+
 // ── listExplainIds ────────────────────────────────────────────────────────────
 
 test('listExplainIds returns non-empty array of strings', () => {

@@ -346,6 +346,12 @@ function resolveAgentInitializationPendingReason(
     if (!agentInitStateResult.state.OrdinaryDocPathsConfirmed) {
         return 'ORDINARY_DOC_PATHS_PENDING';
     }
+    if (
+        !agentInitStateResult.state.ProjectMemoryInitialized
+        || !agentInitStateResult.state.ProjectMemoryValidated
+    ) {
+        return 'PROJECT_MEMORY_PENDING';
+    }
     if (missingProjectCommands.length > 0) {
         return 'PROJECT_COMMANDS_PENDING';
     }
@@ -608,6 +614,8 @@ function buildPendingCheckpointLine(snapshot: StatusSnapshot): string | null {
             return '  Pending checkpoint: Ask the built-in specialist skills question before finalizing agent init';
         case 'ORDINARY_DOC_PATHS_PENDING':
             return '  Pending checkpoint: Confirm ordinary document paths during AGENT_INIT_PROMPT flow';
+        case 'PROJECT_MEMORY_PENDING':
+            return '  Pending checkpoint: Bootstrap and validate project memory during AGENT_INIT_PROMPT flow';
         case 'PROJECT_COMMANDS_PENDING':
             return `  Missing project commands: ${snapshot.missingProjectCommands.length}`;
         case 'VALIDATION_PENDING':

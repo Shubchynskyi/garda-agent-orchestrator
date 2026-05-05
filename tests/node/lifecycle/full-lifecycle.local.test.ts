@@ -16,6 +16,7 @@ import { runUninstall } from '../../../src/lifecycle/uninstall';
 import { getStatusSnapshot } from '../../../src/validators/status';
 import { runVerify } from '../../../src/validators/verify';
 import { validateManifest } from '../../../src/validators/validate-manifest';
+import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 
 function findRepoRoot(): string {
     let dir = __dirname;
@@ -69,6 +70,20 @@ function materializeProjectCommands(bundleRoot: string) {
     }
 
     fs.writeFileSync(commandsPath, content, 'utf8');
+}
+
+function materializeProjectMemory(bundleRoot: string) {
+    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
+        writeTextFile(
+            path.join(bundleRoot, 'live', 'docs', 'project-memory', fileName),
+            [
+                `# ${fileName}`,
+                '',
+                `Full lifecycle fixture memory for ${fileName}.`,
+                'This content represents agent-confirmed project facts for readiness validation.'
+            ].join('\n')
+        );
+    }
 }
 
 function listChildDirectories(parentDir: string) {
@@ -225,6 +240,7 @@ describe('full local lifecycle', () => {
             assert.ok(!setupOutput.includes('Workspace is ready.'));
 
             materializeProjectCommands(bundleRoot);
+            materializeProjectMemory(bundleRoot);
             const agentInitResult = runAgentInit({
                 targetRoot: workspaceRoot,
                 bundleRoot,
@@ -238,7 +254,13 @@ describe('full local lifecycle', () => {
             assert.equal(agentInitResult.readyForTasks, true);
             assert.ok(fs.existsSync(path.join(workspaceRoot, 'CLAUDE.md')));
             const readySnapshot = getStatusSnapshot(workspaceRoot, 'garda-agent-orchestrator/runtime/init-answers.json');
-            assert.equal(readySnapshot.readyForTasks, true);
+            assert.equal(readySnapshot.readyForTasks, true,
+                [
+                    `pending=${readySnapshot.agentInitializationPendingReason || 'none'}`,
+                    `parityStale=${readySnapshot.parityResult.isStale}`,
+                    `providerCompliance=${readySnapshot.providerComplianceResult?.passed ?? 'n/a'}`,
+                    `protectedBlocks=${readySnapshot.protectedManifestAssessment?.blocks ?? 'n/a'}`
+                ].join('; '));
 
             // Verify workspace integrity after full setup + agent-init
             const verifyResult = runVerify({

@@ -151,6 +151,12 @@ export function validateProjectMemoryBootstrap(
 
         if (isTemplateSeedFile(options.templateProjectMemoryDir, fileName, content)) {
             templateSeedFiles.push(fileName);
+            issues.push(makeIssue(
+                'required_file_template_seed',
+                issueSeverityForMode(mode),
+                `Required project-memory file still matches the template seed: ${sourceRelativePath}.`,
+                sourceRelativePath
+            ));
             continue;
         }
 

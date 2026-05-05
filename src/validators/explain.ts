@@ -133,6 +133,16 @@ function getExplainDatabase(): readonly ExplainEntry[] {
         ]
     },
     {
+        id: 'PROJECT_MEMORY_PENDING',
+        title: 'Project memory bootstrap or validation is incomplete',
+        description: 'The agent-init state does not show project memory as initialized and validated.',
+        remediation: [
+            "Re-open AGENT_INIT_PROMPT.md with your agent and enrich project-memory source files from real repository evidence.",
+            `Then run '${PRIMARY_CLI_NAME} agent-init --active-agent-files "<active agent files>" --project-rules-updated yes --skills-prompted yes --ordinary-doc-paths "<confirmed ordinary doc paths>"' to seed missing memory files, regenerate 15-project-memory.md, and record bootstrap status.`,
+            `Inspect ${bn}/runtime/project-memory/bootstrap-report.json for missing files or validation warnings.`
+        ]
+    },
+    {
         id: 'PROJECT_COMMANDS_PENDING',
         title: 'Project commands section is incomplete',
         description: 'The 40-commands.md file still contains placeholder project commands that need to be filled in.',
