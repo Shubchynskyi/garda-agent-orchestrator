@@ -1,5 +1,5 @@
 # CI pipeline for Garda Agent Orchestrator.
-# Runs: typecheck → unit tests → release validation → cross-platform lifecycle smoke matrix.
+# Runs: typecheck/lint → unit tests → release quality validation matrix → cross-platform lifecycle smoke matrix.
 name: CI
 
 on:
@@ -30,7 +30,7 @@ env:
 
 jobs:
   typecheck:
-    name: Typecheck
+    name: Static Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -45,6 +45,9 @@ jobs:
 
       - name: Run typecheck
         run: npm run typecheck
+
+      - name: Run lint
+        run: npm run lint
 
   # ── 2. Unit test suite ───────────────────────────────────────────────────────
   test:
@@ -69,11 +72,17 @@ jobs:
       - name: Run tests
         run: npm test
 
-  # ── 3. Release validation (typecheck + build + test + pack smoke) ─────────────
+  # ── 3. Release validation matrix (version parity + build + quality + pack smoke)
   validate-release:
-    name: Release Validation
-    runs-on: ubuntu-latest
+    name: Release Validation / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
     steps:
       - uses: actions/checkout@v6
 

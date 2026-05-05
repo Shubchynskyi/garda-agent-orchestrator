@@ -120,12 +120,16 @@ node .\bin\garda.js gate validate-manifest --manifest-path MANIFEST.md
 `npm run validate:release` is the explicit release contract:
 
 ```text
+npm run validate:version-parity
 npm run build
-npm test
+npm run typecheck
+npm run lint
+npm run coverage
+npm run audit:prod
 npm pack -> npm install <tarball> -> invoke the packaged CLI
 ```
 
-The final `pack -> install -> invoke` proof is executed by `tests/node/packaging/pack-smoke.test.ts` after the strict TypeScript runtime, test suite, and supporting build scripts have already compiled and passed.
+`npm run coverage` wraps the existing full `npm test` path with `c8` reporting. Initial coverage is report-only; thresholds should be added only after an explicit baseline decision. The final `pack -> install -> invoke` proof is executed by `tests/node/packaging/pack-smoke.test.ts` after the strict TypeScript runtime, lint, coverage, production audit, and supporting build scripts have already passed.
 
 ## 9. Update And Rollback In A Deployed Workspace
 

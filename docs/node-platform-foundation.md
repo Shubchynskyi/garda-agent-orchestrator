@@ -62,20 +62,22 @@ When an operator needs to run direct compiled tests from `.node-build/`, the pro
 
 Runs the explicit release proof path:
 
-1. `npm run build`
-2. `npm test`
-3. compiled `tests/node/packaging/pack-smoke.test.js`, which performs `npm pack -> npm install <tarball> -> CLI invoke`
+1. `npm run validate:version-parity`
+2. `npm run build`
+3. `npm run quality`
+4. compiled `tests/node/packaging/pack-smoke.test.js`, which performs `npm pack -> npm install <tarball> -> CLI invoke`
 
-This keeps the release contract explicit: the shipped package must build, pass the full test suite, pack cleanly, install, and execute from the packaged runtime.
+`npm run quality` composes `typecheck`, `lint`, report-only `coverage`, and `audit:prod`. This keeps the release contract explicit: the shipped package must build, typecheck, lint, pass the full test suite under coverage collection, pass production dependency audit, pack cleanly, install, and execute from the packaged runtime.
 
 ### GitHub Actions CI
 
 Repository CI mirrors the same contract in `.github/workflows/ci.yml`:
 
 1. `npm run typecheck`
-2. `npm test` (runs on Node 24)
-3. `npm run validate:release`
-4. cross-platform lifecycle smoke on Linux, macOS, and Windows (Node 24)
+2. `npm run lint`
+3. `npm test` (runs on Node 24)
+4. `npm run validate:release`
+5. cross-platform lifecycle smoke on Linux, macOS, and Windows (Node 24)
 
 The lifecycle smoke installs from a `file://` clone of the current workflow branch, not implicitly from the repository default branch. That keeps pull-request and branch runs aligned with the code under test.
 
