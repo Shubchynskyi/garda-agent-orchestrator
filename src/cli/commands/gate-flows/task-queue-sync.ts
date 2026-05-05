@@ -13,7 +13,7 @@ export function readTaskQueueStatus(repoRoot: string, taskId: string): string | 
         return null;
     }
 
-    const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i;
+    const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED|DECOMPOSED)\b/i;
     const lines = fs.readFileSync(taskPath, 'utf8').split('\n');
     for (const rawLine of lines) {
         const trimmed = rawLine.trim();
@@ -36,7 +36,8 @@ const TASK_QUEUE_STATUS_MARKERS: Record<string, string> = Object.freeze({
     IN_PROGRESS: '🟨',
     IN_REVIEW: '🟧',
     DONE: '🟩',
-    BLOCKED: '🟥'
+    BLOCKED: '🟥',
+    DECOMPOSED: '🟪'
 });
 
 function formatTaskQueueStatusCell(existingCell: string, nextStatus: string): string {
@@ -97,7 +98,7 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
         }
 
         taskFound = true;
-        const statusMatch = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i.exec(cells[1].trimmed);
+        const statusMatch = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED|DECOMPOSED)\b/i.exec(cells[1].trimmed);
         previousStatus = statusMatch ? statusMatch[1].toUpperCase() : null;
         const updatedStatusCell = formatTaskQueueStatusCell(cells[1].raw, normalizedNextStatus);
         if (updatedStatusCell !== cells[1].raw) {

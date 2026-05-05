@@ -1122,6 +1122,82 @@ describe('gates/next-step', () => {
         assert.equal(preflightPath.endsWith(`${TASK_ID}-preflight.json`), true);
     });
 
+    it('routes explicit decomposed parent tasks to the next unfinished child', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-500 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-501` through `T-503`; do not continue the monolithic implementation. |',
+            '| T-501 | 🟩 DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-502 | 🟦 TODO | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            '| T-503 | 🟦 TODO | P1 | workflow | Child three | gpt-5.4 | 2026-05-05 | strict | Later. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-500', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-502"'));
+        assert.ok(result.reason.includes('T-500 -> T-502'));
+        assert.ok(text.includes('Status: DECOMPOSED'));
+        assert.ok(text.includes('NextGate: child-task'));
+    });
+
+    it('routes legacy BLOCKED split umbrella tasks through nested decomposed children', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-265 | 🟥 BLOCKED | P1 | review | Parent | gpt-5.4 | 2026-05-02 | strict | Paused for split. Split into strict child tasks `T-359` through `T-363`; do not continue the monolithic implementation unless reopened. |',
+            '| T-359 | 🟩 DONE | P1 | review | Child | gpt-5.4 | 2026-05-02 | strict | Complete. |',
+            '| T-360 | 🟩 DONE | P1 | review | Child | gpt-5.4 | 2026-05-02 | strict | Complete. |',
+            '| T-361 | 🟩 DONE | P1 | review | Child | gpt-5.4 | 2026-05-02 | strict | Complete. |',
+            '| T-362 | 🟥 BLOCKED | P1 | review | Nested parent | gpt-5.4 | 2026-05-02 | strict | Paused for split. Continue via child tasks `T-368` through `T-370`; do not continue the monolithic implementation. |',
+            '| T-363 | 🟩 DONE | P1 | review | Child | gpt-5.4 | 2026-05-02 | strict | Complete. |',
+            '| T-368 | 🟩 DONE | P1 | workflow | Child | gpt-5.4 | 2026-05-02 | strict | Complete. |',
+            '| T-369 | 🟩 DONE | P1 | workflow | Child | gpt-5.4 | 2026-05-02 | strict | Complete. |',
+            '| T-370 | 🟦 TODO | P1 | testing | Leaf | gpt-5.4 | 2026-05-02 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-265', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-370"'));
+        assert.ok(result.reason.includes('T-265 -> T-362 -> T-370'));
+        assert.ok(result.reason.includes('legacy BLOCKED split umbrella'));
+    });
+
+    it('does not run parent gates when a decomposed parent has no unfinished child', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-600 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-601` through `T-602`. |',
+            '| T-601 | 🟩 DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-602 | 🟩 DONE | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-600', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('No unfinished child task'));
+    });
+
     it('blocks next-step when non-test review attempts exceed review cycle guard total limit', () => {
         const repoRoot = makeTempRepo();
         writeJson(
@@ -1248,6 +1324,7 @@ describe('gates/next-step', () => {
         assert.ok(promptText.includes(`# Review Cycle Auto-Split Prompt for ${TASK_ID}`));
         assert.ok(promptText.includes('GuardReason: "Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(promptText.includes('summary="second code failure"'));
+        assert.ok(promptText.includes('DECOMPOSED'));
         assert.ok(text.includes('NextGate: review-cycle-auto-split'));
         assert.ok(text.includes('OperatorDecisionRequired: false'));
         assert.ok(text.includes('AutoSplitPromptArtifact: path='));

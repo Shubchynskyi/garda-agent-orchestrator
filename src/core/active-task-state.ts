@@ -17,8 +17,10 @@ function isTerminalTaskStatus(statusCell: string): boolean {
     const normalized = String(statusCell || '').trim().toUpperCase();
     return normalized.includes('DONE')
         || normalized.includes('BLOCKED')
+        || normalized.includes('DECOMPOSED')
         || String(statusCell || '').includes('🟩')
-        || String(statusCell || '').includes('🟥');
+        || String(statusCell || '').includes('🟥')
+        || String(statusCell || '').includes('🟪');
 }
 
 export interface RuntimeTaskState {

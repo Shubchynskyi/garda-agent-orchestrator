@@ -115,6 +115,9 @@ import {
     resolveDefaultReviewScratchPath,
     resolveReviewScratchRoot
 } from './review-scratch-paths';
+import {
+    parseTaskMdTableRow
+} from '../core/task-md-table';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -135,7 +138,7 @@ const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(Object.
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
 
-export type NextStepStatus = 'BLOCKED' | 'READY' | 'DONE';
+export type NextStepStatus = 'BLOCKED' | 'READY' | 'DONE' | 'DECOMPOSED';
 
 export interface NextStepCommand {
     label: string;
@@ -249,8 +252,120 @@ export interface NextStepResult {
 
 interface TaskQueueEntry {
     taskId: string;
+    status: string | null;
     title: string | null;
     profile: string | null;
+    notes: string | null;
+}
+
+interface DecomposedChildRoute {
+    taskId: string;
+    status: string | null;
+    chain: string[];
+}
+
+const TASK_QUEUE_DONE_STATUS_PATTERN = /\bDONE\b/i;
+const TASK_QUEUE_DECOMPOSED_STATUS_PATTERN = /\bDECOMPOSED\b/i;
+const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks|umbrella\s+finding|do\s+not\s+continue\s+the\s+monolithic)\b/i;
+
+function normalizeTaskQueueStatusCell(statusCell: string | null): string {
+    return String(statusCell || '').trim().toUpperCase();
+}
+
+function isTaskQueueDoneStatus(statusCell: string | null): boolean {
+    return TASK_QUEUE_DONE_STATUS_PATTERN.test(normalizeTaskQueueStatusCell(statusCell))
+        || String(statusCell || '').includes('🟩');
+}
+
+function isTaskQueueDecomposedStatus(statusCell: string | null): boolean {
+    return TASK_QUEUE_DECOMPOSED_STATUS_PATTERN.test(normalizeTaskQueueStatusCell(statusCell))
+        || String(statusCell || '').includes('🟪');
+}
+
+function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
+    if (!entry) {
+        return false;
+    }
+    const status = normalizeTaskQueueStatusCell(entry.status);
+    if (!status.includes('BLOCKED') && !String(entry.status || '').includes('🟥')) {
+        return false;
+    }
+    return TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN.test(String(entry.notes || ''));
+}
+
+function isDecomposedParentTask(entry: TaskQueueEntry | null): boolean {
+    return Boolean(entry && (isTaskQueueDecomposedStatus(entry.status) || isLegacySplitParentTask(entry)));
+}
+
+function appendTaskIdIfMissing(taskIds: string[], taskId: string): void {
+    if (!taskIds.includes(taskId)) {
+        taskIds.push(taskId);
+    }
+}
+
+function extractChildTaskIds(notes: string | null): string[] {
+    const text = String(notes || '');
+    const taskIds: string[] = [];
+    const rangePattern = /\bT-(\d+)\s*(?:through|to|-|–|—)\s*T-(\d+)\b/giu;
+    let rangeMatch: RegExpExecArray | null;
+    while ((rangeMatch = rangePattern.exec(text)) !== null) {
+        const start = Number(rangeMatch[1]);
+        const end = Number(rangeMatch[2]);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || Math.abs(end - start) > 100) {
+            continue;
+        }
+        const step = start <= end ? 1 : -1;
+        for (let value = start; step > 0 ? value <= end : value >= end; value += step) {
+            appendTaskIdIfMissing(taskIds, `T-${value}`);
+        }
+    }
+
+    const taskIdPattern = /\bT-\d+\b/giu;
+    let taskIdMatch: RegExpExecArray | null;
+    while ((taskIdMatch = taskIdPattern.exec(text)) !== null) {
+        appendTaskIdIfMissing(taskIds, taskIdMatch[0].toUpperCase());
+    }
+    return taskIds;
+}
+
+function resolveNextUnfinishedChildRoute(
+    taskEntries: Map<string, TaskQueueEntry>,
+    parentTaskId: string,
+    visited = new Set<string>()
+): DecomposedChildRoute | null {
+    if (visited.has(parentTaskId)) {
+        return null;
+    }
+    visited.add(parentTaskId);
+    const parentEntry = taskEntries.get(parentTaskId);
+    const childTaskIds = extractChildTaskIds(parentEntry?.notes || null)
+        .filter((childTaskId) => childTaskId !== parentTaskId);
+
+    for (const childTaskId of childTaskIds) {
+        const childEntry = taskEntries.get(childTaskId);
+        if (!childEntry) {
+            continue;
+        }
+        if (isTaskQueueDoneStatus(childEntry.status)) {
+            continue;
+        }
+        if (isDecomposedParentTask(childEntry)) {
+            const nestedRoute = resolveNextUnfinishedChildRoute(taskEntries, childTaskId, visited);
+            if (nestedRoute) {
+                return {
+                    ...nestedRoute,
+                    chain: [childTaskId, ...nestedRoute.chain]
+                };
+            }
+            continue;
+        }
+        return {
+            taskId: childTaskId,
+            status: childEntry.status,
+            chain: [childTaskId]
+        };
+    }
+    return null;
 }
 
 interface NextStepOptions {
@@ -2477,35 +2592,40 @@ function quoteCommandValue(value: string): string {
     return `"${text.replace(/\\/g, '\\\\')}"`;
 }
 
-function readTaskQueueEntry(repoRoot: string, taskId: string): TaskQueueEntry | null {
+function readTaskQueueEntries(repoRoot: string): Map<string, TaskQueueEntry> {
     const taskPath = path.join(repoRoot, 'TASK.md');
+    const entries = new Map<string, TaskQueueEntry>();
     if (!fileExists(taskPath)) {
-        return null;
+        return entries;
     }
-    const escapedTaskId = taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const rowPattern = new RegExp(`^\\|\\s*${escapedTaskId}\\s*\\|`);
     for (const line of fs.readFileSync(taskPath, 'utf8').split('\n')) {
-        if (!rowPattern.test(line)) {
+        if (!line.trim().startsWith('|')) {
             continue;
         }
-        const cells = line
-            .split('|')
-            .slice(1, -1)
-            .map((cell) => cell.trim());
-        if (cells.length < 8) {
-            return {
-                taskId,
-                title: null,
-                profile: null
-            };
+        const cells = parseTaskMdTableRow(line);
+        if (cells.length < 2 || !/^T-\d+$/iu.test(cells[0].trimmed)) {
+            continue;
         }
-        return {
-            taskId,
-            title: cells[4] || null,
-            profile: cells[7] || null
-        };
+        if (cells.length < 8) {
+            entries.set(cells[0].trimmed.toUpperCase(), {
+                taskId: cells[0].trimmed.toUpperCase(),
+                status: cells[1]?.trimmed || null,
+                title: null,
+                profile: null,
+                notes: cells[cells.length - 1]?.trimmed || null
+            });
+            continue;
+        }
+        const taskId = cells[0].trimmed.toUpperCase();
+        entries.set(taskId, {
+                taskId,
+                status: cells[1]?.trimmed || null,
+                title: cells[4]?.trimmed || null,
+                profile: cells[7]?.trimmed || null,
+                notes: cells[8]?.trimmed || null
+        });
     }
-    return null;
+    return entries;
 }
 
 function resolveDefaultDepthFromTaskQueue(taskEntry: TaskQueueEntry | null): string {
@@ -2992,7 +3112,7 @@ function materializeReviewCycleAutoSplitPrompt(
         artifact_sha256: createHash('sha256').update(content).digest('hex'),
         next_action: 'follow_auto_split_prompt',
         instructions: [
-            'move_parent_to_blocked_split_state',
+            'move_parent_to_decomposed_state',
             'commit_only_completed_reviewed_work_if_required',
             'create_maximally_small_numeric_child_tasks',
             'execute_child_tasks_sequentially'
@@ -3662,7 +3782,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const preflight = safeReadJson(preflightPath);
     const rulePack = safeReadJson(rulePackPath);
     const taskMode = safeReadJson(path.join(reviewsRoot, `${taskId}-task-mode.json`));
-    const taskEntry = readTaskQueueEntry(repoRoot, taskId);
+    const taskEntries = readTaskQueueEntries(repoRoot);
+    const taskEntry = taskEntries.get(taskId) || null;
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
     try {
@@ -3790,6 +3911,48 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         warnings: [] as string[],
         sourceRuntimeStaleness
     };
+
+    if (!isGatePassed(summary, 'completion-gate') && isDecomposedParentTask(taskEntry)) {
+        const childRoute = resolveNextUnfinishedChildRoute(taskEntries, taskId);
+        const decomposedReason = isTaskQueueDecomposedStatus(taskEntry?.status || null)
+            ? 'Task queue marks this parent as DECOMPOSED.'
+            : 'Task queue marks this parent as a legacy BLOCKED split umbrella.';
+        if (childRoute) {
+            const chain = [taskId, ...childRoute.chain].join(' -> ');
+            return buildResult({
+                ...resultBase,
+                status: 'DECOMPOSED',
+                nextGate: 'child-task',
+                title: 'Parent task is decomposed; continue with the next child.',
+                reason:
+                    `${decomposedReason} Parent tasks in this state are not executable lifecycle scopes. ` +
+                    `Continue through child chain ${chain}; next unfinished child status is ${formatNextStepInlineValue(childRoute.status || 'unknown')}.`,
+                commands: [
+                    buildCommand(
+                        'Continue child task',
+                        `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
+                    )
+                ],
+                missingArtifacts: [],
+                presentArtifacts: coreArtifacts.present,
+                finalReport: null
+            });
+        }
+        return buildResult({
+            ...resultBase,
+            status: 'DECOMPOSED',
+            nextGate: null,
+            title: 'Parent task is decomposed and has no unfinished child.',
+            reason:
+                `${decomposedReason} No unfinished child task could be resolved from its notes. ` +
+                'Do not run classify, compile, review, full-suite, or completion gates on the parent; add or reopen a child task if the parent objective is not complete.',
+            commands: [],
+            missingArtifacts: [],
+            presentArtifacts: coreArtifacts.present,
+            finalReport: null
+        });
+    }
+
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
         const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
         if (finalReport) {

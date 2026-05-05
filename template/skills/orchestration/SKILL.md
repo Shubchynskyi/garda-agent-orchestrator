@@ -190,6 +190,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 26. Terminal status contract:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed; successful completion finalization reconciles `TASK.md` to `DONE`.
     - `BLOCKED` when any mandatory gate failed or cannot run; keep the blocked reason explicit and stop the pipeline.
+    - `DECOMPOSED` when a scope-budget or review-cycle guard intentionally split the parent into child tasks; do not run parent lifecycle gates after decomposition.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 27. Report to user in exact order:
     1. concise implementation summary (include depth, path mode, review verdicts, docs updated)

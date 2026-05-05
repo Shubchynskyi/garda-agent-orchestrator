@@ -11,9 +11,9 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Task Lifecycle
 - Task queue source: `TASK.md`.
-- Status lifecycle: `TODO -> IN_PROGRESS -> IN_REVIEW -> DONE` or `BLOCKED`.
-- Visual markers in `TASK.md` status are allowed (`🟦 TODO`, `🟨 IN_PROGRESS`, `🟧 IN_REVIEW`, `🟩 DONE`, `🟥 BLOCKED`), but canonical status token must remain present.
-- Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`; agents should update non-status `TASK.md` metadata and keep `BLOCKED` as an explicit stop state when the workflow fails closed.
+- Status lifecycle: `TODO -> IN_PROGRESS -> IN_REVIEW -> DONE`, `BLOCKED`, or `DECOMPOSED`.
+- Visual markers in `TASK.md` status are allowed (`🟦 TODO`, `🟨 IN_PROGRESS`, `🟧 IN_REVIEW`, `🟩 DONE`, `🟥 BLOCKED`, `🟪 DECOMPOSED`), but canonical status token must remain present.
+- Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`; agents should update non-status `TASK.md` metadata, keep `BLOCKED` as an explicit stop state when the workflow fails closed, and use `DECOMPOSED` only for split parent tasks that are no longer executable lifecycle scopes.
 - If provider-native agent directories are present, use their orchestrator bridge profile before any implementation:
   - `.github/agents/orchestrator.md`
   - `.windsurf/agents/orchestrator.md`
@@ -136,7 +136,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task-event integrity is procedural hardening only: local hash-chain and replay detection help detect tampering after the fact, but they are not a security-grade trust anchor.
 - Task timeline completeness is surfaced in `status` and `doctor`; incomplete timelines are a real workflow defect, not optional trace noise.
 - Orchestrator control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, and internal docs such as `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are local workflow artifacts; in deployed workspaces their ignored status is normal.
-- Terminal statuses (`DONE`, `BLOCKED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
+- Terminal non-active statuses (`DONE`, `BLOCKED`, `DECOMPOSED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
 - Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.
 - Final user report order is mandatory: concise implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.
@@ -204,3 +204,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Resume only after explicit blocking condition resolution.
 - Record `blocked_reason_code` in `TASK.md`.
 - For infrastructure-driven blocks, you must report: the exact command, `cwd`, chosen CLI path, and `stderr`.
+
+## DECOMPOSED Semantics
+- `DECOMPOSED` means the parent task was intentionally split because scope-budget or review-cycle guardrails made the monolithic lifecycle too large.
+- A `DECOMPOSED` parent is not an executable lifecycle scope: do not run classify-change, compile, review, full-suite, or completion gates on the parent.
+- `next-step` must route a `DECOMPOSED` parent to the next unfinished child task; nested decomposed parents should resolve to the next unfinished leaf child.
+- Existing legacy `BLOCKED` rows whose notes clearly say "Paused for split", "Split into ...", or "Continue via child tasks" may be treated compatibly as decomposed parents until a safe migration updates the status cell.
+- When review-cycle auto split is enabled, the auto-split prompt should move the parent to `DECOMPOSED`, create maximally small child tasks, and execute those children through normal gates.

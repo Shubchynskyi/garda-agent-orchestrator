@@ -72,4 +72,5 @@ Pass criteria:
 ## Failure Policy
 - Any failed gate blocks next gates.
 - Stop in explicit `BLOCKED` state when a gate cannot be satisfied now.
+- Use explicit `DECOMPOSED` state when the parent is no longer executable because remaining work was split into child tasks.
 - Resume only after blocker is resolved.

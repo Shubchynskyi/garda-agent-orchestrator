@@ -17,6 +17,7 @@ Task timeline log (per task): `garda-agent-orchestrator/runtime/task-events/<tas
 - `🟧 IN_REVIEW`
 - `🟩 DONE`
 - `🟥 BLOCKED`
+- `🟪 DECOMPOSED`
 
 Status cell format rule: keep canonical token, optionally prefixed by marker (for example `🟦 TODO`).
 
@@ -25,4 +26,3 @@ Status cell format rule: keep canonical token, optionally prefixed by marker (fo
 |---|---|---|---|---|---|---|---|---|
 | T-001 | 🟩 DONE | P1 | process | Verify orchestrator operation, full rule set, and workflow gates | unassigned | {{DEPLOYMENT_DATE}} | default | Completed during full orchestrator setup: install, verify, preflight classification, and review-gate checks. |
 <!-- garda-agent-orchestrator:managed-end -->
-
