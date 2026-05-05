@@ -498,8 +498,11 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             }
 
             const projectMemoryPath = path.join(orchestratorRoot, 'live', 'docs', 'project-memory');
-            if (keepRuntime && fs.existsSync(projectMemoryPath) && fs.lstatSync(projectMemoryPath).isDirectory()) {
-                backupItem(projectMemoryPath, path.join(resolveBundleName(), 'live', 'docs', 'project-memory'), true, true);
+            const shouldBackupProjectMemory = fs.existsSync(projectMemoryPath)
+                && fs.lstatSync(projectMemoryPath).isDirectory()
+                && (keepRuntime || !skipBackups);
+            if (shouldBackupProjectMemory) {
+                backupItem(projectMemoryPath, path.join(resolveBundleName(), 'live', 'docs', 'project-memory'), true, keepRuntime);
                 preservedProjectMemoryPath = path.join(getBackupRoot(), resolveBundleName(), 'live', 'docs', 'project-memory');
             }
 
@@ -553,6 +556,10 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             warnings.push('--skip-backups active: no user-facing backup will be created. Recovery after successful completion is not possible.');
             if (!keepRuntimeArtifactsValue) {
                 warnings.push('--skip-backups with keepRuntimeArtifacts=no: runtime artifacts (reports, logs, rollback snapshots) will be permanently deleted.');
+                const projectMemoryPath = path.join(orchestratorRoot, 'live', 'docs', 'project-memory');
+                if (fs.existsSync(projectMemoryPath) && fs.lstatSync(projectMemoryPath).isDirectory()) {
+                    warnings.push('--skip-backups with keepRuntimeArtifacts=no: project-memory will be permanently deleted.');
+                }
             }
         }
 

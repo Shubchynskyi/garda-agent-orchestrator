@@ -126,6 +126,63 @@ describe('runUninstall', () => {
         }
     });
 
+    it('backs up user-owned project-memory before removing bundle', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'context.md'), '# Context\n\n## Domain\n\nPreserve during uninstall.\n', 'utf8');
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(!fs.existsSync(bundleRoot), 'orchestrator bundle should be removed');
+            assert.notEqual(result.preservedProjectMemoryPath, '<none>');
+            assert.ok(fs.existsSync(path.join(result.preservedProjectMemoryPath, 'context.md')));
+            assert.ok(
+                fs.readFileSync(path.join(result.preservedProjectMemoryPath, 'context.md'), 'utf8')
+                    .includes('Preserve during uninstall.')
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('warns when skip-backups would delete project-memory', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'context.md'), '# Context\n\nDelete warning.\n', 'utf8');
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                skipBackups: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(
+                result.warnings.some((warning) => warning.includes('project-memory will be permanently deleted')),
+                'skip-backups should warn about project-memory deletion'
+            );
+            assert.equal(result.preservedProjectMemoryPath, '<none>');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('preserves primary entrypoint when requested', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {
@@ -476,7 +533,7 @@ describe('runUninstall', () => {
         }
     });
 
-    it('does not preserve project-memory when keepRuntimeArtifacts is no', () => {
+    it('backs up project-memory even when keepRuntimeArtifacts is no', () => {
         const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
         try {
             const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
@@ -493,7 +550,9 @@ describe('runUninstall', () => {
             });
 
             assert.equal(result.result, 'SUCCESS');
-            assert.equal(result.preservedProjectMemoryPath, '<none>');
+            assert.notEqual(result.preservedProjectMemoryPath, '<none>');
+            assert.ok(fs.existsSync(path.join(result.preservedProjectMemoryPath, 'decisions.md')));
+            assert.equal(fs.readFileSync(path.join(result.preservedProjectMemoryPath, 'decisions.md'), 'utf8'), '# Decision Log');
         } finally {
             removePathRecursive(projectRoot);
         }

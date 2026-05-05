@@ -46,7 +46,8 @@ import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from '.
 import {
     seedProjectMemoryFromTemplate,
     validateSeededProjectMemory,
-    writeProjectMemoryBootstrapReport
+    writeProjectMemoryBootstrapReport,
+    type ProjectMemoryBootstrapReport
 } from './project-memory-builder';
 import { withLifecycleOperationLock } from '../lifecycle/common';
 export { mergeConfig } from '../core/config-merge';
@@ -130,6 +131,7 @@ interface BuildInitReportOptions {
     discovery: ProjectDiscovery;
     sourceInventory: SourceInventory;
     reviewCapabilitiesSync: ReviewCapabilitiesSyncResult | null;
+    projectMemoryBootstrapReport: ProjectMemoryBootstrapReport;
     legacyStyleGuidanceActive?: boolean;
 }
 
@@ -483,6 +485,7 @@ export function runInit(options: RunInitOptions) {
             enforceNoAutoCommit, tokenEconomyEnabled, discovery,
             sourceInventory,
             reviewCapabilitiesSync,
+            projectMemoryBootstrapReport: projectMemoryBootstrapReport.report,
             legacyStyleGuidanceActive
         });
         initReportLines.push(...buildMigrationReportLines(migrationResult));
@@ -653,7 +656,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
     const { timestampIso, projectName, targetRoot, ruleSourceMap, ruleFiles,
         copiedSupportDirs, configMergeStatuses, lang, brevity, trimmedSoT,
         enforceNoAutoCommit, tokenEconomyEnabled, discovery,
-        sourceInventory, reviewCapabilitiesSync, legacyStyleGuidanceActive } = opts;
+        sourceInventory, reviewCapabilitiesSync, projectMemoryBootstrapReport,
+        legacyStyleGuidanceActive } = opts;
     const normalized = targetRoot.replace(/\\/g, '/');
     const tick = '`';
     const stackSummary = discovery.detectedStacks.length > 0
@@ -707,6 +711,10 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Project discovery top-level directories: ${dirSummary}`,
         `- Legacy docs discovered in \`docs/agent-rules\`: ${sourceInventory.legacyRuleFiles.length} files`,
         `- Optional review capabilities enabled from live skills: ${enabledOptionalReviews.length > 0 ? enabledOptionalReviews.join(', ') : 'none'}`,
+        '- Project memory sync policy: add missing seed files only; preserve existing user-owned files without overwrite.',
+        `- Project memory copied missing files: ${projectMemoryBootstrapReport.seed.copied_files.length > 0 ? projectMemoryBootstrapReport.seed.copied_files.join(', ') : 'none'}`,
+        `- Project memory preserved files: ${projectMemoryBootstrapReport.seed.preserved_files.length}`,
+        `- Project memory template update notices: ${projectMemoryBootstrapReport.seed.template_update_notices.length}`,
         '- Contract migration snippets auto-applied: 0',
         '- No files were moved or deleted; discovery sources were read-only.', '',
         '## Rule Source Mapping',
@@ -728,6 +736,15 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         lines.push('- **Style Guidance Update**: A new style contract is available, but was not applied because `docs/project-memory/` already has content and your `30-code-style.md` contains custom rules.');
         lines.push(`- The updated templates have been scaffolded as ${tick}${resolveBundleName()}/live/docs/agent-rules/30-code-style.template.md${tick} and ${tick}${resolveBundleName()}/live/docs/project-memory/conventions.template.md${tick}.`);
         lines.push('- Review them and manually update your code style or project memory to adopt the new contract. Delete the `.legacy-style-contract` marker when done.');
+    }
+
+    if (projectMemoryBootstrapReport.seed.template_update_notices.length > 0) {
+        lines.push('', '## Project Memory Update Notices');
+        lines.push(`- Existing files under ${tick}${resolveBundleName()}/live/docs/project-memory${tick} are user-owned and were preserved.`);
+        lines.push('- Template guidance changed for the files below; review manually if you want to adopt the new guidance.');
+        for (const notice of projectMemoryBootstrapReport.seed.template_update_notices) {
+            lines.push(`- ${tick}${notice.livePath}${tick} preserved; compare with template ${tick}${notice.templatePath}${tick}.`);
+        }
     }
 
     return lines;

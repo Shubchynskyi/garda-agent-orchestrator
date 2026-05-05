@@ -960,6 +960,53 @@ describe('runUpdate', () => {
         }
     });
 
+    it('adds missing project-memory files during update without overwriting preserved files', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.writeFileSync(path.join(pmDir, 'README.md'), '# Project Memory\n\nCustom operator-owned index.\n', 'utf8');
+            fs.writeFileSync(path.join(pmDir, 'context.md'), '# Context\n\n## Domain\n\nKeep this domain.\n', 'utf8');
+            fs.rmSync(path.join(pmDir, 'compact.md'), { force: true });
+            fs.rmSync(path.join(pmDir, 'module-map.md'), { force: true });
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(fs.readFileSync(path.join(pmDir, 'README.md'), 'utf8'), '# Project Memory\n\nCustom operator-owned index.\n');
+            assert.ok(fs.readFileSync(path.join(pmDir, 'context.md'), 'utf8').includes('Keep this domain.'));
+            assert.ok(fs.existsSync(path.join(pmDir, 'compact.md')), 'missing compact.md should be added');
+            assert.ok(fs.existsSync(path.join(pmDir, 'module-map.md')), 'missing module-map.md should be added');
+            assert.ok(result.projectMemoryDiagnostics, 'update result should expose project-memory diagnostics');
+            assert.ok(result.projectMemoryDiagnostics!.copiedFiles.includes('compact.md'));
+            assert.ok(result.projectMemoryDiagnostics!.copiedFiles.includes('module-map.md'));
+            assert.ok(
+                result.projectMemoryDiagnostics!.templateUpdateNotices.some((notice: string) => notice.includes('README.md preserved')),
+                'preserved README should surface template guidance notice'
+            );
+
+            const reportPath = path.join(projectRoot, result.updateReportPath);
+            const report = fs.readFileSync(reportPath, 'utf8');
+            assert.ok(report.includes('## ProjectMemory'));
+            assert.ok(report.includes('CopiedMissingFiles: compact.md, module-map.md'));
+            assert.ok(report.includes('TemplateUpdateNotices: docs/project-memory/README.md preserved'));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('regenerates 15-project-memory.md from user content during update', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {

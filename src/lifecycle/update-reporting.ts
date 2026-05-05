@@ -76,6 +76,23 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
         `ManifestValidation: ${stageResult.manifestStatus}`,
         `InvariantCheck: ${stageResult.invariantStatus}`,
         '',
+        '## ProjectMemory',
+        stageResult.projectMemoryDiagnostics
+            ? `BootstrapReport: ${stageResult.projectMemoryDiagnostics.bootstrapReportPath || 'n/a'}`
+            : 'BootstrapReport: n/a',
+        stageResult.projectMemoryDiagnostics
+            ? `CopiedMissingFiles: ${stageResult.projectMemoryDiagnostics.copiedFiles.length > 0 ? stageResult.projectMemoryDiagnostics.copiedFiles.join(', ') : 'none'}`
+            : 'CopiedMissingFiles: n/a',
+        stageResult.projectMemoryDiagnostics
+            ? `PreservedUserOwnedFiles: ${stageResult.projectMemoryDiagnostics.preservedFiles.length}`
+            : 'PreservedUserOwnedFiles: n/a',
+        stageResult.projectMemoryDiagnostics
+            ? `MissingTemplateFiles: ${stageResult.projectMemoryDiagnostics.missingTemplateFiles.length > 0 ? stageResult.projectMemoryDiagnostics.missingTemplateFiles.join(', ') : 'none'}`
+            : 'MissingTemplateFiles: n/a',
+        stageResult.projectMemoryDiagnostics
+            ? `TemplateUpdateNotices: ${stageResult.projectMemoryDiagnostics.templateUpdateNotices.length > 0 ? stageResult.projectMemoryDiagnostics.templateUpdateNotices.join('; ') : 'none'}`
+            : 'TemplateUpdateNotices: n/a',
+        '',
         '## ContractMigrations',
         `AppliedCount: ${stageResult.contractMigrationCount}`,
         stageResult.contractMigrationFiles.length > 0
@@ -166,6 +183,7 @@ export function buildUpdateResult(input: UpdateResultInput) {
         installStatus: stageResult.installStatus,
         materializationStatus: stageResult.materializationStatus,
         workflowConfigMergeStatus: stageResult.workflowConfigMergeStatus,
+        projectMemoryDiagnostics: stageResult.projectMemoryDiagnostics || null,
         contractMigrationStatus: stageResult.contractMigrationStatus,
         contractMigrationCount: stageResult.contractMigrationCount,
         contractMigrationFiles: stageResult.contractMigrationFiles,

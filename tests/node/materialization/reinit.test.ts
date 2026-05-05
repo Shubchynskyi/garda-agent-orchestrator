@@ -378,6 +378,71 @@ describe('runReinit', () => {
         }
     });
 
+    it('adds missing project-memory files on reinit and reports preserved template guidance', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+            fs.writeFileSync(answersPath, JSON.stringify({
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            }));
+
+            const pmDir = path.join(bundleRoot, 'live', 'docs', 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'README.md'), '# Project Memory\n\nLegacy local guidance.\n', 'utf8');
+            fs.writeFileSync(path.join(pmDir, 'context.md'), '# Context\n\n## Domain\n\nCustom stack diagnostics.\n', 'utf8');
+
+            const firstResult = runReinit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.ok(fs.existsSync(path.join(pmDir, 'compact.md')), 'compact.md should be added');
+            assert.ok(fs.existsSync(path.join(pmDir, 'module-map.md')), 'module-map.md should be added');
+            assert.ok(fs.existsSync(path.join(pmDir, 'commands.md')), 'commands.md should be added');
+            assert.ok(fs.existsSync(path.join(pmDir, 'risks.md')), 'risks.md should be added');
+            assert.equal(fs.readFileSync(path.join(pmDir, 'README.md'), 'utf8'), '# Project Memory\n\nLegacy local guidance.\n');
+            assert.ok(fs.readFileSync(path.join(pmDir, 'context.md'), 'utf8').includes('Custom stack diagnostics.'));
+            assert.ok(
+                firstResult.changes.some((change) =>
+                    change.key === 'ProjectMemory.compact.md'
+                    && change.action === 'seeded_missing'
+                ),
+                'reinit changes should report missing file additions'
+            );
+            assert.ok(
+                firstResult.changes.some((change) =>
+                    change.key === 'ProjectMemory.README.md'
+                    && change.action === 'preserved_user_owned'
+                ),
+                'reinit changes should report preserved user-owned template guidance'
+            );
+            assert.ok(fs.existsSync(firstResult.projectMemoryBootstrapReportPath));
+
+            const secondResult = runReinit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+            assert.ok(
+                !secondResult.changes.some((change) => change.action === 'seeded_missing'),
+                'second reinit should be idempotent for project-memory file additions'
+            );
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('preserves ActiveAgentFiles on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

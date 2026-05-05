@@ -11,12 +11,18 @@ import {
 } from '../runtime/agent-init-state';
 import { getCanonicalEntrypointFile, convertActiveAgentEntrypointFilesToString } from './common';
 import { applyAssistantDefaults } from './rule-materialization';
+import { generateProjectMemorySummary } from './rule-materialization';
 import { runInstall } from './install';
 import { writeProtectedControlPlaneManifest } from '../gates/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import { resolveBundleName } from '../core/constants';
 import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
 import { withLifecycleOperationLock } from '../lifecycle/common';
+import {
+    seedProjectMemoryFromTemplate,
+    validateSeededProjectMemory,
+    writeProjectMemoryBootstrapReport
+} from './project-memory-builder';
 
 interface ReinitOptions {
     targetRoot: string;
@@ -185,6 +191,48 @@ export function runReinit(options: ReinitOptions) {
             initAnswersPath: resolvedInitPath
         });
 
+        const liveRoot = path.join(bundleRoot, 'live');
+        const liveRuleRoot = path.join(liveRoot, 'docs', 'agent-rules');
+        const timestampIso = new Date().toISOString();
+        const projectMemorySeed = seedProjectMemoryFromTemplate({
+            templateRoot: sourceRoot,
+            liveRoot
+        });
+        const projectMemorySummaryPath = path.join(liveRuleRoot, '15-project-memory.md');
+        ensureDirectory(path.dirname(projectMemorySummaryPath));
+        fs.writeFileSync(
+            projectMemorySummaryPath,
+            generateProjectMemorySummary(projectMemorySeed.projectMemoryDir, timestampIso),
+            'utf8'
+        );
+        const projectMemoryValidation = validateSeededProjectMemory(projectMemorySeed, { mode: 'check' });
+        const projectMemoryBootstrapReport = writeProjectMemoryBootstrapReport({
+            bundleRoot,
+            timestampIso,
+            seedResult: projectMemorySeed,
+            validation: projectMemoryValidation,
+            summaryPath: projectMemorySummaryPath
+        });
+
+        for (const fileName of projectMemorySeed.copiedFiles) {
+            changes.push({
+                key: `ProjectMemory.${fileName}`,
+                action: 'seeded_missing',
+                value: fileName,
+                source: 'template_project_memory',
+                note: 'Missing project-memory seed file added without overwriting existing files.'
+            });
+        }
+        for (const notice of projectMemorySeed.templateUpdateNotices) {
+            changes.push({
+                key: `ProjectMemory.${notice.fileName}`,
+                action: 'preserved_user_owned',
+                value: notice.livePath,
+                source: 'template_project_memory',
+                note: notice.action
+            });
+        }
+
         const preserveExistingCheckpoints = doesAgentInitStateMatchAnswers(previousAgentInitState, {
             AssistantLanguage: resolvedLanguage,
             SourceOfTruth: resolvedSourceOfTruth,
@@ -233,6 +281,9 @@ export function runReinit(options: ReinitOptions) {
             coreRuleUpdated,
             tokenEconomyConfigUpdated: tokenEconomyUpdated.updated,
             tokenEconomyConfigPath: tokenEconomyUpdated.path,
+            projectMemoryBootstrapReportPath: projectMemoryBootstrapReport.path,
+            projectMemoryBootstrapReport: projectMemoryBootstrapReport.report,
+            projectMemoryValidation,
             verifyStatus: skipVerify ? 'SKIPPED' : 'NOT_RUN',
             manifestValidationStatus: skipManifestValidation ? 'SKIPPED' : 'NOT_RUN'
         };

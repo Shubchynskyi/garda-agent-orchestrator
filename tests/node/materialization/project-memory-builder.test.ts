@@ -81,6 +81,10 @@ describe('project-memory builder', () => {
 
             assert.equal(result.seededDirectory, false);
             assert.ok(result.preservedFiles.includes('compact.md'));
+            assert.ok(
+                result.templateUpdateNotices.some((notice) => notice.fileName === 'compact.md'),
+                'preserved custom file should emit template guidance notice'
+            );
             assert.equal(fs.readFileSync(path.join(pmDir, 'compact.md'), 'utf8'), '# Custom Compact\n\n## Durable\nKeep this.\n');
             assert.ok(fs.existsSync(path.join(pmDir, 'module-map.md')));
             assert.ok(fs.existsSync(path.join(pmDir, 'commands.md')));
@@ -116,6 +120,7 @@ describe('project-memory builder', () => {
             assert.equal(report.project_memory.read_strategy, 'index_first');
             assert.ok(report.project_memory.read_first.includes('live/docs/project-memory/README.md'));
             assert.ok(report.project_memory.read_first.includes('live/docs/project-memory/compact.md'));
+            assert.deepEqual(report.seed.template_update_notices, []);
             assert.equal(report.validation.mode, 'check');
             assert.equal(report.generated_summary.exists, true);
             assert.match(String(report.generated_summary.sha256), /^[a-f0-9]{64}$/);

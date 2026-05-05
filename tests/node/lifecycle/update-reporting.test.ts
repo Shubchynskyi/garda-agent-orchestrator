@@ -16,6 +16,7 @@ function makeStageResult(overrides: Record<string, unknown> = {}) {
         invariantStatus: 'PASS',
         updatedVersion: '2.0.0',
         rollbackStatus: 'NOT_TRIGGERED',
+        projectMemoryDiagnostics: null,
         ...overrides
     };
 }
@@ -87,8 +88,41 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('Install: PASS'));
         assert.ok(text.includes('Materialization: PASS'));
         assert.ok(text.includes('WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true'));
+        assert.ok(text.includes('## ProjectMemory'));
+        assert.ok(text.includes('BootstrapReport: n/a'));
         assert.ok(text.includes('AppliedCount: 0'));
         assert.ok(text.includes('AppliedFiles: none'));
+    });
+
+    it('includes project-memory lifecycle diagnostics when materialization reports them', () => {
+        const lines = buildUpdateReportLines({
+            normalizedTarget: '/project',
+            initAnswersResolvedPath: '/project/answers.json',
+            rollbackSnapshotRelativePath: 'snapshot',
+            rollbackRecordsRelativePath: 'snapshot/records.json',
+            rollbackRecordCount: 0,
+            rollbackStatus: 'NOT_TRIGGERED',
+            trustContext: makeTrustContext(),
+            previousVersion: '1.0.0',
+            previousVersionSource: 'live/version.json',
+            bundleVersion: '2.0.0',
+            stageResult: makeStageResult({
+                projectMemoryDiagnostics: {
+                    copiedFiles: ['compact.md'],
+                    preservedFiles: ['README.md', 'context.md'],
+                    missingTemplateFiles: [],
+                    templateUpdateNotices: [
+                        'docs/project-memory/README.md preserved; template guidance available at docs/project-memory/README.md'
+                    ],
+                    bootstrapReportPath: '/project/garda-agent-orchestrator/runtime/project-memory/bootstrap-report.json'
+                }
+            })
+        });
+
+        const text = lines.join('\n');
+        assert.ok(text.includes('CopiedMissingFiles: compact.md'));
+        assert.ok(text.includes('PreservedUserOwnedFiles: 2'));
+        assert.ok(text.includes('TemplateUpdateNotices: docs/project-memory/README.md preserved'));
     });
 
     it('includes applied migration files when present', () => {

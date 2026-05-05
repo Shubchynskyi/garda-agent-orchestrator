@@ -355,6 +355,163 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('includes full-suite validation evidence in test review handoff artifacts', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-full-suite-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            writeTaskModeArtifactFixture(repoRoot, 'T-920', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-920-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-920',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const preflightSha256 = sha256Text(fs.readFileSync(preflightPath, 'utf8'));
+            const compileGateTimestamp = '2026-05-05T00:00:00.000Z';
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'task-events', 'T-920.jsonl'), JSON.stringify({
+                event_type: 'COMPILE_GATE_PASSED',
+                timestamp_utc: compileGateTimestamp
+            }) + '\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-920-compile-gate.json'), JSON.stringify({
+                timestamp_utc: '2026-05-05T00:00:00.250Z',
+                status: 'PASSED'
+            }, null, 2), 'utf8');
+            const outputArtifactPath = path.join(reviewsRoot, 'T-920-full-suite-output.log');
+            fs.writeFileSync(outputArtifactPath, '# tests 91\n# pass 91\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-920-full-suite-validation.json'), JSON.stringify({
+                status: 'PASSED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: 0,
+                timed_out: false,
+                output_artifact_path: outputArtifactPath,
+                compact_summary: ['# tests 91', '# pass 91'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: [],
+                cycle_binding: {
+                    task_id: 'T-920',
+                    preflight_path: preflightPath,
+                    preflight_sha256: preflightSha256,
+                    compile_gate_timestamp: compileGateTimestamp
+                }
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-920-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-920-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.full_suite_validation?.required_for_review, true);
+            assert.equal(result.full_suite_validation?.status, 'PASSED');
+            assert.equal(result.full_suite_validation?.command, 'npm test');
+            assert.equal(result.full_suite_validation?.exit_code, 0);
+            assert.equal(result.full_suite_validation?.matches_current_preflight, true);
+            assert.equal(result.full_suite_validation?.matches_current_compile_gate, true);
+            assert.equal(result.full_suite_validation?.cycle_binding_valid, true);
+            assert.equal(result.full_suite_validation?.output_artifact_path, outputArtifactPath.replace(/\\/g, '/'));
+            assert.deepEqual(result.full_suite_validation?.compact_summary, ['# tests 91', '# pass 91']);
+
+            const promptArtifactPath = outputPath.replace(/\.json$/, '.md');
+            const promptArtifactText = fs.readFileSync(promptArtifactPath, 'utf8');
+            assert.ok(promptArtifactText.includes('## Full-Suite Validation Evidence'));
+            assert.ok(promptArtifactText.includes('- Status: PASSED'));
+            assert.ok(promptArtifactText.includes('- Command: npm test'));
+            assert.ok(promptArtifactText.includes('- Matches current preflight: true'));
+            assert.ok(promptArtifactText.includes('- Matches current compile gate: true'));
+            assert.ok(promptArtifactText.includes('- Cycle binding valid: true'));
+            assert.ok(promptArtifactText.includes('- # pass 91'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('marks test review full-suite evidence stale when compile-cycle binding differs', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-stale-full-suite-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            writeTaskModeArtifactFixture(repoRoot, 'T-921', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-921-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-921',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const preflightSha256 = sha256Text(fs.readFileSync(preflightPath, 'utf8'));
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'task-events', 'T-921.jsonl'), JSON.stringify({
+                event_type: 'COMPILE_GATE_PASSED',
+                timestamp_utc: '2026-05-05T00:05:00.000Z'
+            }) + '\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-921-compile-gate.json'), JSON.stringify({
+                timestamp_utc: '2026-05-05T00:05:00.250Z',
+                status: 'PASSED'
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-921-full-suite-validation.json'), JSON.stringify({
+                status: 'PASSED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: 0,
+                timed_out: false,
+                output_artifact_path: path.join(reviewsRoot, 'T-921-full-suite-output.log'),
+                compact_summary: ['# pass 91'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: [],
+                cycle_binding: {
+                    task_id: 'T-921',
+                    preflight_path: preflightPath,
+                    preflight_sha256: preflightSha256,
+                    compile_gate_timestamp: '2026-05-05T00:00:00.000Z'
+                }
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-921-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-921-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.full_suite_validation?.matches_current_preflight, true);
+            assert.equal(result.full_suite_validation?.matches_current_compile_gate, false);
+            assert.equal(result.full_suite_validation?.cycle_binding_valid, false);
+            assert.match(result.full_suite_validation?.mismatch_reason || '', /compile gate cycle/);
+            const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
+            assert.ok(promptArtifactText.includes('- Matches current compile gate: false'));
+            assert.ok(promptArtifactText.includes('- Cycle binding valid: false'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('keeps pinned explicit-provider task-mode identity resolved when no routed_to is present', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-explicit-provider-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

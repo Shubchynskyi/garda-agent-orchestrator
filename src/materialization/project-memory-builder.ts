@@ -8,6 +8,7 @@ import {
     PROJECT_MEMORY_RUNTIME_DIRECTORY_RELATIVE_PATH,
     PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,
     buildProjectMemoryLiveRelativePath,
+    normalizeProjectMemoryMarkdown,
     resolveProjectMemoryBootstrapReportPath,
     sha256Hex,
     toProjectMemoryPosixPath
@@ -33,6 +34,15 @@ export interface ProjectMemorySeedResult {
     copiedFiles: string[];
     preservedFiles: string[];
     missingTemplateFiles: string[];
+    templateUpdateNotices: ProjectMemoryTemplateUpdateNotice[];
+}
+
+export interface ProjectMemoryTemplateUpdateNotice {
+    fileName: string;
+    livePath: string;
+    templatePath: string;
+    reason: 'existing_user_owned_file_preserved';
+    action: string;
 }
 
 export interface ProjectMemoryBootstrapReportOptions {
@@ -59,6 +69,7 @@ export interface ProjectMemoryBootstrapReport {
         copied_files: string[];
         preserved_files: string[];
         missing_template_files: string[];
+        template_update_notices: ProjectMemoryTemplateUpdateNotice[];
     };
     validation: {
         passed: boolean;
@@ -99,6 +110,7 @@ export function seedProjectMemoryFromTemplate(options: ProjectMemorySeedOptions)
     const copiedFiles: string[] = [];
     const preservedFiles: string[] = [];
     const missingTemplateFiles: string[] = [];
+    const templateUpdateNotices: ProjectMemoryTemplateUpdateNotice[] = [];
 
     if (!dryRun) {
         ensureDirectory(liveDir);
@@ -109,6 +121,19 @@ export function seedProjectMemoryFromTemplate(options: ProjectMemorySeedOptions)
         const destinationPath = path.join(liveDir, fileName);
         if (pathExists(destinationPath)) {
             preservedFiles.push(fileName);
+            if (pathExists(templatePath)) {
+                const existingContent = readTextFile(destinationPath);
+                const templateContent = readTextFile(templatePath);
+                if (normalizeProjectMemoryMarkdown(existingContent) !== normalizeProjectMemoryMarkdown(templateContent)) {
+                    templateUpdateNotices.push({
+                        fileName,
+                        livePath: getRelativePath(liveRoot, destinationPath),
+                        templatePath: getRelativePath(templateRoot, templatePath),
+                        reason: 'existing_user_owned_file_preserved',
+                        action: 'Review the template guidance manually; the live project-memory file was not overwritten.'
+                    });
+                }
+            }
             continue;
         }
         if (!pathExists(templatePath)) {
@@ -128,7 +153,8 @@ export function seedProjectMemoryFromTemplate(options: ProjectMemorySeedOptions)
         seededDirectory,
         copiedFiles,
         preservedFiles,
-        missingTemplateFiles
+        missingTemplateFiles,
+        templateUpdateNotices
     };
 }
 
@@ -180,7 +206,8 @@ export function buildProjectMemoryBootstrapReport(
             seeded_directory: seedResult.seededDirectory,
             copied_files: [...seedResult.copiedFiles],
             preserved_files: [...seedResult.preservedFiles],
-            missing_template_files: [...seedResult.missingTemplateFiles]
+            missing_template_files: [...seedResult.missingTemplateFiles],
+            template_update_notices: seedResult.templateUpdateNotices.map((notice) => ({ ...notice }))
         },
         validation: {
             passed: validation.passed,

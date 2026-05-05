@@ -78,6 +78,7 @@ export interface UpdatePipelineStageResult {
     installStatus: string;
     materializationStatus: string;
     workflowConfigMergeStatus: string | null;
+    projectMemoryDiagnostics?: ProjectMemoryLifecycleDiagnostics | null;
     contractMigrationStatus: string;
     contractMigrationCount: number;
     contractMigrationFiles: string[];
@@ -85,6 +86,14 @@ export interface UpdatePipelineStageResult {
     manifestStatus: string;
     invariantStatus: string;
     updatedVersion: string;
+}
+
+export interface ProjectMemoryLifecycleDiagnostics {
+    copiedFiles: string[];
+    preservedFiles: string[];
+    missingTemplateFiles: string[];
+    templateUpdateNotices: string[];
+    bootstrapReportPath: string | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -99,6 +108,59 @@ function getWorkflowConfigMergeStatus(result: unknown): string | null {
     return typeof status === 'string' && status.trim()
         ? status
         : null;
+}
+
+function getStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.filter((entry) => typeof entry === 'string' && entry.trim()).map((entry) => entry.trim())
+        : [];
+}
+
+function getProjectMemoryDiagnostics(result: unknown): ProjectMemoryLifecycleDiagnostics | null {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return null;
+    }
+
+    const record = result as Record<string, unknown>;
+    const report = record.projectMemoryBootstrapReport;
+    const reportRecord = report && typeof report === 'object' && !Array.isArray(report)
+        ? report as Record<string, unknown>
+        : null;
+    const seed = reportRecord?.seed && typeof reportRecord.seed === 'object' && !Array.isArray(reportRecord.seed)
+        ? reportRecord.seed as Record<string, unknown>
+        : null;
+    if (!seed) {
+        return null;
+    }
+
+    const rawNotices = Array.isArray(seed.template_update_notices)
+        ? seed.template_update_notices
+        : [];
+    const templateUpdateNotices = rawNotices
+        .map((entry) => {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                return null;
+            }
+            const notice = entry as Record<string, unknown>;
+            const livePath = typeof notice.livePath === 'string' ? notice.livePath : '';
+            const templatePath = typeof notice.templatePath === 'string' ? notice.templatePath : '';
+            return livePath && templatePath
+                ? `${livePath} preserved; template guidance available at ${templatePath}`
+                : null;
+        })
+        .filter((entry): entry is string => Boolean(entry));
+
+    const bootstrapReportPath = typeof record.projectMemoryBootstrapReportPath === 'string'
+        ? record.projectMemoryBootstrapReportPath
+        : null;
+
+    return {
+        copiedFiles: getStringArray(seed.copied_files),
+        preservedFiles: getStringArray(seed.preserved_files),
+        missingTemplateFiles: getStringArray(seed.missing_template_files),
+        templateUpdateNotices,
+        bootstrapReportPath
+    };
 }
 
 /**
@@ -145,6 +207,7 @@ export function executeUpdatePipelineStages(options: {
     let installStatus = 'NOT_RUN';
     let materializationStatus = 'NOT_RUN';
     let workflowConfigMergeStatus: string | null = null;
+    let projectMemoryDiagnostics: ProjectMemoryLifecycleDiagnostics | null = null;
     let contractMigrationStatus = 'NOT_RUN';
     let verifyStatus = 'NOT_RUN';
     let manifestStatus = 'NOT_RUN';
@@ -208,6 +271,7 @@ export function executeUpdatePipelineStages(options: {
                     lifecycleLockAlreadyHeld
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(materializationResult);
+                projectMemoryDiagnostics = getProjectMemoryDiagnostics(materializationResult);
             } else {
                 const initResult = runInit({
                     targetRoot: normalizedTarget,
@@ -225,6 +289,7 @@ export function executeUpdatePipelineStages(options: {
                     lifecycleLockAlreadyHeld
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(initResult);
+                projectMemoryDiagnostics = getProjectMemoryDiagnostics(initResult);
             }
             materializationStatus = 'PASS';
 
@@ -359,6 +424,7 @@ export function executeUpdatePipelineStages(options: {
         installStatus,
         materializationStatus,
         workflowConfigMergeStatus,
+        projectMemoryDiagnostics,
         contractMigrationStatus,
         contractMigrationCount,
         contractMigrationFiles,
