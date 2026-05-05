@@ -221,6 +221,7 @@ garda check-update --target-root "." --init-answers-path "garda-agent-orchestrat
 Notes:
 - By default `check-update` uses the deployed package name from `garda-agent-orchestrator/package.json` with the npm `latest` tag.
 - `--package-spec` accepts npm specs such as `garda-agent-orchestrator@<target-version>`, dist-tags like `@latest`, and local tarballs like `.\garda-agent-orchestrator-<target-version>.tgz`.
+- Trusted npm registry specs are resolved before apply to an exact `name@version` package with registry integrity metadata. Update and check-update output include requested, exact, resolved-version, and resolved-integrity fields when registry provenance is available.
 - `--source-path` is for local testing against an unpacked repo or bundle directory.
 - `--trust-override` is an explicit bypass for non-allowlisted npm specs, git sources, or local `--source-path` testing, and the public CLI only accepts it together with `--no-prompt`.
 - Ordinary CLI/runtime flows ignore `GARDA_UPDATE_TRUST_OVERRIDE`; that environment variable is reserved for test-only harness paths, not for production or CI.
@@ -240,6 +241,7 @@ garda update --target-root "." --init-answers-path "garda-agent-orchestrator/run
 
 Notes:
 - `update` always applies the update workflow unless `--dry-run` is used.
+- Trusted npm registry specs are resolved before install to an exact package version with integrity metadata, and the resolved provenance is recorded in CLI output and update reports.
 - Use `--trust-override --no-prompt` only when you intentionally bypass the trusted-source allowlist for a local or non-standard source; the update report records that override.
 - Successful applies sync bundle files, run install, re-materialize `live/`, apply built-in live-rule contract migrations for existing workspaces, run verify plus manifest validation, and only then write the final `VERSION` marker.
 - Successful applies create rollback artifacts under `garda-agent-orchestrator/runtime/update-rollbacks/` and `garda-agent-orchestrator/runtime/bundle-backups/`.

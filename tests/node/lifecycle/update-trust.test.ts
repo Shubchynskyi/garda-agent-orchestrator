@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -485,7 +485,7 @@ describe('runCheckUpdate trust integration', () => {
     it('accepts untrusted packageSpec with trustOverride', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace('1.0.0');
         try {
-            // Will fail at npm install, but trust check should pass
+            // Trust override must pass first, then nonexistent packages fail during metadata resolution.
             await assert.rejects(
                 runCheckUpdate({
                     targetRoot: projectRoot,
@@ -494,7 +494,7 @@ describe('runCheckUpdate trust integration', () => {
                     dryRun: true,
                     trustOverride: true
                 }),
-                /Failed to install update package|npm install/
+                /Failed to resolve update package|NPM_METADATA_UNAVAILABLE/
             );
         } finally {
             removePathRecursive(projectRoot);

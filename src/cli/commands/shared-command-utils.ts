@@ -4,8 +4,7 @@ import {
     LIFECYCLE_COMMANDS,
     resolveBundleName
 } from '../../core/constants';
-import { formatManifestResult, validateManifest } from '../../validators/validate-manifest';
-import { formatVerifyResult, runVerify } from '../../validators/verify';
+import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../validators';
 import { runContractMigrations } from '../../lifecycle/contract-migrations';
 import { collectUpdateAnnouncements } from '../../lifecycle/update-announcements';
 import { runUpdate } from '../../lifecycle/update';
@@ -22,6 +21,10 @@ export interface UpdateLifecycleResult extends Record<string, unknown> {
     rollbackSnapshotPath?: unknown;
     rollbackStatus?: unknown;
     updateReportPath?: unknown;
+    requestedPackageSpec?: unknown;
+    exactPackageSpec?: unknown;
+    resolvedPackageVersion?: unknown;
+    resolvedPackageIntegrity?: unknown;
     updateMessages?: unknown;
     releaseNotes?: unknown;
     updateAnnouncementWarnings?: unknown;
@@ -355,7 +358,11 @@ export function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: b
                 overrideUsed: runnerOptions.trustOverrideUsed,
                 overrideSource: runnerOptions.trustOverrideSource,
                 sourceType: runnerOptions.sourceType,
-                sourceReference: runnerOptions.sourceReference
+                sourceReference: runnerOptions.sourceReference,
+                requestedPackageSpec: runnerOptions.requestedPackageSpec || null,
+                exactPackageSpec: runnerOptions.exactPackageSpec || null,
+                resolvedPackageVersion: runnerOptions.resolvedPackageVersion || null,
+                resolvedPackageIntegrity: runnerOptions.resolvedPackageIntegrity || null
             },
             lifecycleLockAlreadyHeld: runnerOptions.lifecycleLockAlreadyHeld === true,
             contractMigrationRunner(options) {
@@ -399,6 +406,10 @@ export function mergeUpdateLifecycleOutput(
         rollbackSnapshotPath: lifecycleResult.rollbackSnapshotPath,
         rollbackStatus: lifecycleResult.rollbackStatus,
         updateReportPath: lifecycleResult.updateReportPath,
+        requestedPackageSpec: lifecycleResult.requestedPackageSpec ?? baseResult.requestedPackageSpec,
+        exactPackageSpec: lifecycleResult.exactPackageSpec ?? baseResult.exactPackageSpec,
+        resolvedPackageVersion: lifecycleResult.resolvedPackageVersion ?? baseResult.resolvedPackageVersion,
+        resolvedPackageIntegrity: lifecycleResult.resolvedPackageIntegrity ?? baseResult.resolvedPackageIntegrity,
         updateMessages: lifecycleResult.updateMessages,
         releaseNotes: lifecycleResult.releaseNotes,
         updateAnnouncementWarnings: lifecycleResult.updateAnnouncementWarnings

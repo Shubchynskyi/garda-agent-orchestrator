@@ -139,7 +139,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
         }
     });
     const mergedUpdateResultBase = mergeUpdateLifecycleOutput(toKeyValueRecord(updateResult), lifecycleResult);
-    const mergedUpdateResult = updateResult.updateApplied === true
+    const mergedUpdateResult = updateResult.updateApplied
         ? enrichUpdateOutputWithCurrentBundleAnnouncements(
             (() => {
                 invalidateBundleRuntimeModuleCache(bundlePath);
@@ -154,6 +154,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
         printUpdateStatusBanner(mergedUpdateResult);
         formatKeyValueOutput(mergedUpdateResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
+            'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
@@ -293,7 +294,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
         }
     });
     const mergedCheckResultBase = mergeUpdateLifecycleOutput(toKeyValueRecord(checkResult), lifecycleResult);
-    const mergedCheckResult = checkResult.updateApplied === true
+    const mergedCheckResult = checkResult.updateApplied
         ? enrichUpdateOutputWithCurrentBundleAnnouncements(
             (() => {
                 invalidateBundleRuntimeModuleCache(bundlePath);
@@ -308,6 +309,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
         printUpdateStatusBanner(mergedCheckResult);
         formatKeyValueOutput(mergedCheckResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
+            'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
             'workflowConfigMergeStatus',

@@ -37,6 +37,10 @@ interface UpdateTrustContext {
     overrideSource: string;
     sourceType: string;
     sourceReference: string;
+    requestedPackageSpec?: string | null;
+    exactPackageSpec?: string | null;
+    resolvedPackageVersion?: string | null;
+    resolvedPackageIntegrity?: string | null;
 }
 
 interface RunUpdateOptions {
@@ -154,7 +158,11 @@ function runValidatedUpdate(
         overrideUsed: false,
         overrideSource: 'none',
         sourceType: 'unknown',
-        sourceReference: 'unknown'
+        sourceReference: 'unknown',
+        requestedPackageSpec: null,
+        exactPackageSpec: null,
+        resolvedPackageVersion: null,
+        resolvedPackageIntegrity: null
     };
 
     if (!dryRun) {

@@ -10,6 +10,10 @@ interface UpdateTrustContext {
     overrideSource: string;
     sourceType: string;
     sourceReference: string;
+    requestedPackageSpec?: string | null;
+    exactPackageSpec?: string | null;
+    resolvedPackageVersion?: string | null;
+    resolvedPackageIntegrity?: string | null;
 }
 
 export interface UpdateReportData {
@@ -49,6 +53,10 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
         '## Trust',
         `SourceType: ${trustContext.sourceType}`,
         `SourceReference: ${trustContext.sourceReference}`,
+        `RequestedPackageSpec: ${trustContext.requestedPackageSpec || 'n/a'}`,
+        `ExactPackageSpec: ${trustContext.exactPackageSpec || 'n/a'}`,
+        `ResolvedPackageVersion: ${trustContext.resolvedPackageVersion || 'n/a'}`,
+        `ResolvedPackageIntegrity: ${trustContext.resolvedPackageIntegrity || 'n/a'}`,
         `TrustPolicy: ${trustContext.policy}`,
         `TrustOverrideUsed: ${trustContext.overrideUsed ? 'yes' : 'no'}`,
         `TrustOverrideSource: ${trustContext.overrideSource}`,
@@ -147,6 +155,10 @@ export function buildUpdateResult(input: UpdateResultInput) {
         trustPolicy: trustContext.policy,
         trustOverrideUsed: trustContext.overrideUsed,
         trustOverrideSource: trustContext.overrideSource,
+        requestedPackageSpec: trustContext.requestedPackageSpec || null,
+        exactPackageSpec: trustContext.exactPackageSpec || null,
+        resolvedPackageVersion: trustContext.resolvedPackageVersion || null,
+        resolvedPackageIntegrity: trustContext.resolvedPackageIntegrity || null,
         previousVersion: sources.previousVersion,
         previousVersionSource: sources.previousVersionSource,
         bundleVersion: sources.bundleVersion,

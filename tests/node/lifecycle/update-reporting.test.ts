@@ -47,6 +47,10 @@ function makeTrustContext(overrides: Record<string, unknown> = {}) {
         overrideSource: 'cli-flag',
         sourceType: 'path',
         sourceReference: '/local-source',
+        requestedPackageSpec: null,
+        exactPackageSpec: null,
+        resolvedPackageVersion: null,
+        resolvedPackageIntegrity: null,
         ...overrides
     };
 }
@@ -72,6 +76,10 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('TargetRoot: /project'));
         assert.ok(text.includes('RollbackSnapshotRecordCount: 5'));
         assert.ok(text.includes('TrustPolicy: overridden'));
+        assert.ok(text.includes('RequestedPackageSpec: n/a'));
+        assert.ok(text.includes('ExactPackageSpec: n/a'));
+        assert.ok(text.includes('ResolvedPackageVersion: n/a'));
+        assert.ok(text.includes('ResolvedPackageIntegrity: n/a'));
         assert.ok(text.includes('TrustOverrideUsed: yes'));
         assert.ok(text.includes('TrustOverrideSource: cli-flag'));
         assert.ok(text.includes('PreviousVersion: 1.0.0'));
@@ -125,6 +133,35 @@ describe('buildUpdateReportLines', () => {
         const text = lines.join('\n');
         assert.ok(text.includes('TrustOverrideUsed: no'));
     });
+
+    it('includes resolved npm update provenance when available', () => {
+        const lines = buildUpdateReportLines({
+            normalizedTarget: '/project',
+            initAnswersResolvedPath: '/project/answers.json',
+            rollbackSnapshotRelativePath: 'snapshot',
+            rollbackRecordsRelativePath: 'snapshot/records.json',
+            rollbackRecordCount: 0,
+            rollbackStatus: 'NOT_TRIGGERED',
+            trustContext: makeTrustContext({
+                sourceType: 'npm',
+                sourceReference: 'garda-agent-orchestrator@2.3.4',
+                requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                exactPackageSpec: 'garda-agent-orchestrator@2.3.4',
+                resolvedPackageVersion: '2.3.4',
+                resolvedPackageIntegrity: 'sha512-resolved'
+            }),
+            previousVersion: '1.0.0',
+            previousVersionSource: 'live/version.json',
+            bundleVersion: '2.0.0',
+            stageResult: makeStageResult()
+        });
+
+        const text = lines.join('\n');
+        assert.ok(text.includes('RequestedPackageSpec: garda-agent-orchestrator@latest'));
+        assert.ok(text.includes('ExactPackageSpec: garda-agent-orchestrator@2.3.4'));
+        assert.ok(text.includes('ResolvedPackageVersion: 2.3.4'));
+        assert.ok(text.includes('ResolvedPackageIntegrity: sha512-resolved'));
+    });
 });
 
 describe('buildUpdateResult', () => {
@@ -132,7 +169,12 @@ describe('buildUpdateResult', () => {
         const result = buildUpdateResult({
             normalizedTarget: '/project',
             sources: makeSources(),
-            trustContext: makeTrustContext(),
+            trustContext: makeTrustContext({
+                requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                exactPackageSpec: 'garda-agent-orchestrator@2.0.0',
+                resolvedPackageVersion: '2.0.0',
+                resolvedPackageIntegrity: 'sha512-result'
+            }),
             rollbackSnapshotRelativePath: 'snapshot-path',
             rollbackRecordsRelativePath: 'records-path',
             rollbackSnapshotCreated: true,
@@ -151,6 +193,10 @@ describe('buildUpdateResult', () => {
         assert.equal(result.assistantLanguage, 'English');
         assert.equal(result.trustPolicy, 'overridden');
         assert.equal(result.trustOverrideUsed, true);
+        assert.equal(result.requestedPackageSpec, 'garda-agent-orchestrator@latest');
+        assert.equal(result.exactPackageSpec, 'garda-agent-orchestrator@2.0.0');
+        assert.equal(result.resolvedPackageVersion, '2.0.0');
+        assert.equal(result.resolvedPackageIntegrity, 'sha512-result');
         assert.equal(result.installStatus, 'PASS');
         assert.equal(result.manifestValidationStatus, 'PASS');
         assert.equal(result.workflowConfigMergeStatus, 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true');

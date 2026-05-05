@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { PRIMARY_PACKAGE_NAME, resolveBundleName } from '../core/constants';
 import { pathExists, readTextFile } from '../core/filesystem';
@@ -26,6 +25,7 @@ import {
     withLifecycleOperationLockAsync
 } from './common';
 import {
+    parseNpmPackageSpec,
     type TrustValidationResult,
     validateNpmSourceTrust,
     validatePathSourceTrust
@@ -33,6 +33,7 @@ import {
 import { classifyNpmDiagnostic, createLifecycleDiagnosticError } from './update-diagnostics';
 
 export const DEFAULT_PACKAGE_NAME = PRIMARY_PACKAGE_NAME;
+export const DEFAULT_UPDATE_TEMP_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface NpmInvocation {
     command: string;
@@ -41,6 +42,77 @@ interface NpmInvocation {
 
 interface ResolveInstalledPackageRootOptions {
     sourceReference?: string;
+}
+
+interface NpmViewResult {
+    error?: Error;
+    status: number | null;
+    stdout?: string | Buffer | null;
+    stderr?: string | Buffer | null;
+}
+
+interface NpmInstallResult {
+    cancelled?: boolean;
+    timedOut?: boolean;
+    exitCode: number | null;
+    stdout?: string | Buffer | null;
+    stderr?: string | Buffer | null;
+}
+
+function buildNpmInstallFailureDiagnostic(
+    installResult: NpmInstallResult,
+    effectivePackageSpec: string,
+    effectiveDiagnosticSource: string
+): Error | null {
+    if (installResult.cancelled) {
+        return createLifecycleDiagnosticError({
+            message: `npm install was cancelled for '${effectivePackageSpec}'.`,
+            tool: 'npm',
+            code: 'NPM_INSTALL_CANCELLED',
+            sourceReference: effectiveDiagnosticSource,
+            stderr: installResult.stderr,
+            stdout: installResult.stdout
+        });
+    }
+
+    if (installResult.timedOut) {
+        return createLifecycleDiagnosticError({
+            message: `npm install timed out after ${DEFAULT_NPM_TIMEOUT_MS} ms for '${effectivePackageSpec}'.`,
+            tool: 'npm',
+            code: 'NPM_INSTALL_TIMEOUT',
+            sourceReference: effectiveDiagnosticSource,
+            stderr: installResult.stderr,
+            stdout: installResult.stdout
+        });
+    }
+
+    if (installResult.exitCode !== 0) {
+        const diagnosticText = `${String(installResult.stderr || '')}\n${String(installResult.stdout || '')}`;
+        return createLifecycleDiagnosticError({
+            message: `Failed to install update package '${effectivePackageSpec}'.`,
+            tool: 'npm',
+            code: classifyNpmDiagnostic(diagnosticText),
+            sourceReference: effectiveDiagnosticSource,
+            stderr: installResult.stderr,
+            stdout: installResult.stdout
+        });
+    }
+
+    return null;
+}
+
+interface ResolveNpmUpdateSourceSpecOptions {
+    sourceReference?: string | null;
+    viewRunner?: ((args: string[]) => NpmViewResult) | null;
+}
+
+export interface ResolvedNpmUpdateSource {
+    requestedSpec: string;
+    exactSpec: string;
+    packageName: string | null;
+    version: string | null;
+    integrity: string | null;
+    resolutionMode: 'direct' | 'explicit_exact' | 'resolved';
 }
 
 export interface AcquireUpdateSourceOptions {
@@ -53,6 +125,12 @@ export interface AcquireUpdateSourceOptions {
     diagnosticSourceReference?: string | null;
     diagnosticTool?: string | null;
     prevalidatedPathTrustResult?: TrustValidationResult | null;
+    npmViewRunner?: ((args: string[]) => NpmViewResult) | null;
+    npmInstallRunner?: ((args: string[], options: SpawnStreamedOptions) => Promise<NpmInstallResult>) | null;
+    installedPackageRootResolver?: ((
+        tempInstallRoot: string,
+        options?: ResolveInstalledPackageRootOptions
+    ) => { packageName: string; packageRoot: string }) | null;
 }
 
 export interface AcquiredUpdateSource {
@@ -60,6 +138,10 @@ export interface AcquiredUpdateSource {
     sourceReference: string;
     diagnosticSourceReference: string;
     packageSpec: string | null;
+    requestedPackageSpec: string | null;
+    exactPackageSpec: string | null;
+    resolvedPackageVersion: string | null;
+    resolvedPackageIntegrity: string | null;
     packageName: string | null;
     sourceRoot: string;
     trustPolicy: string;
@@ -80,6 +162,10 @@ export interface CheckUpdateRunnerOptions {
     trustOverrideSource: string;
     sourceType: string;
     sourceReference: string;
+    requestedPackageSpec?: string | null;
+    exactPackageSpec?: string | null;
+    resolvedPackageVersion?: string | null;
+    resolvedPackageIntegrity?: string | null;
     lifecycleLockAlreadyHeld?: boolean;
 }
 
@@ -101,6 +187,12 @@ interface CheckUpdateOptions {
     diagnosticSourceReference?: string | null;
     diagnosticTool?: string | null;
     prevalidatedPathTrustResult?: TrustValidationResult | null;
+    npmViewRunner?: ((args: string[]) => NpmViewResult) | null;
+    npmInstallRunner?: ((args: string[], options: SpawnStreamedOptions) => Promise<NpmInstallResult>) | null;
+    installedPackageRootResolver?: ((
+        tempInstallRoot: string,
+        options?: ResolveInstalledPackageRootOptions
+    ) => { packageName: string; packageRoot: string }) | null;
     updateRunner?: ((options: CheckUpdateRunnerOptions) => void) | null;
 }
 
@@ -109,6 +201,10 @@ interface CheckUpdateResult {
     sourceType: string;
     sourceReference: string;
     packageSpec: string | null;
+    requestedPackageSpec: string | null;
+    exactPackageSpec: string | null;
+    resolvedPackageVersion: string | null;
+    resolvedPackageIntegrity: string | null;
     sourcePath: string | null;
     packageName: string | null;
     currentVersion: string;
@@ -223,11 +319,7 @@ function areDirectoriesEquivalent(
         }
     }
 
-    if (!options.allowExtraDestinationFiles && sourceFiles.length !== destinationFiles.length) {
-        return false;
-    }
-
-    return true;
+    return options.allowExtraDestinationFiles || sourceFiles.length === destinationFiles.length;
 }
 
 function doesSyncItemMatchSource(sourceRoot: string, deployedBundleRoot: string, item: string): boolean {
@@ -254,6 +346,27 @@ function doesSyncItemMatchSource(sourceRoot: string, deployedBundleRoot: string,
     }
 
     return areFilesEquivalent(sourceItemPath, deployedItemPath);
+}
+
+function syncDeferredVersionFile(versionSourcePath: string, versionDestPath: string): void {
+    const previousVersionContent = fs.existsSync(versionDestPath)
+        ? fs.readFileSync(versionDestPath)
+        : null;
+    try {
+        removePathRecursive(versionDestPath);
+        fs.mkdirSync(path.dirname(versionDestPath), { recursive: true });
+        fs.copyFileSync(versionSourcePath, versionDestPath);
+    } catch (versionSyncError) {
+        if (previousVersionContent !== null) {
+            try {
+                fs.mkdirSync(path.dirname(versionDestPath), { recursive: true });
+                fs.writeFileSync(versionDestPath, previousVersionContent);
+            } catch (_restoreErr) {
+                // Best-effort restore; the outer apply catch handles rollback.
+            }
+        }
+        throw versionSyncError;
+    }
 }
 
 function detectSyncSurfaceDrift(sourceRoot: string, deployedBundleRoot: string): string[] {
@@ -349,6 +462,90 @@ function applyUpdateAvailabilitySnapshot(
     result.checkUpdateResult = snapshot.checkUpdateResult;
 }
 
+function isExactNpmVersion(version: string | null): boolean {
+    return typeof version === 'string'
+        && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(version.trim());
+}
+
+function selectNpmViewRecord(parsed: unknown, sourceReference: string, stdout: string): Record<string, unknown> {
+    if (Array.isArray(parsed)) {
+        const records = parsed
+            .map((entry) => toObjectRecord(entry))
+            .filter((entry): entry is Record<string, unknown> => entry !== null);
+        if (records.length === 0) {
+            throw createLifecycleDiagnosticError({
+                message: `npm metadata for update package '${sourceReference}' did not contain any usable version records.`,
+                tool: 'npm',
+                code: 'NPM_METADATA_INVALID',
+                sourceReference,
+                stdout
+            });
+        }
+
+        const sorted = records
+            .map((record) => ({
+                record,
+                version: String(record.version || '').trim()
+            }))
+            .sort((left, right) => compareVersionStrings(left.version, right.version));
+        return sorted[sorted.length - 1].record;
+    }
+
+    const record = toObjectRecord(parsed);
+    if (!record) {
+        throw createLifecycleDiagnosticError({
+            message: `npm metadata for update package '${sourceReference}' was ambiguous.`,
+            tool: 'npm',
+            code: 'NPM_METADATA_INVALID',
+            sourceReference,
+            stdout
+        });
+    }
+
+    return record;
+}
+
+function parseNpmViewJson(stdout: string, sourceReference: string): { version: string; integrity: string } {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(stdout);
+    } catch (_error) {
+        throw createLifecycleDiagnosticError({
+            message: `Failed to parse npm metadata for update package '${sourceReference}'.`,
+            tool: 'npm',
+            code: 'NPM_METADATA_INVALID',
+            sourceReference,
+            stdout
+        });
+    }
+
+    const record = selectNpmViewRecord(parsed, sourceReference, stdout);
+
+    const version = String(record.version || '').trim();
+    const integrity = String(record['dist.integrity'] || '').trim();
+    if (!version || !isExactNpmVersion(version)) {
+        throw createLifecycleDiagnosticError({
+            message: `npm metadata did not resolve an exact version for update package '${sourceReference}'.`,
+            tool: 'npm',
+            code: 'NPM_METADATA_INVALID',
+            sourceReference,
+            stdout
+        });
+    }
+
+    if (!integrity) {
+        throw createLifecycleDiagnosticError({
+            message: `npm metadata did not include dist.integrity for update package '${sourceReference}'.`,
+            tool: 'npm',
+            code: 'NPM_METADATA_INVALID',
+            sourceReference,
+            stdout
+        });
+    }
+
+    return { version, integrity };
+}
+
 let resolvedNpmInvocation: NpmInvocation | null = null;
 
 function resolveNpmInvocation(): NpmInvocation {
@@ -416,6 +613,72 @@ async function runNpmStreamed(args: string[], options: SpawnStreamedOptions = {}
         onStdout: options.onStdout ?? undefined,
         onStderr: options.onStderr ?? undefined
     });
+}
+
+export function resolveNpmUpdateSourceSpec(
+    requestedSpec: string,
+    options: ResolveNpmUpdateSourceSpecOptions = {}
+): ResolvedNpmUpdateSource {
+    const requested = String(requestedSpec || '').trim();
+    const parsed = parseNpmPackageSpec(requested);
+    if (!parsed || !parsed.name) {
+        return {
+            requestedSpec: requested,
+            exactSpec: requested,
+            packageName: null,
+            version: null,
+            integrity: null,
+            resolutionMode: 'direct'
+        };
+    }
+
+    const exactRequested = isExactNpmVersion(parsed.version);
+    const lookupSpec = parsed.version ? `${parsed.name}@${parsed.version}` : parsed.name;
+    const sourceReference = String(options.sourceReference || lookupSpec);
+    const viewRunner = options.viewRunner || ((args: string[]) => runNpmSync(args));
+    const viewResult = viewRunner(['view', lookupSpec, 'version', 'dist.integrity', '--json']);
+    const detailText = viewResult.error ? getErrorMessage(viewResult.error) : '';
+    if (viewResult.error || viewResult.status !== 0) {
+        throw createLifecycleDiagnosticError({
+            message: `Failed to resolve update package '${lookupSpec}' to an exact npm version.`,
+            tool: 'npm',
+            code: 'NPM_METADATA_UNAVAILABLE',
+            sourceReference,
+            stderr: viewResult.stderr,
+            stdout: viewResult.stdout,
+            detailText
+        });
+    }
+
+    const stdout = String(viewResult.stdout || '').trim();
+    if (!stdout) {
+        throw createLifecycleDiagnosticError({
+            message: `npm metadata was empty for update package '${lookupSpec}'.`,
+            tool: 'npm',
+            code: 'NPM_METADATA_EMPTY',
+            sourceReference
+        });
+    }
+
+    const metadata = parseNpmViewJson(stdout, sourceReference);
+    if (exactRequested && parsed.version !== metadata.version) {
+        throw createLifecycleDiagnosticError({
+            message: `npm metadata version '${metadata.version}' did not match requested update package version '${parsed.version}' for '${lookupSpec}'.`,
+            tool: 'npm',
+            code: 'NPM_METADATA_INVALID',
+            sourceReference,
+            stdout
+        });
+    }
+
+    return {
+        requestedSpec: requested,
+        exactSpec: `${parsed.name}@${metadata.version}`,
+        packageName: parsed.name,
+        version: metadata.version,
+        integrity: metadata.integrity,
+        resolutionMode: exactRequested ? 'explicit_exact' : 'resolved'
+    };
 }
 
 function readPackageNameFromDirectory(directoryPath: string, fallbackValue: string | null = null): string | null {
@@ -518,6 +781,39 @@ function resolveInstalledPackageRoot(
     };
 }
 
+export function getUpdateTempRoot(runtimeRoot: string): string {
+    return path.join(runtimeRoot, 'update-temp');
+}
+
+export function cleanupOldUpdateTempRoots(
+    runtimeRoot: string,
+    ttlMs: number = DEFAULT_UPDATE_TEMP_TTL_MS,
+    nowMs: number = Date.now()
+): string[] {
+    const updateTempRoot = getUpdateTempRoot(runtimeRoot);
+    if (!fs.existsSync(updateTempRoot)) {
+        return [];
+    }
+
+    const removed: string[] = [];
+    for (const entry of fs.readdirSync(updateTempRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.startsWith('npm-')) {
+            continue;
+        }
+
+        const candidatePath = path.join(updateTempRoot, entry.name);
+        const stats = fs.statSync(candidatePath);
+        if (nowMs - stats.mtimeMs <= ttlMs) {
+            continue;
+        }
+
+        removePathRecursive(candidatePath);
+        removed.push(candidatePath);
+    }
+
+    return removed;
+}
+
 export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): Promise<AcquiredUpdateSource> {
     const {
         deployedBundleRoot,
@@ -528,7 +824,10 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
         onProgress = null,
         diagnosticSourceReference = null,
         diagnosticTool = null,
-        prevalidatedPathTrustResult = null
+        prevalidatedPathTrustResult = null,
+        npmViewRunner = null,
+        npmInstallRunner = null,
+        installedPackageRootResolver = null
     } = options;
 
     if (packageSpec && sourcePath) {
@@ -552,6 +851,10 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
             sourceReference: resolvedSourcePath,
             diagnosticSourceReference: diagnosticSourceReference || resolvedSourcePath,
             packageSpec: null,
+            requestedPackageSpec: null,
+            exactPackageSpec: null,
+            resolvedPackageVersion: null,
+            resolvedPackageIntegrity: null,
             packageName: readPackageNameFromDirectory(resolvedSourcePath),
             sourceRoot: resolvedSourcePath,
             trustPolicy: trustResult.policy,
@@ -581,9 +884,19 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
     const effectiveDiagnosticSource = diagnosticSourceReference || effectivePackageSpec;
 
     const trustResult = validateNpmSourceTrust(effectivePackageSpec, { trustOverride });
+    const resolvedPackageSpec = resolveNpmUpdateSourceSpec(effectivePackageSpec, {
+        sourceReference: effectiveDiagnosticSource,
+        viewRunner: npmViewRunner
+    });
+    const installPackageSpec = resolvedPackageSpec.exactSpec || effectivePackageSpec;
 
-    const tempInstallRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-update-npm-'));
+    const runtimeRoot = path.join(deployedBundleRoot, 'runtime');
+    cleanupOldUpdateTempRoots(runtimeRoot);
+    const updateTempRoot = getUpdateTempRoot(runtimeRoot);
+    fs.mkdirSync(updateTempRoot, { recursive: true });
+    const tempInstallRoot = fs.mkdtempSync(path.join(updateTempRoot, 'npm-'));
 
+    let acquiredSource: AcquiredUpdateSource | null = null;
     try {
         const installArgs = [
             'install',
@@ -594,53 +907,37 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
             '--package-lock=false',
             '--fund=false',
             '--audit=false',
-            effectivePackageSpec
+            installPackageSpec
         ];
-        const installResult = await runNpmStreamed(installArgs, {
+        const installOptions = {
             signal: signal ?? undefined,
             onStderr: onProgress ?? undefined
-        });
+        };
+        const installResult = npmInstallRunner
+            ? await npmInstallRunner(installArgs, installOptions)
+            : await runNpmStreamed(installArgs, installOptions);
 
-        if (installResult.cancelled) {
-            throw createLifecycleDiagnosticError({
-                message: `npm install was cancelled for '${effectivePackageSpec}'.`,
-                tool: 'npm',
-                code: 'NPM_INSTALL_CANCELLED',
-                sourceReference: effectiveDiagnosticSource,
-                stderr: installResult.stderr,
-                stdout: installResult.stdout
-            });
+        const failedInstallDiagnostic = buildNpmInstallFailureDiagnostic(
+            installResult,
+            effectivePackageSpec,
+            effectiveDiagnosticSource
+        );
+        if (failedInstallDiagnostic) {
+            throw failedInstallDiagnostic;
         }
 
-        if (installResult.timedOut) {
-            throw createLifecycleDiagnosticError({
-                message: `npm install timed out after ${DEFAULT_NPM_TIMEOUT_MS} ms for '${effectivePackageSpec}'.`,
-                tool: 'npm',
-                code: 'NPM_INSTALL_TIMEOUT',
-                sourceReference: effectiveDiagnosticSource,
-                stderr: installResult.stderr,
-                stdout: installResult.stdout
-            });
-        }
-
-        if (installResult.exitCode !== 0) {
-            const diagnosticText = `${String(installResult.stderr || '')}\n${String(installResult.stdout || '')}`;
-            throw createLifecycleDiagnosticError({
-                message: `Failed to install update package '${effectivePackageSpec}'.`,
-                tool: 'npm',
-                code: classifyNpmDiagnostic(diagnosticText),
-                sourceReference: effectiveDiagnosticSource,
-                stderr: installResult.stderr,
-                stdout: installResult.stdout
-            });
-        }
-
-        const installed = resolveInstalledPackageRoot(tempInstallRoot, { sourceReference: effectiveDiagnosticSource });
-        return {
+        const installed = installedPackageRootResolver
+            ? installedPackageRootResolver(tempInstallRoot, { sourceReference: effectiveDiagnosticSource })
+            : resolveInstalledPackageRoot(tempInstallRoot, { sourceReference: effectiveDiagnosticSource });
+        acquiredSource = {
             sourceType: 'npm',
-            sourceReference: effectivePackageSpec,
+            sourceReference: installPackageSpec,
             diagnosticSourceReference: effectiveDiagnosticSource,
-            packageSpec: effectivePackageSpec,
+            packageSpec: installPackageSpec,
+            requestedPackageSpec: resolvedPackageSpec.requestedSpec,
+            exactPackageSpec: resolvedPackageSpec.exactSpec,
+            resolvedPackageVersion: resolvedPackageSpec.version,
+            resolvedPackageIntegrity: resolvedPackageSpec.integrity,
             packageName: installed.packageName,
             sourceRoot: installed.packageRoot,
             trustPolicy: trustResult.policy,
@@ -651,9 +948,11 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
                 removePathRecursive(tempInstallRoot);
             }
         };
-    } catch (error: unknown) {
-        removePathRecursive(tempInstallRoot);
-        throw error;
+        return acquiredSource;
+    } finally {
+        if (!acquiredSource) {
+            removePathRecursive(tempInstallRoot);
+        }
     }
 }
 
@@ -676,6 +975,9 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         diagnosticSourceReference = null,
         diagnosticTool = null,
         prevalidatedPathTrustResult = null,
+        npmViewRunner = null,
+        npmInstallRunner = null,
+        installedPackageRootResolver = null,
         updateRunner = null
     } = options;
 
@@ -698,7 +1000,10 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         onProgress,
         diagnosticSourceReference,
         diagnosticTool,
-        prevalidatedPathTrustResult
+        prevalidatedPathTrustResult,
+        npmViewRunner,
+        npmInstallRunner,
+        installedPackageRootResolver
     });
 
     const result: CheckUpdateResult = {
@@ -706,6 +1011,10 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         sourceType: source.sourceType,
         sourceReference: source.sourceReference,
         packageSpec: source.packageSpec,
+        requestedPackageSpec: source.requestedPackageSpec,
+        exactPackageSpec: source.exactPackageSpec,
+        resolvedPackageVersion: source.resolvedPackageVersion,
+        resolvedPackageIntegrity: source.resolvedPackageIntegrity,
         sourcePath: source.sourceType === 'path' ? source.sourceReference : null,
         packageName: source.packageName,
         currentVersion,
@@ -718,7 +1027,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         noPrompt,
         dryRun,
         trustPolicy: source.trustPolicy || 'enforced',
-        trustOverrideUsed: source.trustOverrideUsed === true,
+        trustOverrideUsed: source.trustOverrideUsed,
         trustOverrideSource: source.trustOverrideSource || 'none',
         syncItemsDetected: 0,
         syncItemsBackedUp: 0,
@@ -822,6 +1131,10 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                         sourceType: source.sourceType,
                         sourceReference: source.sourceReference,
                         packageSpec: source.packageSpec,
+                        requestedPackageSpec: source.requestedPackageSpec,
+                        exactPackageSpec: source.exactPackageSpec,
+                        resolvedPackageVersion: source.resolvedPackageVersion,
+                        resolvedPackageIntegrity: source.resolvedPackageIntegrity,
                         preexistingMap: syncPreexistingMap
                     });
                     result.syncBackupRoot = syncBackupRoot;
@@ -833,7 +1146,14 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                     writeUpdateSentinel(deployedBundleRoot, {
                         startedAt: new Date().toISOString(),
                         fromVersion: currentVersion,
-                        toVersion: latestVersion
+                        toVersion: latestVersion,
+                        sourceType: source.sourceType,
+                        sourceReference: source.sourceReference,
+                        packageSpec: source.packageSpec,
+                        requestedPackageSpec: source.requestedPackageSpec,
+                        exactPackageSpec: source.exactPackageSpec,
+                        resolvedPackageVersion: source.resolvedPackageVersion,
+                        resolvedPackageIntegrity: source.resolvedPackageIntegrity
                     });
 
                     if (updateRunner) {
@@ -848,6 +1168,10 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                             trustOverrideSource: result.trustOverrideSource,
                             sourceType: result.sourceType,
                             sourceReference: result.sourceReference,
+                            requestedPackageSpec: result.requestedPackageSpec,
+                            exactPackageSpec: result.exactPackageSpec,
+                            resolvedPackageVersion: result.resolvedPackageVersion,
+                            resolvedPackageIntegrity: result.resolvedPackageIntegrity,
                             lifecycleLockAlreadyHeld: true
                         });
                     }
@@ -858,30 +1182,7 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                     const versionSourcePath = path.join(source.sourceRoot, DEFERRED_VERSION_ITEM);
                     if (fs.existsSync(versionSourcePath)) {
                         const versionDestPath = path.join(deployedBundleRoot, DEFERRED_VERSION_ITEM);
-                        // Preserve the previous VERSION so it can be restored if the
-                        // deferred copy fails.  VERSION is not part of the regular
-                        // syncPreexistingMap, so without this guard the old file would
-                        // be lost on a late failure (T-092).
-                        const previousVersionContent = fs.existsSync(versionDestPath)
-                            ? fs.readFileSync(versionDestPath)
-                            : null;
-                        try {
-                            removePathRecursive(versionDestPath);
-                            fs.mkdirSync(path.dirname(versionDestPath), { recursive: true });
-                            fs.copyFileSync(versionSourcePath, versionDestPath);
-                        } catch (versionSyncError) {
-                            // Restore the previous VERSION to keep the workspace consistent.
-                            if (previousVersionContent !== null) {
-                                try {
-                                    fs.mkdirSync(path.dirname(versionDestPath), { recursive: true });
-                                    fs.writeFileSync(versionDestPath, previousVersionContent);
-                                } catch (_restoreErr) {
-                                    // Best-effort restore; the outer catch will report the
-                                    // original failure which already triggers a full rollback.
-                                }
-                            }
-                            throw versionSyncError;
-                        }
+                        syncDeferredVersionFile(versionSourcePath, versionDestPath);
                         result.syncItemsUpdated++;
                         result.syncedItems.push(DEFERRED_VERSION_ITEM);
                         syncDeferredLiveVersionPayload(deployedBundleRoot, readTextFile(versionDestPath).trim());

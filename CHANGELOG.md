@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- pinned npm update applies to exact registry-resolved package versions with recorded integrity/provenance, surfaced resolved package fields in update/check-update output, and limited update temp cleanup to old Garda-owned `runtime/update-temp/npm-*` roots
 - preserved existing workspace style guidance during init/update by scaffolding the new code-style contract as reviewable templates, adding init-report adoption notices, and keeping user-owned `project-memory` content out of generated summaries
 - made strict-profile review selection treat configured test-only changes as test review only, including non-Node test roots and tests under runtime roots, while preserving security/protected-scope fail-closed behavior
 - added configurable `ordinary_doc_paths` so agent-init can confirm ordinary planning/changelog paths that skip code/test review while still appearing in preflight and doc-impact evidence

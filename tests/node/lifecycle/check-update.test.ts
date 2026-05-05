@@ -6,11 +6,17 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { buildUpdateLifecycleRunner } from '../../../src/cli/commands/shared-command-utils';
-import { runCheckUpdate } from '../../../src/lifecycle/check-update';
+import {
+    cleanupOldUpdateTempRoots,
+    getUpdateTempRoot,
+    resolveNpmUpdateSourceSpec,
+    runCheckUpdate
+} from '../../../src/lifecycle/check-update';
 import {
     BUNDLE_SYNC_ITEMS,
     removePathRecursive,
     getUpdateSentinelPath,
+    readUpdateSentinel,
     withLifecycleOperationLockAsync
 } from '../../../src/lifecycle/common';
 const FIRST_NPM_RELEASE_PACKAGE_SPEC = process.env.GARDA_FIRST_NPM_RELEASE_PACKAGE_SPEC || 'garda-agent-orchestrator@1.0.0';
@@ -328,6 +334,162 @@ function setupCheckUpdateWorkspace(
     return { projectRoot: tmpDir, bundleRoot: bundle };
 }
 
+describe('npm update source resolution', () => {
+    it('resolves floating registry specs to exact package specs with integrity', () => {
+        const result = resolveNpmUpdateSourceSpec('garda-agent-orchestrator@latest', {
+            viewRunner(args) {
+                assert.deepEqual(args, [
+                    'view',
+                    'garda-agent-orchestrator@latest',
+                    'version',
+                    'dist.integrity',
+                    '--json'
+                ]);
+                return {
+                    status: 0,
+                    stdout: JSON.stringify({
+                        version: '2.3.4',
+                        'dist.integrity': 'sha512-resolved'
+                    })
+                };
+            }
+        });
+
+        assert.deepEqual(result, {
+            requestedSpec: 'garda-agent-orchestrator@latest',
+            exactSpec: 'garda-agent-orchestrator@2.3.4',
+            packageName: 'garda-agent-orchestrator',
+            version: '2.3.4',
+            integrity: 'sha512-resolved',
+            resolutionMode: 'resolved'
+        });
+    });
+
+    it('keeps explicit exact package specs stable without latest resolution', () => {
+        const result = resolveNpmUpdateSourceSpec('garda-agent-orchestrator@2.3.4', {
+            viewRunner(args) {
+                assert.deepEqual(args, [
+                    'view',
+                    'garda-agent-orchestrator@2.3.4',
+                    'version',
+                    'dist.integrity',
+                    '--json'
+                ]);
+                return {
+                    status: 0,
+                    stdout: JSON.stringify({
+                        version: '2.3.4',
+                        'dist.integrity': 'sha512-exact'
+                    })
+                };
+            }
+        });
+
+        assert.deepEqual(result, {
+            requestedSpec: 'garda-agent-orchestrator@2.3.4',
+            exactSpec: 'garda-agent-orchestrator@2.3.4',
+            packageName: 'garda-agent-orchestrator',
+            version: '2.3.4',
+            integrity: 'sha512-exact',
+            resolutionMode: 'explicit_exact'
+        });
+    });
+
+    it('fails closed when registry resolution omits integrity', () => {
+        assert.throws(
+            () => resolveNpmUpdateSourceSpec('garda-agent-orchestrator@latest', {
+                viewRunner() {
+                    return {
+                        status: 0,
+                        stdout: JSON.stringify({ version: '2.3.4' })
+                    };
+                }
+            }),
+            /dist\.integrity/
+        );
+    });
+
+    it('resolves range metadata arrays to the highest exact version with integrity', () => {
+        const result = resolveNpmUpdateSourceSpec('garda-agent-orchestrator@^2.0.0', {
+            viewRunner(args) {
+                assert.deepEqual(args, [
+                    'view',
+                    'garda-agent-orchestrator@^2.0.0',
+                    'version',
+                    'dist.integrity',
+                    '--json'
+                ]);
+                return {
+                    status: 0,
+                    stdout: JSON.stringify([
+                        {
+                            version: '2.0.1',
+                            'dist.integrity': 'sha512-older'
+                        },
+                        {
+                            version: '2.1.0',
+                            'dist.integrity': 'sha512-newer'
+                        }
+                    ])
+                };
+            }
+        });
+
+        assert.deepEqual(result, {
+            requestedSpec: 'garda-agent-orchestrator@^2.0.0',
+            exactSpec: 'garda-agent-orchestrator@2.1.0',
+            packageName: 'garda-agent-orchestrator',
+            version: '2.1.0',
+            integrity: 'sha512-newer',
+            resolutionMode: 'resolved'
+        });
+    });
+
+    it('fails closed when exact requested version differs from registry metadata', () => {
+        assert.throws(
+            () => resolveNpmUpdateSourceSpec('garda-agent-orchestrator@2.3.4', {
+                viewRunner() {
+                    return {
+                        status: 0,
+                        stdout: JSON.stringify({
+                            version: '2.3.5',
+                            'dist.integrity': 'sha512-other'
+                        })
+                    };
+                }
+            }),
+            /did not match requested update package version/
+        );
+    });
+
+    it('janitor removes only old Garda-owned npm update temp roots', () => {
+        const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-update-temp-'));
+        try {
+            const updateTempRoot = getUpdateTempRoot(runtimeRoot);
+            const oldNpmRoot = path.join(updateTempRoot, 'npm-old');
+            const freshNpmRoot = path.join(updateTempRoot, 'npm-fresh');
+            const foreignRoot = path.join(updateTempRoot, 'foreign-old');
+            fs.mkdirSync(oldNpmRoot, { recursive: true });
+            fs.mkdirSync(freshNpmRoot, { recursive: true });
+            fs.mkdirSync(foreignRoot, { recursive: true });
+
+            const now = Date.now();
+            const oldDate = new Date(now - 10_000);
+            fs.utimesSync(oldNpmRoot, oldDate, oldDate);
+            fs.utimesSync(foreignRoot, oldDate, oldDate);
+
+            const removed = cleanupOldUpdateTempRoots(runtimeRoot, 5_000, now);
+
+            assert.deepEqual(removed, [oldNpmRoot]);
+            assert.equal(fs.existsSync(oldNpmRoot), false);
+            assert.equal(fs.existsSync(freshNpmRoot), true);
+            assert.equal(fs.existsSync(foreignRoot), true);
+        } finally {
+            removePathRecursive(runtimeRoot);
+        }
+    });
+});
+
 describe('runCheckUpdate', () => {
     const repoRoot = findRepoRoot();
 
@@ -394,8 +556,16 @@ describe('runCheckUpdate', () => {
 
             assert.equal(result.checkUpdateResult, 'UP_TO_DATE');
             assert.equal(result.sourceType, 'npm');
+            assert.equal(result.packageSpec, sourceRoot);
+            assert.equal(result.requestedPackageSpec, sourceRoot);
+            assert.equal(result.exactPackageSpec, sourceRoot);
+            assert.equal(result.resolvedPackageVersion, null);
+            assert.equal(result.resolvedPackageIntegrity, null);
             assert.equal(result.updateAvailable, false);
             assert.equal(result.currentVersion, currentVersion);
+            const updateTempRoot = getUpdateTempRoot(path.join(bundleRoot, 'runtime'));
+            const tempEntries = fs.existsSync(updateTempRoot) ? fs.readdirSync(updateTempRoot) : [];
+            assert.deepEqual(tempEntries.filter((entry) => entry.startsWith('npm-')), []);
         } finally {
             removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
@@ -961,6 +1131,119 @@ describe('runCheckUpdate', () => {
                 'Sentinel must exist during lifecycle execution');
             assert.ok(!fs.existsSync(sentinelPath),
                 'Sentinel must be removed after successful update');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('records npm update source provenance in the sentinel during apply', async () => {
+        const sourceRoot = createSourcePathFixture(repoRoot);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            let sentinelDuringLifecycle: Record<string, unknown> | null = null;
+
+            const result = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                packageSpec: sourceRoot,
+                noPrompt: true,
+                apply: true,
+                trustOverride: true,
+                updateRunner: () => {
+                    sentinelDuringLifecycle = readUpdateSentinel(bundleRoot) as Record<string, unknown> | null;
+                }
+            });
+
+            assert.equal(result.checkUpdateResult, 'UPDATED');
+            assert.ok(sentinelDuringLifecycle, 'Sentinel must be readable during lifecycle execution');
+            const sentinel = sentinelDuringLifecycle as Record<string, unknown>;
+            assert.equal(sentinel.sourceType, 'npm');
+            assert.equal(sentinel.sourceReference, sourceRoot);
+            assert.equal(sentinel.packageSpec, sourceRoot);
+            assert.equal(sentinel.requestedPackageSpec, sourceRoot);
+            assert.equal(sentinel.exactPackageSpec, sourceRoot);
+            assert.equal(sentinel.resolvedPackageVersion, null);
+            assert.equal(sentinel.resolvedPackageIntegrity, null);
+            assert.ok(!fs.existsSync(getUpdateSentinelPath(bundleRoot)),
+                'Sentinel must be removed after successful update');
+        } finally {
+            removePathRecursive(sourceRoot);
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('applies registry npm specs through exact install specs and resolved sentinel provenance', async () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            let installedSpec: string | null = null;
+            let sentinelDuringLifecycle: Record<string, unknown> | null = null;
+            let packageRoot = '';
+
+            const result = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                packageSpec: 'garda-agent-orchestrator@latest',
+                noPrompt: true,
+                apply: true,
+                npmViewRunner(args) {
+                    assert.deepEqual(args, [
+                        'view',
+                        'garda-agent-orchestrator@latest',
+                        'version',
+                        'dist.integrity',
+                        '--json'
+                    ]);
+                    return {
+                        status: 0,
+                        stdout: JSON.stringify({
+                            version: '9.9.9',
+                            'dist.integrity': 'sha512-registry-integrity'
+                        })
+                    };
+                },
+                async npmInstallRunner(args) {
+                    installedSpec = args[args.length - 1];
+                    assert.equal(installedSpec, 'garda-agent-orchestrator@9.9.9');
+                    const prefixIndex = args.indexOf('--prefix');
+                    assert.notEqual(prefixIndex, -1);
+                    const installRoot = args[prefixIndex + 1];
+                    packageRoot = path.join(installRoot, 'node_modules', 'garda-agent-orchestrator');
+                    seedBundleSyncSurface(repoRoot, packageRoot);
+                    fs.writeFileSync(path.join(packageRoot, 'VERSION'), '9.9.9\n', 'utf8');
+                    return {
+                        cancelled: false,
+                        timedOut: false,
+                        exitCode: 0,
+                        stdout: '',
+                        stderr: ''
+                    };
+                },
+                installedPackageRootResolver() {
+                    return {
+                        packageName: 'garda-agent-orchestrator',
+                        packageRoot
+                    };
+                },
+                updateRunner: () => {
+                    sentinelDuringLifecycle = readUpdateSentinel(bundleRoot) as Record<string, unknown> | null;
+                }
+            });
+
+            assert.equal(result.updateApplied, true);
+            assert.equal(result.sourceReference, 'garda-agent-orchestrator@9.9.9');
+            assert.equal(result.packageSpec, 'garda-agent-orchestrator@9.9.9');
+            assert.equal(result.requestedPackageSpec, 'garda-agent-orchestrator@latest');
+            assert.equal(result.exactPackageSpec, 'garda-agent-orchestrator@9.9.9');
+            assert.equal(result.resolvedPackageVersion, '9.9.9');
+            assert.equal(result.resolvedPackageIntegrity, 'sha512-registry-integrity');
+            assert.equal(installedSpec, 'garda-agent-orchestrator@9.9.9');
+
+            assert.ok(sentinelDuringLifecycle, 'Sentinel must be readable during registry-backed apply');
+            const sentinel = sentinelDuringLifecycle as Record<string, unknown>;
+            assert.equal(sentinel.requestedPackageSpec, 'garda-agent-orchestrator@latest');
+            assert.equal(sentinel.exactPackageSpec, 'garda-agent-orchestrator@9.9.9');
+            assert.equal(sentinel.resolvedPackageVersion, '9.9.9');
+            assert.equal(sentinel.resolvedPackageIntegrity, 'sha512-registry-integrity');
         } finally {
             removePathRecursive(projectRoot);
         }

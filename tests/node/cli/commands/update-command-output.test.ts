@@ -206,13 +206,21 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                             trustOverrideUsed: true,
                             trustOverrideSource: 'cli',
                             sourceType: 'path',
-                            sourceReference: 'fixture'
+                            sourceReference: 'fixture',
+                            requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                            exactPackageSpec: 'garda-agent-orchestrator@1.1.0',
+                            resolvedPackageVersion: '1.1.0',
+                            resolvedPackageIntegrity: 'sha512-output'
                         });
                     }
                     return {
                         targetRoot: fixture.workspaceRoot,
                         sourceType: 'path',
                         sourceReference: 'fixture',
+                        requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                        exactPackageSpec: 'garda-agent-orchestrator@1.1.0',
+                        resolvedPackageVersion: '1.1.0',
+                        resolvedPackageIntegrity: 'sha512-output',
                         currentVersion: '1.0.0',
                         latestVersion: '1.1.0',
                         updateAvailable: true,
@@ -240,6 +248,10 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.match(plainTextLines[2], /\u001b\[2mThe available update was applied to this workspace\.\u001b\[0m/);
             assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
             assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
+            assert.equal(plainTextLines.includes('RequestedPackageSpec: garda-agent-orchestrator@latest'), true);
+            assert.equal(plainTextLines.includes('ExactPackageSpec: garda-agent-orchestrator@1.1.0'), true);
+            assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
+            assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-output'), true);
             assert.equal(
                 plainTextLines.includes('WorkflowConfigMergeStatus: live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'),
                 true
@@ -273,6 +285,10 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             const parsed = JSON.parse(jsonLines.join('\n'));
             assert.equal(parsed.previousVersion, '1.0.0');
             assert.equal(parsed.updatedVersion, '1.1.0');
+            assert.equal(parsed.requestedPackageSpec, 'garda-agent-orchestrator@latest');
+            assert.equal(parsed.exactPackageSpec, 'garda-agent-orchestrator@1.1.0');
+            assert.equal(parsed.resolvedPackageVersion, '1.1.0');
+            assert.equal(parsed.resolvedPackageIntegrity, 'sha512-output');
             assert.equal(
                 parsed.workflowConfigMergeStatus,
                 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'
@@ -322,13 +338,21 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
                             trustOverrideUsed: true,
                             trustOverrideSource: 'cli',
                             sourceType: 'path',
-                            sourceReference: 'fixture'
+                            sourceReference: 'fixture',
+                            requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                            exactPackageSpec: 'garda-agent-orchestrator@1.1.0',
+                            resolvedPackageVersion: '1.1.0',
+                            resolvedPackageIntegrity: 'sha512-check'
                         });
                     }
                     return {
                         targetRoot: fixture.workspaceRoot,
                         sourceType: 'path',
                         sourceReference: 'fixture',
+                        requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                        exactPackageSpec: 'garda-agent-orchestrator@1.1.0',
+                        resolvedPackageVersion: '1.1.0',
+                        resolvedPackageIntegrity: 'sha512-check',
                         currentVersion: '1.0.0',
                         latestVersion: '1.1.0',
                         updateAvailable: true,
@@ -357,6 +381,10 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
             assert.equal(plainTextLines.includes('UpdateApplied: True'), true);
             assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
             assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
+            assert.equal(plainTextLines.includes('RequestedPackageSpec: garda-agent-orchestrator@latest'), true);
+            assert.equal(plainTextLines.includes('ExactPackageSpec: garda-agent-orchestrator@1.1.0'), true);
+            assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
+            assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-check'), true);
             assert.equal(
                 plainTextLines.includes('WorkflowConfigMergeStatus: live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'),
                 true
@@ -379,6 +407,10 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
                 parsed.workflowConfigMergeStatus,
                 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false'
             );
+            assert.equal(parsed.requestedPackageSpec, 'garda-agent-orchestrator@latest');
+            assert.equal(parsed.exactPackageSpec, 'garda-agent-orchestrator@1.1.0');
+            assert.equal(parsed.resolvedPackageVersion, '1.1.0');
+            assert.equal(parsed.resolvedPackageIntegrity, 'sha512-check');
         } finally {
             reloaded.restore();
             restoreCachedModule(fixture.bundleUpdateModulePath, originalBundleModule);
