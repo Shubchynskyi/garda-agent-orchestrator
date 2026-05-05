@@ -815,6 +815,34 @@ describe('runInit', () => {
         }
     });
 
+    it('writes project-memory bootstrap report on init', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const reportPath = path.join(bundleRoot, 'runtime', 'project-memory', 'bootstrap-report.json');
+            assert.equal(result.projectMemoryBootstrapReportPath, reportPath);
+            assert.ok(fs.existsSync(reportPath), 'bootstrap report must be written');
+
+            const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+            assert.equal(report.schema_version, 1);
+            assert.equal(report.project_memory.read_strategy, 'index_first');
+            assert.ok(report.project_memory.read_first.includes('live/docs/project-memory/README.md'));
+            assert.ok(report.project_memory.read_first.includes('live/docs/project-memory/compact.md'));
+            assert.equal(report.validation.mode, 'check');
+            assert.equal(report.generated_summary.path, 'live/docs/agent-rules/15-project-memory.md');
+            assert.match(String(report.generated_summary.sha256), /^[a-f0-9]{64}$/);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('regenerates 15-project-memory.md with user content on reinit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

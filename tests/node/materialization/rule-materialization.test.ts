@@ -344,7 +344,7 @@ describe('generateProjectMemorySummary', () => {
         }
     });
 
-    it('generates summary with content and provenance table', () => {
+    it('generates bounded link-first summary with content highlights and provenance hashes', () => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-pm-full-'));
         try {
             const pmDir = path.join(tmpDir, 'project-memory');
@@ -357,25 +357,29 @@ describe('generateProjectMemorySummary', () => {
             const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
             assert.ok(result!.includes('DO NOT EDIT'));
             assert.ok(result!.includes('2025-01-01T00:00:00.000Z'));
-            assert.ok(result!.includes('From `context.md`'));
-            assert.ok(result!.includes('### Domain'));
+            assert.ok(result!.includes('link-first orientation index'));
+            assert.ok(result!.includes('## Source Index'));
+            assert.ok(result!.includes('### `context.md`'));
             assert.ok(result!.includes('E-commerce SaaS.'));
-            assert.ok(result!.includes('### Goals'));
+            assert.ok(result!.includes('Goals: Scale globally.'));
             assert.ok(result!.includes('Scale globally.'));
-            assert.ok(result!.includes('From `stack.md`'));
-            assert.ok(result!.includes('### Languages'));
+            assert.ok(result!.includes('### `stack.md`'));
             assert.ok(result!.includes('TypeScript 5.x'));
-            // Provenance table
             assert.ok(result!.includes('## Provenance'));
-            assert.ok(result!.includes('| Domain | `docs/project-memory/context.md` |'));
-            assert.ok(result!.includes('| Goals | `docs/project-memory/context.md` |'));
-            assert.ok(result!.includes('| Languages | `docs/project-memory/stack.md` |'));
+            assert.match(
+                result,
+                /\| `context\.md` \| `docs\/project-memory\/context\.md` \| `[a-f0-9]{64}` \| content \|/
+            );
+            assert.match(
+                result,
+                /\| `stack\.md` \| `docs\/project-memory\/stack\.md` \| `[a-f0-9]{64}` \| content \|/
+            );
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     });
 
-    it('skips README.md', () => {
+    it('includes README.md as a read-first source instead of dropping project-memory index files', () => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-pm-readme-'));
         try {
             const pmDir = path.join(tmpDir, 'project-memory');
@@ -384,8 +388,9 @@ describe('generateProjectMemorySummary', () => {
                 '# Project Memory\n\n## Ownership Contract\n\nUser-owned.\n', 'utf8');
 
             const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
-            assert.ok(!result.includes('Ownership Contract'));
-            assert.ok(result!.includes('contains no content files yet'));
+            assert.ok(result.includes('docs/project-memory/README.md'));
+            assert.ok(result.includes('Read Order'));
+            assert.ok(result.includes('## Provenance'));
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
@@ -425,9 +430,45 @@ describe('generateProjectMemorySummary', () => {
                 '# A\n\n## A Section\n\nA content.\n', 'utf8');
 
             const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
-            const aIdx = result.indexOf('From `a-first.md`');
-            const zIdx = result.indexOf('From `z-last.md`');
+            const aIdx = result.indexOf('### `a-first.md`');
+            const zIdx = result.indexOf('### `z-last.md`');
             assert.ok(aIdx < zIdx, 'a-first.md should appear before z-last.md');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not duplicate large project-memory bodies into generated summary', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-pm-bounded-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            const repeatedDetails = Array.from({ length: 200 }, (_value, index) => `Detail ${index}: verbose architecture fact`).join('\n');
+            fs.writeFileSync(path.join(pmDir, 'architecture.md'),
+                `# Architecture\n\n## Runtime\n\nFirst durable line.\n${repeatedDetails}\n`, 'utf8');
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(result.includes('First durable line.'));
+            assert.ok(!result.includes('Detail 199: verbose architecture fact'));
+            assert.ok(result.length < 12000, 'generated summary should stay bounded by previewing content');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('treats meaningful content outside H2 sections as content in generated summary', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-pm-h1-content-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'custom.md'),
+                '# Custom Memory\n\nImportant durable fact outside a level-2 section.\n', 'utf8');
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(result.includes('| `docs/project-memory/custom.md` | Custom durable project-memory file. | content |'));
+            assert.ok(result.includes('### `custom.md`'));
+            assert.ok(result.includes('Important durable fact outside a level-2 section.'));
+            assert.ok(!result.includes('| `custom.md` | `docs/project-memory/custom.md` | `n/a` | placeholder_only |'));
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }

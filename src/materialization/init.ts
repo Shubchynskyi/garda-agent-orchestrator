@@ -43,6 +43,11 @@ import {
 } from './rule-materialization';
 import { getNodeHumanCommitCommand, getNodeInteractiveUpdateCommand, getNodeNonInteractiveUpdateCommand } from './command-constants';
 import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
+import {
+    seedProjectMemoryFromTemplate,
+    validateSeededProjectMemory,
+    writeProjectMemoryBootstrapReport
+} from './project-memory-builder';
 import { withLifecycleOperationLock } from '../lifecycle/common';
 export { mergeConfig } from '../core/config-merge';
 
@@ -210,29 +215,8 @@ export function runInit(options: RunInitOptions) {
     const discoveryOverlay = buildDiscoveryOverlaySection(discovery);
 
     // Seed project-memory from template and add later missing seed files without overwriting user content.
-    const seedOnlyDirectories = ['docs/project-memory'];
-    let seededDirs = 0;
-
-    for (const relDir of seedOnlyDirectories) {
-        const srcDir = path.join(templateRoot, relDir);
-        if (!pathExists(srcDir)) continue;
-
-        const destDir = path.join(liveRoot, relDir);
-        if (pathExists(destDir)) {
-            if (!dryRun) {
-                copyDirectoryRecursive(srcDir, destDir, {
-                    shouldCopyFile: (_srcPath, destPath) => !pathExists(destPath)
-                });
-            }
-            continue;
-        }
-
-        if (!dryRun) {
-            ensureDirectory(destDir);
-            copyDirectoryRecursive(srcDir, destDir);
-        }
-        seededDirs++;
-    }
+    const projectMemorySeed = seedProjectMemoryFromTemplate({ templateRoot, liveRoot, dryRun });
+    const seededDirs = projectMemorySeed.seededDirectory ? 1 : 0;
 
     // T-075: migrate user-authored content from context rules into project-memory
     // (runs BEFORE rule materialization so current live/legacy content is still readable)
@@ -348,7 +332,7 @@ export function runInit(options: RunInitOptions) {
     }
 
     // Generate project-memory summary rule (always regenerated, after migration)
-    const projectMemoryDir = path.join(liveRoot, 'docs/project-memory');
+    const projectMemoryDir = projectMemorySeed.projectMemoryDir;
     const projectMemorySummary = generateProjectMemorySummary(projectMemoryDir, timestampIso);
     const projectMemorySummaryDest = path.join(liveRuleRoot, '15-project-memory.md');
     if (!dryRun) {
@@ -359,6 +343,16 @@ export function runInit(options: RunInitOptions) {
         source: 'docs/project-memory/*',
         origin: 'generated',
         destination: path.relative(targetRoot, projectMemorySummaryDest).replace(/\\/g, '/')
+    });
+
+    const projectMemoryValidation = validateSeededProjectMemory(projectMemorySeed, { mode: 'check' });
+    const projectMemoryBootstrapReport = writeProjectMemoryBootstrapReport({
+        bundleRoot,
+        timestampIso,
+        seedResult: projectMemorySeed,
+        validation: projectMemoryValidation,
+        summaryPath: projectMemorySummaryDest,
+        dryRun
     });
 
     // Handle managed config materialization (token-economy enabled flag)
@@ -526,6 +520,9 @@ export function runInit(options: RunInitOptions) {
         supportDirectoriesSynced: copiedSupportDirs,
         seedOnlyDirectoriesSeeded: seededDirs,
         projectMemoryMigration: migrationResult,
+        projectMemoryBootstrapReportPath: projectMemoryBootstrapReport.path,
+        projectMemoryBootstrapReport: projectMemoryBootstrapReport.report,
+        projectMemoryValidation,
         reviewCapabilitiesConfigMergeStatus: configMergeStatuses['review-capabilities'] || 'n/a',
         pathsConfigMergeStatus: configMergeStatuses['paths'] || 'n/a',
         tokenEconomyConfigMergeStatus: configMergeStatuses['token-economy'] || 'n/a',

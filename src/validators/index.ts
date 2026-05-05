@@ -4,5 +4,6 @@ export * from './status';
 export * from './verify';
 export * from './doctor';
 export * from './doctor-formatting';
+export * from './project-memory';
 export * from './explain';
 export * from './why-blocked';
