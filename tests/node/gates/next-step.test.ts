@@ -2911,6 +2911,56 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('record-review-result'));
     });
 
+    it('routes launch-package review failures to review-cycle retry without implementation changes', () => {
+        const launchFailureBodies = [
+            'Reviewer failed before code review because reviewer_prompt_sha256 did not match the prepared launch package.\n\n',
+            'Reviewer failed before code review because review_context_sha256 must match the current launch package.\n\n',
+            'Reviewer failed before code review because review_tree_state_sha256 mismatch invalidates launch binding.\n\n',
+            'Reviewer launch artifact is not eligible for invocation attestation: launch_binding_sha256 does not match.\n\n'
+        ];
+        for (const body of launchFailureBodies) {
+            const repoRoot = makeTempRepo();
+            seedStartedTask(repoRoot, TASK_ID);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+            seedCompilePass(repoRoot, TASK_ID);
+            writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail', body });
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.status, 'BLOCKED');
+            assert.equal(result.next_gate, 'reviewer-launch-retry');
+            assert.equal(result.review.next_review_type, 'code');
+            assert.match(result.title, /Retry 'code' reviewer launch package/);
+            assert.match(result.reason, /Preserve the failed review artifact and receipt/);
+            assert.match(result.reason, /do not make fake implementation changes/);
+            assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+            assert.ok(!result.commands[0].command.includes('record-review-result'));
+            assert.ok(!result.commands[0].command.includes('compile-gate'));
+        }
+    });
+
+    it('keeps real code-review failures on implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body:
+                'P1: The implementation skips input validation, binding validation accepts invalid state, ' +
+                'and a receipt where review_context_sha256 does not match the current context can bypass checks.\n\n'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Fix failed 'code' review findings/);
+        assert.match(result.reason, /Fix the findings/);
+        assert.ok(!result.commands[0].command.includes('restart-review-cycle'));
+    });
+
     it('reports strict_sequential downstream blockers after a failed code review', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

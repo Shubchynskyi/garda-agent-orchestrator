@@ -407,6 +407,8 @@ interface ReviewArtifactState {
     failToken: string;
     verdictToken: string | null;
     failed: boolean;
+    failureKind: 'launch-package' | null;
+    failureReason: string | null;
     ready: boolean;
     violations: string[];
     reviewerIdentity: string | null;
@@ -439,6 +441,29 @@ interface ReviewArtifactState {
         review_tree_state_sha256?: string | null;
         routing_event_sha256?: string;
     } | null;
+}
+
+const REVIEW_LAUNCH_PACKAGE_FAILURE_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+    { pattern: /\breviewer_prompt_sha256\b[\s\S]{0,160}\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b/i, reason: 'reviewer_prompt_sha256 mismatch' },
+    { pattern: /\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b[\s\S]{0,160}\breviewer_prompt_sha256\b/i, reason: 'reviewer_prompt_sha256 mismatch' },
+    { pattern: /\breview_context_sha256\b[\s\S]{0,160}\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b/i, reason: 'review_context_sha256 mismatch' },
+    { pattern: /\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b[\s\S]{0,160}\breview_context_sha256\b/i, reason: 'review_context_sha256 mismatch' },
+    { pattern: /\breview_tree_state_sha256\b[\s\S]{0,160}\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b/i, reason: 'review_tree_state_sha256 mismatch' },
+    { pattern: /\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b[\s\S]{0,160}\breview_tree_state_sha256\b/i, reason: 'review_tree_state_sha256 mismatch' },
+    { pattern: /\b(?:launch_binding_sha256|prepared_launch_event_sha256|reviewer_launch_artifact_sha256)\b[\s\S]{0,160}\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b/i, reason: 'reviewer launch binding mismatch' },
+    { pattern: /\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b[\s\S]{0,160}\b(?:launch_binding_sha256|prepared_launch_event_sha256|reviewer_launch_artifact_sha256)\b/i, reason: 'reviewer launch binding mismatch' },
+    { pattern: /\b(?:launch package|launch artifact|prepared launch|reviewer launch|invocation attestation|launch binding)\b[\s\S]{0,160}\b(?:must match|does not match|did not match|mismatch|wrong|stale|invalid|not eligible)\b/i, reason: 'reviewer launch package mismatch' },
+    { pattern: /\b(?:wrong|stale|invalid)\s+(?:prompt|context|tree-state|tree state)\s+hash\b/i, reason: 'reviewer launch hash mismatch' }
+];
+const REVIEW_LAUNCH_PACKAGE_FAILURE_MARKER_PATTERN =
+    /\b(?:reviewer\s+failed\s+before\s+\w+\s+review|reviewer\s+launch\s+artifact\s+is\s+not\s+eligible\s+for\s+invocation\s+attestation|reviewer\s+launch\s+package\s+failure|launch\s+package\s+failure|launch\s+metadata\s+failure|invocation\s+attestation\s+failed)\b/i;
+
+function detectReviewLaunchPackageFailureReason(content: string): string | null {
+    if (!REVIEW_LAUNCH_PACKAGE_FAILURE_MARKER_PATTERN.test(content)) {
+        return null;
+    }
+    const match = REVIEW_LAUNCH_PACKAGE_FAILURE_PATTERNS.find(({ pattern }) => pattern.test(content));
+    return match?.reason || null;
 }
 
 interface CompileReadiness {
@@ -629,6 +654,8 @@ function readReviewArtifactState(
     let reviewerProvenance: ReviewArtifactState['reviewerProvenance'] = null;
     let verdictToken: string | null = null;
     let failed = false;
+    let failureKind: ReviewArtifactState['failureKind'] = null;
+    let failureReason: string | null = null;
 
     if (!contextExists) {
         violations.push('review context artifact is missing');
@@ -704,9 +731,17 @@ function readReviewArtifactState(
         if (failToken && parsedVerdictToken === failToken) {
             verdictToken = failToken;
             failed = true;
-            violations.push(
-                `review artifact contains fail token '${failToken}'; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
-            );
+            failureReason = detectReviewLaunchPackageFailureReason(content);
+            if (failureReason) {
+                failureKind = 'launch-package';
+                violations.push(
+                    `review artifact contains fail token '${failToken}' for reviewer launch package failure (${failureReason}); preserve the failed artifact and restart the review cycle without implementation changes`
+                );
+            } else {
+                violations.push(
+                    `review artifact contains fail token '${failToken}'; fix implementation and rerun compile plus '${reviewType}' review before launching dependent reviews`
+                );
+            }
         } else if (passToken && parsedVerdictToken === passToken) {
             verdictToken = passToken;
         } else {
@@ -894,6 +929,8 @@ function readReviewArtifactState(
         failToken,
         verdictToken,
         failed,
+        failureKind,
+        failureReason,
         ready: violations.length === 0,
         violations,
         reviewerIdentity,
@@ -4498,6 +4535,26 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     buildCommand(
                         'Finish upstream review first',
                         navigatorCommand
+                    )
+                ]
+            });
+        }
+        if (state?.failed && state.failureKind === 'launch-package' && currentReviewRecordedEvidenceCurrent) {
+            const taskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'reviewer-launch-retry',
+                title: `Retry '${reviewType}' reviewer launch package.`,
+                reason:
+                    `Recorded '${reviewType}' review verdict is '${state.verdictToken || state.failToken || 'FAILED'}', ` +
+                    `but the failure matches reviewer launch package or binding evidence (${state.failureReason || 'launch package mismatch'}). ` +
+                    'Preserve the failed review artifact and receipt as audit evidence; do not edit them by hand and do not make fake implementation changes. ' +
+                    `Restart the review cycle to rebuild '${reviewType}' launch metadata and launch a fresh reviewer before downstream reviews.`,
+                commands: [
+                    buildCommand(
+                        'Restart review cycle for reviewer launch retry',
+                        `${cliPrefix} gate restart-review-cycle --task-id "${taskId}" --task-intent ${quoteCommandValue(taskIntent)} --repo-root "."`
                     )
                 ]
             });
