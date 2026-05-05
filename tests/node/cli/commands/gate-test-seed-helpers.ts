@@ -1093,7 +1093,7 @@ export function findLastTimelineEventIndex(
 }
 
 export function readTaskQueueStatusFromTaskFile(repoRoot: string, taskId: string): string | null {
-    const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED)\b/i;
+    const statusPattern = /\b(TODO|IN_PROGRESS|IN_REVIEW|DONE|BLOCKED|DECOMPOSED)\b/i;
     const taskPath = path.join(repoRoot, 'TASK.md');
     const lines = fs.readFileSync(taskPath, 'utf8').split(/\r?\n/);
     for (const rawLine of lines) {

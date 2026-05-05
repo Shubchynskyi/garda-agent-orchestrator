@@ -106,6 +106,22 @@ test('tree-state review compatibility suite keeps the focused regression shards 
         [
             'tests/node/cli/commands/gates-review-reuse.test.ts',
             "completion review-skill evidence rejects reused receipts when the current review context file drifts"
+        ],
+        [
+            'tests/node/cli/commands/gates-completion.test.ts',
+            'receipt_snapshot_path: path.normalize(receiptSnapshotPath)'
+        ],
+        [
+            'tests/node/cli/commands/gates-completion.test.ts',
+            'review_artifact_snapshot_path: path.normalize(artifactSnapshotPath)'
+        ],
+        [
+            'tests/node/cli/commands/gates-completion.test.ts',
+            'reviewScopeSha256: computeReviewRelevantScopeFingerprint'
+        ],
+        [
+            'tests/node/cli/commands/gate-test-seed-helpers.ts',
+            'DECOMPOSED'
         ]
     ] as const) {
         assertSourceContains(relativePath, expected);
