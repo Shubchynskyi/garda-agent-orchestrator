@@ -8,6 +8,58 @@ import {
 import { getNodeGateCommandPrefix } from '../materialization/command-constants';
 import { buildTaskQueueStatusContract } from '../core/task-queue-status-contract';
 
+type ReviewIntegrityAttestation = NonNullable<FinalCloseoutArtifact['review_integrity_attestation']>;
+
+function buildFallbackReviewIntegrityAttestation(closeout: FinalCloseoutArtifact): ReviewIntegrityAttestation {
+    const reviewVerdictCount = Object.keys(closeout.implementation_summary.review_verdicts || {}).length;
+    const reason = 'Legacy final closeout artifact lacks the mandatory review integrity attestation; completion is not review-attested.';
+    return {
+        schema_version: 1, enforcement_mode: 'ADVISORY', status: 'DEGRADED_OR_UNVERIFIABLE', required_review_count: reviewVerdictCount,
+        required_review_types: Object.keys(closeout.implementation_summary.review_verdicts || {}).sort(),
+        independent_review_completed: false, completion_review_attested: false, completion_review_attestation_not_required: false, completion_allowed: false,
+        fake_or_fallback_artifacts_observed: false, same_agent_fallback_observed: false, fallback_artifacts_observed: false,
+        legacy_local_review_observed: true, missing_or_unverifiable_artifacts_observed: true, fabricated_artifacts_observed: false,
+        observed_issues: ['legacy final closeout artifact lacks review integrity attestation'], reason,
+        visible_summary_line:
+            'Review integrity: DEGRADED_OR_UNVERIFIABLE; independent_review_completed=no; ' +
+            'completion_review_attested=no; fake/fallback/unverifiable artifacts observed=yes; enforcement=advisory.',
+        final_report_lines: [
+            'Review integrity: DEGRADED_OR_UNVERIFIABLE.',
+            'Review integrity enforcement: advisory; this summary reports trust state but does not apply completion blocking.',
+            'Independent review completed: no.',
+            'Completion review-attested: no.',
+            'Fake/fallback artifacts observed: no.',
+            'Same-agent fallback observed: no.',
+            'Fallback artifacts observed: no.',
+            'Legacy local review observed: yes.',
+            'Missing/unverifiable artifacts observed: yes.',
+            'Fabricated artifacts observed: no.',
+            `Completion allowed: no. Reason: ${reason}`
+        ]
+    };
+}
+
+function getReviewIntegrityAttestation(closeout: FinalCloseoutArtifact): ReviewIntegrityAttestation {
+    return closeout.review_integrity_attestation || buildFallbackReviewIntegrityAttestation(closeout);
+}
+
+function shouldRenderReviewTrustSummary(
+    closeout: FinalCloseoutArtifact,
+    reviewIntegrityAttestation: ReviewIntegrityAttestation
+): boolean {
+    if (!closeout.review_trust) {
+        return false;
+    }
+    if (
+        reviewIntegrityAttestation.completion_review_attested ||
+        reviewIntegrityAttestation.completion_review_attestation_not_required ||
+        reviewIntegrityAttestation.status === 'NO_REVIEW_REQUIRED'
+    ) {
+        return true;
+    }
+    return closeout.review_trust.independent_review_attested !== true;
+}
+
 function normalizeCommitToken(value: string): string {
     return String(value || '')
         .trim()
@@ -123,14 +175,24 @@ export function buildCommitCommandSuggestion(
 }
 
 function buildLocalizedCloseoutReviewMode(
-    closeout: FinalCloseoutArtifact
+    closeout: FinalCloseoutArtifact,
+    reviewIntegrityAttestation: ReviewIntegrityAttestation
 ): string {
     const reportMessages = getAgentReportMessages();
-    const trustPrefix = closeout.review_trust?.independent_review_attested
-        ? reportMessages.summaries.independentReviewAttested
-        : (closeout.review_trust
-            ? reportMessages.summaries.localReview
-            : reportMessages.summaries.noRequiredReview);
+    let trustPrefix: string;
+    if (
+        reviewIntegrityAttestation.status === 'INDEPENDENT_REVIEW_ATTESTED' &&
+        reviewIntegrityAttestation.completion_review_attested
+    ) {
+        trustPrefix = reportMessages.summaries.independentReviewAttested;
+    } else if (
+        reviewIntegrityAttestation.status === 'NO_REVIEW_REQUIRED' ||
+        reviewIntegrityAttestation.completion_review_attestation_not_required
+    ) {
+        trustPrefix = reportMessages.summaries.noRequiredReview;
+    } else {
+        trustPrefix = `review integrity=${reviewIntegrityAttestation.status}`;
+    }
     const verdicts = Object.entries(closeout.implementation_summary.review_verdicts)
         .map(([reviewType, verdict]) => `${reviewType}=${verdict}`);
     if (verdicts.length === 0) {
@@ -179,6 +241,7 @@ function buildLocalizedOptionalSkillsSummary(
 }
 
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
+    const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
     const depthParts: string[] = [];
     if (closeout.implementation_summary.requested_depth != null) {
         depthParts.push(`requested depth=${closeout.implementation_summary.requested_depth}`);
@@ -193,32 +256,32 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     const reviewVerdictText = reviewVerdicts.length > 0 ? reviewVerdicts.join(', ') : '`none required`';
     const docsUpdatedText = closeout.implementation_summary.docs_updated ? '`yes`' : '`no`';
 
-    const lines: string[] = [
-        buildAgentReportBlock({
-            context: 'task_closeout',
-            assistantLanguage: closeout.agent_report?.assistant_language || null,
-            assistantLanguageConfirmed: closeout.agent_report?.assistant_language_confirmed ?? null,
-            profileSummary: closeout.implementation_summary.active_profile,
-            reviewModeSummary: buildLocalizedCloseoutReviewMode(closeout),
-            optionalSkillsSummary: buildLocalizedOptionalSkillsSummary(closeout),
-            mandatoryFullSuiteEnabled: closeout.workflow?.mandatory_full_suite_enabled ?? null,
-            nextTaskPrompt: closeout.agent_report?.next_task_command || null,
-            latestUpdateNotice: closeout.agent_report?.latest_update_notice || null
-        }),
-        '',
+    const lines: string[] = ['## Review Integrity Attestation'];
+    for (const entry of reviewIntegrityAttestation.final_report_lines) {
+        lines.push(`- ${entry}`);
+    }
+    if (reviewIntegrityAttestation.observed_issues.length > 0) {
+        lines.push('- Observed review evidence issues:');
+        for (const issue of reviewIntegrityAttestation.observed_issues) {
+            lines.push(`  - ${issue}`);
+        }
+    }
+
+    lines.push('');
+    lines.push(
         `Task \`${closeout.task_id}\` completed in \`${depthText}\`, \`path mode=${pathModeText}\`. ` +
         `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
-    ];
+    );
 
     if (closeout.optional_skills?.visible_summary_line) {
         lines.push(closeout.optional_skills.visible_summary_line);
     }
 
-    if (closeout.review_trust?.visible_summary_line) {
+    if (shouldRenderReviewTrustSummary(closeout, reviewIntegrityAttestation) && closeout.review_trust?.visible_summary_line) {
         lines.push(closeout.review_trust.visible_summary_line);
     }
 
-    if (closeout.review_trust?.policy_summary_line) {
+    if (shouldRenderReviewTrustSummary(closeout, reviewIntegrityAttestation) && closeout.review_trust?.policy_summary_line) {
         lines.push(closeout.review_trust.policy_summary_line);
     }
 
@@ -235,6 +298,18 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     }
 
     lines.push((closeout.task_queue_status_contract || buildTaskQueueStatusContract(closeout.task_id)).visible_summary_line);
+    lines.push('');
+    lines.push(buildAgentReportBlock({
+        context: 'task_closeout',
+        assistantLanguage: closeout.agent_report?.assistant_language || null,
+        assistantLanguageConfirmed: closeout.agent_report?.assistant_language_confirmed ?? null,
+        profileSummary: closeout.implementation_summary.active_profile,
+        reviewModeSummary: buildLocalizedCloseoutReviewMode(closeout, reviewIntegrityAttestation),
+        optionalSkillsSummary: buildLocalizedOptionalSkillsSummary(closeout),
+        mandatoryFullSuiteEnabled: closeout.workflow?.mandatory_full_suite_enabled ?? null,
+        nextTaskPrompt: closeout.agent_report?.next_task_command || null,
+        latestUpdateNotice: closeout.agent_report?.latest_update_notice || null
+    }));
 
     lines.push('');
     lines.push('Suggested commit command:');
@@ -376,14 +451,22 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     lines.push(`FinalCloseout: ${summary.final_closeout.status} (${summary.final_closeout.artifact_state})`);
     lines.push(`  JsonArtifact: ${summary.final_closeout.artifact_paths.json}`);
     lines.push(`  MarkdownArtifact: ${summary.final_closeout.artifact_paths.markdown}`);
+    const reviewIntegrityAttestation = getReviewIntegrityAttestation(summary.final_closeout);
     if (summary.final_closeout.optional_skills?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.optional_skills.visible_summary_line}`);
     }
-    if (summary.final_closeout.review_trust?.visible_summary_line) {
+    if (shouldRenderReviewTrustSummary(summary.final_closeout, reviewIntegrityAttestation) && summary.final_closeout.review_trust?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.review_trust.visible_summary_line}`);
     }
-    if (summary.final_closeout.review_trust?.policy_summary_line) {
+    if (shouldRenderReviewTrustSummary(summary.final_closeout, reviewIntegrityAttestation) && summary.final_closeout.review_trust?.policy_summary_line) {
         lines.push(`  ${summary.final_closeout.review_trust.policy_summary_line}`);
+    }
+    lines.push(`  ${reviewIntegrityAttestation.visible_summary_line}`);
+    if (reviewIntegrityAttestation.observed_issues.length > 0) {
+        lines.push('  ReviewIntegrityIssues:');
+        for (const issue of reviewIntegrityAttestation.observed_issues) {
+            lines.push(`    - ${issue}`);
+        }
     }
     if (summary.final_closeout.workflow?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.workflow.visible_summary_line}`);
@@ -396,12 +479,10 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     lines.push(`  ${(summary.final_closeout.task_queue_status_contract || buildTaskQueueStatusContract(summary.task_id)).visible_summary_line}`);
     lines.push('FinalReportOrder:');
-    lines.push(
-        `  1. ${summary.final_report_contract.required_order[0]} ` +
-        `(include ${summary.final_report_contract.implementation_summary_requirements.join(', ')})`
-    );
-    lines.push(`  2. ${summary.final_report_contract.required_order[1]}`);
-    lines.push(`  3. ${summary.final_report_contract.required_order[2]}`);
+    for (const [index, entry] of summary.final_report_contract.required_order.entries()) {
+        const suffix = entry === 'implementation summary' ? ` (include ${summary.final_report_contract.implementation_summary_requirements.join(', ')})` : '';
+        lines.push(`  ${index + 1}. ${entry}${suffix}`);
+    }
 
     return lines.join('\n');
 }

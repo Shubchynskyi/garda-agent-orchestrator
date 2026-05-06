@@ -33,12 +33,15 @@ import {
     type FinalCloseoutArtifactPaths,
     type FinalCloseoutDocsSummary,
     type FinalCloseoutImplementationSummary,
+    type FinalCloseoutReviewIntegrityAttestation,
     type FinalCloseoutOptionalSkillsSummary,
     type FinalCloseoutReviewTrustSummary,
     type FinalReportContract,
     type GateOutcome,
     type ProfileReviewDecisionSummary,
     parseOptionalNumber,
+    buildReviewIntegrityAttestation,
+    collectKnownRequiredReviewTypes,
     readDocImpactSummary,
     readReviewTrustSummary,
     readReviewTrustSummaryFromReviewGate,
@@ -78,6 +81,7 @@ export interface FinalCloseoutArtifact {
     artifact_paths: FinalCloseoutArtifactPaths;
     implementation_summary: FinalCloseoutImplementationSummary;
     review_trust?: FinalCloseoutReviewTrustSummary | null;
+    review_integrity_attestation?: FinalCloseoutReviewIntegrityAttestation;
     optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
     workflow?: {
         mandatory_full_suite_enabled: boolean;
@@ -296,6 +300,102 @@ function isEventRelevantForLifecycleGate(
         currentCycle,
         repoRoot
     );
+}
+
+function readTaskEventSequence(event: TaskAuditEvent): number | null {
+    const integrity = event.integrity && typeof event.integrity === 'object' ? event.integrity as Record<string, unknown> : null;
+    const sequence = typeof integrity?.task_sequence === 'number' ? integrity.task_sequence : Number(integrity?.task_sequence);
+    return Number.isInteger(sequence) ? sequence : null;
+}
+
+function taskEventOccursAfter(candidate: TaskAuditEvent, anchor: TaskAuditEvent, currentCycle: TaskCycleBindingSnapshot | null): boolean {
+    const candidateSequence = readTaskEventSequence(candidate);
+    const anchorSequence = readTaskEventSequence(anchor);
+    if (candidateSequence != null && anchorSequence != null) {
+        return candidateSequence > anchorSequence;
+    }
+    const candidateTime = parseTimestamp(candidate.timestamp_utc).getTime();
+    const anchorTime = parseTimestamp(anchor.timestamp_utc).getTime();
+    const compileTime = currentCycle?.compile_gate_timestamp ? parseTimestamp(currentCycle.compile_gate_timestamp).getTime() : 0;
+    if (candidateTime > 0 && compileTime > 0 && candidateTime < compileTime) {
+        return false;
+    }
+    return candidateTime > 0 && anchorTime > 0 && candidateTime > anchorTime;
+}
+
+function buildCompletionReviewOrderBlocker(
+    requiredReviews: Record<string, boolean>,
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string
+): BlockerEntry | null {
+    if (!Object.values(requiredReviews).some((required) => required === true)) {
+        return null;
+    }
+    const reviewGatePass = findLatestEventForTypes(
+        ['REVIEW_GATE_PASSED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE'],
+        events,
+        (eventType, event) => isEventRelevantForLifecycleGate(
+            { gate: 'required-reviews-check', pass_event: 'REVIEW_GATE_PASSED', fail_events: ['REVIEW_GATE_FAILED'] },
+            eventType,
+            event,
+            currentCycle,
+            repoRoot
+        )
+    );
+    if (reviewGatePass) {
+        for (let index = events.length - 1; index >= 0; index -= 1) {
+            const event = events[index];
+            if (!taskEventOccursAfter(event, reviewGatePass.event, currentCycle)) {
+                continue;
+            }
+            const eventType = String(event.event_type || '').trim().toUpperCase();
+            const details = event.details && typeof event.details === 'object' ? event.details as Record<string, unknown> : null;
+            const reviewType = String(details?.review_type || details?.reviewType || '').trim().toLowerCase();
+            if (eventType === 'REVIEW_RECORDED' && requiredReviews[reviewType] === true) {
+                return {
+                    gate: 'required-reviews-check',
+                    reason: 'Required review evidence changed after REVIEW_GATE_PASSED; rerun required-reviews-check and completion-gate.'
+                };
+            }
+        }
+    }
+    const completionPass = findLatestEventForTypes(
+        ['COMPLETION_GATE_PASSED'],
+        events,
+        (eventType, event) => isEventRelevantForLifecycleGate(
+            { gate: 'completion-gate', pass_event: 'COMPLETION_GATE_PASSED', fail_events: ['COMPLETION_GATE_FAILED'] },
+            eventType,
+            event,
+            currentCycle,
+            repoRoot
+        )
+    );
+    if (!completionPass) {
+        return null;
+    }
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (!taskEventOccursAfter(event, completionPass.event, currentCycle)) {
+            continue;
+        }
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        const details = event.details && typeof event.details === 'object' ? event.details as Record<string, unknown> : null;
+        const reviewType = String(details?.review_type || details?.reviewType || '').trim().toLowerCase();
+        const reviewEvidenceChanged =
+            (eventType === 'REVIEW_RECORDED' && requiredReviews[reviewType] === true)
+            || eventType === 'REVIEW_GATE_PASSED'
+            || eventType === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
+            || eventType === 'REVIEW_GATE_FAILED';
+        if (!reviewEvidenceChanged) {
+            continue;
+        }
+        return {
+            gate: 'completion-gate',
+            reason: `Completion gate pass is stale because ${eventType} occurred afterward; rerun review gates and completion-gate.`
+        };
+    }
+    return null;
 }
 
 function resolveFullSuiteValidationRequirementForCurrentCycle(
@@ -663,11 +763,8 @@ function collectRequiredReviewBlockers(
     events: TaskAuditEvent[],
     currentCycle: TaskCycleBindingSnapshot | null
 ): BlockerEntry[] {
-    return Object.entries(requiredReviews)
-        .flatMap(([reviewType, required]) => {
-            if (!required) {
-                return [];
-            }
+    return collectKnownRequiredReviewTypes(requiredReviews)
+        .flatMap((reviewType) => {
             if (!shouldValidateRequiredReviewArtifactForCurrentCycle(reviewType, events, currentCycle)) {
                 return [];
             }
@@ -863,6 +960,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const changedFiles = auditedChangedFiles.changedFiles;
     const changedFilesCount = changedFiles.length;
     const changedLinesTotal = preflightSummary.changedLinesTotal;
+    const hasCompletionPass = gates.some(
+        (g) => g.gate === 'completion-gate' && g.status === 'PASS'
+    );
     const timelineReviewExecutionPolicyMode = preflight
         ? null
         : readReviewExecutionPolicyModeFromCurrentCycleTimeline(events, currentCycle, repoRoot);
@@ -877,12 +977,21 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         gate: 'doc-impact-gate',
         reason
     })));
-    blockers.push(...collectRequiredReviewBlockers(requiredReviews, safeTaskId, reviewsRoot, events, currentCycle));
+    const requiredReviewBlockers = collectRequiredReviewBlockers(requiredReviews, safeTaskId, reviewsRoot, events, currentCycle);
+    if (!hasCompletionPass) {
+        blockers.push(...requiredReviewBlockers);
+    }
+    const completionReviewOrderBlocker = buildCompletionReviewOrderBlocker(
+        requiredReviews,
+        events,
+        currentCycle,
+        repoRoot
+    );
+    if (completionReviewOrderBlocker) {
+        blockers.push(completionReviewOrderBlocker);
+    }
     const tokenEconomy = buildTokenEconomySummary(safeTaskId, events, repoRoot, reviewsRoot);
     const evidence = collectEvidenceArtifacts(reviewsRoot, safeTaskId, taskEventFile);
-    const hasCompletionPass = gates.some(
-        (g) => g.gate === 'completion-gate' && g.status === 'PASS'
-    );
     const hasFailedGate = gates.some((g) => g.status === 'FAIL');
     const failedGateNames = gates.filter((g) => g.status === 'FAIL').map((g) => g.gate);
     const hasNonCompletionFailure = failedGateNames.some((gateName) => gateName !== 'completion-gate');
@@ -995,47 +1104,12 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const reviewGatePath = path.join(reviewsRoot, `${safeTaskId}-review-gate.json`);
     const reviewGate = safeReadJson(reviewGatePath);
     const reviewVerdicts = readReviewVerdicts(requiredReviews, reviewGate);
-    const reviewContextPaths = Object.fromEntries(
-        Object.keys(requiredReviews).map((reviewType) => {
-            for (let index = events.length - 1; index >= 0; index -= 1) {
-                const entry = events[index];
-                if (String(entry.event_type || '') !== 'REVIEW_RECORDED') {
-                    continue;
-                }
-                const details = entry.details && typeof entry.details === 'object'
-                    ? entry.details as Record<string, unknown>
-                    : null;
-                const recordedReviewType = String(
-                    details?.review_type
-                    || details?.reviewType
-                    || ''
-                ).trim().toLowerCase();
-                if (recordedReviewType !== reviewType) {
-                    continue;
-                }
-                if (
-                    currentCycle?.compile_gate_timestamp
-                    && parseTimestamp(entry.timestamp_utc).getTime() < parseTimestamp(currentCycle.compile_gate_timestamp).getTime()
-                ) {
-                    continue;
-                }
-                const reviewContextPath = String(
-                    details?.review_context_path
-                    || details?.reviewContextPath
-                    || ''
-                ).trim();
-                return [reviewType, reviewContextPath || null];
-            }
-            return [reviewType, null];
-        })
-    );
     const receiptReviewTrustSummary = readReviewTrustSummary(
         requiredReviews,
         reviewsRoot,
         safeTaskId,
         scopeCategory,
-        preflightSha256,
-        reviewContextPaths
+        preflightSha256
     );
     const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
         reviewGate,
@@ -1049,6 +1123,16 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         ?? (hasRequiredReviews
             ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
             : receiptReviewTrustSummary);
+    const reviewIntegrityAttestation = buildReviewIntegrityAttestation({
+        requiredReviews,
+        reviewsRoot,
+        taskId: safeTaskId,
+        scopeCategory,
+        preflightSha256,
+        reviewTrustSummary,
+        repoRoot,
+        timelineEvents: events
+    });
     const optionalSkillsPath = path.join(reviewsRoot, `${safeTaskId}-optional-skill-selection.json`);
     const bundleRoot = path.dirname(path.dirname(reviewsRoot));
     const taskEventsTimelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, safeTaskId, taskEventFile);
@@ -1074,6 +1158,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                     ? `Completion gate passed, but supporting lifecycle evidence is incomplete: ${supportingGateGaps.join(', ')}.`
                 : 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
         required_order: [
+            'review integrity attestation',
             'implementation summary',
             commitCommand.suggestion,
             commitQuestionText
@@ -1096,7 +1181,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         audit_status: status,
         status: finalReportContract.status,
         blocker: finalReportContract.blocker,
-        artifact_state: status === 'PASS' ? 'PENDING' : 'NOT_READY',
+        artifact_state: finalReportContract.status === 'READY' ? 'PENDING' : 'NOT_READY',
         cycle_binding: currentCycle
             ? {
                 preflight_path: currentCycle.preflight_path,
@@ -1122,6 +1207,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                 : null
         },
         review_trust: reviewTrustSummary,
+        review_integrity_attestation: reviewIntegrityAttestation,
         optional_skills: optionalSkillsSummary,
         workflow: {
             mandatory_full_suite_enabled: fullSuiteValidationEnabled,
