@@ -82,7 +82,7 @@ export interface FinalCloseoutReviewTrustSummary extends ReviewTrustSummary {}
 
 export interface FinalCloseoutReviewIntegrityAttestation {
     schema_version: 1;
-    enforcement_mode: 'ADVISORY';
+    enforcement_mode: 'ADVISORY' | 'BLOCKING';
     status: 'INDEPENDENT_REVIEW_ATTESTED' | 'NO_REVIEW_REQUIRED' | 'DEGRADED_OR_UNVERIFIABLE';
     required_review_count: number;
     required_review_types: string[];
@@ -939,6 +939,7 @@ export function buildReviewIntegrityAttestation(options: {
 }): FinalCloseoutReviewIntegrityAttestation {
     const requiredReviewTypes = collectKnownRequiredReviewTypes(options.requiredReviews);
     const unsafeRequiredReviewTypeIssues = collectUnsafeRequiredReviewTypeIssues(options.requiredReviews);
+    const rawRequiredReviewCount = Object.values(options.requiredReviews || {}).filter((required) => required === true).length;
     const requiredReviewCount = requiredReviewTypes.length;
     const observationReviewTypes = requiredReviewCount > 0
         ? requiredReviewTypes
@@ -970,7 +971,7 @@ export function buildReviewIntegrityAttestation(options: {
     const fabricatedArtifactsObserved = issueText.includes('fabricated-looking');
     const fakeOrFallbackObserved = fabricatedArtifactsObserved || fallbackArtifactsObserved;
 
-    if (requiredReviewCount === 0 && observedIssues.length === 0) {
+    if (rawRequiredReviewCount === 0 && observedIssues.length === 0) {
         const reason = 'No mandatory review was required for this scope; completion is allowed but is not review-attested.';
         return {
             schema_version: 1,
@@ -1012,14 +1013,18 @@ export function buildReviewIntegrityAttestation(options: {
     }
 
     const completionReviewAttested = independentReviewCompleted && observedIssues.length === 0;
-    const completionAllowed = true;
+    const blockingEnforcementRequired = rawRequiredReviewCount > 0;
+    const completionAllowed = !blockingEnforcementRequired || completionReviewAttested;
+    const enforcementMode = blockingEnforcementRequired ? 'BLOCKING' : 'ADVISORY';
     const status = completionReviewAttested ? 'INDEPENDENT_REVIEW_ATTESTED' : 'DEGRADED_OR_UNVERIFIABLE';
     const reason = completionReviewAttested
         ? 'All mandatory reviews are independently audited and no fake, fallback, legacy, missing, fabricated, or unverifiable review artifacts were observed.'
-        : 'Mandatory review trust is degraded or unverifiable; completion is allowed under advisory enforcement but is not review-attested.';
+        : blockingEnforcementRequired
+            ? 'Mandatory review trust is degraded or unverifiable; final closeout is blocked until independent review evidence is current, hash-bound, and telemetry-bound.'
+            : 'Review evidence is degraded or unverifiable, but no mandatory review was required for this scope; completion is allowed without review attestation.';
     return {
         schema_version: 1,
-        enforcement_mode: 'ADVISORY',
+        enforcement_mode: enforcementMode,
         status,
         required_review_count: requiredReviewCount,
         required_review_types: requiredReviewTypes,
@@ -1038,11 +1043,13 @@ export function buildReviewIntegrityAttestation(options: {
         visible_summary_line:
             `Review integrity: ${status}; independent_review_completed=${independentReviewCompleted ? 'yes' : 'no'}; ` +
             `completion_review_attested=${completionReviewAttested ? 'yes' : 'no'}; ` +
-            `completion_allowed=yes; fake/fallback/unverifiable artifacts observed=${observedIssues.length > 0 ? 'yes' : 'no'}; ` +
-            'enforcement=advisory.',
+            `completion_allowed=${completionAllowed ? 'yes' : 'no'}; fake/fallback/unverifiable artifacts observed=${observedIssues.length > 0 ? 'yes' : 'no'}; ` +
+            `enforcement=${enforcementMode.toLowerCase()}.`,
         final_report_lines: [
             `Review integrity: ${status}.`,
-            'Review integrity enforcement: advisory; this summary reports trust state but does not apply completion blocking.',
+            completionAllowed
+                ? `Review integrity enforcement: ${enforcementMode.toLowerCase()}; this summary reports trust state without blocking final closeout for this scope.`
+                : 'Review integrity enforcement: blocking; final closeout is blocked until mandatory review trust is independently attested.',
             `Independent review completed: ${independentReviewCompleted ? 'yes' : 'no'}.`,
             `Completion review-attested: ${completionReviewAttested ? 'yes' : 'no'}.`,
             ...formatReviewIntegrityObservationLines({
@@ -1053,7 +1060,7 @@ export function buildReviewIntegrityAttestation(options: {
                 missingOrUnverifiableObserved,
                 fabricatedArtifactsObserved
             }),
-            `Completion allowed: yes (advisory enforcement). Reason: ${reason}`
+            `Completion allowed: ${completionAllowed ? 'yes' : 'no'}. Reason: ${reason}`
         ]
     };
 }

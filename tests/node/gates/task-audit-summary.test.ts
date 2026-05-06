@@ -337,6 +337,7 @@ function assertReviewIntegrity(
     options: {
         completionReviewAttested?: boolean;
         completionReviewAttestationNotRequired?: boolean;
+        completionAllowed?: boolean;
         enforcementMode?: ReviewIntegrityAttestation['enforcement_mode'];
         issueIncludes?: string;
     } = {}
@@ -344,7 +345,7 @@ function assertReviewIntegrity(
     const attestation = result.final_closeout.review_integrity_attestation;
     assert.ok(attestation);
     assert.equal(attestation.status, expectedStatus);
-    assert.equal(attestation.completion_allowed, true);
+    assert.equal(attestation.completion_allowed, options.completionAllowed ?? true);
     if (options.enforcementMode) {
         assert.equal(attestation.enforcement_mode, options.enforcementMode);
     }
@@ -364,6 +365,24 @@ function assertReviewIntegrity(
         );
     }
     return attestation;
+}
+
+function assertReviewIntegrityBlocksFinalCloseout(
+    result: TaskAuditSummaryResult,
+    issueIncludes?: string
+): ReviewIntegrityAttestation {
+    assert.equal(result.status, 'BLOCKED');
+    assert.equal(result.final_closeout.status, 'NOT_READY');
+    assert.equal(result.final_closeout.artifact_state, 'NOT_READY');
+    assert.equal(result.final_report_contract.status, 'NOT_READY');
+    assert.match(result.final_report_contract.blocker || '', /Review integrity blocked final closeout/);
+    assert.ok(result.blockers.some((blocker) => blocker.gate === 'review-integrity'));
+    return assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
+        completionAllowed: false,
+        completionReviewAttested: false,
+        enforcementMode: 'BLOCKING',
+        issueIncludes
+    });
 }
 
 function writeCurrentIndependentReviewFixture(options: {
@@ -1534,10 +1553,7 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.final_closeout.status, 'READY');
-            assert.equal(result.final_closeout.artifact_state, 'PENDING');
-            assert.equal(result.final_report_contract.status, 'READY');
-            assert.equal(result.final_report_contract.blocker, null);
+            assertReviewIntegrityBlocksFinalCloseout(result, 'same_agent_fallback');
             assert.equal(result.final_closeout.implementation_summary.requested_depth, 2);
             assert.equal(result.final_closeout.implementation_summary.effective_depth, 2);
             assert.equal(result.final_closeout.implementation_summary.path_mode, 'FULL_PATH');
@@ -1548,10 +1564,6 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.review_trust?.status, 'UNAVAILABLE');
             assert.ok(result.final_closeout.review_trust?.visible_summary_line?.includes('incomplete or invalid'));
             assert.ok(result.final_closeout.review_trust?.policy_summary_line?.includes('asserted local review cannot satisfy mandatory independent review'));
-            assert.equal(result.final_closeout.review_integrity_attestation?.status, 'DEGRADED_OR_UNVERIFIABLE');
-            assert.equal(result.final_closeout.review_integrity_attestation?.enforcement_mode, 'ADVISORY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attested, false);
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_allowed, true);
             assert.equal(result.final_closeout.review_integrity_attestation?.same_agent_fallback_observed, true);
             assert.equal(result.final_closeout.review_integrity_attestation?.fake_or_fallback_artifacts_observed, true);
             assert.equal(result.final_closeout.implementation_summary.docs_updated, true);
@@ -1700,7 +1712,7 @@ describe('gates/task-audit-summary', () => {
             assert.equal(missingRoutingPolicySummary, null);
         });
 
-        describe('final closeout review integrity advisory output', () => {
+        describe('final closeout review integrity enforced output', () => {
             describe('positive closeout states', () => {
                 it('marks final closeout ready when current mandatory reviews are independently attested', () => {
                     writeWorkflowConfig(tmpDir, false);
@@ -1727,7 +1739,7 @@ describe('gates/task-audit-summary', () => {
                     assert.equal(result.final_report_contract.status, 'READY');
                     const attestation = assertReviewIntegrity(result, 'INDEPENDENT_REVIEW_ATTESTED', {
                         completionReviewAttested: true,
-                        enforcementMode: 'ADVISORY'
+                        enforcementMode: 'BLOCKING'
                     });
                     assert.deepEqual(attestation.observed_issues, []);
                 });
@@ -1758,7 +1770,7 @@ describe('gates/task-audit-summary', () => {
                 });
             });
 
-            describe('degraded and fallback advisory states', () => {
+            describe('degraded and fallback enforcement states', () => {
                 const degradedCases = [
                     {
                         name: 'fabricated',
@@ -1789,7 +1801,7 @@ describe('gates/task-audit-summary', () => {
                 ] as const;
 
                 for (const degradedCase of degradedCases) {
-                    it(`keeps ${degradedCase.name} review evidence advisory-only`, () => {
+                    it(`blocks ${degradedCase.name} review evidence from final closeout`, () => {
                         writeWorkflowConfig(tmpDir, false);
                         writePreflight(reviewsDir, TASK_ID, { mode: 'FULL_PATH', changed_files: [`src/${degradedCase.name}.ts`], metrics: { changed_lines_total: 18 }, required_reviews: { code: true } });
                         degradedCase.writeFixture(computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)));
@@ -1800,16 +1812,11 @@ describe('gates/task-audit-summary', () => {
 
                         const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
 
-                        assert.equal(result.final_closeout.status, 'READY');
-                        assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
-                            completionReviewAttested: false,
-                            enforcementMode: 'ADVISORY',
-                            issueIncludes: degradedCase.issue
-                        });
+                        assertReviewIntegrityBlocksFinalCloseout(result, degradedCase.issue);
                     });
                 }
 
-                it('marks reused review evidence without strict bindings as advisory-only degraded output', () => {
+                it('blocks reused review evidence without strict bindings from final closeout', () => {
                     writeWorkflowConfig(tmpDir, false);
                     writePassedLifecycle(eventsDir, TASK_ID);
                     writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
@@ -1871,15 +1878,10 @@ describe('gates/task-audit-summary', () => {
 
                     const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
 
-                    assert.equal(result.final_closeout.status, 'READY');
-                    assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
-                        completionReviewAttested: false,
-                        enforcementMode: 'ADVISORY',
-                        issueIncludes: 'strict reused review evidence is invalid'
-                    });
+                    assertReviewIntegrityBlocksFinalCloseout(result, 'strict reused review evidence is invalid');
                 });
 
-                it('blocks stale telemetry closeout while leaving review integrity advisory-only', () => {
+                it('blocks stale telemetry closeout through review integrity enforcement', () => {
                     writeWorkflowConfig(tmpDir, false);
                     writePreflight(reviewsDir, TASK_ID, {
                         mode: 'FULL_PATH',
@@ -1899,11 +1901,7 @@ describe('gates/task-audit-summary', () => {
                     const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
 
                     assert.equal(result.status, 'BLOCKED');
-                    assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
-                        completionReviewAttested: false,
-                        enforcementMode: 'ADVISORY',
-                        issueIncludes: 'review recorded after current required-reviews gate'
-                    });
+                    assertReviewIntegrityBlocksFinalCloseout(result, 'review recorded after current required-reviews gate');
                     assert.ok(result.blockers.some((blocker) =>
                         blocker.gate === 'required-reviews-check'
                         && blocker.reason.includes('Required review evidence changed after REVIEW_GATE_PASSED')
@@ -1911,7 +1909,7 @@ describe('gates/task-audit-summary', () => {
                 });
             });
 
-            describe('unsafe review type advisory reporting', () => {
+            describe('unsafe review type enforcement reporting', () => {
                 it('allowlists required review types before review artifact path construction', () => {
                     writeWorkflowConfig(tmpDir, false);
                     writePassedLifecycle(eventsDir, TASK_ID);
@@ -1924,12 +1922,10 @@ describe('gates/task-audit-summary', () => {
 
                     const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
 
-                    assert.equal(result.final_closeout.status, 'READY');
-                    const attestation = assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
-                        completionReviewAttested: false,
-                        enforcementMode: 'ADVISORY',
-                        issueIncludes: 'unsafe or unknown required review type ignored'
-                    });
+                    const attestation = assertReviewIntegrityBlocksFinalCloseout(
+                        result,
+                        'unsafe or unknown required review type ignored'
+                    );
                     assert.deepEqual(attestation.required_review_types, []);
                 });
             });

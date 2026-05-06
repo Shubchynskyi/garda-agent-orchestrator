@@ -14,7 +14,7 @@ function buildFallbackReviewIntegrityAttestation(closeout: FinalCloseoutArtifact
     const reviewVerdictCount = Object.keys(closeout.implementation_summary.review_verdicts || {}).length;
     const reason = 'Legacy final closeout artifact lacks the mandatory review integrity attestation; completion is not review-attested.';
     return {
-        schema_version: 1, enforcement_mode: 'ADVISORY', status: 'DEGRADED_OR_UNVERIFIABLE', required_review_count: reviewVerdictCount,
+        schema_version: 1, enforcement_mode: 'BLOCKING', status: 'DEGRADED_OR_UNVERIFIABLE', required_review_count: reviewVerdictCount,
         required_review_types: Object.keys(closeout.implementation_summary.review_verdicts || {}).sort(),
         independent_review_completed: false, completion_review_attested: false, completion_review_attestation_not_required: false, completion_allowed: false,
         fake_or_fallback_artifacts_observed: false, same_agent_fallback_observed: false, fallback_artifacts_observed: false,
@@ -22,10 +22,10 @@ function buildFallbackReviewIntegrityAttestation(closeout: FinalCloseoutArtifact
         observed_issues: ['legacy final closeout artifact lacks review integrity attestation'], reason,
         visible_summary_line:
             'Review integrity: DEGRADED_OR_UNVERIFIABLE; independent_review_completed=no; ' +
-            'completion_review_attested=no; fake/fallback/unverifiable artifacts observed=yes; enforcement=advisory.',
+            'completion_review_attested=no; completion_allowed=no; fake/fallback/unverifiable artifacts observed=yes; enforcement=blocking.',
         final_report_lines: [
             'Review integrity: DEGRADED_OR_UNVERIFIABLE.',
-            'Review integrity enforcement: advisory; this summary reports trust state but does not apply completion blocking.',
+            'Review integrity enforcement: blocking; final closeout is blocked until mandatory review trust is independently attested.',
             'Independent review completed: no.',
             'Completion review-attested: no.',
             'Fake/fallback artifacts observed: no.',

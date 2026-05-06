@@ -53,6 +53,7 @@ function createReviewerRoutingFixture(
         execution_provider_source: executionProviderSource,
         identity_status: 'resolved',
         capability_level: routingPolicy.capability_level,
+        delegation_required: routingPolicy.delegation_required,
         expected_execution_mode: routingPolicy.expected_execution_mode,
         fallback_allowed: routingPolicy.fallback_allowed,
         fallback_reason_required: routingPolicy.fallback_reason_required,

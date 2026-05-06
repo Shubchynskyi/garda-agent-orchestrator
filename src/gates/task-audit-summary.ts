@@ -1133,6 +1133,18 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         repoRoot,
         timelineEvents: events
     });
+    const reviewIntegrityBlocker = hasCompletionPass && reviewIntegrityAttestation.completion_allowed === false
+        ? {
+            gate: 'review-integrity',
+            reason: reviewIntegrityAttestation.reason
+        }
+        : null;
+    if (reviewIntegrityBlocker && !blockers.some((blocker) => blocker.gate === reviewIntegrityBlocker.gate)) {
+        blockers.push(reviewIntegrityBlocker);
+    }
+    if (status === 'PASS' && reviewIntegrityBlocker) {
+        status = 'BLOCKED';
+    }
     const optionalSkillsPath = path.join(reviewsRoot, `${safeTaskId}-optional-skill-selection.json`);
     const bundleRoot = path.dirname(path.dirname(reviewsRoot));
     const taskEventsTimelineEvidence = readOptionalSkillSelectionTimelineEvidence(bundleRoot, safeTaskId, taskEventFile);
@@ -1152,6 +1164,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         status: status === 'PASS' ? 'READY' : 'NOT_READY',
         blocker: status === 'PASS'
             ? null
+            : reviewIntegrityBlocker
+                ? `Review integrity blocked final closeout: ${reviewIntegrityBlocker.reason}`
             : pointInTimeSnapshot.status === 'FINALIZATION_IN_FLIGHT' && status === 'INCOMPLETE'
                 ? `${pointInTimeSnapshot.message} ${pointInTimeSnapshot.recommended_action}`
                 : hasCompletionPass && supportingGateGaps.length > 0
