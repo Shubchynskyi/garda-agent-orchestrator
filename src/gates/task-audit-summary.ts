@@ -18,6 +18,12 @@ import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../ga
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from './classify-change';
 import { loadFullSuiteValidationConfig } from './full-suite-validation';
 import {
+    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
+    PROJECT_MEMORY_IMPACT_BLOCKED_EVENT,
+    getProjectMemoryImpactLifecycleEvidence,
+    type ProjectMemoryImpactLifecycleEvidence
+} from './project-memory-impact';
+import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
     buildReviewExecutionPolicySummaryLine,
     loadReviewExecutionPolicyConfig,
@@ -90,6 +96,7 @@ export interface FinalCloseoutArtifact {
         review_execution_policy_summary_line?: string | null;
     } | null;
     docs: FinalCloseoutDocsSummary;
+    project_memory?: FinalCloseoutProjectMemorySummary | null;
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
     task_queue_status_contract?: TaskQueueStatusContract;
     agent_report?: {
@@ -123,6 +130,22 @@ export interface TaskAuditSummaryResult {
     point_in_time_snapshot: PointInTimeSnapshot;
     final_report_contract: FinalReportContract;
     final_closeout: FinalCloseoutArtifact;
+}
+
+export interface FinalCloseoutProjectMemorySummary {
+    enabled: boolean;
+    required: boolean;
+    mode: string;
+    evidence_status: string;
+    status: string | null;
+    update_needed: boolean | null;
+    affected_memory_files: string[];
+    updated_memory_files: string[];
+    compact_status: string | null;
+    compact_refreshed: boolean | null;
+    artifact_path: string;
+    update_artifact_path: string;
+    visible_summary_line: string;
 }
 
 export interface PointInTimeSnapshot {
@@ -181,26 +204,37 @@ const BASE_LIFECYCLE_GATES: ReadonlyArray<LifecycleGateSpec> = [
     { gate: 'completion-gate', pass_event: 'COMPLETION_GATE_PASSED', fail_events: ['COMPLETION_GATE_FAILED'] }
 ];
 
-function getLifecycleGates(fullSuiteValidationEnabled: boolean): LifecycleGateSpec[] {
+function getLifecycleGates(fullSuiteValidationEnabled: boolean, projectMemoryImpactRequired: boolean): LifecycleGateSpec[] {
     const gates = BASE_LIFECYCLE_GATES.map((entry) => ({
         gate: entry.gate,
         pass_event: entry.pass_event,
         fail_events: [...entry.fail_events]
     }));
-    if (!fullSuiteValidationEnabled) {
-        return gates;
+    if (fullSuiteValidationEnabled) {
+        const completionIndex = gates.findIndex((entry) => entry.gate === 'completion-gate');
+        const fullSuiteGate = {
+            gate: 'full-suite-validation',
+            pass_event: 'FULL_SUITE_VALIDATION_PASSED',
+            fail_events: ['FULL_SUITE_VALIDATION_FAILED', 'FULL_SUITE_VALIDATION_SKIPPED']
+        };
+        if (completionIndex === -1) {
+            gates.push(fullSuiteGate);
+        } else {
+            gates.splice(completionIndex, 0, fullSuiteGate);
+        }
     }
-
-    const completionIndex = gates.findIndex((entry) => entry.gate === 'completion-gate');
-    const fullSuiteGate = {
-        gate: 'full-suite-validation',
-        pass_event: 'FULL_SUITE_VALIDATION_PASSED',
-        fail_events: ['FULL_SUITE_VALIDATION_FAILED', 'FULL_SUITE_VALIDATION_SKIPPED']
-    };
-    if (completionIndex === -1) {
-        gates.push(fullSuiteGate);
-    } else {
-        gates.splice(completionIndex, 0, fullSuiteGate);
+    if (projectMemoryImpactRequired) {
+        const currentCompletionIndex = gates.findIndex((entry) => entry.gate === 'completion-gate');
+        const projectMemoryGate = {
+            gate: 'project-memory-impact',
+            pass_event: PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
+            fail_events: [PROJECT_MEMORY_IMPACT_BLOCKED_EVENT]
+        };
+        if (currentCompletionIndex === -1) {
+            gates.push(projectMemoryGate);
+        } else {
+            gates.splice(currentCompletionIndex, 0, projectMemoryGate);
+        }
     }
     return gates;
 }
@@ -266,6 +300,7 @@ const CURRENT_CYCLE_DOWNSTREAM_GATES = new Set([
     'required-reviews-check',
     'doc-impact-gate',
     'full-suite-validation',
+    'project-memory-impact',
     'completion-gate'
 ]);
 
@@ -432,6 +467,25 @@ function resolveFullSuiteValidationRequirementForCurrentCycle(
     }
 
     return liveFullSuiteValidationEnabled;
+}
+
+function hasCurrentCycleProjectMemoryImpactEvent(
+    events: TaskAuditEvent[],
+    currentCycle: TaskCycleBindingSnapshot | null,
+    repoRoot: string
+): boolean {
+    const gateSpec: LifecycleGateSpec = {
+        gate: 'project-memory-impact',
+        pass_event: PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
+        fail_events: [PROJECT_MEMORY_IMPACT_BLOCKED_EVENT]
+    };
+    return events.some((event) => {
+        const eventType = String(event.event_type || '').trim().toUpperCase();
+        if (eventType !== PROJECT_MEMORY_IMPACT_ASSESSED_EVENT && eventType !== PROJECT_MEMORY_IMPACT_BLOCKED_EVENT) {
+            return false;
+        }
+        return isEventRelevantForLifecycleGate(gateSpec, eventType, event, currentCycle, repoRoot);
+    });
 }
 
 function resolveLifecycleGateStatus(
@@ -773,7 +827,13 @@ function collectRequiredReviewBlockers(
         });
 }
 
-function collectEvidenceArtifacts(reviewsRoot: string, taskId: string, taskEventFile: string): EvidenceArtifact[] {
+function collectEvidenceArtifacts(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    taskEventFile: string,
+    projectMemoryImpact: ProjectMemoryImpactLifecycleEvidence
+): EvidenceArtifact[] {
     const evidence = ARTIFACT_PATTERNS.map(({ kind, suffix }) => {
         const artifactPath = path.join(reviewsRoot, `${taskId}${suffix}`);
         const exists = fs.existsSync(artifactPath);
@@ -785,6 +845,22 @@ function collectEvidenceArtifacts(reviewsRoot: string, taskId: string, taskEvent
         };
     });
 
+    if (projectMemoryImpact.required || projectMemoryImpact.evidence_status !== 'NOT_REQUIRED') {
+        for (const [kind, artifactPath] of [
+            ['project-memory-impact', projectMemoryImpact.artifact_path],
+            ['project-memory-update', projectMemoryImpact.update_artifact_path]
+        ] as const) {
+            const resolvedPath = path.resolve(repoRoot, artifactPath);
+            const exists = fs.existsSync(resolvedPath);
+            evidence.push({
+                kind,
+                path: toPosix(resolvedPath),
+                exists,
+                sha256: exists ? fileSha256(resolvedPath) : null
+            });
+        }
+    }
+
     evidence.push({
         kind: 'task-events',
         path: toPosix(taskEventFile),
@@ -793,6 +869,26 @@ function collectEvidenceArtifacts(reviewsRoot: string, taskId: string, taskEvent
     });
 
     return evidence;
+}
+
+function buildFinalCloseoutProjectMemorySummary(
+    evidence: ProjectMemoryImpactLifecycleEvidence
+): FinalCloseoutProjectMemorySummary {
+    return {
+        enabled: evidence.enabled,
+        required: evidence.required,
+        mode: evidence.mode,
+        evidence_status: evidence.evidence_status,
+        status: evidence.status,
+        update_needed: evidence.update_needed,
+        affected_memory_files: [...evidence.affected_memory_files],
+        updated_memory_files: [...evidence.updated_memory_files],
+        compact_status: evidence.compact_status,
+        compact_refreshed: evidence.compact_refreshed,
+        artifact_path: evidence.artifact_path,
+        update_artifact_path: evidence.update_artifact_path,
+        visible_summary_line: evidence.visible_summary_line
+    };
 }
 
 function readReviewExecutionPolicyModeFromCurrentCycleTimeline(
@@ -910,8 +1006,17 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         repoRoot,
         liveFullSuiteValidationEnabled
     );
+    const projectMemoryImpactEvidence = getProjectMemoryImpactLifecycleEvidence({
+        repoRoot,
+        taskId: safeTaskId,
+        preflightPath: path.join(reviewsRoot, `${safeTaskId}-preflight.json`)
+    });
+    const hasCurrentProjectMemoryImpactEvent = hasCurrentCycleProjectMemoryImpactEvent(events, currentCycle, repoRoot);
+    const hasCompletionPassEvent = events.some((event) => String(event.event_type || '').trim().toUpperCase() === 'COMPLETION_GATE_PASSED');
+    const projectMemoryImpactRequired = projectMemoryImpactEvidence.required
+        && (!hasCompletionPassEvent || hasCurrentProjectMemoryImpactEvent);
     const workspaceStatusSnapshot = getStatusSnapshot(repoRoot);
-    const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled);
+    const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled, projectMemoryImpactRequired);
     let integrityStatus: string;
     if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
         try {
@@ -981,6 +1086,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     if (!hasCompletionPass) {
         blockers.push(...requiredReviewBlockers);
     }
+    if (projectMemoryImpactRequired && projectMemoryImpactEvidence.evidence_status !== 'CURRENT') {
+        blockers.push({
+            gate: 'project-memory-impact',
+            reason:
+                `Project memory impact evidence is ${projectMemoryImpactEvidence.evidence_status}. ` +
+                `${projectMemoryImpactEvidence.visible_summary_line}`
+        });
+    }
     const completionReviewOrderBlocker = buildCompletionReviewOrderBlocker(
         requiredReviews,
         events,
@@ -991,7 +1104,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         blockers.push(completionReviewOrderBlocker);
     }
     const tokenEconomy = buildTokenEconomySummary(safeTaskId, events, repoRoot, reviewsRoot);
-    const evidence = collectEvidenceArtifacts(reviewsRoot, safeTaskId, taskEventFile);
+    const evidence = collectEvidenceArtifacts(repoRoot, reviewsRoot, safeTaskId, taskEventFile, projectMemoryImpactEvidence);
     const hasFailedGate = gates.some((g) => g.status === 'FAIL');
     const failedGateNames = gates.filter((g) => g.status === 'FAIL').map((g) => g.gate);
     const hasNonCompletionFailure = failedGateNames.some((gateName) => gateName !== 'completion-gate');
@@ -1052,7 +1165,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         'REVIEW_PHASE_STARTED',
         'REVIEW_GATE_PASSED',
         'REVIEW_GATE_PASSED_WITH_OVERRIDE',
-        'DOC_IMPACT_ASSESSED'
+        'DOC_IMPACT_ASSESSED',
+        PROJECT_MEMORY_IMPACT_ASSESSED_EVENT
     ]);
     const requireSupportingGateCompleteness = events.some((event) =>
         supportingLifecycleAnchorEvents.has(String(event.event_type || ''))
@@ -1160,6 +1274,15 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     );
     const finalCloseoutJsonPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.json`);
     const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.md`);
+    const implementationSummaryRequirements = [
+        'depth',
+        'path mode',
+        'review verdicts',
+        'docs updated'
+    ];
+    if (projectMemoryImpactRequired || projectMemoryImpactEvidence.evidence_status !== 'NOT_REQUIRED') {
+        implementationSummaryRequirements.push('project memory status');
+    }
     const finalReportContract: FinalReportContract = {
         status: status === 'PASS' ? 'READY' : 'NOT_READY',
         blocker: status === 'PASS'
@@ -1177,12 +1300,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             commitCommand.suggestion,
             commitQuestionText
         ],
-        implementation_summary_requirements: [
-            'depth',
-            'path mode',
-            'review verdicts',
-            'docs updated'
-        ],
+        implementation_summary_requirements: implementationSummaryRequirements,
         commit_command_template: commitCommand.template,
         commit_command_suggestion: commitCommand.suggestion,
         commit_question: commitQuestionText
@@ -1230,6 +1348,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(reviewExecutionPolicyMode)
         },
         docs: docsSummary,
+        project_memory: buildFinalCloseoutProjectMemorySummary(projectMemoryImpactEvidence),
         token_economy: tokenEconomy,
         task_queue_status_contract: buildTaskQueueStatusContract(safeTaskId),
         agent_report: {

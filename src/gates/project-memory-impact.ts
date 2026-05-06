@@ -26,6 +26,10 @@ import { fileSha256, normalizePath } from './helpers';
 
 export type ProjectMemoryImpactStatus = 'OFF' | 'NO_UPDATE_NEEDED' | 'UPDATE_NEEDED' | 'UPDATED' | 'BLOCKED';
 export type ProjectMemoryUpdateEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'VALID' | 'STALE' | 'TAMPERED' | 'INVALID';
+export type ProjectMemoryImpactEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'CURRENT' | 'STALE' | 'BLOCKED' | 'INVALID';
+
+export const PROJECT_MEMORY_IMPACT_ASSESSED_EVENT = 'PROJECT_MEMORY_IMPACT_ASSESSED';
+export const PROJECT_MEMORY_IMPACT_BLOCKED_EVENT = 'PROJECT_MEMORY_IMPACT_BLOCKED';
 
 export interface ProjectMemoryImpactReason {
     changed_file: string;
@@ -93,6 +97,26 @@ export interface ProjectMemoryImpactArtifact {
     };
     impact_fingerprint_sha256: string;
     next_step: string;
+    violations: string[];
+}
+
+export interface ProjectMemoryImpactLifecycleEvidence {
+    required: boolean;
+    enabled: boolean;
+    mode: ProjectMemoryMaintenanceMode;
+    configured_mode: ProjectMemoryMaintenanceMode;
+    run_before_final_closeout: boolean;
+    artifact_path: string;
+    update_artifact_path: string;
+    status: ProjectMemoryImpactStatus | null;
+    outcome: 'PASS' | 'FAIL' | null;
+    evidence_status: ProjectMemoryImpactEvidenceStatus;
+    update_needed: boolean | null;
+    affected_memory_files: string[];
+    updated_memory_files: string[];
+    compact_status: 'OK' | 'MISSING' | 'OVERFLOW' | null;
+    compact_refreshed: boolean | null;
+    visible_summary_line: string;
     violations: string[];
 }
 
@@ -183,14 +207,63 @@ function readJsonFileIfPresent(filePath: string): unknown | null {
     }
 }
 
+function computeProjectMemoryConfigKeyEditDistance(left: string, right: string): number {
+    const rows = left.length + 1;
+    const cols = right.length + 1;
+    const distances = Array.from({ length: rows }, (_, rowIndex) => (
+        Array.from({ length: cols }, (_, colIndex) => (rowIndex === 0 ? colIndex : (colIndex === 0 ? rowIndex : 0)))
+    ));
+
+    for (let rowIndex = 1; rowIndex < rows; rowIndex += 1) {
+        for (let colIndex = 1; colIndex < cols; colIndex += 1) {
+            const substitutionCost = left[rowIndex - 1] === right[colIndex - 1] ? 0 : 1;
+            distances[rowIndex][colIndex] = Math.min(
+                distances[rowIndex - 1][colIndex] + 1,
+                distances[rowIndex][colIndex - 1] + 1,
+                distances[rowIndex - 1][colIndex - 1] + substitutionCost
+            );
+        }
+    }
+
+    return distances[left.length][right.length];
+}
+
+function readProjectMemoryMaintenanceSection(parsed: Record<string, unknown>, defaultConfig: ProjectMemoryMaintenanceConfig): unknown {
+    const exactKey = 'project_memory_maintenance';
+    if (parsed[exactKey] !== undefined) {
+        return parsed[exactKey];
+    }
+
+    for (const key of Object.keys(parsed)) {
+        const normalizedKey = key.toLowerCase();
+        if (normalizedKey === exactKey) {
+            throw new Error(`workflow-config.${key} must use the exact key '${exactKey}'.`);
+        }
+        const editDistance = computeProjectMemoryConfigKeyEditDistance(normalizedKey, exactKey);
+        if (editDistance > 0 && editDistance <= 2) {
+            throw new Error(`workflow-config.${key} is not allowed; did you mean '${exactKey}'?`);
+        }
+    }
+
+    return defaultConfig;
+}
+
 function readWorkflowProjectMemoryConfig(bundleRoot: string): ProjectMemoryMaintenanceConfig {
-    const defaultConfig = buildDefaultWorkflowConfig().project_memory_maintenance;
+    const defaultWorkflowConfig = buildDefaultWorkflowConfig();
+    const defaultConfig = defaultWorkflowConfig.project_memory_maintenance;
     const configPath = getWorkflowConfigPath(bundleRoot);
     const parsed = readJsonFileIfPresent(configPath);
     if (!parsed) {
         return { ...defaultConfig };
     }
-    const validated = validateWorkflowConfig(parsed) as { project_memory_maintenance?: ProjectMemoryMaintenanceConfig };
+    const workflowConfigForProjectMemory = {
+        full_suite_validation: defaultWorkflowConfig.full_suite_validation,
+        review_execution_policy: defaultWorkflowConfig.review_execution_policy,
+        project_memory_maintenance: isPlainObject(parsed)
+            ? readProjectMemoryMaintenanceSection(parsed, defaultConfig)
+            : defaultConfig
+    };
+    const validated = validateWorkflowConfig(workflowConfigForProjectMemory) as { project_memory_maintenance?: ProjectMemoryMaintenanceConfig };
     return {
         ...defaultConfig,
         ...(validated.project_memory_maintenance ?? {})
@@ -206,6 +279,368 @@ function normalizeMaintenanceMode(value: unknown, fallback: ProjectMemoryMainten
         throw new Error(`Project memory mode must be one of: ${PROJECT_MEMORY_MAINTENANCE_MODES.join(', ')}.`);
     }
     return normalized as ProjectMemoryMaintenanceMode;
+}
+
+function resolveProjectMemoryRuntime(repoRoot: string, taskId: string, input?: {
+    preflightPath?: string | null;
+    artifactPath?: string | null;
+    updateArtifactPath?: string | null;
+}): {
+    repoRoot: string;
+    taskId: string;
+    bundleRoot: string;
+    config: ProjectMemoryMaintenanceConfig;
+    mode: ProjectMemoryMaintenanceMode;
+    configuredMode: ProjectMemoryMaintenanceMode;
+    required: boolean;
+    artifactPath: string;
+    updateArtifactPath: string;
+    preflightPath: string | null;
+} {
+    const resolvedRepoRoot = path.resolve(repoRoot || '.');
+    const safeTaskId = assertValidTaskId(taskId);
+    const bundleName = resolveBundleNameForTarget(resolvedRepoRoot);
+    const bundleRoot = path.join(resolvedRepoRoot, bundleName);
+    const config = readWorkflowProjectMemoryConfig(bundleRoot);
+    const configuredMode = normalizeMaintenanceMode(config.mode, 'check');
+    const mode = config.enabled === false ? 'off' : configuredMode;
+    const runtimeMemoryDir = resolveRuntimeProjectMemoryDir(bundleRoot);
+    return {
+        repoRoot: resolvedRepoRoot,
+        taskId: safeTaskId,
+        bundleRoot,
+        config,
+        mode,
+        configuredMode,
+        required: mode !== 'off' && config.run_before_final_closeout === true,
+        artifactPath: input?.artifactPath
+            ? path.resolve(resolvedRepoRoot, input.artifactPath)
+            : path.join(runtimeMemoryDir, `${safeTaskId}-impact.json`),
+        updateArtifactPath: input?.updateArtifactPath
+            ? path.resolve(resolvedRepoRoot, input.updateArtifactPath)
+            : path.join(runtimeMemoryDir, `${safeTaskId}-update.json`),
+        preflightPath: input?.preflightPath === null
+            ? null
+            : path.resolve(resolvedRepoRoot, input?.preflightPath || resolveDefaultPreflightPath(bundleRoot, safeTaskId))
+    };
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function compareImpactArtifactToExpected(
+    actual: ProjectMemoryImpactArtifact,
+    expected: ProjectMemoryImpactArtifact
+): string[] {
+    const checks: Array<{ field: string; actual: unknown; expected: unknown }> = [
+        { field: 'schema_version', actual: actual.schema_version, expected: expected.schema_version },
+        { field: 'task_id', actual: actual.task_id, expected: expected.task_id },
+        { field: 'mode', actual: actual.mode, expected: expected.mode },
+        { field: 'configured_mode', actual: actual.configured_mode, expected: expected.configured_mode },
+        { field: 'enabled', actual: actual.enabled, expected: expected.enabled },
+        { field: 'status', actual: actual.status, expected: expected.status },
+        { field: 'outcome', actual: actual.outcome, expected: expected.outcome },
+        { field: 'update_needed', actual: actual.update_needed, expected: expected.update_needed },
+        { field: 'writes_allowed', actual: actual.writes_allowed, expected: expected.writes_allowed },
+        {
+            field: 'require_user_approval_for_writes',
+            actual: actual.require_user_approval_for_writes,
+            expected: expected.require_user_approval_for_writes
+        },
+        { field: 'preflight_path', actual: actual.preflight_path, expected: expected.preflight_path },
+        { field: 'preflight_hash_sha256', actual: actual.preflight_hash_sha256, expected: expected.preflight_hash_sha256 },
+        { field: 'changed_files', actual: actual.changed_files, expected: expected.changed_files },
+        { field: 'affected_memory_files', actual: actual.affected_memory_files, expected: expected.affected_memory_files },
+        { field: 'affected_memory_file_names', actual: actual.affected_memory_file_names, expected: expected.affected_memory_file_names },
+        { field: 'reasons', actual: actual.reasons, expected: expected.reasons },
+        { field: 'validation', actual: actual.validation, expected: expected.validation },
+        { field: 'compact', actual: actual.compact, expected: expected.compact },
+        { field: 'update_evidence', actual: actual.update_evidence, expected: expected.update_evidence },
+        { field: 'impact_fingerprint_sha256', actual: actual.impact_fingerprint_sha256, expected: expected.impact_fingerprint_sha256 },
+        { field: 'violations', actual: actual.violations, expected: expected.violations }
+    ];
+    const violations: string[] = [];
+    for (const check of checks) {
+        if (!sameJsonValue(check.actual, check.expected)) {
+            violations.push(`Project memory impact artifact field '${check.field}' is stale or does not match current evidence.`);
+        }
+    }
+    return violations;
+}
+
+function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isNullableString(value: unknown): value is string | null {
+    return value === null || typeof value === 'string';
+}
+
+function isProjectMemoryMode(value: unknown): value is ProjectMemoryMaintenanceMode {
+    return PROJECT_MEMORY_MAINTENANCE_MODES.includes(value as ProjectMemoryMaintenanceMode);
+}
+
+function isImpactStatus(value: unknown): value is ProjectMemoryImpactStatus {
+    return ['OFF', 'NO_UPDATE_NEEDED', 'UPDATE_NEEDED', 'UPDATED', 'BLOCKED'].includes(String(value || ''));
+}
+
+function isImpactOutcome(value: unknown): value is 'PASS' | 'FAIL' {
+    return value === 'PASS' || value === 'FAIL';
+}
+
+function isCompactStatus(value: unknown): value is 'OK' | 'MISSING' | 'OVERFLOW' {
+    return value === 'OK' || value === 'MISSING' || value === 'OVERFLOW';
+}
+
+function isUpdateEvidenceStatus(value: unknown): value is ProjectMemoryUpdateEvidenceStatus {
+    return ['NOT_REQUIRED', 'MISSING', 'VALID', 'STALE', 'TAMPERED', 'INVALID'].includes(String(value || ''));
+}
+
+function validateImpactArtifactShape(parsed: Record<string, unknown>): string[] {
+    const violations: string[] = [];
+    const require = (condition: boolean, field: string, expected: string): void => {
+        if (!condition) {
+            violations.push(`Project memory impact artifact field '${field}' must be ${expected}.`);
+        }
+    };
+
+    require(parsed.schema_version === 1, 'schema_version', '1');
+    require(typeof parsed.timestamp_utc === 'string', 'timestamp_utc', 'a string');
+    require(typeof parsed.task_id === 'string', 'task_id', 'a string');
+    require(isProjectMemoryMode(parsed.mode), 'mode', `one of: ${PROJECT_MEMORY_MAINTENANCE_MODES.join(', ')}`);
+    require(isProjectMemoryMode(parsed.configured_mode), 'configured_mode', `one of: ${PROJECT_MEMORY_MAINTENANCE_MODES.join(', ')}`);
+    require(typeof parsed.enabled === 'boolean', 'enabled', 'a boolean');
+    require(isImpactStatus(parsed.status), 'status', 'a valid project-memory impact status');
+    require(isImpactOutcome(parsed.outcome), 'outcome', 'PASS or FAIL');
+    require(typeof parsed.update_needed === 'boolean', 'update_needed', 'a boolean');
+    require(typeof parsed.writes_allowed === 'boolean', 'writes_allowed', 'a boolean');
+    require(typeof parsed.require_user_approval_for_writes === 'boolean', 'require_user_approval_for_writes', 'a boolean');
+    require(isNullableString(parsed.preflight_path), 'preflight_path', 'a string or null');
+    require(isNullableString(parsed.preflight_hash_sha256), 'preflight_hash_sha256', 'a string or null');
+    require(isStringArray(parsed.changed_files), 'changed_files', 'an array of strings');
+    require(isStringArray(parsed.affected_memory_files), 'affected_memory_files', 'an array of strings');
+    require(isStringArray(parsed.affected_memory_file_names), 'affected_memory_file_names', 'an array of strings');
+    require(Array.isArray(parsed.reasons), 'reasons', 'an array');
+    require(isPlainObject(parsed.validation), 'validation', 'an object');
+
+    const compact = isPlainObject(parsed.compact) ? parsed.compact : null;
+    require(compact !== null, 'compact', 'an object');
+    if (compact) {
+        require(typeof compact.path === 'string', 'compact.path', 'a string');
+        require(typeof compact.exists === 'boolean', 'compact.exists', 'a boolean');
+        require(compact.char_count === null || typeof compact.char_count === 'number', 'compact.char_count', 'a number or null');
+        require(typeof compact.max_chars === 'number', 'compact.max_chars', 'a number');
+        require(isNullableString(compact.sha256), 'compact.sha256', 'a string or null');
+        require(isCompactStatus(compact.status), 'compact.status', 'OK, MISSING, or OVERFLOW');
+    }
+
+    const updateEvidence = isPlainObject(parsed.update_evidence) ? parsed.update_evidence : null;
+    require(updateEvidence !== null, 'update_evidence', 'an object');
+    if (updateEvidence) {
+        require(isUpdateEvidenceStatus(updateEvidence.status), 'update_evidence.status', 'a valid update evidence status');
+        require(typeof updateEvidence.path === 'string', 'update_evidence.path', 'a string');
+        require(isStringArray(updateEvidence.updated_memory_files), 'update_evidence.updated_memory_files', 'an array of strings');
+        require(isStringArray(updateEvidence.missing_updated_memory_files), 'update_evidence.missing_updated_memory_files', 'an array of strings');
+        require(isStringArray(updateEvidence.invalid_reasons), 'update_evidence.invalid_reasons', 'an array of strings');
+    }
+
+    require(typeof parsed.impact_fingerprint_sha256 === 'string', 'impact_fingerprint_sha256', 'a string');
+    require(typeof parsed.next_step === 'string', 'next_step', 'a string');
+    require(isStringArray(parsed.violations), 'violations', 'an array of strings');
+    return violations;
+}
+
+function readImpactArtifact(artifactPath: string): {
+    artifact: ProjectMemoryImpactArtifact | null;
+    exists: boolean;
+    invalidReasons: string[];
+} {
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        return { artifact: null, exists: false, invalidReasons: [] };
+    }
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+    } catch (error: unknown) {
+        return {
+            artifact: null,
+            exists: true,
+            invalidReasons: [
+                `Project memory impact artifact is not valid JSON: ${error instanceof Error ? error.message : String(error)}.`
+            ]
+        };
+    }
+
+    if (!isPlainObject(parsed)) {
+        return {
+            artifact: null,
+            exists: true,
+            invalidReasons: ['Project memory impact artifact must be a JSON object.']
+        };
+    }
+
+    const invalidReasons = validateImpactArtifactShape(parsed);
+    return {
+        artifact: invalidReasons.length === 0 ? parsed as unknown as ProjectMemoryImpactArtifact : null,
+        exists: true,
+        invalidReasons
+    };
+}
+
+function buildProjectMemoryVisibleSummary(input: {
+    required: boolean;
+    enabled: boolean;
+    mode: ProjectMemoryMaintenanceMode;
+    evidenceStatus: ProjectMemoryImpactEvidenceStatus;
+    status: ProjectMemoryImpactStatus | null;
+    updateNeeded: boolean | null;
+    updatedMemoryFiles: readonly string[];
+    compactStatus: string | null;
+    compactRefreshed: boolean | null;
+}): string {
+    const statusText = input.status || input.evidenceStatus;
+    const parts = [
+        `Project memory: ${input.enabled ? 'enabled' : 'disabled'}`,
+        `mode=${input.mode}`,
+        `required=${input.required}`,
+        `evidence=${input.evidenceStatus}`,
+        `status=${statusText}`,
+        `update_needed=${input.updateNeeded == null ? 'unknown' : input.updateNeeded}`,
+        `updated_files=${input.updatedMemoryFiles.length}`,
+        `compact=${input.compactStatus || 'unknown'}`,
+        `compact_refreshed=${input.compactRefreshed == null ? 'unknown' : input.compactRefreshed}`
+    ];
+    return parts.join('; ');
+}
+
+export function getProjectMemoryImpactLifecycleEvidence(input: {
+    repoRoot: string;
+    taskId: string;
+    preflightPath?: string | null;
+    artifactPath?: string | null;
+    updateArtifactPath?: string | null;
+}): ProjectMemoryImpactLifecycleEvidence {
+    const runtime = resolveProjectMemoryRuntime(input.repoRoot, input.taskId, input);
+    if (!runtime.required) {
+        const status = runtime.mode === 'off' ? 'OFF' : null;
+        return {
+            required: false,
+            enabled: runtime.mode !== 'off',
+            mode: runtime.mode,
+            configured_mode: runtime.configuredMode,
+            run_before_final_closeout: runtime.config.run_before_final_closeout,
+            artifact_path: normalizePath(runtime.artifactPath),
+            update_artifact_path: normalizePath(runtime.updateArtifactPath),
+            status,
+            outcome: status === 'OFF' ? 'PASS' : null,
+            evidence_status: 'NOT_REQUIRED',
+            update_needed: false,
+            affected_memory_files: [],
+            updated_memory_files: [],
+            compact_status: null,
+            compact_refreshed: null,
+            visible_summary_line: buildProjectMemoryVisibleSummary({
+                required: false,
+                enabled: runtime.mode !== 'off',
+                mode: runtime.mode,
+                evidenceStatus: 'NOT_REQUIRED',
+                status,
+                updateNeeded: false,
+                updatedMemoryFiles: [],
+                compactStatus: null,
+                compactRefreshed: null
+            }),
+            violations: []
+        };
+    }
+
+    const expected = assessProjectMemoryImpact({
+        repoRoot: runtime.repoRoot,
+        taskId: runtime.taskId,
+        preflightPath: runtime.preflightPath,
+        artifactPath: runtime.artifactPath,
+        updateArtifactPath: runtime.updateArtifactPath
+    }).artifact;
+    const actualResult = readImpactArtifact(runtime.artifactPath);
+    const actual = actualResult.artifact;
+    if (!actual) {
+        const evidenceStatus: ProjectMemoryImpactEvidenceStatus = actualResult.exists ? 'INVALID' : 'MISSING';
+        const violations = actualResult.exists
+            ? actualResult.invalidReasons
+            : [`Project memory impact artifact is missing: ${normalizePath(runtime.artifactPath)}.`];
+        return {
+            required: true,
+            enabled: true,
+            mode: runtime.mode,
+            configured_mode: runtime.configuredMode,
+            run_before_final_closeout: runtime.config.run_before_final_closeout,
+            artifact_path: normalizePath(runtime.artifactPath),
+            update_artifact_path: normalizePath(runtime.updateArtifactPath),
+            status: null,
+            outcome: null,
+            evidence_status: evidenceStatus,
+            update_needed: expected.update_needed,
+            affected_memory_files: expected.affected_memory_files,
+            updated_memory_files: expected.update_evidence.updated_memory_files,
+            compact_status: expected.compact.status,
+            compact_refreshed: null,
+            visible_summary_line: buildProjectMemoryVisibleSummary({
+                required: true,
+                enabled: true,
+                mode: runtime.mode,
+                evidenceStatus,
+                status: null,
+                updateNeeded: expected.update_needed,
+                updatedMemoryFiles: expected.update_evidence.updated_memory_files,
+                compactStatus: expected.compact.status,
+                compactRefreshed: null
+            }),
+            violations
+        };
+    }
+
+    const violations = compareImpactArtifactToExpected(actual, expected);
+    const evidenceStatus: ProjectMemoryImpactEvidenceStatus = violations.length > 0
+        ? 'STALE'
+        : actual.status === 'BLOCKED'
+            ? 'BLOCKED'
+            : actual.outcome === 'PASS'
+                ? 'CURRENT'
+                : 'INVALID';
+    const compactRefreshed = actual.update_evidence.status === 'NOT_REQUIRED'
+        ? false
+        : readUpdateEvidence(runtime.updateArtifactPath)?.compact_refreshed ?? null;
+    return {
+        required: true,
+        enabled: true,
+        mode: actual.mode,
+        configured_mode: actual.configured_mode,
+        run_before_final_closeout: runtime.config.run_before_final_closeout,
+        artifact_path: normalizePath(runtime.artifactPath),
+        update_artifact_path: normalizePath(runtime.updateArtifactPath),
+        status: actual.status,
+        outcome: actual.outcome,
+        evidence_status: evidenceStatus,
+        update_needed: actual.update_needed,
+        affected_memory_files: actual.affected_memory_files,
+        updated_memory_files: actual.update_evidence.updated_memory_files,
+        compact_status: actual.compact.status,
+        compact_refreshed: compactRefreshed,
+        visible_summary_line: buildProjectMemoryVisibleSummary({
+            required: true,
+            enabled: true,
+            mode: actual.mode,
+            evidenceStatus,
+            status: actual.status,
+            updateNeeded: actual.update_needed,
+            updatedMemoryFiles: actual.update_evidence.updated_memory_files,
+            compactStatus: actual.compact.status,
+            compactRefreshed
+        }),
+        violations
+    };
 }
 
 function resolveDefaultPreflightPath(bundleRoot: string, taskId: string): string {

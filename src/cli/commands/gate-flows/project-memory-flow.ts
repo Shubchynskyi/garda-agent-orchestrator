@@ -2,7 +2,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { appendMandatoryTaskEvent } from '../../../gate-runtime/task-events';
 import { EXIT_GATE_FAILURE } from '../../exit-codes';
-import { assessProjectMemoryImpact } from '../../../gates/project-memory-impact';
+import {
+    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
+    PROJECT_MEMORY_IMPACT_BLOCKED_EVENT,
+    assessProjectMemoryImpact
+} from '../../../gates/project-memory-impact';
 import type { ProjectMemoryMaintenanceMode } from '../../../core/workflow-config';
 import { normalizePath } from '../../../gates/helpers';
 import { writeJsonArtifact } from '../gates-artifacts';
@@ -97,7 +101,7 @@ export function runProjectMemoryImpactCommand(
         appendMandatoryTaskEvent(
             resolveOrchestratorRoot(repoRoot),
             result.artifact.task_id,
-            result.artifact.status === 'BLOCKED' ? 'PROJECT_MEMORY_IMPACT_BLOCKED' : 'PROJECT_MEMORY_IMPACT_ASSESSED',
+            result.artifact.status === 'BLOCKED' ? PROJECT_MEMORY_IMPACT_BLOCKED_EVENT : PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
             result.artifact.outcome,
             result.artifact.status === 'BLOCKED'
                 ? 'Project memory impact gate blocked completion.'

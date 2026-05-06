@@ -24,6 +24,12 @@ import {
 } from '../../../src/gates/finalization-lock';
 import { ensureSkillsHeadlinesCurrent } from '../../../src/runtime/skill-headlines';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
+import {
+    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
+    assessProjectMemoryImpact
+} from '../../../src/gates/project-memory-impact';
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 
 const NODE_BACKEND_SKILL_SOURCE = path.join(
     process.cwd(),
@@ -204,6 +210,34 @@ function writeWorkflowConfig(
         }, null, 2),
         'utf8'
     );
+}
+
+function writeProjectMemoryWorkflowConfig(repoRoot: string, enabled = true): void {
+    const config = buildDefaultWorkflowConfig();
+    config.full_suite_validation.enabled = false;
+    config.full_suite_validation.command = 'npm test';
+    config.review_execution_policy = { mode: 'code_first_optional' };
+    config.project_memory_maintenance.enabled = enabled;
+    config.project_memory_maintenance.mode = 'check';
+    config.project_memory_maintenance.run_before_final_closeout = true;
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify(config, null, 2), 'utf8');
+}
+
+function seedProjectMemory(repoRoot: string): void {
+    const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+    fs.mkdirSync(memoryRoot, { recursive: true });
+    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
+        fs.writeFileSync(path.join(memoryRoot, fileName), `# ${fileName}\n\nConfirmed project memory content.\n`, 'utf8');
+    }
+}
+
+function writeProjectMemoryImpactArtifact(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-preflight.json`);
+    const result = assessProjectMemoryImpact({ repoRoot, taskId, preflightPath });
+    fs.mkdirSync(path.dirname(result.artifactPath), { recursive: true });
+    fs.writeFileSync(result.artifactPath, JSON.stringify(result.artifact, null, 2), 'utf8');
 }
 
 function writePathsConfig(repoRoot: string, data: Record<string, unknown>): void {
@@ -519,6 +553,115 @@ describe('gates/task-audit-summary', () => {
             const rulePackGate = result.gates.find(g => g.gate === 'load-rule-pack');
             assert.ok(rulePackGate);
             assert.equal(rulePackGate.status, 'PASS');
+        });
+
+        it('includes project-memory-impact gate and final closeout project memory status', () => {
+            writeProjectMemoryWorkflowConfig(tmpDir);
+            seedProjectMemory(tmpDir);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/app.ts'],
+                metrics: { changed_lines_total: 3 },
+                required_reviews: {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                task_id: TASK_ID,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES'
+            });
+            writeProjectMemoryImpactArtifact(tmpDir, TASK_ID);
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'IMPLEMENTATION_STARTED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' },
+                { event_type: 'REVIEW_GATE_PASSED' },
+                { event_type: 'DOC_IMPACT_ASSESSED' },
+                { event_type: PROJECT_MEMORY_IMPACT_ASSESSED_EVENT },
+                { event_type: 'COMPLETION_GATE_PASSED' }
+            ]);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.gates.find(g => g.gate === 'project-memory-impact')?.status, 'PASS');
+            assert.equal(result.final_closeout.project_memory?.evidence_status, 'CURRENT');
+            assert.equal(result.final_closeout.project_memory?.status, 'NO_UPDATE_NEEDED');
+            const rendered = formatTaskAuditSummaryText(result);
+            assert.ok(rendered.includes('Project memory: enabled; mode=check'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Project memory: enabled; mode=check'));
+        });
+
+        it('does not block final closeout on historical project-memory events after maintenance is disabled', () => {
+            writeProjectMemoryWorkflowConfig(tmpDir);
+            seedProjectMemory(tmpDir);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/app.ts'],
+                metrics: { changed_lines_total: 3 },
+                required_reviews: {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                task_id: TASK_ID,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES'
+            });
+            writeProjectMemoryImpactArtifact(tmpDir, TASK_ID);
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'IMPLEMENTATION_STARTED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' },
+                { event_type: 'REVIEW_GATE_PASSED' },
+                { event_type: 'DOC_IMPACT_ASSESSED' },
+                { event_type: PROJECT_MEMORY_IMPACT_ASSESSED_EVENT },
+                { event_type: 'COMPLETION_GATE_PASSED' }
+            ]);
+            writeProjectMemoryWorkflowConfig(tmpDir, false);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.gates.some(g => g.gate === 'project-memory-impact'), false);
+            assert.equal(result.final_closeout.project_memory?.evidence_status, 'NOT_REQUIRED');
+            assert.equal(result.blockers.some((blocker) => blocker.gate === 'project-memory-impact'), false);
         });
 
         it('reads changed files from preflight', () => {

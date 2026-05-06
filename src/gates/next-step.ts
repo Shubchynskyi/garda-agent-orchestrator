@@ -59,6 +59,11 @@ import {
     buildDefaultWorkflowConfig
 } from '../core/workflow-config';
 import {
+    getProjectMemoryImpactLifecycleEvidence,
+    type ProjectMemoryImpactEvidenceStatus,
+    type ProjectMemoryImpactStatus
+} from './project-memory-impact';
+import {
     REVIEW_CONTRACTS
 } from './required-reviews-check';
 import {
@@ -183,6 +188,22 @@ export interface NextStepFullSuiteSummary {
     note: string;
 }
 
+export interface NextStepProjectMemorySummary {
+    enabled: boolean;
+    required: boolean;
+    mode: string;
+    evidence_status: ProjectMemoryImpactEvidenceStatus;
+    status: ProjectMemoryImpactStatus | null;
+    update_needed: boolean | null;
+    affected_memory_files: string[];
+    updated_memory_files: string[];
+    compact_status: string | null;
+    compact_refreshed: boolean | null;
+    artifact_path: string;
+    update_artifact_path: string;
+    visible_summary_line: string;
+}
+
 export interface NextStepReviewSummary {
     required_reviews: string[];
     review_execution_policy_mode: EffectiveReviewExecutionPolicyMode;
@@ -266,6 +287,7 @@ export interface NextStepResult {
     missing_artifacts: NextStepArtifactState[];
     present_artifacts: NextStepArtifactState[];
     full_suite_validation: NextStepFullSuiteSummary;
+    project_memory: NextStepProjectMemorySummary | null;
     review: NextStepReviewSummary;
     task_queue_status_contract: TaskQueueStatusContract;
     audit_status: TaskAuditSummaryResult['status'];
@@ -3260,6 +3282,27 @@ function buildNavigatorCommand(cliPrefix: string, taskId: string): string {
     return `${cliPrefix} next-step "${taskId}" --repo-root "."`;
 }
 
+function buildProjectMemoryImpactCommand(
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    projectMemory: NextStepProjectMemorySummary
+): string {
+    const parts = [
+        `${cliPrefix} gate project-memory-impact`,
+        `--task-id "${taskId}"`,
+        `--preflight-path "${preflightCommandPath}"`
+    ];
+    if (projectMemory.evidence_status === 'BLOCKED' && projectMemory.affected_memory_files.length > 0) {
+        parts.push('--confirm-updated');
+        for (const file of projectMemory.affected_memory_files) {
+            parts.push(`--updated-memory-file ${quoteCommandValue(file)}`);
+        }
+    }
+    parts.push('--repo-root "."');
+    return parts.join(' ');
+}
+
 function quoteCommandValue(value: string): string {
     const text = String(value);
     if (/["$`]/.test(text)) {
@@ -4221,6 +4264,7 @@ function buildResult(params: {
     missingArtifacts: NextStepArtifactState[];
     presentArtifacts: NextStepArtifactState[];
     fullSuite: NextStepFullSuiteSummary;
+    projectMemory?: NextStepProjectMemorySummary | null;
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
@@ -4256,6 +4300,7 @@ function buildResult(params: {
         missing_artifacts: missingArtifacts,
         present_artifacts: params.presentArtifacts,
         full_suite_validation: params.fullSuite,
+        project_memory: params.projectMemory || null,
         review: params.review,
         task_queue_status_contract: buildTaskQueueStatusContract(params.taskId),
         audit_status: params.auditStatus,
@@ -4275,6 +4320,7 @@ function buildSourceRuntimeRemediationResult(params: {
     missingArtifacts: NextStepArtifactState[];
     presentArtifacts: NextStepArtifactState[];
     fullSuite: NextStepFullSuiteSummary;
+    projectMemory?: NextStepProjectMemorySummary | null;
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
@@ -4299,6 +4345,7 @@ function buildSourceRuntimeRemediationResult(params: {
         missingArtifacts: params.missingArtifacts,
         presentArtifacts: params.presentArtifacts,
         fullSuite: params.fullSuite,
+        projectMemory: params.projectMemory || null,
         review: params.review,
         auditStatus: params.auditStatus,
         profile: params.profile
@@ -4471,6 +4518,24 @@ function resolveRulePackStage(rulePack: Record<string, unknown> | null): string 
     return typeof rulePack?.stage === 'string' ? rulePack.stage.trim() || null : null;
 }
 
+function buildProjectMemoryNextStepSummary(evidence: ReturnType<typeof getProjectMemoryImpactLifecycleEvidence>): NextStepProjectMemorySummary {
+    return {
+        enabled: evidence.enabled,
+        required: evidence.required,
+        mode: evidence.mode,
+        evidence_status: evidence.evidence_status,
+        status: evidence.status,
+        update_needed: evidence.update_needed,
+        affected_memory_files: [...evidence.affected_memory_files],
+        updated_memory_files: [...evidence.updated_memory_files],
+        compact_status: evidence.compact_status,
+        compact_refreshed: evidence.compact_refreshed,
+        artifact_path: evidence.artifact_path,
+        update_artifact_path: evidence.update_artifact_path,
+        visible_summary_line: evidence.visible_summary_line
+    };
+}
+
 export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const repoRoot = path.resolve(options.repoRoot || '.');
     const taskId = assertValidTaskId(options.taskId);
@@ -4558,6 +4623,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             ? 'Full-suite validation is mandatory because the effective workflow config enables it.'
             : 'Full-suite validation is disabled in the effective workflow config.'
     };
+    const projectMemoryEvidence = getProjectMemoryImpactLifecycleEvidence({
+        repoRoot,
+        taskId,
+        preflightPath
+    });
+    const projectMemorySummary = buildProjectMemoryNextStepSummary(projectMemoryEvidence);
     const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
     const reviewPolicy = resolveReviewPolicy(preflight);
     const preflightSha256 = fileExists(preflightPath) ? fileSha256(preflightPath) : null;
@@ -4598,6 +4669,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         { key: 'review-gate', path: path.join(reviewsRoot, `${taskId}-review-gate.json`) },
         { key: 'doc-impact', path: path.join(reviewsRoot, `${taskId}-doc-impact.json`) },
         { key: 'full-suite-validation', path: path.join(reviewsRoot, `${taskId}-full-suite-validation.json`) },
+        ...(projectMemoryEvidence.required
+            ? [{ key: 'project-memory-impact', path: projectMemoryEvidence.artifact_path }]
+            : []),
         { key: 'completion-gate', path: path.join(reviewsRoot, `${taskId}-completion-gate.json`) }
     ]);
 
@@ -4608,6 +4682,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         missingArtifacts: coreArtifacts.missing,
         presentArtifacts: coreArtifacts.present,
         fullSuite: fullSuiteSummary,
+        projectMemory: projectMemorySummary,
         review: reviewSummary,
         profile: profileSummary,
         auditStatus: summary.status,
@@ -5736,6 +5811,30 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
+    if (projectMemoryEvidence.required && projectMemoryEvidence.evidence_status !== 'CURRENT') {
+        const staleDetails = projectMemoryEvidence.violations.length > 0
+            ? ` Violations: ${projectMemoryEvidence.violations.join('; ')}`
+            : '';
+        const affectedFiles = projectMemoryEvidence.affected_memory_files.length > 0
+            ? ` Affected memory files: ${projectMemoryEvidence.affected_memory_files.join(', ')}.`
+            : '';
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'project-memory-impact',
+            title: 'Record project memory impact.',
+            reason:
+                `Project memory maintenance is enabled before final closeout (${projectMemoryEvidence.visible_summary_line}). ` +
+                `Record current project-memory impact evidence after upstream validation and before completion.${affectedFiles}${staleDetails}`,
+            commands: [
+                buildCommand(
+                    'Run project memory impact gate',
+                    buildProjectMemoryImpactCommand(cliPrefix, taskId, preflightCommandPath, projectMemorySummary)
+                )
+            ]
+        });
+    }
+
     if (!isGatePassed(summary, 'completion-gate')) {
         return buildResult({
             ...resultBase,
@@ -5854,6 +5953,9 @@ export function formatNextStepText(result: NextStepResult): string {
         }
     }
     lines.push(`FullSuite: enabled=${result.full_suite_validation.enabled}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`);
+    if (result.project_memory) {
+        lines.push(result.project_memory.visible_summary_line);
+    }
     lines.push(`ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
     if (result.review.required_reviews.length > 0) {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);

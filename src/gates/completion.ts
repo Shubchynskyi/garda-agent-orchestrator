@@ -38,7 +38,9 @@ import {
     readJsonArtifact,
     ensurePassedArtifactStatus,
     readOptionalArtifactStringField,
-    findLatestRecordedReviewContextPath
+    findLatestRecordedReviewContextPath,
+    findLatestTimelineEvent,
+    type TimelineEventEntry
 } from './completion-evidence';
 import {
     REVIEW_CONTRACTS,
@@ -64,6 +66,11 @@ import {
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
 } from './full-suite-validation';
+import {
+    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
+    getProjectMemoryImpactLifecycleEvidence,
+    type ProjectMemoryImpactLifecycleEvidence
+} from './project-memory-impact';
 import { resolveReviewExecutionPolicyModeFromPreflight } from '../core/review-execution-policy';
 
 export { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
@@ -132,6 +139,55 @@ export interface RunCompletionGateOptions {
     noOpArtifactPath?: string;
     handshakePath?: string;
     shellSmokePath?: string;
+}
+
+function validateProjectMemoryImpactForCompletion(input: {
+    evidence: ProjectMemoryImpactLifecycleEvidence;
+    orderedEvents: readonly TimelineEventEntry[];
+    fullSuiteValidationEnabled: boolean;
+    timelinePath: string;
+}): string[] {
+    const violations: string[] = [];
+    if (!input.evidence.required) {
+        return violations;
+    }
+    if (input.evidence.evidence_status !== 'CURRENT') {
+        violations.push(
+            `Project memory impact evidence is not current before completion: ${input.evidence.evidence_status}. ` +
+            `${input.evidence.visible_summary_line}`
+        );
+        violations.push(...input.evidence.violations);
+        return violations;
+    }
+
+    const impactEvent = findLatestTimelineEvent(
+        input.orderedEvents,
+        (entry) => entry.event_type === PROJECT_MEMORY_IMPACT_ASSESSED_EVENT
+    );
+    if (!impactEvent) {
+        violations.push(`Task timeline '${normalizePath(input.timelinePath)}' is missing ${PROJECT_MEMORY_IMPACT_ASSESSED_EVENT}.`);
+        return violations;
+    }
+
+    const docImpactEvent = findLatestTimelineEvent(
+        input.orderedEvents,
+        (entry) => entry.event_type === 'DOC_IMPACT_ASSESSED'
+    );
+    if (docImpactEvent && impactEvent.sequence <= docImpactEvent.sequence) {
+        violations.push('Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.');
+    }
+    if (input.fullSuiteValidationEnabled) {
+        const fullSuiteEvent = findLatestTimelineEvent(
+            input.orderedEvents,
+            (entry) => entry.event_type === 'FULL_SUITE_VALIDATION_PASSED' || entry.event_type === 'FULL_SUITE_VALIDATION_WARNED'
+        );
+        if (!fullSuiteEvent) {
+            violations.push('Project memory impact evidence requires current full-suite validation evidence when full-suite validation is enabled.');
+        } else if (impactEvent.sequence <= fullSuiteEvent.sequence) {
+            violations.push('Project memory impact evidence must be recorded after full-suite validation for the current completion cycle.');
+        }
+    }
+    return violations;
 }
 
 export function runCompletionGate(options: RunCompletionGateOptions) {
@@ -603,6 +659,18 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         fullSuiteValidationEvidence.status = 'NOT_REQUIRED';
     }
 
+    const projectMemoryImpactEvidence = getProjectMemoryImpactLifecycleEvidence({
+        repoRoot,
+        taskId: resolvedTaskId || '',
+        preflightPath
+    });
+    errors.push(...validateProjectMemoryImpactForCompletion({
+        evidence: projectMemoryImpactEvidence,
+        orderedEvents,
+        fullSuiteValidationEnabled: fullSuiteValidationConfig.enabled,
+        timelinePath
+    }));
+
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';
     const outcome = errors.length > 0 ? 'FAIL' : 'PASS';
     const coherentCycleRestartCommand = stageSequence.violations.length > 0 && resolvedTaskId
@@ -666,6 +734,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         reviewer_routing_enforcement: reviewerRoutingEnforcement,
         review_trust_summary: reviewTrustSummary,
         full_suite_validation_evidence: fullSuiteValidationEvidence,
+        project_memory_impact_evidence: projectMemoryImpactEvidence,
         zero_diff_evidence: zeroDiffEvidence,
         dirty_workspace_protection_evidence: dirtyWorkspaceProtectionEvidence,
         plan: planEvidence,

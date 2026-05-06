@@ -12,7 +12,10 @@ import { getWorkspaceSnapshotCached } from '../../../src/gates/workspace-snapsho
 import { buildRulePackArtifact } from '../../../src/gates/rule-pack';
 import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
 import { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from '../../../src/gates/task-audit-summary';
+import { assessProjectMemoryImpact } from '../../../src/gates/project-memory-impact';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events-helpers';
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -165,6 +168,34 @@ function writeJson(filePath: string, payload: unknown): void {
 function writeJsonWithSha(filePath: string, payload: unknown): string {
     writeJson(filePath, payload);
     return fileSha256(filePath);
+}
+
+function writeProjectMemoryWorkflowConfig(
+    repoRoot: string,
+    options: { enabled?: boolean; mode?: 'off' | 'check' | 'update' | 'strict'; fullSuiteEnabled?: boolean } = {}
+): void {
+    const config = buildDefaultWorkflowConfig();
+    config.full_suite_validation.enabled = options.fullSuiteEnabled ?? false;
+    config.full_suite_validation.command = 'npm test';
+    config.review_execution_policy = { mode: 'code_first_optional' };
+    config.project_memory_maintenance.enabled = options.enabled ?? true;
+    config.project_memory_maintenance.mode = options.mode ?? 'check';
+    config.project_memory_maintenance.run_before_final_closeout = true;
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), config);
+}
+
+function seedProjectMemory(repoRoot: string): void {
+    const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+    fs.mkdirSync(memoryRoot, { recursive: true });
+    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
+        fs.writeFileSync(path.join(memoryRoot, fileName), `# ${fileName}\n\nConfirmed project memory content.\n`, 'utf8');
+    }
+}
+
+function seedProjectMemoryImpact(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const result = assessProjectMemoryImpact({ repoRoot, taskId, preflightPath });
+    writeJson(result.artifactPath, result.artifact);
 }
 
 function sha256Text(value: string): string {
@@ -4399,6 +4430,62 @@ describe('gates/next-step', () => {
         assert.equal(result.full_suite_validation.enabled, false);
         assert.equal(result.next_gate, 'completion-gate');
         assert.ok(result.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('routes to project-memory-impact before completion when project memory maintenance is enabled', () => {
+        const repoRoot = makeTempRepo();
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'check' });
+        seedProjectMemory(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'project-memory-impact');
+        assert.equal(result.project_memory?.required, true);
+        assert.equal(result.project_memory?.evidence_status, 'MISSING');
+        assert.ok(result.commands[0].command.includes('gate project-memory-impact'));
+        assert.ok(result.commands[0].command.includes('--preflight-path'));
+        assert.ok(!result.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('continues to completion after current project-memory-impact evidence exists', () => {
+        const repoRoot = makeTempRepo();
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'check' });
+        seedProjectMemory(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedProjectMemoryImpact(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'completion-gate', result.reason);
+        assert.equal(result.project_memory?.evidence_status, 'CURRENT');
+        assert.equal(result.project_memory?.status, 'NO_UPDATE_NEEDED');
+        assert.ok(result.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('keeps the old completion sequence when project memory maintenance is off', () => {
+        const repoRoot = makeTempRepo();
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: false, mode: 'check' });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'completion-gate');
+        assert.equal(result.project_memory?.required, false);
+        assert.equal(result.project_memory?.evidence_status, 'NOT_REQUIRED');
+        assert.ok(!result.commands[0].command.includes('project-memory-impact'));
     });
 
     it('routes to required-reviews-check when compile passed and no reviews are required', () => {

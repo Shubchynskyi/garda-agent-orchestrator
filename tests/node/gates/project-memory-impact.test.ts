@@ -6,11 +6,13 @@ import * as path from 'node:path';
 
 import {
     assessProjectMemoryImpact,
+    getProjectMemoryImpactLifecycleEvidence,
     routeProjectMemoryImpact
 } from '../../../src/gates/project-memory-impact';
 import {
     PROJECT_MEMORY_REQUIRED_FILE_NAMES
 } from '../../../src/core/project-memory';
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 
 function withTempRepo(callback: (repoRoot: string) => void): void {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-pm-impact-'));
@@ -32,6 +34,22 @@ function seedProjectMemory(repoRoot: string): void {
             'utf8'
         );
     }
+}
+
+function writeProjectMemoryWorkflowConfig(repoRoot: string): void {
+    const config = buildDefaultWorkflowConfig();
+    config.project_memory_maintenance.enabled = true;
+    config.project_memory_maintenance.mode = 'check';
+    config.project_memory_maintenance.run_before_final_closeout = true;
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify(config, null, 2), 'utf8');
+}
+
+function writeRawWorkflowConfig(repoRoot: string, config: Record<string, unknown>): void {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify(config, null, 2), 'utf8');
 }
 
 describe('routeProjectMemoryImpact', () => {
@@ -185,6 +203,67 @@ describe('assessProjectMemoryImpact', () => {
             assert.equal(result.artifact.outcome, 'PASS');
             assert.equal(result.artifact.compact.status, 'OVERFLOW');
             assert.ok(result.artifact.validation.issues.some((issue) => issue.message.includes('compact.md')));
+        });
+    });
+
+    it('reports malformed lifecycle impact artifacts as INVALID instead of throwing', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-108';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({ changed_files: [] }), 'utf8');
+            const runtimeMemoryDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'project-memory');
+            fs.mkdirSync(runtimeMemoryDir, { recursive: true });
+            fs.writeFileSync(path.join(runtimeMemoryDir, `${taskId}-impact.json`), JSON.stringify({ schema_version: 1 }), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+
+            assert.equal(evidence.evidence_status, 'INVALID');
+            assert.ok(evidence.violations.some((violation) => violation.includes("field 'update_evidence'")));
+            assert.ok(evidence.visible_summary_line.includes('evidence=INVALID'));
+        });
+    });
+
+    it('fails closed on case-mismatched project memory workflow config keys', () => {
+        withTempRepo((repoRoot) => {
+            writeRawWorkflowConfig(repoRoot, {
+                Project_Memory_Maintenance: {
+                    enabled: true,
+                    mode: 'check'
+                }
+            });
+
+            assert.throws(
+                () => getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId: 'T-109', preflightPath: null }),
+                /must use the exact key 'project_memory_maintenance'/
+            );
+        });
+    });
+
+    it('keeps project memory config isolated from unrelated invalid workflow sections', () => {
+        withTempRepo((repoRoot) => {
+            writeRawWorkflowConfig(repoRoot, {
+                project_memory_maintenance: {
+                    enabled: true,
+                    mode: 'check',
+                    run_before_final_closeout: true
+                },
+                scope_budget_guard: {
+                    enabled: true,
+                    action: 'BLOCK_SOMEHOW'
+                }
+            });
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({
+                repoRoot,
+                taskId: 'T-110',
+                preflightPath: null
+            });
+
+            assert.equal(evidence.required, true);
+            assert.notEqual(evidence.evidence_status, 'NOT_REQUIRED');
         });
     });
 });
