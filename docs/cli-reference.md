@@ -523,7 +523,11 @@ Task-start identity and preflight notes:
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
 
-`project-memory-impact` writes read-only impact diagnostics under `runtime/project-memory/`; update evidence is recorded with `--confirm-updated` after user-owned project memory files have been updated separately.
+`project-memory-impact` writes read-only impact diagnostics under `runtime/project-memory/`; update evidence is recorded with `--confirm-updated` after user-owned project memory files have been updated separately. Fresh workspaces default project-memory maintenance to `update`, while setup/update preserve explicit existing `off`, `check`, `update`, or `strict` choices. After an update, give the agent this first-task prompt when memory may still be stale:
+
+```text
+Refresh Garda project memory after this update. Inspect the repository through the normal orchestrator workflow, update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are stale or still template placeholders, keep `compact.md` concise, and record project-memory update evidence when the workflow asks for it. Do not overwrite user-authored memory without preserving its facts.
+```
 
 `validate-manifest --compact` preserves failure diagnostics but reduces the green path to `MANIFEST_VALIDATION_PASSED | entries=<count>`.
 

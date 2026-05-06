@@ -67,7 +67,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('FullSuiteCommand: npm test'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
-        assert.ok(output.includes('Project memory maintenance: disabled read_strategy=index_first'));
+        assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -181,7 +181,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         ], PACKAGE_JSON)).output;
         assert.ok(validateOutput.includes('Action: validate'));
         assert.ok(validateOutput.includes('Status: PASS'));
-        assert.ok(validateOutput.includes('Project memory maintenance: disabled'));
+        assert.ok(validateOutput.includes('Project memory maintenance: update'));
 
         const explainOutput = captureConsole(() => handleWorkflow([
             'explain',
@@ -221,11 +221,11 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.scope, 'repo-local');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');
-        assert.equal(parsed.project_memory_maintenance.enabled, false);
-        assert.equal(parsed.project_memory_maintenance.mode, 'check');
+        assert.equal(parsed.project_memory_maintenance.enabled, true);
+        assert.equal(parsed.project_memory_maintenance.mode, 'update');
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
-        assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: disabled read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
+        assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

@@ -228,8 +228,8 @@ test('workflow-config schema accepts project memory maintenance defaults', () =>
     const result = validateAgainstSchema(data, workflowConfigSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
     assert.deepEqual(data.project_memory_maintenance, {
-        enabled: false,
-        mode: 'check',
+        enabled: true,
+        mode: 'update',
         run_before_final_closeout: true,
         require_user_approval_for_writes: true,
         max_compact_summary_chars: 12000,

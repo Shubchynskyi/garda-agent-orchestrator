@@ -954,11 +954,11 @@ function buildNextStep(status: ProjectMemoryImpactStatus, affectedMemoryFiles: r
         case 'UPDATED':
             return 'Project memory update evidence is current for the affected memory files.';
         case 'BLOCKED':
-            return 'Update the listed memory files and rerun project-memory-impact with --confirm-updated, or switch maintenance mode out of strict.';
+            return 'With explicit user approval, update the listed memory files and rerun project-memory-impact with --confirm-updated, or switch maintenance mode out of strict/update.';
         case 'UPDATE_NEEDED':
         default:
             return affectedMemoryFiles.length > 0
-                ? 'Update listed memory files when appropriate, then rerun with --confirm-updated; check mode remains advisory.'
+                ? 'With explicit user approval, update listed memory files when appropriate, then rerun with --confirm-updated; check mode remains advisory.'
                 : 'Inspect project-memory diagnostics; check mode remains advisory.';
     }
 }

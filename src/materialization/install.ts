@@ -772,6 +772,12 @@ export function runInstall(options: RunInstallOptions) {
         workflowConfigMergeStatus: typeof initResult?.workflowConfigMergeStatus === 'string'
             ? initResult.workflowConfigMergeStatus
             : null,
+        projectMemoryMaintenanceSummaryLine: typeof initResult?.projectMemoryMaintenanceSummaryLine === 'string'
+            ? initResult.projectMemoryMaintenanceSummaryLine
+            : null,
+        projectMemoryRefreshHandoffPrompt: typeof initResult?.projectMemoryRefreshHandoffPrompt === 'string'
+            ? initResult.projectMemoryRefreshHandoffPrompt
+            : null,
         backupRoot: dryRun ? null : backupRoot
     };
     });

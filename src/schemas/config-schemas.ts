@@ -338,7 +338,7 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
         },
         project_memory_maintenance: {
             type: 'object',
-            description: 'Repo-local project-memory maintenance settings. Disabled by default; check/update/strict enforcement is introduced by later gates.',
+            description: 'Repo-local project-memory maintenance settings. Fresh workspaces default to update mode while explicit existing choices are preserved.',
             properties: {
                 enabled: {
                     type: 'boolean',

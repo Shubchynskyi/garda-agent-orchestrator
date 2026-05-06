@@ -472,6 +472,39 @@ describe('runInit', () => {
         }
     });
 
+    it('materializes project-memory maintenance update mode for a fresh bundle', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const workflowConfig = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+                'utf8'
+            ));
+            assert.deepEqual(workflowConfig.project_memory_maintenance, {
+                enabled: true,
+                mode: 'update',
+                run_before_final_closeout: true,
+                require_user_approval_for_writes: true,
+                max_compact_summary_chars: 12000,
+                read_strategy: 'index_first',
+                impact_artifact_retention_days: 30
+            });
+            assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
+
+            const initReport = fs.readFileSync(result.initReportPath, 'utf8');
+            assert.ok(initReport.includes('Project memory refresh handoff prompt: Refresh Garda project memory after this update.'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('syncs root .gitignore without root reviewer scratch during standalone init', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

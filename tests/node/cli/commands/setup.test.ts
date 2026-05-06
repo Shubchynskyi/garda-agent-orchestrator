@@ -465,6 +465,9 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
         assert.ok(initReport.includes('Workflow config merge status: existing_values_preserved_and_missing_keys_filled'));
         assert.ok(initReport.includes(`path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json`));
         assert.ok(initReport.includes('full_suite_validation.enabled=true'));
+        assert.ok(refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
+        assert.ok(refreshText.includes('ProjectMemoryRefreshHandoff: Refresh Garda project memory after this update.'));
+        assert.ok(initReport.includes('Project memory refresh handoff prompt: Refresh Garda project memory after this update.'));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
@@ -683,6 +686,8 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Garda captures my mind'));
     assert.ok(text.includes('Mandatory orchestrator flow:'));
     assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate'));
+    assert.ok(text.includes('Project memory maintenance: update read_strategy=index_first'));
+    assert.ok(text.includes('Project memory refresh handoff: Refresh Garda project memory after this update.'));
 });
 
 test('buildSetupHandoffText renders compact report labels in English while preserving assistant language', () => {

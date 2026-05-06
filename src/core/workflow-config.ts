@@ -80,8 +80,8 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
     scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,
     review_cycle_guard: DEFAULT_REVIEW_CYCLE_GUARD_CONFIG,
     project_memory_maintenance: Object.freeze({
-        enabled: false,
-        mode: 'check',
+        enabled: true,
+        mode: 'update',
         run_before_final_closeout: true,
         require_user_approval_for_writes: true,
         max_compact_summary_chars: 12000,

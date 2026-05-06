@@ -22,6 +22,7 @@ import {
     type ProjectMemoryReadStrategy,
     type WorkflowConfigData
 } from '../../core/workflow-config';
+import { buildProjectMemoryMaintenanceSummaryLine } from '../../core/project-memory-rollout';
 import {
     SCOPE_BUDGET_GUARD_ACTIONS,
     normalizeScopeBudgetGuardConfig,
@@ -267,10 +268,6 @@ function buildReviewCycleGuardLine(config: ReviewCycleGuardConfig): string {
     return `Review cycle guard: ${config.enabled ? config.action : 'disabled'} max_failed_non_test_reviews=${config.max_failed_non_test_reviews} max_total_non_test_reviews=${config.max_total_non_test_reviews} excluded=${config.excluded_review_types.join(',')} auto_split_enabled=${config.auto_split_enabled}`;
 }
 
-function buildProjectMemoryMaintenanceLine(config: ProjectMemoryMaintenanceConfig): string {
-    return `Project memory maintenance: ${config.enabled ? config.mode : 'disabled'} read_strategy=${config.read_strategy} max_compact_summary_chars=${config.max_compact_summary_chars} require_user_approval_for_writes=${config.require_user_approval_for_writes}`;
-}
-
 function buildWorkflowShowResult(
     roots: WorkflowCommandRoots,
     state: WorkflowConfigState
@@ -297,7 +294,7 @@ function buildWorkflowShowResult(
         review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
         scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard),
         review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard),
-        project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceLine(projectMemoryMaintenance)
+        project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceSummaryLine(projectMemoryMaintenance)
     };
 }
 

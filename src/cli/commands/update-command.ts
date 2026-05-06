@@ -157,7 +157,8 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
-            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
+            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine',
+            'projectMemoryRefreshHandoffPrompt', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
         printUpdateAnnouncementSections(mergedUpdateResult);
     }
@@ -234,7 +235,8 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
             'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
-            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
+            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine',
+            'projectMemoryRefreshHandoffPrompt', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
         printUpdateAnnouncementSections(mergedUpdateGitResult);
     }
@@ -312,7 +314,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
-            'workflowConfigMergeStatus',
+            'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine', 'projectMemoryRefreshHandoffPrompt',
             'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
         ]);
         printUpdateAnnouncementSections(mergedCheckResult);

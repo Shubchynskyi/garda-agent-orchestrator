@@ -6,9 +6,15 @@ import { readJsonFile } from '../core/json';
 import {
     mergeWorkflowConfigWithTemplate,
     readWorkflowConfigForMerge,
+    buildDefaultWorkflowConfig,
     type WorkflowConfigReadStatus,
     type WorkflowConfigData
 } from '../core/workflow-config';
+import {
+    PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
+    buildProjectMemoryMaintenanceSummaryLine,
+    normalizeProjectMemoryMaintenanceForDisplay
+} from '../core/project-memory-rollout';
 import {
     ALL_AGENT_ENTRYPOINT_FILES,
     DEFAULT_ASSISTANT_BREVITY,
@@ -100,6 +106,16 @@ function getFullSuiteEnabledDiagnostic(config: Record<string, unknown>): string 
         : 'invalid';
 }
 
+function getProjectMemoryMaintenanceDiagnostic(config: Record<string, unknown>): { enabled: string; mode: string } {
+    const projectMemorySection = isPlainObject(config.project_memory_maintenance)
+        ? normalizeProjectMemoryMaintenanceForDisplay(config.project_memory_maintenance)
+        : null;
+    return {
+        enabled: projectMemorySection ? String(projectMemorySection.enabled) : 'invalid',
+        mode: projectMemorySection ? String(projectMemorySection.enabled ? projectMemorySection.mode : 'off') : 'invalid'
+    };
+}
+
 function buildWorkflowConfigMergeStatus(
     targetRoot: string,
     workflowConfigPath: string,
@@ -108,7 +124,13 @@ function buildWorkflowConfigMergeStatus(
 ): string {
     const relativePath = path.relative(targetRoot, workflowConfigPath).replace(/\\/g, '/');
     const enabledDiagnostic = getFullSuiteEnabledDiagnostic(materializedConfig);
-    const suffix = `path=${relativePath} full_suite_validation.enabled=${enabledDiagnostic}`;
+    const projectMemoryDiagnostic = getProjectMemoryMaintenanceDiagnostic(materializedConfig);
+    const suffix = [
+        `path=${relativePath}`,
+        `full_suite_validation.enabled=${enabledDiagnostic}`,
+        `project_memory_maintenance.enabled=${projectMemoryDiagnostic.enabled}`,
+        `project_memory_maintenance.mode=${projectMemoryDiagnostic.mode}`
+    ].join(' ');
     if (readStatus === 'present') {
         return `existing_values_preserved_and_missing_keys_filled ${suffix}`;
     }
@@ -132,6 +154,8 @@ interface BuildInitReportOptions {
     sourceInventory: SourceInventory;
     reviewCapabilitiesSync: ReviewCapabilitiesSyncResult | null;
     projectMemoryBootstrapReport: ProjectMemoryBootstrapReport;
+    projectMemoryMaintenanceSummaryLine: string;
+    projectMemoryRefreshHandoffPrompt: string;
     legacyStyleGuidanceActive?: boolean;
 }
 
@@ -359,6 +383,9 @@ export function runInit(options: RunInitOptions) {
 
     // Handle managed config materialization (token-economy enabled flag)
     const configMergeStatuses: Record<string, string> = {};
+    let projectMemoryMaintenanceSummaryLine = buildProjectMemoryMaintenanceSummaryLine(
+        buildDefaultWorkflowConfig().project_memory_maintenance
+    );
 
     for (const configName of managedConfigNames) {
         const templateConfigPath = path.join(templateRoot, `config/${configName}.json`);
@@ -413,6 +440,11 @@ export function runInit(options: RunInitOptions) {
             // Apply token economy enabled flag
             if (configName === 'token-economy') {
                 materializedConfig.enabled = tokenEconomyEnabled;
+            }
+            if (configName === 'workflow-config') {
+                projectMemoryMaintenanceSummaryLine = buildProjectMemoryMaintenanceSummaryLine(
+                    normalizeProjectMemoryMaintenanceForDisplay(materializedConfig.project_memory_maintenance)
+                );
             }
 
             if (!dryRun) {
@@ -486,6 +518,8 @@ export function runInit(options: RunInitOptions) {
             sourceInventory,
             reviewCapabilitiesSync,
             projectMemoryBootstrapReport: projectMemoryBootstrapReport.report,
+            projectMemoryMaintenanceSummaryLine,
+            projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
             legacyStyleGuidanceActive
         });
         initReportLines.push(...buildMigrationReportLines(migrationResult));
@@ -525,6 +559,8 @@ export function runInit(options: RunInitOptions) {
         projectMemoryMigration: migrationResult,
         projectMemoryBootstrapReportPath: projectMemoryBootstrapReport.path,
         projectMemoryBootstrapReport: projectMemoryBootstrapReport.report,
+        projectMemoryMaintenanceSummaryLine,
+        projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
         projectMemoryValidation,
         reviewCapabilitiesConfigMergeStatus: configMergeStatuses['review-capabilities'] || 'n/a',
         pathsConfigMergeStatus: configMergeStatuses['paths'] || 'n/a',
@@ -657,6 +693,7 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         copiedSupportDirs, configMergeStatuses, lang, brevity, trimmedSoT,
         enforceNoAutoCommit, tokenEconomyEnabled, discovery,
         sourceInventory, reviewCapabilitiesSync, projectMemoryBootstrapReport,
+        projectMemoryMaintenanceSummaryLine, projectMemoryRefreshHandoffPrompt,
         legacyStyleGuidanceActive } = opts;
     const normalized = targetRoot.replace(/\\/g, '/');
     const tick = '`';
@@ -712,6 +749,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Legacy docs discovered in \`docs/agent-rules\`: ${sourceInventory.legacyRuleFiles.length} files`,
         `- Optional review capabilities enabled from live skills: ${enabledOptionalReviews.length > 0 ? enabledOptionalReviews.join(', ') : 'none'}`,
         '- Project memory sync policy: add missing seed files only; preserve existing user-owned files without overwrite.',
+        `- ${projectMemoryMaintenanceSummaryLine}`,
+        `- Project memory refresh handoff prompt: ${projectMemoryRefreshHandoffPrompt}`,
         `- Project memory copied missing files: ${projectMemoryBootstrapReport.seed.copied_files.length > 0 ? projectMemoryBootstrapReport.seed.copied_files.join(', ') : 'none'}`,
         `- Project memory preserved files: ${projectMemoryBootstrapReport.seed.preserved_files.length}`,
         `- Project memory template update notices: ${projectMemoryBootstrapReport.seed.template_update_notices.length}`,
@@ -776,7 +815,8 @@ function buildUsageLines(opts: BuildUsageOptions): string[] {
         '- If token economy mode is enabled, use `depth=1` only for small, well-localized tasks; default `depth=3` keeps full reviewer context while shared gate-output compaction still applies.', '',
         '## Update Workspace',
         `- Interactive update: \`${getNodeInteractiveUpdateCommand()}\``,
-        `- Non-interactive apply: \`${getNodeNonInteractiveUpdateCommand()}\``, '',
+        `- Non-interactive apply: \`${getNodeNonInteractiveUpdateCommand()}\``,
+        `- First task after update memory refresh prompt: ${PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT}`, '',
         `Canonical instructions entrypoint for orchestration: \`${canonicalEntrypoint}\`.`,
         `Hard stop: first open \`${canonicalEntrypoint}\` and follow its routing links. Only then execute any task from \`TASK.md\`.`,
         'Orchestrator mode starts when task execution is requested from this file (`TASK.md`).',

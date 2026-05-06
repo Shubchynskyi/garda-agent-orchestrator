@@ -7,7 +7,9 @@ function makeStageResult(overrides: Record<string, unknown> = {}) {
     return {
         installStatus: 'PASS',
         materializationStatus: 'PASS',
-        workflowConfigMergeStatus: 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true',
+        workflowConfigMergeStatus: 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update',
+        projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',
+        projectMemoryRefreshHandoffPrompt: 'Refresh Garda project memory after this update. Inspect the repository through the normal orchestrator workflow, update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are stale or still template placeholders, keep `compact.md` concise, and record project-memory update evidence when the workflow asks for it. Do not overwrite user-authored memory without preserving its facts.',
         contractMigrationStatus: 'SKIPPED_NO_RUNNER',
         contractMigrationCount: 0,
         contractMigrationFiles: [] as string[],
@@ -87,8 +89,10 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('BundleVersion: 2.0.0'));
         assert.ok(text.includes('Install: PASS'));
         assert.ok(text.includes('Materialization: PASS'));
-        assert.ok(text.includes('WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true'));
+        assert.ok(text.includes('WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'));
         assert.ok(text.includes('## ProjectMemory'));
+        assert.ok(text.includes('Maintenance: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'));
+        assert.ok(text.includes('RefreshHandoffPrompt: Refresh Garda project memory after this update.'));
         assert.ok(text.includes('BootstrapReport: n/a'));
         assert.ok(text.includes('AppliedCount: 0'));
         assert.ok(text.includes('AppliedFiles: none'));
@@ -233,7 +237,9 @@ describe('buildUpdateResult', () => {
         assert.equal(result.resolvedPackageIntegrity, 'sha512-result');
         assert.equal(result.installStatus, 'PASS');
         assert.equal(result.manifestValidationStatus, 'PASS');
-        assert.equal(result.workflowConfigMergeStatus, 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true');
+        assert.equal(result.workflowConfigMergeStatus, 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update');
+        assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
+        assert.match(String(result.projectMemoryRefreshHandoffPrompt), /^Refresh Garda project memory after this update\./);
         assert.equal(result.updateReportPath, 'report-path');
     });
 

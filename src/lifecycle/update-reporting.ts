@@ -77,6 +77,8 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
         `InvariantCheck: ${stageResult.invariantStatus}`,
         '',
         '## ProjectMemory',
+        `Maintenance: ${stageResult.projectMemoryMaintenanceSummaryLine || 'n/a'}`,
+        `RefreshHandoffPrompt: ${stageResult.projectMemoryRefreshHandoffPrompt || 'n/a'}`,
         stageResult.projectMemoryDiagnostics
             ? `BootstrapReport: ${stageResult.projectMemoryDiagnostics.bootstrapReportPath || 'n/a'}`
             : 'BootstrapReport: n/a',
@@ -183,6 +185,8 @@ export function buildUpdateResult(input: UpdateResultInput) {
         installStatus: stageResult.installStatus,
         materializationStatus: stageResult.materializationStatus,
         workflowConfigMergeStatus: stageResult.workflowConfigMergeStatus,
+        projectMemoryMaintenanceSummaryLine: stageResult.projectMemoryMaintenanceSummaryLine || null,
+        projectMemoryRefreshHandoffPrompt: stageResult.projectMemoryRefreshHandoffPrompt || null,
         projectMemoryDiagnostics: stageResult.projectMemoryDiagnostics || null,
         contractMigrationStatus: stageResult.contractMigrationStatus,
         contractMigrationCount: stageResult.contractMigrationCount,

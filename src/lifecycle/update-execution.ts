@@ -13,6 +13,10 @@ import {
     writeAgentInitState
 } from '../runtime/agent-init-state';
 import { getActiveAgentEntrypointFiles } from '../materialization/common';
+import {
+    PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
+    readProjectMemoryMaintenanceRolloutSummaryFromBundle
+} from '../core/project-memory-rollout';
 import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
 import { restoreRollbackSnapshot } from './common';
 import { getLiveVersionPayload, type ResolvedUpdateSources } from './update-source';
@@ -78,6 +82,8 @@ export interface UpdatePipelineStageResult {
     installStatus: string;
     materializationStatus: string;
     workflowConfigMergeStatus: string | null;
+    projectMemoryMaintenanceSummaryLine?: string | null;
+    projectMemoryRefreshHandoffPrompt?: string | null;
     projectMemoryDiagnostics?: ProjectMemoryLifecycleDiagnostics | null;
     contractMigrationStatus: string;
     contractMigrationCount: number;
@@ -207,6 +213,8 @@ export function executeUpdatePipelineStages(options: {
     let installStatus = 'NOT_RUN';
     let materializationStatus = 'NOT_RUN';
     let workflowConfigMergeStatus: string | null = null;
+    let projectMemoryMaintenanceSummaryLine: string | null = null;
+    let projectMemoryRefreshHandoffPrompt: string | null = null;
     let projectMemoryDiagnostics: ProjectMemoryLifecycleDiagnostics | null = null;
     let contractMigrationStatus = 'NOT_RUN';
     let verifyStatus = 'NOT_RUN';
@@ -272,6 +280,15 @@ export function executeUpdatePipelineStages(options: {
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(materializationResult);
                 projectMemoryDiagnostics = getProjectMemoryDiagnostics(materializationResult);
+                const materializationRecord = materializationResult && typeof materializationResult === 'object' && !Array.isArray(materializationResult)
+                    ? materializationResult as Record<string, unknown>
+                    : {};
+                projectMemoryMaintenanceSummaryLine = typeof materializationRecord.projectMemoryMaintenanceSummaryLine === 'string'
+                    ? materializationRecord.projectMemoryMaintenanceSummaryLine
+                    : null;
+                projectMemoryRefreshHandoffPrompt = typeof materializationRecord.projectMemoryRefreshHandoffPrompt === 'string'
+                    ? materializationRecord.projectMemoryRefreshHandoffPrompt
+                    : null;
             } else {
                 const initResult = runInit({
                     targetRoot: normalizedTarget,
@@ -290,6 +307,18 @@ export function executeUpdatePipelineStages(options: {
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(initResult);
                 projectMemoryDiagnostics = getProjectMemoryDiagnostics(initResult);
+                projectMemoryMaintenanceSummaryLine = typeof initResult.projectMemoryMaintenanceSummaryLine === 'string'
+                    ? initResult.projectMemoryMaintenanceSummaryLine
+                    : null;
+                projectMemoryRefreshHandoffPrompt = typeof initResult.projectMemoryRefreshHandoffPrompt === 'string'
+                    ? initResult.projectMemoryRefreshHandoffPrompt
+                    : null;
+            }
+            if (!projectMemoryMaintenanceSummaryLine) {
+                projectMemoryMaintenanceSummaryLine = readProjectMemoryMaintenanceRolloutSummaryFromBundle(bundleRoot).summary_line;
+            }
+            if (!projectMemoryRefreshHandoffPrompt) {
+                projectMemoryRefreshHandoffPrompt = PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT;
             }
             materializationStatus = 'PASS';
 
@@ -424,6 +453,8 @@ export function executeUpdatePipelineStages(options: {
         installStatus,
         materializationStatus,
         workflowConfigMergeStatus,
+        projectMemoryMaintenanceSummaryLine,
+        projectMemoryRefreshHandoffPrompt,
         projectMemoryDiagnostics,
         contractMigrationStatus,
         contractMigrationCount,

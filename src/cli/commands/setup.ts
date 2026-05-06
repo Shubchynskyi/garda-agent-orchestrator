@@ -56,6 +56,10 @@ import { serializeInitAnswers } from '../../schemas/init-answers';
 import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
 import { hasMaterializedWorkflowConfigBaseline } from '../../core/workflow-config';
+import {
+    PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
+    readProjectMemoryMaintenanceRolloutSummaryFromBundle
+} from '../../core/project-memory-rollout';
 import { validateManifest } from '../../validators/validate-manifest';
 import { runVerify } from '../../validators/verify';
 import { writeProtectedControlPlaneManifest } from '../../gates/helpers';
@@ -249,6 +253,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
         : null;
     const reviewModeSummary = reportMessages.summaries.mandatoryOrchestratorGates;
     const optionalSkillsSummary = reportMessages.summaries.askDuringAgentInit;
+    const projectMemoryRolloutSummary = readProjectMemoryMaintenanceRolloutSummaryFromBundle(snapshot.bundlePath);
     const activeProfileLine = activeProfileHint.activeProfile
         ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
         : 'Use explicit depth only as a one-run override.';
@@ -284,6 +289,8 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push(`  5. ${activeProfileLine}`);
     lines.push('  6. Mandatory orchestrator flow:');
     lines.push(`     ${gateFlow}`);
+    lines.push(`  ${projectMemoryRolloutSummary.summary_line}`);
+    lines.push(`  Project memory refresh handoff: ${projectMemoryRolloutSummary.refresh_handoff_prompt}`);
     return lines.join('\n');
 }
 
@@ -492,6 +499,10 @@ export async function handleSetup(
         if (typeof installResult.workflowConfigMergeStatus === 'string') {
             console.log(`WorkflowConfigMerge: ${installResult.workflowConfigMergeStatus}`);
         }
+        if (typeof installResult.projectMemoryMaintenanceSummaryLine === 'string') {
+            console.log(`ProjectMemoryMaintenance: ${installResult.projectMemoryMaintenanceSummaryLine}`);
+        }
+        console.log(`ProjectMemoryRefreshHandoff: ${PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT}`);
         console.log('');
         printBanner(
             packageJson,
