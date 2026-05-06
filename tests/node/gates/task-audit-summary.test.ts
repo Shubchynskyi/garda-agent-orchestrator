@@ -320,13 +320,50 @@ function buildCurrentTaskAuditSummary(
     tmpDir: string,
     eventsDir: string,
     reviewsDir: string
-) {
+): TaskAuditSummaryResult {
     return buildTaskAuditSummary({
         taskId,
         repoRoot: tmpDir,
         eventsRoot: eventsDir,
         reviewsRoot: reviewsDir
     });
+}
+
+type ReviewIntegrityAttestation = NonNullable<TaskAuditSummaryResult['final_closeout']['review_integrity_attestation']>;
+
+function assertReviewIntegrity(
+    result: TaskAuditSummaryResult,
+    expectedStatus: ReviewIntegrityAttestation['status'],
+    options: {
+        completionReviewAttested?: boolean;
+        completionReviewAttestationNotRequired?: boolean;
+        enforcementMode?: ReviewIntegrityAttestation['enforcement_mode'];
+        issueIncludes?: string;
+    } = {}
+): ReviewIntegrityAttestation {
+    const attestation = result.final_closeout.review_integrity_attestation;
+    assert.ok(attestation);
+    assert.equal(attestation.status, expectedStatus);
+    assert.equal(attestation.completion_allowed, true);
+    if (options.enforcementMode) {
+        assert.equal(attestation.enforcement_mode, options.enforcementMode);
+    }
+    if (options.completionReviewAttested !== undefined) {
+        assert.equal(attestation.completion_review_attested, options.completionReviewAttested);
+    }
+    if (options.completionReviewAttestationNotRequired !== undefined) {
+        assert.equal(
+            attestation.completion_review_attestation_not_required,
+            options.completionReviewAttestationNotRequired
+        );
+    }
+    if (options.issueIncludes) {
+        assert.ok(
+            attestation.observed_issues.some((issue) => issue.includes(options.issueIncludes || '')),
+            options.issueIncludes
+        );
+    }
+    return attestation;
 }
 
 function writeCurrentIndependentReviewFixture(options: {
@@ -1663,218 +1700,239 @@ describe('gates/task-audit-summary', () => {
             assert.equal(missingRoutingPolicySummary, null);
         });
 
-        it('marks final closeout ready when current mandatory reviews are independently attested', () => {
-            writeWorkflowConfig(tmpDir, false);
-            writePreflight(reviewsDir, TASK_ID, { mode: 'FULL_PATH', changed_files: ['src/gates/task-audit-summary.ts'], metrics: { changed_lines_total: 18 }, required_reviews: { code: true } });
-            const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
-            const reviewerIdentity = 'agent:code-reviewer';
-            const fixture = writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256, reviewerIdentity, provenance: null });
-            writeIntegrityEventSequence(eventsDir, TASK_ID, ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PREFLIGHT_CLASSIFIED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED'].map((event_type) => ({ event_type })));
-            const invocationEvent = appendIntegrityEvent(eventsDir, TASK_ID, {
-                event_type: 'REVIEWER_INVOCATION_ATTESTED',
-                details: { task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64) }
-            });
-            const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
-            const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
-            const integrity = invocationEvent.integrity as Record<string, unknown>;
-            receipt.reviewer_provenance = { schema_version: 1, attestation_type: 'reviewer_invocation_attestation', controller_event_type: 'REVIEWER_INVOCATION_ATTESTED', task_sequence: integrity.task_sequence, prev_event_sha256: integrity.prev_event_sha256, event_sha256: integrity.event_sha256, task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64) };
-            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', receipt);
-            appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_RECORDED', details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code') });
-            ['REVIEW_GATE_PASSED', 'DOC_IMPACT_ASSESSED', 'COMPLETION_GATE_PASSED'].forEach((event_type) => appendIntegrityEvent(eventsDir, TASK_ID, { event_type }));
+        describe('final closeout review integrity advisory output', () => {
+            describe('positive closeout states', () => {
+                it('marks final closeout ready when current mandatory reviews are independently attested', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    writePreflight(reviewsDir, TASK_ID, { mode: 'FULL_PATH', changed_files: ['src/gates/task-audit-summary.ts'], metrics: { changed_lines_total: 18 }, required_reviews: { code: true } });
+                    const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+                    const reviewerIdentity = 'agent:code-reviewer';
+                    const fixture = writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256, reviewerIdentity, provenance: null });
+                    writeIntegrityEventSequence(eventsDir, TASK_ID, ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PREFLIGHT_CLASSIFIED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED'].map((event_type) => ({ event_type })));
+                    const invocationEvent = appendIntegrityEvent(eventsDir, TASK_ID, {
+                        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        details: { task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64) }
+                    });
+                    const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
+                    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+                    const integrity = invocationEvent.integrity as Record<string, unknown>;
+                    receipt.reviewer_provenance = { schema_version: 1, attestation_type: 'reviewer_invocation_attestation', controller_event_type: 'REVIEWER_INVOCATION_ATTESTED', task_sequence: integrity.task_sequence, prev_event_sha256: integrity.prev_event_sha256, event_sha256: integrity.event_sha256, task_id: TASK_ID, review_type: 'code', reviewer_execution_mode: 'delegated_subagent', reviewer_identity: reviewerIdentity, review_context_sha256: fixture.reviewContextSha256, routing_event_sha256: 'd'.repeat(64) };
+                    writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', receipt);
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_RECORDED', details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code') });
+                    ['REVIEW_GATE_PASSED', 'DOC_IMPACT_ASSESSED', 'COMPLETION_GATE_PASSED'].forEach((event_type) => appendIntegrityEvent(eventsDir, TASK_ID, { event_type }));
 
-            const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+                    const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
 
-            assert.equal(result.final_closeout.status, 'READY');
-            assert.equal(result.final_report_contract.status, 'READY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.status, 'INDEPENDENT_REVIEW_ATTESTED');
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_allowed, true);
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attested, true);
-            assert.deepEqual(result.final_closeout.review_integrity_attestation?.observed_issues, []);
-        });
+                    assert.equal(result.final_closeout.status, 'READY');
+                    assert.equal(result.final_report_contract.status, 'READY');
+                    const attestation = assertReviewIntegrity(result, 'INDEPENDENT_REVIEW_ATTESTED', {
+                        completionReviewAttested: true,
+                        enforcementMode: 'ADVISORY'
+                    });
+                    assert.deepEqual(attestation.observed_issues, []);
+                });
 
-        it('marks review integrity degraded for fabricated, missing, mismatched, or unsafe review evidence', () => {
-            const cases = [
-                ['fabricated', (sha: string) => writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256: sha, reviewContent: '# Code Review\nReview artifact: placeholder\nREVIEW PASSED' }), 'fabricated-looking review artifact content observed'],
-                ['missing-invocation', (sha: string) => writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256: sha }), 'missing matching REVIEWER_INVOCATION_ATTESTED telemetry'],
-                ['missing-receipt', (sha: string) => { writeArtifact(reviewsDir, TASK_ID, '-code.md', '# Code Review\nREVIEW PASSED'); writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', { task_id: TASK_ID, status: 'PASSED', outcome: 'PASS', preflight_hash_sha256: sha, required_reviews: { code: true }, review_checks: { code: makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:code-reviewer') } }); }, 'missing or invalid review receipt'],
-                ['mismatched-hash', (sha: string) => { writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256: sha }); writeArtifact(reviewsDir, TASK_ID, '-code.md', '# Code Review\nREVIEW PASSED\nmodified after receipt'); }, 'review artifact hash does not match receipt']
-            ] as const;
-            for (const testCase of cases) {
-                fs.rmSync(eventsDir, { recursive: true, force: true }); fs.rmSync(reviewsDir, { recursive: true, force: true });
-                fs.mkdirSync(eventsDir, { recursive: true }); fs.mkdirSync(reviewsDir, { recursive: true });
-                writeWorkflowConfig(tmpDir, false);
-                writePreflight(reviewsDir, TASK_ID, { mode: 'FULL_PATH', changed_files: [`src/${testCase[0]}.ts`], metrics: { changed_lines_total: 18 }, required_reviews: { code: true } });
-                testCase[1](computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)));
-                const details = fs.existsSync(path.join(reviewsDir, `${TASK_ID}-code-receipt.json`))
-                    ? buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code')
-                    : {};
-                writePassedLifecycleWithReviewRecorded(eventsDir, TASK_ID, details);
+                it('marks docs-only no-review closeout as allowed but not review-attested', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    writePassedLifecycle(eventsDir, TASK_ID);
+                    writePreflight(reviewsDir, TASK_ID, {
+                        mode: 'FAST_PATH',
+                        scope_category: 'docs-only',
+                        changed_files: ['docs/usage.md'],
+                        metrics: { changed_lines_total: 6 },
+                        required_reviews: {}
+                    });
 
-                const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+                    const result = buildTaskAuditSummary({
+                        taskId: TASK_ID,
+                        repoRoot: tmpDir,
+                        eventsRoot: eventsDir,
+                        reviewsRoot: reviewsDir
+                    });
 
-                assert.equal(result.final_closeout.status, 'READY', testCase[0]);
-                assert.equal(result.final_closeout.review_integrity_attestation?.status, 'DEGRADED_OR_UNVERIFIABLE', testCase[0]);
-                assert.equal(result.final_closeout.review_integrity_attestation?.enforcement_mode, 'ADVISORY', testCase[0]);
-                assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attested, false, testCase[0]);
-                assert.equal(result.final_closeout.review_integrity_attestation?.completion_allowed, true, testCase[0]);
-                assert.ok(result.final_closeout.review_integrity_attestation?.observed_issues.some((issue) => issue.includes(testCase[2])), testCase[0]);
-            }
-        });
-
-        it('allowlists required review types before review artifact path construction', () => {
-            writeWorkflowConfig(tmpDir, false);
-            writePassedLifecycle(eventsDir, TASK_ID);
-            writePreflight(reviewsDir, TASK_ID, {
-                mode: 'FULL_PATH',
-                changed_files: ['src/gates/task-audit-summary.ts'],
-                metrics: { changed_lines_total: 18 },
-                required_reviews: { '../../../outside': true }
+                    assert.equal(result.final_closeout.status, 'READY');
+                    assertReviewIntegrity(result, 'NO_REVIEW_REQUIRED', {
+                        completionReviewAttested: false,
+                        completionReviewAttestationNotRequired: true
+                    });
+                });
             });
 
-            const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+            describe('degraded and fallback advisory states', () => {
+                const degradedCases = [
+                    {
+                        name: 'fabricated',
+                        writeFixture: (sha: string) => writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256: sha, reviewContent: '# Code Review\nReview artifact: placeholder\nREVIEW PASSED' }),
+                        issue: 'fabricated-looking review artifact content observed'
+                    },
+                    {
+                        name: 'missing-invocation',
+                        writeFixture: (sha: string) => writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256: sha }),
+                        issue: 'missing matching REVIEWER_INVOCATION_ATTESTED telemetry'
+                    },
+                    {
+                        name: 'missing-receipt',
+                        writeFixture: (sha: string) => {
+                            writeArtifact(reviewsDir, TASK_ID, '-code.md', '# Code Review\nREVIEW PASSED');
+                            writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', { task_id: TASK_ID, status: 'PASSED', outcome: 'PASS', preflight_hash_sha256: sha, required_reviews: { code: true }, review_checks: { code: makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:code-reviewer') } });
+                        },
+                        issue: 'missing or invalid review receipt'
+                    },
+                    {
+                        name: 'mismatched-hash',
+                        writeFixture: (sha: string) => {
+                            writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256: sha });
+                            writeArtifact(reviewsDir, TASK_ID, '-code.md', '# Code Review\nREVIEW PASSED\nmodified after receipt');
+                        },
+                        issue: 'review artifact hash does not match receipt'
+                    }
+                ] as const;
 
-            assert.equal(result.final_closeout.status, 'READY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.status, 'DEGRADED_OR_UNVERIFIABLE');
-            assert.equal(result.final_closeout.review_integrity_attestation?.enforcement_mode, 'ADVISORY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attested, false);
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_allowed, true);
-            assert.deepEqual(result.final_closeout.review_integrity_attestation?.required_review_types, []);
-            assert.ok(result.final_closeout.review_integrity_attestation?.observed_issues.some((issue) =>
-                issue.includes('unsafe or unknown required review type ignored')
-            ));
-        });
+                for (const degradedCase of degradedCases) {
+                    it(`keeps ${degradedCase.name} review evidence advisory-only`, () => {
+                        writeWorkflowConfig(tmpDir, false);
+                        writePreflight(reviewsDir, TASK_ID, { mode: 'FULL_PATH', changed_files: [`src/${degradedCase.name}.ts`], metrics: { changed_lines_total: 18 }, required_reviews: { code: true } });
+                        degradedCase.writeFixture(computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)));
+                        const details = fs.existsSync(path.join(reviewsDir, `${TASK_ID}-code-receipt.json`))
+                            ? buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code')
+                            : {};
+                        writePassedLifecycleWithReviewRecorded(eventsDir, TASK_ID, details);
 
-        it('marks review integrity degraded when reused review evidence omits strict reuse bindings', () => {
-            writeWorkflowConfig(tmpDir, false);
-            writePassedLifecycle(eventsDir, TASK_ID);
-            writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
-                requested_depth: 2,
-                effective_depth: 2,
-                active_profile: 'balanced'
-            });
-            writePreflight(reviewsDir, TASK_ID, {
-                mode: 'FULL_PATH',
-                changed_files: ['tests/node/cli/commands/gates-review-reuse.test.ts'],
-                metrics: { changed_lines_total: 32 },
-                required_reviews: { code: true, test: true }
-            });
-            const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
-            const codeReviewContent = '# Code Review\nREVIEW PASSED';
-            const testReviewContent = '# Test Review\nTEST REVIEW PASSED';
-            writeArtifact(reviewsDir, TASK_ID, '-code.md', codeReviewContent);
-            writeArtifact(reviewsDir, TASK_ID, '-test.md', testReviewContent);
-            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
-                schema_version: 2,
-                task_id: TASK_ID,
-                review_type: 'code',
-                preflight_sha256: preflightSha256,
-                review_context_sha256: '1'.repeat(64),
-                review_artifact_sha256: createHash('sha256').update(codeReviewContent, 'utf8').digest('hex'),
-                reused_existing_review: true,
-                reviewer_execution_mode: 'delegated_subagent',
-                reviewer_identity: 'agent:historical-code-reviewer',
-                reviewer_fallback_reason: null,
-                trust_level: 'INDEPENDENT_AUDITED'
-            });
-            writeArtifact(reviewsDir, TASK_ID, '-test-receipt.json', {
-                schema_version: 2,
-                task_id: TASK_ID,
-                review_type: 'test',
-                preflight_sha256: preflightSha256,
-                review_context_sha256: '2'.repeat(64),
-                review_artifact_sha256: createHash('sha256').update(testReviewContent, 'utf8').digest('hex'),
-                reviewer_execution_mode: 'delegated_subagent',
-                reviewer_identity: 'agent:fresh-test-reviewer',
-                reviewer_fallback_reason: null,
-                trust_level: 'INDEPENDENT_AUDITED'
-            });
-            writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', {
-                task_id: TASK_ID,
-                status: 'PASSED',
-                outcome: 'PASS',
-                preflight_hash_sha256: preflightSha256,
-                required_reviews: { code: true, test: true },
-                verdicts: {
-                    code: 'REVIEW PASSED',
-                    test: 'TEST REVIEW PASSED'
-                },
-                review_checks: {
-                    code: makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:historical-code-reviewer'),
-                    test: makeIndependentReviewGateCheck('TEST REVIEW PASSED', 'agent:fresh-test-reviewer')
+                        const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+
+                        assert.equal(result.final_closeout.status, 'READY');
+                        assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
+                            completionReviewAttested: false,
+                            enforcementMode: 'ADVISORY',
+                            issueIncludes: degradedCase.issue
+                        });
+                    });
                 }
+
+                it('marks reused review evidence without strict bindings as advisory-only degraded output', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    writePassedLifecycle(eventsDir, TASK_ID);
+                    writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
+                        requested_depth: 2,
+                        effective_depth: 2,
+                        active_profile: 'balanced'
+                    });
+                    writePreflight(reviewsDir, TASK_ID, {
+                        mode: 'FULL_PATH',
+                        changed_files: ['tests/node/cli/commands/gates-review-reuse.test.ts'],
+                        metrics: { changed_lines_total: 32 },
+                        required_reviews: { code: true, test: true }
+                    });
+                    const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+                    const codeReviewContent = '# Code Review\nREVIEW PASSED';
+                    const testReviewContent = '# Test Review\nTEST REVIEW PASSED';
+                    writeArtifact(reviewsDir, TASK_ID, '-code.md', codeReviewContent);
+                    writeArtifact(reviewsDir, TASK_ID, '-test.md', testReviewContent);
+                    writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                        schema_version: 2,
+                        task_id: TASK_ID,
+                        review_type: 'code',
+                        preflight_sha256: preflightSha256,
+                        review_context_sha256: '1'.repeat(64),
+                        review_artifact_sha256: createHash('sha256').update(codeReviewContent, 'utf8').digest('hex'),
+                        reused_existing_review: true,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:historical-code-reviewer',
+                        reviewer_fallback_reason: null,
+                        trust_level: 'INDEPENDENT_AUDITED'
+                    });
+                    writeArtifact(reviewsDir, TASK_ID, '-test-receipt.json', {
+                        schema_version: 2,
+                        task_id: TASK_ID,
+                        review_type: 'test',
+                        preflight_sha256: preflightSha256,
+                        review_context_sha256: '2'.repeat(64),
+                        review_artifact_sha256: createHash('sha256').update(testReviewContent, 'utf8').digest('hex'),
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:fresh-test-reviewer',
+                        reviewer_fallback_reason: null,
+                        trust_level: 'INDEPENDENT_AUDITED'
+                    });
+                    writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', {
+                        task_id: TASK_ID,
+                        status: 'PASSED',
+                        outcome: 'PASS',
+                        preflight_hash_sha256: preflightSha256,
+                        required_reviews: { code: true, test: true },
+                        verdicts: {
+                            code: 'REVIEW PASSED',
+                            test: 'TEST REVIEW PASSED'
+                        },
+                        review_checks: {
+                            code: makeIndependentReviewGateCheck('REVIEW PASSED', 'agent:historical-code-reviewer'),
+                            test: makeIndependentReviewGateCheck('TEST REVIEW PASSED', 'agent:fresh-test-reviewer')
+                        }
+                    });
+
+                    const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+
+                    assert.equal(result.final_closeout.status, 'READY');
+                    assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
+                        completionReviewAttested: false,
+                        enforcementMode: 'ADVISORY',
+                        issueIncludes: 'strict reused review evidence is invalid'
+                    });
+                });
+
+                it('blocks stale telemetry closeout while leaving review integrity advisory-only', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    writePreflight(reviewsDir, TASK_ID, {
+                        mode: 'FULL_PATH',
+                        changed_files: ['src/gates/task-audit-summary.ts'],
+                        metrics: { changed_lines_total: 18 },
+                        required_reviews: { code: true }
+                    });
+                    const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+                    writeCurrentIndependentReviewFixture({
+                        reviewsDir,
+                        taskId: TASK_ID,
+                        preflightSha256
+                    });
+                    const reviewRecordedDetails = buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code');
+                    writePassedLifecycleWithReviewRecorded(eventsDir, TASK_ID, reviewRecordedDetails, 'after-review-gate');
+
+                    const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+
+                    assert.equal(result.status, 'BLOCKED');
+                    assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
+                        completionReviewAttested: false,
+                        enforcementMode: 'ADVISORY',
+                        issueIncludes: 'review recorded after current required-reviews gate'
+                    });
+                    assert.ok(result.blockers.some((blocker) =>
+                        blocker.gate === 'required-reviews-check'
+                        && blocker.reason.includes('Required review evidence changed after REVIEW_GATE_PASSED')
+                    ));
+                });
             });
 
-            const result = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
+            describe('unsafe review type advisory reporting', () => {
+                it('allowlists required review types before review artifact path construction', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    writePassedLifecycle(eventsDir, TASK_ID);
+                    writePreflight(reviewsDir, TASK_ID, {
+                        mode: 'FULL_PATH',
+                        changed_files: ['src/gates/task-audit-summary.ts'],
+                        metrics: { changed_lines_total: 18 },
+                        required_reviews: { '../../../outside': true }
+                    });
+
+                    const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+
+                    assert.equal(result.final_closeout.status, 'READY');
+                    const attestation = assertReviewIntegrity(result, 'DEGRADED_OR_UNVERIFIABLE', {
+                        completionReviewAttested: false,
+                        enforcementMode: 'ADVISORY',
+                        issueIncludes: 'unsafe or unknown required review type ignored'
+                    });
+                    assert.deepEqual(attestation.required_review_types, []);
+                });
             });
-
-            assert.equal(result.final_closeout.status, 'READY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.status, 'DEGRADED_OR_UNVERIFIABLE');
-            assert.equal(result.final_closeout.review_integrity_attestation?.enforcement_mode, 'ADVISORY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attested, false);
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_allowed, true);
-            assert.ok(result.final_closeout.review_integrity_attestation?.observed_issues.some((issue) => issue.includes('strict reused review evidence is invalid')));
-        });
-
-        it('blocks final closeout but keeps advisory completion allowed when required review telemetry is recorded after required-review gate', () => {
-            writeWorkflowConfig(tmpDir, false);
-            writePreflight(reviewsDir, TASK_ID, {
-                mode: 'FULL_PATH',
-                changed_files: ['src/gates/task-audit-summary.ts'],
-                metrics: { changed_lines_total: 18 },
-                required_reviews: { code: true }
-            });
-            const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
-            writeCurrentIndependentReviewFixture({
-                reviewsDir,
-                taskId: TASK_ID,
-                preflightSha256
-            });
-            const reviewRecordedDetails = buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code');
-            writePassedLifecycleWithReviewRecorded(eventsDir, TASK_ID, reviewRecordedDetails, 'after-review-gate');
-
-            const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
-
-            assert.equal(result.status, 'BLOCKED');
-            assert.equal(result.final_closeout.review_integrity_attestation?.status, 'DEGRADED_OR_UNVERIFIABLE');
-            assert.equal(result.final_closeout.review_integrity_attestation?.enforcement_mode, 'ADVISORY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attested, false);
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_allowed, true);
-            assert.ok(result.blockers.some((blocker) =>
-                blocker.gate === 'required-reviews-check'
-                && blocker.reason.includes('Required review evidence changed after REVIEW_GATE_PASSED')
-            ));
-            assert.ok(result.final_closeout.review_integrity_attestation?.observed_issues.some((issue) =>
-                issue.includes('review recorded after current required-reviews gate')
-            ));
-        });
-
-        it('marks docs-only no-review closeout as allowed but not review-attested', () => {
-            writeWorkflowConfig(tmpDir, false);
-            writePassedLifecycle(eventsDir, TASK_ID);
-            writePreflight(reviewsDir, TASK_ID, {
-                mode: 'FAST_PATH',
-                scope_category: 'docs-only',
-                changed_files: ['docs/usage.md'],
-                metrics: { changed_lines_total: 6 },
-                required_reviews: {}
-            });
-
-            const result = buildTaskAuditSummary({
-                taskId: TASK_ID,
-                repoRoot: tmpDir,
-                eventsRoot: eventsDir,
-                reviewsRoot: reviewsDir
-            });
-
-            assert.equal(result.final_closeout.status, 'READY');
-            assert.equal(result.final_closeout.review_integrity_attestation?.status, 'NO_REVIEW_REQUIRED');
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_allowed, true);
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attested, false);
-            assert.equal(result.final_closeout.review_integrity_attestation?.completion_review_attestation_not_required, true);
         });
 
         it('does not promote asserted-local review gate checks to independent trust', () => {
