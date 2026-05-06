@@ -1,0 +1,13 @@
+{
+  "style": "conventional",
+  "template": "{{TYPE}}({{SCOPE}}): {{SUMMARY}}",
+  "protected_required_placeholders": [
+    "TYPE",
+    "SCOPE",
+    "SUMMARY"
+  ],
+  "protected_commit_policy": {
+    "requires_human_confirmation": true,
+    "auto_commit_allowed": false
+  }
+}

@@ -380,6 +380,29 @@ Notes:
 - When `review_cycle_guard.auto_split_enabled=true`, `next-step` emits a dedicated auto-split prompt artifact for the agent from the bundled template at `template/docs/prompts/review-cycle-auto-split.md`. The template is materialized into `runtime/reviews/<task-id>-review-cycle-auto-split-prompt.md` only when a blocking review-cycle violation actually happens. The prompt tells the agent to move the parent into a blocked/split state through supported task controls or explicit backlog editing, decide whether a reviewed committable diff should be committed, create maximally small numeric child tasks, and then execute those child tasks sequentially. It must not auto-commit unfinished or unreviewed work, and it must not mark the parent `DONE` merely because split work exists.
 - `WARN_ONLY` does not block the next gate, but `next-step` prints the review-cycle violation under `Warnings` so the operator still sees the over-budget review cycle.
 
+### `garda templates`
+
+Show, validate, and manage user-owned effective message template overrides.
+
+```text
+garda templates --target-root "."
+garda templates list --target-root "."
+garda templates show --template final-report --target-root "."
+garda templates path --template commit-message --target-root "." --json
+garda templates edit --template reviewer-prompt --target-root "."
+garda templates validate --target-root "."
+garda templates validate --template final-report --target-root "."
+garda templates reset --template final-report --target-root "."
+```
+
+Notes:
+- `templates` with no subcommand behaves like `templates list`.
+- Supported template ids are `final-report`, `commit-message`, and `reviewer-prompt`.
+- Built-in templates live under `template/templates/**`; user-owned overrides live under `live/templates/*.user.*`.
+- `templates edit` creates the user override file when it is missing and prints the path to edit. It does not launch an editor.
+- `templates validate` fails closed when an effective template removes required placeholders, edits protected Garda sections, allows auto-commit wording, or breaks the JSON contract for commit-message templates.
+- `templates reset` removes only the selected user-owned override and restores the built-in effective template.
+
 ### `garda review-capabilities`
 
 Show, list, enable, or disable repo-local optional review capabilities without hand-editing `review-capabilities.json`.

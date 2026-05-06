@@ -399,7 +399,7 @@ export function buildCommandSummaryLines(): string[] {
     return lines;
 }
 
-type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'profile' | 'workflow';
+type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow';
 
 interface GuardedCommandHelpDescriptor {
     readonly summary: string;
@@ -453,6 +453,28 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
         hints: Object.freeze([
             'Default mode: review-capabilities with no subcommand behaves like review-capabilities show.',
             'The list alias behaves like review-capabilities show.'
+        ])
+    }),
+    templates: Object.freeze({
+        summary: 'Show, validate, and manage user-owned message template overrides.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} templates [list] [--target-root PATH] [--bundle-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} templates show --template final-report|commit-message|reviewer-prompt [--json]`,
+            `${PRIMARY_CLI_NAME} templates path --template final-report|commit-message|reviewer-prompt`,
+            `${PRIMARY_CLI_NAME} templates edit --template final-report|commit-message|reviewer-prompt`,
+            `${PRIMARY_CLI_NAME} templates validate [--template final-report|commit-message|reviewer-prompt] [--json]`,
+            `${PRIMARY_CLI_NAME} templates reset --template final-report|commit-message|reviewer-prompt`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} templates list`,
+            `${PRIMARY_CLI_NAME} templates show --template final-report`,
+            `${PRIMARY_CLI_NAME} templates edit --template commit-message`,
+            `${PRIMARY_CLI_NAME} templates validate`
+        ]),
+        hints: Object.freeze([
+            'Default mode: templates with no subcommand behaves like templates list.',
+            'User overrides may change wording, but effective templates preserve protected workflow sections and required placeholders.',
+            'The edit action creates or reports the user-owned override path; it does not open an interactive editor.'
         ])
     }),
     profile: Object.freeze({
@@ -516,8 +538,8 @@ function styleHelpToken(token: string): string {
         || [
             'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'uninstall', 'cleanup', 'gc', 'clean', 'verify', 'check-update', 'skills',
-            'review-capabilities', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
-            'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable'
+            'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
+            'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset'
         ].includes(normalized)
     ) {
         return cyan(trimmed);
@@ -634,6 +656,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  check-update  Compare current deployment with a newer npm package or local source.',
             '  skills        List, suggest, add, remove, and validate optional built-in skill packs.',
             '  review-capabilities  Show, enable, and disable repo-local optional review capabilities.',
+            '  templates     Show, validate, and manage user-owned message template overrides.',
             '  workflow      Show and set repo-local workflow config.',
             '  profile       List, use, create, delete, and validate workspace profiles.',
             '  diff-managed  Show managed vs user-owned block ownership across workspace files.',

@@ -176,6 +176,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'clean',
     'skills',
     'review-capabilities',
+    'templates',
     'profile',
     'workflow',
     'diff-managed'

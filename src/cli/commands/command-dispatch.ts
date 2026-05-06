@@ -53,7 +53,7 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
         const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
         return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
     }
-    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'profile'].includes(commandName)) {
+    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile'].includes(commandName)) {
         return '.';
     }
     return resolveTargetOrBundleParityRoot(commandArgv);
@@ -70,7 +70,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'profile', 'workflow'].includes(commandName)) {
+    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow'].includes(commandName)) {
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale) {
@@ -88,7 +88,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
                         return buildGateCommandOverviewText(parityRoot);
                     }
                 })()
-                : buildGuardedCommandHelpText(commandName as 'agent-init' | 'skills' | 'review-capabilities' | 'profile' | 'workflow');
+                : buildGuardedCommandHelpText(commandName as 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow');
             throw new Error(
                 buildParityBlockedCommandText({
                     commandName,
@@ -232,6 +232,14 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         case 'review-capabilities': {
             const { handleReviewCapabilities } = await import('./review-capabilities-command');
             const result = handleReviewCapabilities(commandArgv, packageJson);
+            if (isFailedValidationResult(result)) {
+                process.exitCode = EXIT_VALIDATION_FAILURE;
+            }
+            return;
+        }
+        case 'templates': {
+            const { handleTemplates } = await import('./templates-command');
+            const result = handleTemplates(commandArgv, packageJson);
             if (isFailedValidationResult(result)) {
                 process.exitCode = EXIT_VALIDATION_FAILURE;
             }
