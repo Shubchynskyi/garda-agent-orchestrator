@@ -41,6 +41,7 @@ function loadPackFixtureItems(repoRoot: string): string[] {
     items.delete('dist');
     items.delete('bin');
     items.add('package.json');
+    items.add('scripts/package-legacy-entrypoint-compat.cjs');
     items.add('scripts/node-foundation');
     items.add('tsconfig.build.json');
     items.add('tsconfig.scripts.json');
@@ -60,20 +61,6 @@ function copyPackFixture(repoRoot: string, fixtureRoot: string): void {
     if (fs.existsSync(realNodeModules) && !fs.existsSync(fixtureNodeModules)) {
         fs.symlinkSync(realNodeModules, fixtureNodeModules, 'junction');
     }
-}
-
-function getTypescriptCliPath(repoRoot: string): string {
-    return path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
-}
-
-function syncGeneratedCliEntrypoint(repoRoot: string): void {
-    const compiledCliPath = path.join(repoRoot, 'dist', 'src', 'bin', 'garda.js');
-    const repoPath = path.join(repoRoot, 'bin', 'garda.js');
-    if (!fs.existsSync(compiledCliPath)) {
-        throw new Error(`compiled CLI launcher not found: ${compiledCliPath}`);
-    }
-    fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
-    fs.copyFileSync(compiledCliPath, repoPath);
 }
 
 function quoteWindowsArgument(argument: string): string {
@@ -155,31 +142,23 @@ function assertNoConsumerInstallLifecycleScripts(packageJson: { scripts?: Record
     }
 }
 
-function buildPublishRuntimeInRepo(repoRoot: string): void {
-    const result = childProcess.spawnSync(process.execPath, [getTypescriptCliPath(repoRoot), '-p', 'tsconfig.build.json'], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        timeout: 120_000,
-        windowsHide: true
-    });
-
-    if (result.status !== 0) {
-        throw new Error(`publish runtime build failed:\n${result.stderr || result.stdout}`);
-    }
-
-    syncGeneratedCliEntrypoint(repoRoot);
-}
-
 function npmPack(repoRoot: string): string {
-    // Build dist/ explicitly in an isolated fixture repo so this smoke test
-    // does not race with other packaging tests that also materialize dist/.
-    buildPublishRuntimeInRepo(repoRoot);
+    const legacyClaudeTemplatePath = path.join(repoRoot, 'template', 'CLAUDE.md');
+    assert.ok(
+        !fs.existsSync(legacyClaudeTemplatePath),
+        'fixture source tree must not start with a stored template/CLAUDE.md'
+    );
 
-    const result = spawnNpm(['pack', '--ignore-scripts', '--pack-destination', repoRoot], repoRoot);
+    const result = spawnNpm(['pack', '--pack-destination', repoRoot], repoRoot);
 
     if (result.status !== 0) {
         throw new Error(formatSpawnFailure('npm pack', result));
     }
+
+    assert.ok(
+        !fs.existsSync(legacyClaudeTemplatePath),
+        'postpack must remove the generated legacy template/CLAUDE.md from the package source tree'
+    );
 
     const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
     return lines[lines.length - 1].trim();
@@ -250,6 +229,19 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
         assert.ok(
             fs.existsSync(path.join(installedPackageRoot, 'dist', 'src', 'index.js')),
             'dist/src/index.js must exist in the installed package'
+        );
+        assert.ok(
+            fs.existsSync(path.join(installedPackageRoot, 'template', 'entrypoints', 'canonical-rule-index.md')),
+            'neutral canonical rule-index template must exist in the installed package'
+        );
+        const installedLegacyTemplatePath = path.join(installedPackageRoot, 'template', 'CLAUDE.md');
+        assert.ok(
+            fs.existsSync(installedLegacyTemplatePath),
+            'packed package must include generated legacy template/CLAUDE.md for 1.0.0 updater compatibility'
+        );
+        assert.ok(
+            fs.readFileSync(installedLegacyTemplatePath, 'utf8').includes('# CLAUDE.md'),
+            'generated legacy template/CLAUDE.md must be provider-specific only inside the packed package'
         );
 
         // 2. --version prints the correct version

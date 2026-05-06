@@ -87,15 +87,15 @@ function setupUpdateWorkspace(repoRoot: string) {
 
 function injectBundleUpdate(bundleRoot: string, updateMarker: string, nextVersion: string) {
     const versionPath = path.join(bundleRoot, 'VERSION');
-    const templateClaudePath = path.join(bundleRoot, 'template', 'CLAUDE.md');
-    const currentTemplate = fs.readFileSync(templateClaudePath, 'utf8');
+    const canonicalRuleIndexPath = path.join(bundleRoot, 'template', 'entrypoints', 'canonical-rule-index.md');
+    const currentTemplate = fs.readFileSync(canonicalRuleIndexPath, 'utf8');
     const updatedTemplate = currentTemplate.replace(
         MANAGED_END,
         `Rollback marker: ${updateMarker}\r\n${MANAGED_END}`
     );
 
     fs.writeFileSync(versionPath, `${nextVersion}\n`, 'utf8');
-    fs.writeFileSync(templateClaudePath, updatedTemplate, 'utf8');
+    fs.writeFileSync(canonicalRuleIndexPath, updatedTemplate, 'utf8');
 }
 
 
@@ -114,7 +114,8 @@ describe('runRollback (snapshot mode)', () => {
             });
 
             const baselineVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
-            const baselineTemplateClaude = fs.readFileSync(path.join(bundleRoot, 'template', 'CLAUDE.md'), 'utf8');
+            const canonicalRuleIndexPath = path.join(bundleRoot, 'template', 'entrypoints', 'canonical-rule-index.md');
+            const baselineCanonicalRuleIndex = fs.readFileSync(canonicalRuleIndexPath, 'utf8');
 
             const sourceBundleRoot = path.join(projectRoot, 'update-source');
             copyDirRecursive(bundleRoot, sourceBundleRoot);
@@ -139,7 +140,7 @@ describe('runRollback (snapshot mode)', () => {
             assert.equal(updateResult.checkUpdateResult, 'UPDATED');
             assert.ok(fs.existsSync(updateResult.syncBackupMetadataPath));
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), '9.9.9');
-            assert.match(fs.readFileSync(path.join(bundleRoot, 'template', 'CLAUDE.md'), 'utf8'), /ROLLBACK_TEST_MARKER/);
+            assert.match(fs.readFileSync(canonicalRuleIndexPath, 'utf8'), /ROLLBACK_TEST_MARKER/);
 
             const rollbackResult = await runRollback({
                 targetRoot: projectRoot,
@@ -150,7 +151,7 @@ describe('runRollback (snapshot mode)', () => {
             assert.equal(rollbackResult.restoreStatus, 'SUCCESS');
             assert.equal(rollbackResult.rollbackVersion, baselineVersion);
             assert.equal(fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(), baselineVersion);
-            assert.equal(fs.readFileSync(path.join(bundleRoot, 'template', 'CLAUDE.md'), 'utf8'), baselineTemplateClaude);
+            assert.equal(fs.readFileSync(canonicalRuleIndexPath, 'utf8'), baselineCanonicalRuleIndex);
             assert.equal(rollbackResult.restoreStatus, 'SUCCESS');
             assert.ok(fs.existsSync(path.join(projectRoot, rollbackResult.rollbackReportPath)));
         } finally {

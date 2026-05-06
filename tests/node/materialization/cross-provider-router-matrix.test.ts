@@ -28,8 +28,8 @@ import {
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const TEMPLATE_CLAUDE_PATH = path.join(process.cwd(), 'template', 'CLAUDE.md');
-const templateClaudeContent = fs.readFileSync(TEMPLATE_CLAUDE_PATH, 'utf-8');
+const CANONICAL_RULE_INDEX_TEMPLATE_PATH = path.join(process.cwd(), 'template', 'entrypoints', 'canonical-rule-index.md');
+const canonicalRuleIndexTemplateContent = fs.readFileSync(CANONICAL_RULE_INDEX_TEMPLATE_PATH, 'utf-8');
 
 const ALL_PROVIDERS = SOURCE_OF_TRUTH_VALUES as readonly string[];
 const PROVIDER_BRIDGE_PROFILES = getProviderOrchestratorProfileDefinitions();
@@ -64,13 +64,13 @@ describe('cross-provider-router-matrix: root-entrypoint canonical blocks', () =>
         const canonicalFile = getCanonicalEntrypointFile(provider);
 
         it(`${provider}: canonical block contains managed markers`, () => {
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(block.includes(MANAGED_START), `Missing start marker for ${provider}`);
             assert.ok(block.includes(MANAGED_END), `Missing end marker for ${provider}`);
         });
 
         it(`${provider}: canonical block title matches entrypoint file`, () => {
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(
                 block.includes(`# ${canonicalFile}`),
                 `Title should be '# ${canonicalFile}', got block starting with: ${block.slice(0, 200)}`
@@ -78,7 +78,7 @@ describe('cross-provider-router-matrix: root-entrypoint canonical blocks', () =>
         });
 
         it(`${provider}: canonical block references all 12 rule files`, () => {
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             const ruleFiles = [
                 '00-core.md', '10-project-context.md', '15-project-memory.md',
                 '20-architecture.md', '30-code-style.md', '35-strict-coding-rules.md',
@@ -94,13 +94,13 @@ describe('cross-provider-router-matrix: root-entrypoint canonical blocks', () =>
         });
 
         it(`${provider}: canonical block includes Hard Stop section with TASK.md reference`, () => {
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(block.includes('Hard Stop'), `${provider}: missing Hard Stop section`);
             assert.ok(block.includes('TASK.md'), `${provider}: missing TASK.md reference`);
         });
 
         it(`${provider}: canonical block references shared start-task router`, () => {
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(
                 block.includes('.agents/workflows/start-task.md'),
                 `${provider}: canonical block must reference shared start-task router`
@@ -108,7 +108,7 @@ describe('cross-provider-router-matrix: root-entrypoint canonical blocks', () =>
         });
 
         it(`${provider}: canonical block references all 4 provider bridge paths`, () => {
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             for (const bp of BRIDGE_PATHS) {
                 assert.ok(
                     block.includes(bp),
@@ -118,7 +118,7 @@ describe('cross-provider-router-matrix: root-entrypoint canonical blocks', () =>
         });
 
         it(`${provider}: canonical block includes Rule Routing table`, () => {
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(block.includes('## Rule Routing'), `${provider}: missing Rule Routing section`);
             assert.ok(block.includes('| Task context |'), `${provider}: missing routing table header`);
         });
@@ -572,7 +572,7 @@ describe('cross-provider-router-matrix: mixed active-agent setups', () => {
 
         for (const file of active) {
             if (file === canonicalFile) {
-                const block = buildCanonicalManagedBlock(file, templateClaudeContent);
+                const block = buildCanonicalManagedBlock(file, canonicalRuleIndexTemplateContent);
                 assert.ok(block.includes(`# ${file}`));
             } else {
                 const redirect = buildRedirectManagedBlock(file, canonicalFile, BRIDGE_PATHS);
@@ -583,7 +583,7 @@ describe('cross-provider-router-matrix: mixed active-agent setups', () => {
     });
 
     it('canonical entrypoint always includes all bridge paths regardless of active set', () => {
-        const block = buildCanonicalManagedBlock('QWEN.md', templateClaudeContent);
+        const block = buildCanonicalManagedBlock('QWEN.md', canonicalRuleIndexTemplateContent);
         for (const bp of BRIDGE_PATHS) {
             assert.ok(block.includes(bp), `Canonical QWEN.md missing bridge path: ${bp}`);
         }
@@ -701,7 +701,7 @@ describe('cross-provider-router-matrix: drift detection', () => {
     it('canonical block includes shared start-task reference for every provider', () => {
         for (const provider of ALL_PROVIDERS) {
             const canonicalFile = getCanonicalEntrypointFile(provider);
-            const block = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(
                 block.includes(SHARED_START_TASK_WORKFLOW_RELATIVE_PATH),
                 `${provider}: canonical block missing shared workflow reference`
@@ -735,11 +735,21 @@ describe('cross-provider-router-matrix: drift detection', () => {
         assert.equal(entrypointToBridge.get('.antigravity/rules.md'), '.antigravity/agents/orchestrator.md');
     });
 
-    it('template CLAUDE.md managed block is valid and extractable', () => {
-        const block = buildCanonicalManagedBlock('CLAUDE.md', templateClaudeContent);
+    it('neutral canonical rule-index template managed block is valid and extractable', () => {
+        const block = buildCanonicalManagedBlock('CLAUDE.md', canonicalRuleIndexTemplateContent);
         assert.ok(block.length > 500, 'Canonical block suspiciously short');
         const lines = block.split('\n');
         assert.ok(lines.length > 20, 'Canonical block has too few lines');
+    });
+
+    it('does not store CLAUDE.md as a rich source template', () => {
+        assert.equal(fs.existsSync(path.join(process.cwd(), 'template', 'CLAUDE.md')), false);
+    });
+
+    it('keeps AGENTS.md as the generic root entrypoint surface', () => {
+        const agentsTemplate = fs.readFileSync(path.join(process.cwd(), 'template', 'AGENTS.md'), 'utf-8');
+        assert.ok(agentsTemplate.includes('# AGENTS.md'));
+        assert.ok(agentsTemplate.includes('generic root entrypoint surface'));
     });
 
     it('gate command prefix is consistent across bridge content — both forms present', () => {
@@ -811,7 +821,7 @@ describe('cross-provider-router-matrix: cross-surface contract consistency', () 
             const canonicalFile = getCanonicalEntrypointFile(provider);
 
             // Canonical entrypoint
-            const canonical = buildCanonicalManagedBlock(canonicalFile, templateClaudeContent);
+            const canonical = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(canonical.includes('TASK.md'), `Canonical ${provider} missing TASK.md`);
 
             // Shared workflow
@@ -844,7 +854,7 @@ describe('cross-provider-router-matrix: cross-surface contract consistency', () 
             const cf = getCanonicalEntrypointFile(provider);
             allContents.push({
                 label: `canonical-${provider}`,
-                content: buildCanonicalManagedBlock(cf, templateClaudeContent)
+                content: buildCanonicalManagedBlock(cf, canonicalRuleIndexTemplateContent)
             });
         }
 

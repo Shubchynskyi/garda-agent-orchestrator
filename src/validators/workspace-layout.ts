@@ -134,6 +134,7 @@ export const CRITICAL_BUNDLE_PATHS = Object.freeze([
     'package.json',
     'VERSION',
     'template/AGENTS.md',
+    'template/entrypoints/canonical-rule-index.md',
     'template/config/garda.config.json'
 ]);
 

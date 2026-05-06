@@ -145,6 +145,7 @@ function seedMatchingSourceCheckoutParity(tmpDir: string) {
     writeStatusFixtureFile(path.join(tmpDir, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
     writeStatusFixtureFile(path.join(bundlePath, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
     writeStatusFixtureFile(path.join(bundlePath, 'template', 'AGENTS.md'), '# template\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'template', 'entrypoints', 'canonical-rule-index.md'), '# template\n');
     writeStatusFixtureFile(path.join(bundlePath, 'template', 'config', 'garda.config.json'), '{}\n');
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'review-capabilities.json'), '{}\n');
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'paths.json'), '{}\n');

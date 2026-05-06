@@ -319,10 +319,17 @@ describe('migrateDepthToProfileRow', () => {
 });
 
 describe('buildCanonicalManagedBlock', () => {
-    it('replaces CLAUDE.md title with canonical file', () => {
+    it('replaces neutral template title with canonical file', () => {
+        const neutralTemplateContent = `${MANAGED_START}\n# canonical-rule-index.md\nSome content\n${MANAGED_END}`;
+        const result = buildCanonicalManagedBlock('AGENTS.md', neutralTemplateContent);
+        assert.ok(result!.includes('# AGENTS.md'));
+        assert.ok(!result.includes('# canonical-rule-index.md'));
+    });
+
+    it('still rewrites legacy CLAUDE.md template titles for compatibility', () => {
         const templateClaudeContent = `${MANAGED_START}\n# CLAUDE.md\nSome content\n${MANAGED_END}`;
         const result = buildCanonicalManagedBlock('AGENTS.md', templateClaudeContent);
-        assert.ok(result!.includes('# AGENTS.md'));
+        assert.ok(result.includes('# AGENTS.md'));
         assert.ok(!result.includes('# CLAUDE.md'));
     });
 

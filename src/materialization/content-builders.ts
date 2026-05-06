@@ -506,7 +506,7 @@ export function buildCanonicalManagedBlock(canonicalFile: string, entrypointTemp
     if (!baseBlock) {
         throw new Error('Entrypoint template managed block is missing; cannot build canonical entrypoint.');
     }
-    return restoreEntrypointRuleLinks(baseBlock).replace(/^# CLAUDE\.md$/m, `# ${canonicalFile}`);
+    return restoreEntrypointRuleLinks(baseBlock).replace(/^# .+$/m, `# ${canonicalFile}`);
 }
 
 export function buildRedirectManagedBlock(

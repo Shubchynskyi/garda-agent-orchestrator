@@ -408,8 +408,8 @@ export function runInstall(options: RunInstallOptions) {
         }
     }
 
-    // Backward-compatible managed-block template; buildCanonicalManagedBlock rewrites it to the selected entrypoint.
-    const managedEntrypointTemplateContent = readTextFile(path.join(sourceRoot, 'CLAUDE.md'));
+    // Provider-neutral managed-block template; buildCanonicalManagedBlock rewrites it to the selected entrypoint.
+    const managedEntrypointTemplateContent = readTextFile(path.join(sourceRoot, 'entrypoints', 'canonical-rule-index.md'));
     const canonicalBlock = buildCanonicalManagedBlock(canonicalEntryFile, managedEntrypointTemplateContent);
     applyEntrypointManagedBlock(canonicalEntryFile, canonicalBlock);
 

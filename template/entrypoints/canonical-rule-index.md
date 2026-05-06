@@ -1,5 +1,5 @@
 <!-- garda-agent-orchestrator:managed-start -->
-# CLAUDE.md
+# canonical-rule-index.md
 <!-- markdownlint-disable MD040 -->
 
 # Garda Agent Orchestrator Rule Index

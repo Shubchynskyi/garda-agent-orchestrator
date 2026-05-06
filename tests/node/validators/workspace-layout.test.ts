@@ -201,6 +201,7 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'dist', 'src'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'template'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'template', 'config'), { recursive: true });
+        fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'template', 'entrypoints'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
         fs.mkdirSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
         fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}', 'utf8');
@@ -210,6 +211,7 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'package.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'template', 'AGENTS.md'), '# template', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'template', 'entrypoints', 'canonical-rule-index.md'), '# template', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'template', 'config', 'garda.config.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'review-capabilities.json'), '{}', 'utf8');

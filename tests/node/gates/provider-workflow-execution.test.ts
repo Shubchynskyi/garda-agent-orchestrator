@@ -110,8 +110,8 @@ function scaffoldProviderWorkspace(root: string, options: ScaffoldOptions): void
         SourceOfTruth: provider
     }, null, 2), 'utf8');
 
-    // Template content for canonical block builder
-    const templatePath = path.join(process.cwd(), 'template', 'CLAUDE.md');
+    // Neutral template content for canonical block builder
+    const templatePath = path.join(process.cwd(), 'template', 'entrypoints', 'canonical-rule-index.md');
     const templateContent = fs.readFileSync(templatePath, 'utf-8');
 
     // Canonical entrypoint
@@ -848,7 +848,7 @@ describe('provider-workflow-execution: cross-provider execution context', () => 
 // ===========================================================================
 
 describe('provider-workflow-execution: materialized workflow gate sequence', () => {
-    const templatePath = path.join(process.cwd(), 'template', 'CLAUDE.md');
+    const templatePath = path.join(process.cwd(), 'template', 'entrypoints', 'canonical-rule-index.md');
     const templateContent = fs.readFileSync(templatePath, 'utf-8');
 
     for (const provider of ALL_PROVIDERS) {
@@ -1064,7 +1064,7 @@ describe('provider-workflow-execution: multi-provider active workspace', () => {
 // ===========================================================================
 
 describe('provider-workflow-execution: redirect entrypoints reference router', () => {
-    const templatePath = path.join(process.cwd(), 'template', 'CLAUDE.md');
+    const templatePath = path.join(process.cwd(), 'template', 'entrypoints', 'canonical-rule-index.md');
     const templateContent = fs.readFileSync(templatePath, 'utf-8');
     const bridgePaths = BRIDGE_PROFILES.map((p) => p.orchestratorRelativePath);
 

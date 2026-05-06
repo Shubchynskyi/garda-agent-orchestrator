@@ -128,6 +128,7 @@ function loadPackFixtureItems(repoRoot: string): string[] {
     items.delete('dist');
     items.delete('bin');
     items.add('package.json');
+    items.add('scripts/package-legacy-entrypoint-compat.cjs');
     items.add('scripts/node-foundation');
     items.add('tsconfig.build.json');
     items.add('tsconfig.scripts.json');
@@ -180,6 +181,18 @@ function createCandidateTarball(repoRoot: string) {
     copyPackFixture(repoRoot, fixtureRoot);
     rewriteFixtureReleaseVersion(fixtureRoot, NEXT_RELEASE_TEST_VERSION);
     buildPublishRuntimeInRepo(fixtureRoot);
+    const legacyCompatResult = spawnSync(process.execPath, [
+        'scripts/package-legacy-entrypoint-compat.cjs',
+        'create'
+    ], {
+        cwd: fixtureRoot,
+        encoding: 'utf8',
+        timeout: 30_000,
+        windowsHide: true
+    });
+    if (legacyCompatResult.status !== 0) {
+        throw new Error(`legacy compatibility template generation failed:\n${legacyCompatResult.stderr || legacyCompatResult.stdout}`);
+    }
 
     const packResult = spawnNpm(['pack', '--ignore-scripts', '--pack-destination', fixtureRoot], fixtureRoot);
     if (packResult.status !== 0) {

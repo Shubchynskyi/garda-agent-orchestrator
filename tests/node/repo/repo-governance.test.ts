@@ -281,7 +281,7 @@ test('start-banner contract stays synced across canonical guidance files', () =>
         'garda-agent-orchestrator/template/docs/agent-rules/40-commands.md',
         'garda-agent-orchestrator/template/docs/agent-rules/90-skill-catalog.md',
         'garda-agent-orchestrator/template/docs/agent-rules/80-task-workflow.md',
-        'garda-agent-orchestrator/template/CLAUDE.md'
+        'garda-agent-orchestrator/template/entrypoints/canonical-rule-index.md'
     ] as const;
 
     for (const relativePath of trackedCanonicalFiles) {
@@ -343,7 +343,7 @@ test('start-banner contract stays synced across canonical guidance files', () =>
             );
         }
         if (
-            relativePath.endsWith('/template/CLAUDE.md')
+            relativePath.endsWith('/template/entrypoints/canonical-rule-index.md')
             || relativePath.endsWith('/docs/agent-rules/80-task-workflow.md')
             || relativePath.endsWith('/skills/orchestration/SKILL.md')
             || relativePath.endsWith('/skills/orchestration-depth1/SKILL.md')

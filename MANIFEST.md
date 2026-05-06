@@ -32,6 +32,8 @@ Managed in project root by `garda install` (or `node garda-agent-orchestrator/bi
 Unused entrypoints are not created by default. Extra redirect entrypoints appear only after the user explicitly confirms them during `agent-init`.
 
 Versioned bundle templates consumed during materialization:
+- template/AGENTS.md
+- template/entrypoints/canonical-rule-index.md
 - template/config/garda.config.json
 - template/config/optional-skill-selection-policy.json
 - template/config/workflow-config.json (optional; configures post-task full-suite validation behavior when enabled via user preference)

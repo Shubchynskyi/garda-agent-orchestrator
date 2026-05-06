@@ -175,15 +175,15 @@ async function runInteractiveSetup(repoRoot: string, workspaceRoot: string, answ
 
 function injectBundleUpdate(bundleRoot: string, updateMarker: string, nextVersion: string) {
     const versionPath = path.join(bundleRoot, 'VERSION');
-    const templateClaudePath = path.join(bundleRoot, 'template', 'CLAUDE.md');
-    const currentTemplate = fs.readFileSync(templateClaudePath, 'utf8');
+    const canonicalRuleIndexPath = path.join(bundleRoot, 'template', 'entrypoints', 'canonical-rule-index.md');
+    const currentTemplate = fs.readFileSync(canonicalRuleIndexPath, 'utf8');
     const updatedTemplate = currentTemplate.replace(
         MANAGED_END,
         `Update marker: ${updateMarker}\r\n${MANAGED_END}`
     );
 
     fs.writeFileSync(versionPath, `${nextVersion}\n`, 'utf8');
-    fs.writeFileSync(templateClaudePath, updatedTemplate, 'utf8');
+    fs.writeFileSync(canonicalRuleIndexPath, updatedTemplate, 'utf8');
 }
 
 describe('full local lifecycle', () => {

@@ -288,13 +288,13 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
         });
     });
 
-    describe('template root entrypoint (template/CLAUDE.md)', () => {
-        const content = readRepoFile('template/CLAUDE.md');
+    describe('neutral canonical rule-index template', () => {
+        const content = readRepoFile('template/entrypoints/canonical-rule-index.md');
 
         it('includes clarification that ad-hoc preference does not apply to mandatory gates', () => {
             assert.ok(
                 content.includes('restraint applies only to standalone ad-hoc commands'),
-                'template/CLAUDE.md must clarify that ad-hoc preference does not apply to mandatory gates'
+                'template/entrypoints/canonical-rule-index.md must clarify that ad-hoc preference does not apply to mandatory gates'
             );
         });
     });
