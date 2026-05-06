@@ -59,6 +59,9 @@ import {
     REVIEW_CONTRACTS
 } from './required-reviews-check';
 import {
+    getNoOpEvidence
+} from './no-op';
+import {
     getWorkspaceSnapshotCached,
     type WorkspaceSnapshot
 } from './workspace-snapshot-cache';
@@ -603,6 +606,15 @@ function hasZeroDiffNoReviewableScopeSuppression(
     return zeroDiffGuard?.zero_diff_detected === true
         && zeroDiffGuard.status === 'BASELINE_ONLY'
         && profileGuardrails?.zero_diff_no_reviewable_scope === true;
+}
+
+function preflightRequiresAuditedNoOp(preflight: Record<string, unknown> | null): boolean {
+    if (!preflight || !isPlainRecord(preflight.zero_diff_guard)) {
+        return false;
+    }
+    const zeroDiffGuard = preflight.zero_diff_guard;
+    return zeroDiffGuard.zero_diff_detected === true
+        && zeroDiffGuard.completion_requires_audited_no_op === true;
 }
 
 function resolveReviewPolicy(preflight: Record<string, unknown> | null): {
@@ -4843,6 +4855,27 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     buildCommand(
                         'Record delegated review output, then close reviewer',
                         `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path "${reviewOutputPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
+                    )
+                ]
+            });
+        }
+    }
+
+    if (preflightRequiresAuditedNoOp(preflight)) {
+        const noOpEvidence = getNoOpEvidence(repoRoot, taskId, '', preflightCommandPath);
+        if (noOpEvidence.evidence_status !== 'PASS') {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'record-no-op',
+                title: 'Record audited zero-diff no-op evidence.',
+                reason:
+                    'The current preflight is BASELINE_ONLY with no reviewable diff and requires audited no-op evidence before review or completion gates can pass. ' +
+                    `Record no-op evidence or implement changes and refresh preflight; current no-op evidence status: ${noOpEvidence.evidence_status}.`,
+                commands: [
+                    buildCommand(
+                        'Record audited no-op evidence',
+                        `${cliPrefix} gate record-no-op --task-id "${taskId}" --classification "AUDIT_ONLY" --reason "<why no code changed>" --preflight-path "${preflightCommandPath}" --repo-root "."`
                     )
                 ]
             });

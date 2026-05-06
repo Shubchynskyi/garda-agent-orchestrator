@@ -168,9 +168,12 @@ function buildPreflightGateHelpEntries(
             ], true)
         },
         'record-no-op': {
-            ...createSingleUsageEntry(
+            ...createGateHelpEntry(
                 'Record an audited no-op classification when the task intentionally produces no code changes.',
-                `${cliPrefix} gate record-no-op --task-id "${TASK_ID_PLACEHOLDER}" --classification "BASELINE_ONLY" --reason "<why no code changed>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                [
+                    `${cliPrefix} gate record-no-op --task-id "${TASK_ID_PLACEHOLDER}" --classification "AUDIT_ONLY" --reason "<why no code changed>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                    `${cliPrefix} gate record-no-op --task-id "${TASK_ID_PLACEHOLDER}" --classification "<NO_CHANGES_REQUIRED|ALREADY_DONE|AUDIT_ONLY>" --reason "<why no code changed>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`
+                ],
                 true
             )
         },

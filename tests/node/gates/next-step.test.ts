@@ -170,6 +170,28 @@ function fileSha256(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
+function writeNoOpEvidence(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    options: { preflightSha256?: string | null; evidenceTaskId?: string } = {}
+): void {
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-no-op.json`), {
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'record-no-op',
+        task_id: options.evidenceTaskId || taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        classification: 'AUDIT_ONLY',
+        reason: 'Current baseline is intentionally validated without an additional workspace diff.',
+        actor: 'test',
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_sha256: options.preflightSha256 === undefined
+            ? fileSha256(preflightPath)
+            : options.preflightSha256
+    });
+}
+
 function appendEvent(
     repoRoot: string,
     taskId: string,
@@ -3800,7 +3822,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('gate required-reviews-check'));
     });
 
-    it('explains zero-diff no-review closeout before required reviews check', () => {
+    it('routes zero-diff no-review closeout to audited no-op before required reviews check', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
@@ -3821,12 +3843,133 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'required-reviews-check');
-        assert.equal(result.title, 'Validate zero-diff no-review closeout.');
+        assert.equal(result.next_gate, 'record-no-op');
+        assert.equal(result.title, 'Record audited zero-diff no-op evidence.');
         assert.ok(result.reason.includes('no reviewable diff'));
         assert.ok(result.reason.includes('audited no-op evidence'));
         assert.ok(!result.reason.includes('All required review artifacts appear present'));
+        assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(result.commands[0].command.includes('--classification "AUDIT_ONLY"'));
+        assert.ok(result.commands[0].command.includes('--preflight-path'));
+    });
+
+    it('routes zero-diff with completed required reviews to audited no-op before review gate retry', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-no-op');
+        assert.ok(result.reason.includes('EVIDENCE_FILE_MISSING'));
+        assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(!result.commands[0].command.includes('gate required-reviews-check'));
+    });
+
+    it('continues to required reviews check after current zero-diff no-op evidence exists', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        preflight.profile_guardrails = {
+            zero_diff_no_reviewable_scope: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeNoOpEvidence(repoRoot, TASK_ID, preflightPath);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'required-reviews-check');
+        assert.equal(result.title, 'Validate zero-diff no-review closeout.');
         assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
+    });
+
+    it('routes stale zero-diff no-op evidence back to record-no-op', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        preflight.profile_guardrails = {
+            zero_diff_no_reviewable_scope: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeNoOpEvidence(repoRoot, TASK_ID, preflightPath, {
+            preflightSha256: '0'.repeat(64)
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-no-op');
+        assert.ok(result.reason.includes('EVIDENCE_PREFLIGHT_HASH_MISMATCH'));
+        assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(!result.commands[0].command.includes('gate required-reviews-check'));
+    });
+
+    it('routes foreign zero-diff no-op evidence back to record-no-op', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        preflight.profile_guardrails = {
+            zero_diff_no_reviewable_scope: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeNoOpEvidence(repoRoot, TASK_ID, preflightPath, {
+            evidenceTaskId: 'T-FOREIGN'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-no-op');
+        assert.ok(result.reason.includes('EVIDENCE_TASK_MISMATCH'));
+        assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(!result.commands[0].command.includes('gate required-reviews-check'));
     });
 
     it('routes back to preflight refresh when workspace scope drifts after compile', () => {

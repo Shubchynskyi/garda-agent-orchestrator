@@ -856,6 +856,15 @@ describe('cli/commands/gates', () => {
         assert.ok(combinedOutput.includes('task-audit-summary'));
     });
 
+    it('record-no-op help uses accepted classifications', async () => {
+        const result = await runCliWithCapturedOutput(['gate', 'record-no-op', '--help'], { cwd: getSourceCheckoutNestedCwd() });
+        assert.equal(result.exitCode, 0);
+        const combinedOutput = result.logs.join('\n');
+        assert.ok(combinedOutput.includes('--classification "AUDIT_ONLY"'));
+        assert.ok(combinedOutput.includes('NO_CHANGES_REQUIRED|ALREADY_DONE|AUDIT_ONLY'));
+        assert.ok(!combinedOutput.includes('--classification "BASELINE_ONLY"'));
+    });
+
     it('runs compile gate and writes evidence', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901';
