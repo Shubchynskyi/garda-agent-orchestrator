@@ -672,6 +672,132 @@ function writeReviewEvidence(
     });
 }
 
+function writeStrictIndependentCodeReviewEvidence(repoRoot: string, taskId: string): void {
+    const reviewType = 'code';
+    const reviewerIdentity = 'agent:code-reviewer';
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflightSha256 = fileSha256(preflightPath);
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
+    const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const reviewContextScope = buildReviewContextScopeFixture(repoRoot, taskId, reviewType);
+    const reviewTreeState = reviewContextScope.tree_state as Record<string, unknown> | undefined;
+    const reviewTreeStateSha256 = String(reviewTreeState?.tree_state_sha256 || '').trim();
+    const reviewContext = {
+        task_id: taskId,
+        review_type: reviewType,
+        preflight_path: preflightPath,
+        preflight_sha256: preflightSha256,
+        ...reviewContextScope,
+        reviewer_routing: {
+            actual_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            delegation_required: true,
+            expected_execution_mode: 'delegated_subagent',
+            fallback_allowed: false,
+            fallback_reason_required: false
+        }
+    };
+    writeJson(reviewContextPath, reviewContext);
+    const reviewContextSha256 = fileSha256(reviewContextPath);
+    const artifactText = '# code review\n\n## Verdict\nREVIEW PASSED\n';
+    fs.writeFileSync(artifactPath, artifactText, 'utf8');
+    const reviewArtifactSha256 = fileSha256(artifactPath);
+
+    appendEvent(repoRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', {
+        review_type: reviewType,
+        output_path: reviewContextPath
+    });
+    const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: reviewerIdentity
+    });
+    const invocationIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: reviewerIdentity,
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: reviewContextSha256,
+        review_tree_state_sha256: reviewTreeStateSha256,
+        routing_event_sha256: routeIntegrity.event_sha256
+    });
+    const reviewerProvenance = {
+        schema_version: 1,
+        attestation_type: 'reviewer_invocation_attestation',
+        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        task_sequence: invocationIntegrity.task_sequence,
+        prev_event_sha256: invocationIntegrity.prev_event_sha256,
+        event_sha256: invocationIntegrity.event_sha256,
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: reviewContextSha256,
+        review_tree_state_sha256: reviewTreeStateSha256,
+        routing_event_sha256: routeIntegrity.event_sha256
+    };
+    const receipt = {
+        task_id: taskId,
+        review_type: reviewType,
+        trust_level: 'INDEPENDENT_AUDITED',
+        preflight_sha256: preflightSha256,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: reviewerIdentity,
+        review_artifact_sha256: reviewArtifactSha256,
+        review_context_sha256: reviewContextSha256,
+        review_tree_state_sha256: reviewTreeStateSha256,
+        reviewer_provenance: reviewerProvenance
+    };
+    writeJson(receiptPath, receipt);
+    const receiptSha256 = fileSha256(receiptPath);
+    const receiptSnapshotPath = artifactPath.replace(/\.md$/u, `-receipt-${receiptSha256}.json`);
+    const artifactSnapshotPath = artifactPath.replace(/\.md$/u, `-artifact-${reviewArtifactSha256}.md`);
+    writeJson(receiptSnapshotPath, receipt);
+    fs.writeFileSync(artifactSnapshotPath, artifactText, 'utf8');
+    appendEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'PASS', {
+        ...receipt,
+        receipt_path: receiptPath,
+        receipt_sha256: receiptSha256,
+        receipt_snapshot_path: receiptSnapshotPath,
+        receipt_snapshot_sha256: receiptSha256,
+        review_artifact_path: artifactPath,
+        review_artifact_sha256: reviewArtifactSha256,
+        review_artifact_snapshot_path: artifactSnapshotPath,
+        review_artifact_snapshot_sha256: reviewArtifactSha256,
+        review_context_path: reviewContextPath,
+        review_context_sha256: reviewContextSha256
+    });
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-review-gate.json`), {
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_hash_sha256: preflightSha256,
+        required_reviews: { code: true },
+        verdicts: { code: 'REVIEW PASSED' },
+        review_checks: {
+            code: {
+                required: true,
+                skipped_by_override: false,
+                receipt_valid: true,
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: reviewerIdentity,
+                reviewer_fallback_reason: null,
+                trust_level: 'INDEPENDENT_AUDITED',
+                verdict: 'REVIEW PASSED',
+                reviewer_routing_policy: {
+                    delegation_required: true,
+                    expected_execution_mode: 'delegated_subagent',
+                    fallback_allowed: false,
+                    fallback_reason_required: false
+                }
+            }
+        }
+    });
+    appendEvent(repoRoot, taskId, 'REVIEW_GATE_PASSED');
+}
+
 function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: string, reviewerIdentity: string): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
@@ -785,6 +911,15 @@ function seedFullSuiteValidation(
 function materializeFinalCloseout(repoRoot: string, taskId: string): void {
     const summary = buildTaskAuditSummary({ taskId, repoRoot });
     synchronizeFinalCloseoutArtifacts(summary);
+}
+
+function seedCompletedTaskWithIndependentCodeReview(repoRoot: string, taskId: string): void {
+    seedStartedTask(repoRoot, taskId);
+    writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true });
+    seedCompilePass(repoRoot, taskId);
+    writeStrictIndependentCodeReviewEvidence(repoRoot, taskId);
+    seedDocImpactPass(repoRoot, taskId);
+    seedCompletionPass(repoRoot, taskId);
 }
 
 function seedSourceCheckoutRuntime(repoRoot: string, stale: boolean): void {
@@ -4761,7 +4896,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
 
-        assert.equal(result.status, 'DONE');
+        assert.equal(result.status, 'DONE', result.reason);
         assert.equal(result.next_gate, null);
         assert.deepEqual(result.missing_artifacts, []);
         assert.equal(result.commands.length, 0);
@@ -4779,6 +4914,26 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('  none'));
     });
 
+    it('surfaces final report readiness after independent review attestation and canonical materialization', () => {
+        const repoRoot = makeTempRepo();
+        seedCompletedTaskWithIndependentCodeReview(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'DONE', result.reason);
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.equal(result.final_report?.required_order[0], 'review integrity attestation');
+        assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
+        assert.match(result.reason, /canonical final closeout is materialized/i);
+        assert.ok(text.includes('Review trust: INDEPENDENT_AUDITED via DELEGATED_SUBAGENT; independent reviewer launch attested.'));
+        assert.ok(text.includes('1. review integrity attestation'));
+        assert.ok(text.includes('Commands:'));
+        assert.ok(text.includes('  none'));
+    });
+
     it('routes back to task-audit-summary when final closeout artifacts are tampered or non-canonical', () => {
         for (const tamper of [
             'missing-json-attestation',
@@ -4790,7 +4945,12 @@ describe('gates/next-step', () => {
             'extra-markdown-trailing-blank'
         ]) {
             const repoRoot = makeTempRepo();
-            seedStartedTask(repoRoot, TASK_ID); writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }); seedCompilePass(repoRoot, TASK_ID); seedReviewGatePass(repoRoot, TASK_ID); seedDocImpactPass(repoRoot, TASK_ID); seedCompletionPass(repoRoot, TASK_ID);
+            seedStartedTask(repoRoot, TASK_ID);
+            writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+            seedCompilePass(repoRoot, TASK_ID);
+            seedReviewGatePass(repoRoot, TASK_ID);
+            seedDocImpactPass(repoRoot, TASK_ID);
+            seedCompletionPass(repoRoot, TASK_ID);
             materializeFinalCloseout(repoRoot, TASK_ID);
             const closeoutRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
             const closeoutPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.json`);
@@ -4814,7 +4974,9 @@ describe('gates/next-step', () => {
 
             const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-            assert.equal(result.status, 'READY', tamper); assert.equal(result.next_gate, 'task-audit-summary', tamper); assert.equal(result.final_report, null, tamper);
+            assert.equal(result.status, 'READY', tamper);
+            assert.equal(result.next_gate, 'task-audit-summary', tamper);
+            assert.equal(result.final_report, null, tamper);
             assert.ok(result.commands[0].command.includes('gate task-audit-summary'), tamper);
             assert.match(result.reason, /final closeout artifacts are not materialized yet/i, tamper);
         }
