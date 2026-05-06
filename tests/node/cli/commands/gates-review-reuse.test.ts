@@ -23,6 +23,7 @@ import {
 } from '../../../../src/cli/main';
 import { validateReviewSkillEvidence } from '../../../../src/gates/completion';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
+import { buildScopedDiff } from '../../../../src/gates/build-scoped-diff';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
@@ -207,6 +208,45 @@ function writeReviewCapabilitiesConfig(
         ...overrides
     }, null, 2) + '\n', 'utf8');
     return configPath;
+}
+
+function writeScopedDiffPathsConfig(repoRoot: string): string {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+        triggers: {
+            db: ['(^|/)(db|database|migrations?|schema)(/|$)', '\\.sql$'],
+            security: ['(^|/)(auth|security|token|secret)(/|\\.|$)'],
+            refactor: ['(^|/)refactor-never-match(/|$)'],
+            api: ['(^|/)(controllers?|routes?)(/|\\.|$)'],
+            dependency: ['(^|/)package\\.json$'],
+            infra: ['(^|/)\\.github/workflows/'],
+            test: ['(^|/)(__tests__|tests?)/', '\\.(spec|test)\\.(ts|tsx|js|jsx)$'],
+            performance: ['(^|/)(performance|perf|benchmark)/']
+        },
+        runtime_roots: ['src/'],
+        code_like_regexes: ['\\.(ts|tsx|js|jsx)$'],
+        ordinary_doc_paths: ['CHANGELOG.md']
+    }, null, 2) + '\n', 'utf8');
+    return configPath;
+}
+
+function buildScopedDiffFixture(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    preflightPath: string,
+    pathsConfigPath: string
+): void {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    buildScopedDiff({
+        reviewType,
+        preflightPath,
+        pathsConfigPath,
+        outputPath: path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`),
+        metadataPath: path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`),
+        repoRoot
+    });
 }
 
 function getReviewsRoot(repoRoot: string): string {
@@ -3365,12 +3405,13 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('reuses non-test review evidence when only tests change after domain reviews', async () => {
+    it('reuses non-test review evidence when only tests change after domain reviews with full-diff fallback contexts', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-domain-reuse-after-test-delta';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Qwen');
         const reviewsRoot = getReviewsRoot(repoRoot);
+        const pathsConfigPath = writeScopedDiffPathsConfig(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -3389,7 +3430,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
                 code: true,
                 db: false,
                 security: true,
-                refactor: false,
+                refactor: true,
                 api: false,
                 test: true,
                 performance: false,
@@ -3399,9 +3440,13 @@ describe('cli/commands/gates – review-reuse suites', () => {
         }, `${taskId}-prior-preflight.json`);
         const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         const securityReviewContextPath = path.join(reviewsRoot, `${taskId}-security-review-context.json`);
+        const refactorReviewContextPath = path.join(reviewsRoot, `${taskId}-refactor-review-context.json`);
         const testReviewContextPath = path.join(reviewsRoot, `${taskId}-test-review-context.json`);
+        buildScopedDiffFixture(repoRoot, taskId, 'security', priorPreflightPath, pathsConfigPath);
+        buildScopedDiffFixture(repoRoot, taskId, 'refactor', priorPreflightPath, pathsConfigPath);
         seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, codeReviewContextPath, 'agent:code-reviewer');
         seedReusableReviewEvidence(repoRoot, taskId, 'security', 'SECURITY REVIEW PASSED', priorPreflightPath, securityReviewContextPath, 'agent:security-reviewer');
+        seedReusableReviewEvidence(repoRoot, taskId, 'refactor', 'REFACTOR REVIEW PASSED', priorPreflightPath, refactorReviewContextPath, 'agent:refactor-reviewer');
         seedReusableReviewEvidence(repoRoot, taskId, 'test', 'TEST REVIEW PASSED', priorPreflightPath, testReviewContextPath, 'agent:test-reviewer');
 
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works after the test-only delta", () => {});\n', 'utf8');
@@ -3413,7 +3458,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
                 code: true,
                 db: false,
                 security: true,
-                refactor: false,
+                refactor: true,
                 api: false,
                 test: true,
                 performance: false,
@@ -3432,6 +3477,7 @@ describe('cli/commands/gates – review-reuse suites', () => {
         });
         assert.equal(codeBuild.reusedReviewEvidence, true);
 
+        buildScopedDiffFixture(repoRoot, taskId, 'security', preflightPath, pathsConfigPath);
         const securityBuild = await runBuildReviewContextCommand({
             repoRoot,
             reviewType: 'security',
@@ -3441,6 +3487,19 @@ describe('cli/commands/gates – review-reuse suites', () => {
         });
         assert.equal(securityBuild.reusedReviewEvidence, true);
         assert.ok(securityBuild.outputLines.includes('ReviewReuseDecision: accepted'));
+        assert.ok(securityBuild.outputLines.some((line) => line.includes('only test files changed after accepted code scope')));
+
+        buildScopedDiffFixture(repoRoot, taskId, 'refactor', preflightPath, pathsConfigPath);
+        const refactorBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'refactor',
+            depth: 2,
+            preflightPath,
+            outputPath: refactorReviewContextPath
+        });
+        assert.equal(refactorBuild.reusedReviewEvidence, true);
+        assert.ok(refactorBuild.outputLines.includes('ReviewReuseDecision: accepted'));
+        assert.ok(refactorBuild.outputLines.some((line) => line.includes('only test files changed after accepted code scope')));
 
         const testBuild = await runBuildReviewContextCommand({
             repoRoot,
@@ -3472,10 +3531,99 @@ describe('cli/commands/gates – review-reuse suites', () => {
         );
         assert.equal(
             currentRecordedEvents.some((event) => (
+                String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'refactor'
+                && (event.details as Record<string, unknown> | undefined)?.reused_existing_review === true
+            )),
+            true
+        );
+        assert.equal(
+            currentRecordedEvents.some((event) => (
                 String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
             )),
             false
         );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('does not reuse non-test review evidence for sensitive test-path deltas', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-no-domain-reuse-sensitive-test-delta';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const pathsConfigPath = writeScopedDiffPathsConfig(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 5;\nconst b = 7;\nconsole.log(a + b);\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Do not reuse domain reviews for sensitive test-path deltas'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', 'tests/app.test.ts'],
+            metrics: { changed_lines_total: 4 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: true,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        }, `${taskId}-prior-preflight.json`);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const refactorReviewContextPath = path.join(reviewsRoot, `${taskId}-refactor-review-context.json`);
+        buildScopedDiffFixture(repoRoot, taskId, 'refactor', priorPreflightPath, pathsConfigPath);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, codeReviewContextPath, 'agent:code-reviewer');
+        seedReusableReviewEvidence(repoRoot, taskId, 'refactor', 'REFACTOR REVIEW PASSED', priorPreflightPath, refactorReviewContextPath, 'agent:refactor-reviewer');
+
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'config'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'config', 'app.test.ts'), 'it("covers config behavior", () => {});\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'code',
+            changed_files: ['src/app.ts', 'tests/config/app.test.ts'],
+            metrics: { changed_lines_total: 4 },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: true,
+                api: false,
+                test: true,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: codeReviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+
+        buildScopedDiffFixture(repoRoot, taskId, 'refactor', preflightPath, pathsConfigPath);
+        const refactorBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'refactor',
+            depth: 2,
+            preflightPath,
+            outputPath: refactorReviewContextPath
+        });
+        assert.equal(refactorBuild.reusedReviewEvidence, false);
+        assert.ok(refactorBuild.outputLines.includes('ReviewReuseDecision: rejected'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

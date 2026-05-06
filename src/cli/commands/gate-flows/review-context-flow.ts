@@ -40,6 +40,10 @@ import {
     isNonTestReviewScope
 } from '../../../gates/review-reuse';
 import {
+    getClassificationConfig
+} from '../../../gates/classify-change';
+import { matchAnyRegex } from '../../../gate-runtime/text-utils';
+import {
     assertReviewTreeStateFresh
 } from '../../../gates/review-tree-state';
 import {
@@ -94,6 +98,16 @@ interface CompileEvidenceSummary {
     preflightPath: string | null;
     preflightHashSha256: string | null;
 }
+
+const TEST_DELTA_DOMAIN_REUSE_REVIEW_TYPES = new Set([
+    'db',
+    'security',
+    'refactor',
+    'api',
+    'performance',
+    'infra',
+    'dependency'
+]);
 
 export interface TimelineEventsSummaryResult {
     events: ReviewDependencyTimelineEvent[];
@@ -278,6 +292,116 @@ function readJsonRecord(pathToRead: string): Record<string, unknown> | null {
     } catch {
         return null;
     }
+}
+
+function getScopedDiffMetadata(reviewContext: Record<string, unknown>): Record<string, unknown> | null {
+    if (!isRecord(reviewContext.scoped_diff) || !isRecord(reviewContext.scoped_diff.metadata)) {
+        return null;
+    }
+    return reviewContext.scoped_diff.metadata;
+}
+
+function hasFullDiffFallbackScopedDiff(reviewContext: Record<string, unknown>): boolean {
+    const metadata = getScopedDiffMetadata(reviewContext);
+    return metadata?.fallback_to_full_diff === true;
+}
+
+function getCandidateTestDeltaFiles(
+    codeScopeFingerprint: ReturnType<typeof computeReviewReuseCodeScopeFingerprint>
+): string[] {
+    const nonTestOrDocFiles = new Set([
+        ...codeScopeFingerprint.non_test_changed_files,
+        ...codeScopeFingerprint.docs_only_changed_files
+    ]);
+    return codeScopeFingerprint.all_changed_files
+        .filter((filePath) => !nonTestOrDocFiles.has(filePath))
+        .sort();
+}
+
+function findSensitiveTestDeltaFiles(repoRoot: string, testDeltaFiles: readonly string[]): string[] {
+    if (testDeltaFiles.length === 0) {
+        return [];
+    }
+    const config = getClassificationConfig(repoRoot);
+    const sensitiveRegexes = [
+        ...config.db_trigger_regexes,
+        ...config.security_trigger_regexes,
+        ...config.api_trigger_regexes,
+        ...config.dependency_trigger_regexes,
+        ...config.infra_trigger_regexes,
+        ...config.performance_trigger_regexes,
+        ...config.fast_path_sensitive_regexes,
+        '(Config|Settings|Options|Schema|Contract|Dto|DTO)[^/]*\\.(java|kt|ts|tsx|js|jsx|py|go|cs|rb|php|json|ya?ml|toml|xml)$',
+        '(^|/)(config|configs?|schemas?|contracts?)(/|$)',
+        '(^|/)[^/]*(config|settings|paths)[^/]*\\.(json|ya?ml|toml|xml)$'
+    ];
+    return testDeltaFiles.filter((filePath) => (
+        gateHelpers.testPathPrefix(filePath, config.protected_control_plane_roots)
+        || matchAnyRegex(filePath, sensitiveRegexes, {
+            skipInvalidRegex: true,
+            caseInsensitive: true
+        })
+    ));
+}
+
+function evaluateTestOnlyDeltaReuseEligibility(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    preflightPath: string;
+    preflightPayload: Record<string, unknown>;
+    currentReviewContext: Record<string, unknown>;
+    codeScopeFingerprint: ReturnType<typeof computeReviewReuseCodeScopeFingerprint>;
+    timelineEventsSummary?: TimelineEventsSummaryResult | null;
+}): { allowed: boolean; reason: string } {
+    const reviewType = normalizeLowerText(options.reviewType);
+    if (!TEST_DELTA_DOMAIN_REUSE_REVIEW_TYPES.has(reviewType)) {
+        return { allowed: false, reason: 'review type is not eligible for test-only delta domain reuse' };
+    }
+    if (!hasFullDiffFallbackScopedDiff(options.currentReviewContext)) {
+        return { allowed: false, reason: 'current review context is not a full-diff fallback scoped context' };
+    }
+    if (options.codeScopeFingerprint.non_test_changed_files.length === 0) {
+        return { allowed: false, reason: 'current preflight has no non-test code scope to compare with prior review evidence' };
+    }
+    const testDeltaFiles = getCandidateTestDeltaFiles(options.codeScopeFingerprint);
+    if (testDeltaFiles.length === 0) {
+        return { allowed: false, reason: 'current preflight has no test-only delta files' };
+    }
+    const sensitiveTestDeltaFiles = findSensitiveTestDeltaFiles(options.repoRoot, testDeltaFiles);
+    if (sensitiveTestDeltaFiles.length > 0) {
+        return {
+            allowed: false,
+            reason: `test-only delta includes sensitive path(s): ${sensitiveTestDeltaFiles.slice(0, 8).join(', ')}`
+        };
+    }
+    const reviewsRoot = path.dirname(options.preflightPath);
+    const codeReviewContextPath = path.join(reviewsRoot, `${options.taskId}-code-review-context.json`);
+    const currentCodeReviewEvidence = tryAcceptCurrentPassReviewEvidence({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: 'code',
+        preflightPath: options.preflightPath,
+        preflightPayload: options.preflightPayload,
+        reviewContextPath: codeReviewContextPath,
+        timelineEventsSummary: options.timelineEventsSummary
+    });
+    if (!currentCodeReviewEvidence.accepted) {
+        return {
+            allowed: false,
+            reason: `current-cycle code review reuse evidence is not accepted: ${currentCodeReviewEvidence.reason}`
+        };
+    }
+    if (!currentCodeReviewEvidence.reusedExistingReview) {
+        return {
+            allowed: false,
+            reason: 'current-cycle code review evidence is fresh rather than reused'
+        };
+    }
+    return {
+        allowed: true,
+        reason: `only test files changed after accepted code scope; current code reuse receipt=${currentCodeReviewEvidence.receiptPath || 'unknown'}; test files=${testDeltaFiles.join(', ')}`
+    };
 }
 
 function findLatestCurrentCycleReviewRecordedEvent(options: {
@@ -793,6 +917,16 @@ async function tryReuseReviewEvidence(options: {
     const currentReviewContextSha256 = String(gateHelpers.fileSha256(options.reviewContextPath) || '').trim().toLowerCase() || null;
     const currentReviewTreeStateSha256 = getReviewTreeStateSha256FromContext(currentReviewContext);
     const currentContextReuseSha256 = String(computeReviewContextReuseHash(currentReviewContext) || '').trim().toLowerCase() || null;
+    const testOnlyDeltaReuseEligibility = evaluateTestOnlyDeltaReuseEligibility({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        preflightPath: options.preflightPath,
+        preflightPayload: options.preflightPayload,
+        currentReviewContext,
+        codeScopeFingerprint,
+        timelineEventsSummary: options.timelineEventsSummary
+    });
 
     const candidateRejections: string[] = [];
     for (const candidate of candidates) {
@@ -811,7 +945,8 @@ async function tryReuseReviewEvidence(options: {
             hasCurrentReviewScope,
             currentCodeScopeSha256,
             currentReviewContextSha256,
-            currentContextReuseSha256
+            currentContextReuseSha256,
+            allowTestOnlyDeltaContextMismatch: testOnlyDeltaReuseEligibility.allowed
         });
         if (!validation.accepted) {
             candidateRejections.push(`${candidate.sourceDescription}: ${validation.reason}`);
@@ -863,7 +998,9 @@ async function tryReuseReviewEvidence(options: {
             reviewerExecutionMode: evidence.reviewerExecutionMode,
             reviewerIdentity: evidence.reviewerIdentity,
             reason: (
-                evidence.contextHashMatches
+                evidence.testOnlyDeltaContextMismatch
+                    ? `accepted: non-test review reused because ${testOnlyDeltaReuseEligibility.reason}; full-diff fallback context changed, but non-test code scope matches prior independent PASS review`
+                : evidence.contextHashMatches
                     ? 'accepted: exact review context hash and scope evidence match prior independent PASS review'
                     : 'accepted: review context reuse hash and scope evidence match prior independent PASS review'
             ) + `; matched ${candidate.sourceDescription} from ${gateHelpers.normalizePath(evidence.verifiedReceiptPath || candidate.sourceReceiptPath)}` + (

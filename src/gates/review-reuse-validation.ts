@@ -46,6 +46,7 @@ export interface AcceptedReviewReuseCandidateEvidence {
     artifactText: string;
     contextHashMatches: boolean;
     contextReuseHashMatches: boolean;
+    testOnlyDeltaContextMismatch: boolean;
 }
 
 export function normalizeReceiptSha256(value: unknown): string | null {
@@ -277,6 +278,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
     currentCodeScopeSha256: string | null;
     currentReviewContextSha256: string | null;
     currentContextReuseSha256: string | null;
+    allowTestOnlyDeltaContextMismatch?: boolean;
 }): { accepted: true; evidence: AcceptedReviewReuseCandidateEvidence } | { accepted: false; reason: string } {
     const sourceEventResolution = options.candidate.sourceKind === 'latest_receipt'
         ? findHistoricalReviewRecordedEventForLatestReceiptCandidate({
@@ -506,7 +508,46 @@ export function validateHistoricalReviewReuseCandidate(options: {
     const contextHashMatches = !!expectedContextSha256 && expectedContextSha256 === options.currentReviewContextSha256;
     const contextReuseHashMatches = !!options.currentContextReuseSha256
         && acceptableContextReuseHashes.includes(options.currentContextReuseSha256);
+    const currentReviewScopeSha256 = String(options.reviewScopeFingerprint.review_scope_sha256 || '').trim().toLowerCase() || null;
+    const codeScopeStillMatches = !!expectedCodeScopeSha256
+        && !!options.currentCodeScopeSha256
+        && expectedCodeScopeSha256 === options.currentCodeScopeSha256;
+    const reviewScopeChangedAfterPriorReview = !!expectedReviewScopeSha256
+        && !!currentReviewScopeSha256
+        && expectedReviewScopeSha256 !== currentReviewScopeSha256;
+    const testOnlyDeltaContextMismatch = !contextHashMatches
+        && !contextReuseHashMatches
+        && options.allowTestOnlyDeltaContextMismatch === true
+        && options.nonTestReviewScope
+        && options.hasCurrentCodeScope
+        && codeScopeStillMatches
+        && reviewScopeChangedAfterPriorReview;
     if (!contextHashMatches && !contextReuseHashMatches) {
+        if (testOnlyDeltaContextMismatch) {
+            return {
+                accepted: true,
+                evidence: {
+                    candidate: options.candidate,
+                    verifiedReceiptPath: verifiedReceipt.receiptPath,
+                    receipt,
+                    reusedFromReceiptPath,
+                    reusedFromReceiptSha256,
+                    reviewerExecutionMode,
+                    reviewerIdentity,
+                    historicalReviewerProvenance,
+                    expectedContextSha256,
+                    expectedContextReuseSha256,
+                    expectedReviewTreeStateSha256,
+                    expectedReviewScopeSha256,
+                    expectedCodeScopeSha256,
+                    historicalReviewArtifactSha256,
+                    artifactText,
+                    contextHashMatches,
+                    contextReuseHashMatches,
+                    testOnlyDeltaContextMismatch
+                }
+            };
+        }
         return {
             accepted: false,
             reason:
@@ -534,7 +575,8 @@ export function validateHistoricalReviewReuseCandidate(options: {
             historicalReviewArtifactSha256,
             artifactText,
             contextHashMatches,
-            contextReuseHashMatches
+            contextReuseHashMatches,
+            testOnlyDeltaContextMismatch
         }
     };
 }
