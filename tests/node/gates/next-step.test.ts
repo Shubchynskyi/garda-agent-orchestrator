@@ -1423,7 +1423,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'split-required-latch');
-        assert.match(result.reason, /could not update TASK\.md/i);
+        assert.match(result.reason, /TASK\.md status sync failed/i);
         const latch = JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-split-required.json`), 'utf8')) as Record<string, unknown>;
         assert.deepEqual(latch.status_sync, {
             outcome: 'task_not_found',
@@ -1489,7 +1489,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'split-required-latch');
-        assert.match(result.reason, /could not update TASK\.md/i);
+        assert.match(result.reason, /TASK\.md status sync failed/i);
         assert.match(result.reason, /Review cycle guard: BLOCK_FOR_OPERATOR_DECISION/i);
         assert.equal(result.review_cycle_block?.auto_split_enabled, true);
         const latch = JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-split-required.json`), 'utf8')) as Record<string, unknown>;
