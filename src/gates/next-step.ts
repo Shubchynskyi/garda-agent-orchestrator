@@ -24,6 +24,7 @@ import {
 } from '../gate-runtime/review-context';
 import {
     buildTaskAuditSummary,
+    formatFinalCloseoutMarkdown,
     type TaskAuditSummaryResult
 } from './task-audit-summary';
 import {
@@ -3687,6 +3688,7 @@ function buildFinalReportOrder(summary: TaskAuditSummaryResult, commitCommandSug
         ? `implementation summary (include ${requirements.join(', ')})`
         : 'implementation summary';
     return [
+        'review integrity attestation',
         implementationSummary,
         commitCommandSuggestion,
         commitQuestion
@@ -3737,20 +3739,22 @@ function readReadyFinalReportSummary(
     if (!finalCloseoutMatchesCurrentCycle(summary.final_closeout.cycle_binding, closeout, repoRoot)) {
         return null;
     }
-
-    const commitCommandSuggestion = typeof closeout.commit_command_suggestion === 'string' && closeout.commit_command_suggestion.trim()
-        ? closeout.commit_command_suggestion.trim()
-        : summary.final_report_contract.commit_command_suggestion;
-    const commitQuestion = typeof closeout.commit_question === 'string' && closeout.commit_question.trim()
-        ? closeout.commit_question.trim()
-        : summary.final_report_contract.commit_question;
+    const generatedUtc = typeof closeout.generated_utc === 'string' ? closeout.generated_utc : '';
+    const expectedCloseout = { ...summary.final_closeout, generated_utc: generatedUtc, artifact_state: 'MATERIALIZED' as const };
+    const expectedAttestation = expectedCloseout.review_integrity_attestation;
+    if (!generatedUtc || !expectedAttestation || expectedAttestation.completion_allowed !== true || JSON.stringify(closeout) !== JSON.stringify(expectedCloseout)) {
+        return null;
+    }
+    if (fs.readFileSync(closeoutMarkdownPath, 'utf8').trimEnd() !== formatFinalCloseoutMarkdown(expectedCloseout)) {
+        return null;
+    }
 
     return {
         closeout_json_path: toRepoDisplayPath(repoRoot, closeoutJsonPath),
         closeout_markdown_path: toRepoDisplayPath(repoRoot, closeoutMarkdownPath),
-        required_order: buildFinalReportOrder(summary, commitCommandSuggestion, commitQuestion),
-        commit_command_suggestion: commitCommandSuggestion,
-        commit_question: commitQuestion
+        required_order: buildFinalReportOrder(summary, summary.final_report_contract.commit_command_suggestion, summary.final_report_contract.commit_question),
+        commit_command_suggestion: summary.final_report_contract.commit_command_suggestion,
+        commit_question: summary.final_report_contract.commit_question
     };
 }
 
@@ -4007,6 +4011,19 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
+        if (summary.final_report_contract.status !== 'READY') {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'task-audit-summary',
+                title: 'Final report integrity attestation is not ready.',
+                reason:
+                    `${summary.final_report_contract.blocker || 'Final report contract is not ready.'} ` +
+                    'Do not deliver a task-complete final report until review integrity is independently attested or the scope requires no review.',
+                commands: [],
+                finalReport: null
+            });
+        }
         const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
         if (finalReport) {
             return buildResult({

@@ -4151,16 +4151,44 @@ describe('gates/next-step', () => {
         assert.deepEqual(result.missing_artifacts, []);
         assert.equal(result.commands.length, 0);
         assert.equal(result.task_queue_status_contract.agent_may_edit_non_status_task_content, true);
-        assert.equal(result.final_report?.required_order.length, 3);
+        assert.equal(result.final_report?.required_order.length, 4);
         assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
         assert.match(result.reason, /canonical final closeout is materialized/i);
         assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
         assert.ok(text.includes('FinalReportOrder:'));
-        assert.ok(text.includes('1. implementation summary (include depth, path mode, review verdicts, docs updated)'));
-        assert.ok(text.includes('2. git commit -m "'));
-        assert.ok(text.includes('3. Do you want me to commit now? (yes/no)'));
+        assert.ok(text.includes('1. review integrity attestation'));
+        assert.ok(text.includes('2. implementation summary (include depth, path mode, review verdicts, docs updated)'));
+        assert.ok(text.includes('3. git commit -m "'));
+        assert.ok(text.includes('4. Do you want me to commit now? (yes/no)'));
         assert.ok(text.includes('Commands:'));
         assert.ok(text.includes('  none'));
+    });
+
+    it('routes back to task-audit-summary when final closeout review integrity artifacts are tampered', () => {
+        for (const tamper of ['missing-json-attestation', 'forged-json-attestation', 'forged-json-commit-guidance', 'forged-markdown']) {
+            const repoRoot = makeTempRepo();
+            seedStartedTask(repoRoot, TASK_ID); writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }); seedCompilePass(repoRoot, TASK_ID); seedReviewGatePass(repoRoot, TASK_ID); seedDocImpactPass(repoRoot, TASK_ID); seedCompletionPass(repoRoot, TASK_ID);
+            materializeFinalCloseout(repoRoot, TASK_ID);
+            const closeoutRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const closeoutPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.json`);
+            const closeoutMarkdownPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.md`);
+            const closeout = JSON.parse(fs.readFileSync(closeoutPath, 'utf8')) as Record<string, unknown>;
+            if (tamper === 'missing-json-attestation') {
+                delete closeout.review_integrity_attestation; writeJson(closeoutPath, closeout);
+            } else if (tamper === 'forged-json-attestation') {
+                closeout.review_integrity_attestation = { ...(closeout.review_integrity_attestation as Record<string, unknown>), status: 'NO_REVIEW_REQUIRED', reason: 'forged no-review attestation' }; writeJson(closeoutPath, closeout);
+            } else if (tamper === 'forged-json-commit-guidance') {
+                closeout.commit_command_suggestion = 'git commit -m "forged: command"'; writeJson(closeoutPath, closeout);
+            } else {
+                fs.writeFileSync(closeoutMarkdownPath, `${fs.readFileSync(closeoutMarkdownPath, 'utf8')}\nforged review integrity line\n`, 'utf8');
+            }
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.status, 'READY', tamper); assert.equal(result.next_gate, 'task-audit-summary', tamper); assert.equal(result.final_report, null, tamper);
+            assert.ok(result.commands[0].command.includes('gate task-audit-summary'), tamper);
+            assert.match(result.reason, /final closeout artifacts are not materialized yet/i, tamper);
+        }
     });
 
     it('routes back to task-audit-summary when only a stale prior-cycle closeout is materialized', () => {

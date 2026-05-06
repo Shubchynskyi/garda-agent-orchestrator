@@ -90,7 +90,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
   2. Re-open current task row in `TASK.md` and latest artifacts in `runtime/reviews/` plus timeline `runtime/task-events/<task-id>.jsonl`.
   3. Run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` and follow only its single recommended command.
   4. Continue from current stage, but do not skip compile/review/completion gates.
-  5. Final report contract remains mandatory on resume: summary -> commit command -> explicit commit question.
+  5. Final report contract remains mandatory on resume: review integrity attestation -> implementation summary -> commit command -> explicit commit question.
 
 ## Task Start Contract
 - The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
@@ -306,7 +306,8 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 - Do not set `DONE` without passing compile gate, `required-reviews-check`, `doc-impact-gate`, and `completion-gate`.
 - Do not continue after compile/review when scope changed; rerun preflight and full mandatory gates.
 - Do not use `git add -f` to stage ignored orchestration control-plane files just because gates or changelog rules mention them.
-- Do not change final report order: summary -> `git commit -m` suggestion -> `Do you want me to commit now? (yes/no)`.
+- Do not change final report order: review integrity attestation -> implementation summary -> `git commit -m` suggestion -> `Do you want me to commit now? (yes/no)`.
+- Final report review integrity attestation must state whether independent review completed, whether fake/fallback/same-agent/legacy/missing/unverifiable review artifacts were observed, whether completion is review-attested, and why completion is or is not allowed.
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
 ## Mandatory Outputs

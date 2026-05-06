@@ -489,19 +489,12 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         enforcement_level: 'hard_block'
     };
     const scopeCategory = typeof preflight.scope_category === 'string' ? preflight.scope_category : null;
-    const reviewContextPaths = Object.fromEntries(
-        Object.keys(requiredReviews).map((reviewKey) => [
-            reviewKey,
-            findLatestRecordedReviewContextPath(orderedEvents, reviewKey)
-        ])
-    );
     const receiptReviewTrustSummary = readReviewTrustSummary(
         requiredReviews,
         reviewsRoot,
         resolvedTaskId || '',
         scopeCategory,
-        validatedPreflight.preflight_hash,
-        reviewContextPaths
+        validatedPreflight.preflight_hash
     );
     const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
         reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)
