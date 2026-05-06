@@ -102,7 +102,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 ## Canonical Workflow
 1. Select highest-priority `TODO` task in `TASK.md`; successful `enter-task-mode` reconciles it to `IN_PROGRESS`.
 2. If no `TODO` exists, create a task from current user request; successful `enter-task-mode` then reconciles it to `IN_PROGRESS`.
-3. Resolve requested depth and record requested/effective depth in `TASK.md` notes.
+3. Resolve requested depth and record requested/effective depth in non-status `TASK.md` notes.
 4. Run the default navigator and repeat it after every command:
    - Node: `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`
    - Do not start with `compile-gate`, infer default config flags, or choose a gate from this static list unless `next-step` prints it as the single recommended command.
@@ -189,7 +189,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 25. After `COMPLETION_GATE_PASSED`, run `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>" --as-json`; this materializes `runtime/reviews/<task-id>-final-closeout.json` and `runtime/reviews/<task-id>-final-closeout.md`. Use the canonical final-closeout artifact instead of reconstructing the report structure manually.
 26. Terminal status contract:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed; successful completion finalization reconciles `TASK.md` to `DONE`.
-    - `BLOCKED` when any mandatory gate failed or cannot run; keep the blocked reason explicit and stop the pipeline.
+    - `BLOCKED` when any mandatory gate failed or cannot run; keep the blocked reason explicit, stop the pipeline, and do not hand-edit the active `TASK.md` status cell to `BLOCKED` as a gate substitute.
     - `DECOMPOSED` when a scope-budget or review-cycle guard intentionally split the parent into child tasks; do not run parent lifecycle gates after decomposition.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 27. Report to user in exact order:
@@ -302,6 +302,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 - Do not move to implementation without plan.
 - Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
 - Do not bypass required reviews without deterministic gate override contract.
+- Do not set or hand-edit active `TASK.md` lifecycle status cells (`IN_PROGRESS`, `IN_REVIEW`, `DONE`, `BLOCKED`) as a substitute for gates; task-mode, review-gate, and completion finalization own normal status sync, and explicit operator `task-reset` owns reset/discard.
 - Do not set `DONE` without passing compile gate, `required-reviews-check`, `doc-impact-gate`, and `completion-gate`.
 - Do not continue after compile/review when scope changed; rerun preflight and full mandatory gates.
 - Do not use `git add -f` to stage ignored orchestration control-plane files just because gates or changelog rules mention them.
@@ -309,7 +310,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 - Do not leave reviewer/specialist agents open after review completion (when platform supports agent lifecycle controls).
 
 ## Mandatory Outputs
-- Updated task row in `TASK.md`, including gate-owned status reconciliation plus any required notes or artifact references.
+- Gate-owned `TASK.md` status reconciliation plus any required non-status notes or artifact references. Do not manually synchronize the active lifecycle status in the final report.
 - Task-mode artifact: `garda-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json`.
 - Preflight artifact: `garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`.
 - Compile gate result: `COMPILE_GATE_PASSED`.

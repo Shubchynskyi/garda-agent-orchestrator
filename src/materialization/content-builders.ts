@@ -775,6 +775,7 @@ Hard stops:
 - Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
+- Do not hand-edit active \`TASK.md\` lifecycle statuses (\`IN_PROGRESS\`, \`IN_REVIEW\`, \`DONE\`, \`BLOCKED\`) as a substitute for gates; completion finalization owns \`DONE\`, review-gate owns \`IN_REVIEW\`, task-mode owns \`IN_PROGRESS\`, and explicit operator \`task-reset\` owns reset/discard.
 - Do not mark \`DONE\` without \`COMPLETION_GATE_PASSED\`.
 - Do not create fake review artifacts or bypass reviewer routing.
 - The \`40-commands.md\` restraint applies only to standalone ad-hoc commands. It does NOT exempt mandatory gates: gates such as \`compile-gate\` and \`full-suite-validation\` must execute their underlying build/test/type-check commands when the workflow requires them.

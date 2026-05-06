@@ -123,6 +123,10 @@ import {
 import {
     parseTaskMdTableRow
 } from '../core/task-md-table';
+import {
+    buildTaskQueueStatusContract,
+    type TaskQueueStatusContract
+} from '../core/task-queue-status-contract';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -248,6 +252,7 @@ export interface NextStepResult {
     present_artifacts: NextStepArtifactState[];
     full_suite_validation: NextStepFullSuiteSummary;
     review: NextStepReviewSummary;
+    task_queue_status_contract: TaskQueueStatusContract;
     audit_status: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
     warnings: string[];
@@ -3626,6 +3631,7 @@ function buildResult(params: {
         present_artifacts: params.presentArtifacts,
         full_suite_validation: params.fullSuite,
         review: params.review,
+        task_queue_status_contract: buildTaskQueueStatusContract(params.taskId),
         audit_status: params.auditStatus,
         profile: params.profile,
         warnings: params.warnings || [],
@@ -4038,7 +4044,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             reason:
                 `TASK.md marks ${formatNextStepInlineValue(taskId)} as DONE. ` +
                 'Treat this task as terminal and do not run stale lifecycle recovery, classify, compile, review, full-suite, or completion gates. ' +
-                'Reopen the TASK.md row to TODO or IN_PROGRESS before starting a new lifecycle cycle for this task.',
+                'Use an explicit operator task-reset/reopen command before starting a new lifecycle cycle for this task; do not hand-edit active TASK.md lifecycle statuses.',
             commands: [],
             missingArtifacts: [],
             presentArtifacts: coreArtifacts.present,
@@ -5026,6 +5032,7 @@ export function formatNextStepText(result: NextStepResult): string {
     if (result.review.trust_note) {
         lines.push(result.review.trust_note);
     }
+    lines.push(result.task_queue_status_contract.visible_summary_line);
     if (result.missing_artifacts.length > 0) {
         lines.push(`MissingArtifacts: ${result.missing_artifacts.map((artifact) => artifact.key).join(', ')}`);
     }

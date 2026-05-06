@@ -878,6 +878,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(taskModeResult.exitCode, 0);
         assert.equal(taskModeResult.outputLines[0], 'TASK_MODE_ENTERED');
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_PROGRESS');
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
         runHandshakeForTask(repoRoot, taskId);
         runShellSmokeForTask(repoRoot, taskId);
@@ -9280,6 +9281,25 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.review_artifacts?.test?.receipt?.trust_level, 'INDEPENDENT_AUDITED');
         assert.ok(completionResult.review_trust_summary?.visible_summary_line?.includes('INDEPENDENT_AUDITED'));
         assert.ok(completionResult.review_trust_summary?.policy_summary_line?.includes('independent reviewer launch attestation satisfies mandatory review'));
+
+        const previousCompletionExitCode = process.exitCode;
+        const previousCompletionCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'completion-gate',
+                '--task-id', taskId,
+                '--preflight-path', preflightPath,
+                '--repo-root', repoRoot
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousCompletionCwd);
+            process.exitCode = previousCompletionExitCode;
+        }
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

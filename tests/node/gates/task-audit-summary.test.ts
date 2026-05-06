@@ -2996,10 +2996,15 @@ describe('gates/task-audit-summary', () => {
             const closeoutJson = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
             assert.equal(closeoutJson.artifact_state, 'MATERIALIZED');
             assert.equal(closeoutJson.workflow.visible_summary_line, 'Mandatory full-suite: false');
+            assert.equal(closeoutJson.task_queue_status_contract.authority, 'gate_owned_status_sync');
+            assert.deepEqual(closeoutJson.task_queue_status_contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED']);
             assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Suggested commit command:'));
             assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Mandatory full-suite: false'));
+            assert.ok(fs.readFileSync(markdownPath, 'utf8').includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
             assert.ok(renderedSummaryText.includes('Mandatory full-suite: false'));
+            assert.ok(renderedSummaryText.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
             assert.ok(renderedMarkdown.includes('Do you want me to commit now? (yes/no)'));
+            assert.ok(renderedMarkdown.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
         });
 
         it('renders the mandatory full-suite summary line when present', () => {

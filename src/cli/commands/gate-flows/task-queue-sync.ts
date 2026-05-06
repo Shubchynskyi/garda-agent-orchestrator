@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { formatTaskQueueStatusCell, normalizeTaskQueueStatusCell, readTaskQueueStatusToken } from '../../../core/active-task-state';
+import { buildTaskQueueStatusContract, type TaskQueueStatusContract } from '../../../core/task-queue-status-contract';
 import { parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../core/task-md-table';
 import * as gateHelpers from '../../../gates/helpers';
 
@@ -42,10 +43,12 @@ export interface TaskQueueStatusSyncResult {
     previous_status: string | null;
     next_status: string;
     error_message: string | null;
+    status_contract: TaskQueueStatusContract;
 }
 
 export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, nextStatus: string): TaskQueueStatusSyncResult {
     const taskPath = path.join(repoRoot, 'TASK.md');
+    const statusContract = buildTaskQueueStatusContract(taskId);
     if (!fs.existsSync(taskPath) || !fs.statSync(taskPath).isFile()) {
         return {
             outcome: 'task_file_missing',
@@ -53,7 +56,8 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             task_id: taskId,
             previous_status: null,
             next_status: normalizeTaskQueueStatusCell(nextStatus),
-            error_message: null
+            error_message: null,
+            status_contract: statusContract
         };
     }
 
@@ -97,7 +101,8 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             task_id: taskId,
             previous_status: null,
             next_status: normalizedNextStatus,
-            error_message: null
+            error_message: null,
+            status_contract: statusContract
         };
     }
 
@@ -108,7 +113,8 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             task_id: taskId,
             previous_status: previousStatus,
             next_status: normalizedNextStatus,
-            error_message: null
+            error_message: null,
+            status_contract: statusContract
         };
     }
 
@@ -121,7 +127,8 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             task_id: taskId,
             previous_status: previousStatus,
             next_status: normalizedNextStatus,
-            error_message: getErrorMessage(error)
+            error_message: getErrorMessage(error),
+            status_contract: statusContract
         };
     }
 
@@ -131,6 +138,7 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
         task_id: taskId,
         previous_status: previousStatus,
         next_status: normalizedNextStatus,
-        error_message: null
+        error_message: null,
+        status_contract: statusContract
     };
 }

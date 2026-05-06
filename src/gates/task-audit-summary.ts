@@ -52,6 +52,10 @@ import {
 } from './task-audit-summary-collectors';
 import { buildCommitCommandSuggestion, formatFinalCloseoutMarkdown } from './task-audit-summary-renderers';
 import { cleanupTerminalReviewTempOutputs } from '../cli/commands/gates-artifacts';
+import {
+    buildTaskQueueStatusContract,
+    type TaskQueueStatusContract
+} from '../core/task-queue-status-contract';
 export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
 
 export interface TaskAuditSummaryOptions {
@@ -83,6 +87,7 @@ export interface FinalCloseoutArtifact {
     } | null;
     docs: FinalCloseoutDocsSummary;
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
+    task_queue_status_contract?: TaskQueueStatusContract;
     agent_report?: {
         assistant_language: string | null;
         assistant_language_confirmed: boolean | null;
@@ -1126,6 +1131,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         },
         docs: docsSummary,
         token_economy: tokenEconomy,
+        task_queue_status_contract: buildTaskQueueStatusContract(safeTaskId),
         agent_report: {
             assistant_language: workspaceStatusSnapshot.assistantLanguage,
             assistant_language_confirmed: workspaceStatusSnapshot.assistantLanguageConfirmed,

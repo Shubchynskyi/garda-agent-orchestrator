@@ -1455,6 +1455,10 @@ describe('gates/next-step', () => {
         assert.deepEqual(result.missing_artifacts, []);
         assert.match(result.reason, /TASK\.md marks "T-620" as DONE/);
         assert.match(result.reason, /do not run stale lifecycle recovery/);
+        assert.match(result.reason, /do not hand-edit active TASK\.md lifecycle statuses/);
+        assert.equal(result.task_queue_status_contract.authority, 'gate_owned_status_sync');
+        assert.deepEqual(result.task_queue_status_contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED']);
+        assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
         assert.equal(text.includes('classify-change'), false);
         assert.equal(text.includes('compile-gate'), false);
     });
@@ -4146,9 +4150,11 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, null);
         assert.deepEqual(result.missing_artifacts, []);
         assert.equal(result.commands.length, 0);
+        assert.equal(result.task_queue_status_contract.agent_may_edit_non_status_task_content, true);
         assert.equal(result.final_report?.required_order.length, 3);
         assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
         assert.match(result.reason, /canonical final closeout is materialized/i);
+        assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
         assert.ok(text.includes('FinalReportOrder:'));
         assert.ok(text.includes('1. implementation summary (include depth, path mode, review verdicts, docs updated)'));
         assert.ok(text.includes('2. git commit -m "'));

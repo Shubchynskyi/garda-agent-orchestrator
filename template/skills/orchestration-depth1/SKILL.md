@@ -39,7 +39,7 @@ Escalate back to the full orchestration skill immediately if:
 
 ## Compact Workflow
 1. Start only from `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.` and make the fresh main-agent execution reply emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits, then list the first mandatory gates to run.
-2. Capture requested/effective depth in `TASK.md`; successful `enter-task-mode` reconciles the task to `IN_PROGRESS`.
+2. Capture requested/effective depth in non-status `TASK.md` notes; successful `enter-task-mode` reconciles the task to `IN_PROGRESS`.
 3. Build a concise plan focused on changed files, risks, and validation.
 4. Run `enter-task-mode`, `load-rule-pack --stage TASK_ENTRY`, `handshake-diagnostics`, `shell-smoke-preflight`, and then preflight/classification; stop using this short form if escalation is required.
 5. Read only minimal context: core rules, task workflow, touched module context, and scope-triggered rule snippets.
@@ -54,7 +54,7 @@ Escalate back to the full orchestration skill immediately if:
 - Do not continue a normal task run when the workspace already had modified files before `enter-task-mode`; isolate scope first with staged or explicit preflight inputs.
 - Do not skip compile, review, or completion gates.
 - Mandatory reviews still require a fresh clean-context delegated reviewer; do not reuse an existing reviewer session, and close or release the reviewer after receipt persistence.
-- Do not hand-edit forward `TASK.md` status transitions; gate flow owns `IN_PROGRESS`, `IN_REVIEW`, and `DONE`; use `DECOMPOSED` only when a parent has been intentionally split into child tasks.
+- Do not hand-edit active `TASK.md` lifecycle status transitions (`IN_PROGRESS`, `IN_REVIEW`, `DONE`, `BLOCKED`); gate flow owns `IN_PROGRESS`, `IN_REVIEW`, and `DONE`, explicit operator `task-reset` owns reset/discard, and `DECOMPOSED` is only for intentionally split parent tasks.
 - Re-run preflight after meaningful scope changes.
 - If the original preflight used planned `--changed-file` inputs in a clean workspace before implementation, refresh it before compile by rerunning `classify-change` and `load-rule-pack --stage POST_PREFLIGHT` once the real diff exists.
 - Do not mark a task `DONE` while any PASS review artifact still has active findings, residual risks, or deferred items without `Justification:`.

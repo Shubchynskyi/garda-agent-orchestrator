@@ -6,6 +6,7 @@ import {
     getAgentReportMessages
 } from '../cli/commands/cli-format-output';
 import { getNodeGateCommandPrefix } from '../materialization/command-constants';
+import { buildTaskQueueStatusContract } from '../core/task-queue-status-contract';
 
 function normalizeCommitToken(value: string): string {
     return String(value || '')
@@ -233,6 +234,8 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         lines.push(closeout.token_economy.visible_summary_line);
     }
 
+    lines.push((closeout.task_queue_status_contract || buildTaskQueueStatusContract(closeout.task_id)).visible_summary_line);
+
     lines.push('');
     lines.push('Suggested commit command:');
     lines.push('```bash');
@@ -391,6 +394,7 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     if (summary.final_closeout.token_economy?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.token_economy.visible_summary_line}`);
     }
+    lines.push(`  ${(summary.final_closeout.task_queue_status_contract || buildTaskQueueStatusContract(summary.task_id)).visible_summary_line}`);
     lines.push('FinalReportOrder:');
     lines.push(
         `  1. ${summary.final_report_contract.required_order[0]} ` +

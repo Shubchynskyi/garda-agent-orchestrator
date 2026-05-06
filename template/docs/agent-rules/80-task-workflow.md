@@ -13,7 +13,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task queue source: `TASK.md`.
 - Status lifecycle: `TODO -> IN_PROGRESS -> IN_REVIEW -> DONE`, `BLOCKED`, or `DECOMPOSED`.
 - Visual markers in `TASK.md` status are allowed (`🟦 TODO`, `🟨 IN_PROGRESS`, `🟧 IN_REVIEW`, `🟩 DONE`, `🟥 BLOCKED`, `🟪 DECOMPOSED`), but canonical status token must remain present.
-- Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`; agents should update non-status `TASK.md` metadata, keep `BLOCKED` as an explicit stop state when the workflow fails closed, and use `DECOMPOSED` only for split parent tasks that are no longer executable lifecycle scopes.
+- Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`.
+- Agents may add tasks, edit backlog content, and update non-status `TASK.md` metadata when requested, but must not hand-edit active task status cells to `IN_PROGRESS`, `IN_REVIEW`, `DONE`, or `BLOCKED` as a substitute for lifecycle gates.
+- Explicit operator reset or discard commands, such as `gate task-reset --reopen` or `gate task-reset --discard`, are the supported exceptions for lifecycle reset/discard status changes.
+- Keep `BLOCKED` as an explicit workflow stop state when the workflow fails closed, record the blocking reason in notes/timeline, and use `DECOMPOSED` only for split parent tasks that are no longer executable lifecycle scopes.
 - If provider-native agent directories are present, use their orchestrator bridge profile before any implementation:
   - `.github/agents/orchestrator.md`
   - `.windsurf/agents/orchestrator.md`
@@ -148,6 +151,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task timeline completeness is surfaced in `status` and `doctor`; incomplete timelines are a real workflow defect, not optional trace noise.
 - Orchestrator control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, and internal docs such as `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are local workflow artifacts; in deployed workspaces their ignored status is normal.
 - Terminal non-active statuses (`DONE`, `BLOCKED`, `DECOMPOSED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
+- Gate-owned status sync is the only normal updater for active lifecycle status cells. Final reporting must not ask the implementation agent to manually synchronize `TASK.md` status; stale queue-vs-gate diagnostics should name the gate evidence or explicit operator reset/discard command.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
 - Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.
 - Final user report order is mandatory: concise implementation summary -> conventional-style `git commit -m "<type>(<scope>): <summary>"` suggestion -> `Do you want me to commit now? (yes/no)`.
@@ -159,8 +163,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - HARD STOP: do not continue a normal task run when the workspace already had modified files before `enter-task-mode`; isolate scope first with staged or explicit preflight inputs.
 - HARD STOP: do not launch required reviewers without `build-review-context`; completion requires review-skill telemetry.
 - HARD STOP: do not force-stage ignored orchestration control-plane files just because gates, changelog, or reviews reference them.
-- HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order.
-- HARD STOP: do not set `DONE` until completion gate is `COMPLETION_GATE_PASSED`, every review finding is either resolved or explicitly deferred with `Justification:`, and the final user report is delivered in mandatory order.
+- HARD STOP: do not set or hand-edit the `TASK.md` status to `DONE` until completion gate is `COMPLETION_GATE_PASSED` and final user report is delivered in mandatory order; completion finalization performs the normal queue sync.
+- HARD STOP: do not set or hand-edit the `TASK.md` status to `DONE` until completion gate is `COMPLETION_GATE_PASSED`, every review finding is either resolved or explicitly deferred with `Justification:`, and the final user report is delivered in mandatory order; completion finalization performs the normal queue sync.
 - HARD STOP: any mandatory gate/tooling failure (`Unknown gate`, missing CLI, build dependency errors, stale bundle mismatch) forces an immediate `BLOCKED` state. Broken infrastructure is not a license to continue implementation or bypass the orchestrator.
 - HARD STOP: do not use agent-authored scripts to batch, loop over, or "green-light" orchestrator gates or to write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
 - HARD STOP: do not fabricate review artifacts, receipts, routing metadata, telemetry, task statuses, or claims that a task is commit-ready when the required gate evidence is absent.
@@ -213,7 +217,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 ## BLOCKED Semantics
 - `BLOCKED` means pipeline is paused; no next stage may start.
 - Resume only after explicit blocking condition resolution.
-- Record `blocked_reason_code` in `TASK.md`.
+- Record `blocked_reason_code` in `TASK.md` notes or task-event diagnostics. Do not hand-edit the active status cell to `BLOCKED` as a substitute for a failed mandatory gate or explicit operator decision.
 - For infrastructure-driven blocks, you must report: the exact command, `cwd`, chosen CLI path, and `stderr`.
 
 ## DECOMPOSED Semantics
