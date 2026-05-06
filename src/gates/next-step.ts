@@ -324,7 +324,7 @@ function appendTaskMentionIfMissing(taskMentions: ChildTaskIdMention[], taskId: 
     }
 }
 
-function extractChildTaskIds(notes: string | null, knownTaskIds: Iterable<string>): string[] {
+function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<string>): ChildTaskIdMention[] {
     const text = String(notes || '');
     const taskMentions: ChildTaskIdMention[] = [];
     const rangePattern = /\b([Tt]-)(\d+)\b[\s`*_]*(?:through|to|-|–|—)[\s`*_]*\b([Tt]-)(\d+)\b/gu;
@@ -361,8 +361,35 @@ function extractChildTaskIds(notes: string | null, knownTaskIds: Iterable<string
         }
     }
     return taskMentions
-        .sort((left, right) => left.index - right.index)
-        .map((mention) => mention.taskId);
+        .sort((left, right) => left.index - right.index);
+}
+
+function isTaskIdCharacter(value: string): boolean {
+    return /^[A-Za-z0-9._-]$/u.test(value);
+}
+
+function isExplicitChildContinuationBoundary(text: string, index: number): boolean {
+    return /^(?:,\s*)?then\s+continue\b/iu.test(text.slice(index));
+}
+
+function findExplicitChildSegmentEnd(text: string, startIndex: number): number {
+    for (let index = startIndex; index < text.length; index += 1) {
+        if (isExplicitChildContinuationBoundary(text, index)) {
+            return index;
+        }
+        const current = text[index];
+        if (current === ';' || current === '\n' || current === '|') {
+            return index;
+        }
+        if (current === '.') {
+            const previous = text[index - 1] || '';
+            const next = text[index + 1] || '';
+            if (!(isTaskIdCharacter(previous) && isTaskIdCharacter(next))) {
+                return index;
+            }
+        }
+    }
+    return text.length;
 }
 
 function extractExplicitLinkedChildTaskIds(notes: string | null, knownTaskIds: Iterable<string>): string[] {
@@ -372,12 +399,10 @@ function extractExplicitLinkedChildTaskIds(notes: string | null, knownTaskIds: I
     let markerMatch: RegExpExecArray | null;
     TASK_QUEUE_CHILD_LINK_MARKER_PATTERN.lastIndex = 0;
     while ((markerMatch = TASK_QUEUE_CHILD_LINK_MARKER_PATTERN.exec(text)) !== null) {
-        const segmentEnd = text.slice(markerMatch.index).search(/[.;\n|]/u);
-        const absoluteSegmentEnd = segmentEnd >= 0 ? markerMatch.index + segmentEnd : text.length;
+        const absoluteSegmentEnd = findExplicitChildSegmentEnd(text, markerMatch.index);
         const segment = text.slice(markerMatch.index, absoluteSegmentEnd);
-        for (const childTaskId of extractChildTaskIds(segment, knownTaskIdList)) {
-            const childIndex = text.indexOf(childTaskId, markerMatch.index);
-            appendTaskMentionIfMissing(childTaskIds, childTaskId, childIndex >= 0 ? childIndex : markerMatch.index);
+        for (const childMention of extractChildTaskMentions(segment, knownTaskIdList)) {
+            appendTaskMentionIfMissing(childTaskIds, childMention.taskId, markerMatch.index + childMention.index);
         }
     }
     return childTaskIds
@@ -389,7 +414,7 @@ function resolveNextUnfinishedChildRoute(
     taskEntries: Map<string, TaskQueueEntry>,
     parentTaskId: string,
     visited = new Set<string>(),
-    childTaskIdExtractor: (notes: string | null, knownTaskIds: Iterable<string>) => string[] = extractChildTaskIds
+    childTaskIdExtractor: (notes: string | null, knownTaskIds: Iterable<string>) => string[] = extractExplicitLinkedChildTaskIds
 ): DecomposedChildRoute | null {
     if (visited.has(parentTaskId)) {
         return null;
@@ -4764,7 +4789,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (!isGatePassed(summary, 'completion-gate') && isDecomposedParentTask(taskEntry)) {
-        const childRoute = resolveNextUnfinishedChildRoute(taskEntries, taskId);
+        const childRoute = resolveNextUnfinishedChildRoute(
+            taskEntries,
+            taskId,
+            new Set<string>(),
+            extractExplicitLinkedChildTaskIds
+        );
         const decomposedReason = isTaskQueueDecomposedStatus(taskEntry?.status || null)
             ? 'Task queue marks this parent as DECOMPOSED.'
             : 'Task queue marks this parent as a legacy BLOCKED split umbrella.';

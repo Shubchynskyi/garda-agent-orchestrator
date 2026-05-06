@@ -1569,6 +1569,75 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('NextGate: child-task'));
     });
 
+    it('ignores parent and continuation mentions when routing nested decomposed parents', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-322 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-409`, `T-410`, `T-411`, and `T-412` through normal gates, then use parent routing only after children are complete. |',
+            '| T-409 | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-322`. Execute leaf tasks `T-413`, `T-414`, and `T-415` through normal gates, then continue `T-410`/`T-411`/`T-412`. |',
+            '| T-413 | 🟪 DECOMPOSED | P1 | workflow | Nested advisory parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-409`. Execute child tasks `T-416` and `T-417` through normal gates. Enforcement belongs to `T-410`; materialization belongs to `T-411`. |',
+            '| T-416 | 🟩 DONE | P1 | workflow | Source child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-417 | 🟩 DONE | P1 | testing | Test child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-414 | 🟩 DONE | P1 | security | Path safety child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-415 | 🟦 TODO | P1 | testing | Advisory regressions | gpt-5.5 | 2026-05-06 | strict | Next leaf. |',
+            '| T-410 | 🟦 TODO | P1 | workflow | Enforcement continuation | gpt-5.5 | 2026-05-06 | strict | Continue only after T-409 leaves. |',
+            '| T-411 | 🟦 TODO | P1 | workflow | Materialization continuation | gpt-5.5 | 2026-05-06 | strict | Later. |',
+            '| T-412 | 🟦 TODO | P1 | testing | Split cleanup continuation | gpt-5.5 | 2026-05-06 | strict | Later. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const parentResult = resolveNextStep({ taskId: 'T-322', repoRoot });
+        const nestedResult = resolveNextStep({ taskId: 'T-409', repoRoot });
+        const completedNestedResult = resolveNextStep({ taskId: 'T-413', repoRoot });
+
+        assert.equal(parentResult.status, 'DECOMPOSED');
+        assert.equal(parentResult.next_gate, 'child-task');
+        assert.ok(parentResult.commands[0].command.includes('next-step "T-415"'));
+        assert.ok(parentResult.reason.includes('T-322 -> T-409 -> T-415'));
+        assert.equal(parentResult.reason.includes('T-410'), false);
+
+        assert.equal(nestedResult.status, 'DECOMPOSED');
+        assert.equal(nestedResult.next_gate, 'child-task');
+        assert.ok(nestedResult.commands[0].command.includes('next-step "T-415"'));
+        assert.ok(nestedResult.reason.includes('T-409 -> T-415'));
+        assert.equal(nestedResult.reason.includes('T-410'), false);
+
+        assert.equal(completedNestedResult.status, 'DECOMPOSED');
+        assert.equal(completedNestedResult.next_gate, null);
+        assert.equal(completedNestedResult.commands.length, 0);
+        assert.ok(completedNestedResult.reason.includes('No unfinished child task'));
+        assert.equal(completedNestedResult.reason.includes('T-410'), false);
+    });
+
+    it('does not route completed explicit leaves to same-sentence continuation tasks', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-409 | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-322`. Execute leaf tasks `T-413`, `T-414`, and `T-415` through normal gates, then continue `T-410`/`T-411`/`T-412`. |',
+            '| T-413 | 🟩 DONE | P1 | workflow | Advisory child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-414 | 🟩 DONE | P1 | security | Path safety child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-415 | 🟩 DONE | P1 | testing | Advisory regressions | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-410 | 🟦 TODO | P1 | workflow | Enforcement continuation | gpt-5.5 | 2026-05-06 | strict | Continuation, not child of T-409. |',
+            '| T-411 | 🟦 TODO | P1 | workflow | Materialization continuation | gpt-5.5 | 2026-05-06 | strict | Later. |',
+            '| T-412 | 🟦 TODO | P1 | testing | Split cleanup continuation | gpt-5.5 | 2026-05-06 | strict | Later. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-409', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('No unfinished child task'));
+        assert.equal(result.reason.includes('T-410'), false);
+    });
+
     it('routes decomposed parent tasks to nonnumeric child task IDs', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
