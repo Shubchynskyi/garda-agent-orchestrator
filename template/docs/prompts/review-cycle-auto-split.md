@@ -6,7 +6,7 @@ LatestFailedReview: {{LATEST_FAILED_REVIEW}}
 
 ## Instructions
 1. Treat the current parent task as blocked by the review-cycle guard; do not continue compile, review, or full-suite gates on the parent as if the block did not exist.
-2. Move the parent task into `DECOMPOSED` state through supported task controls when available, or by explicit backlog editing when no gate exists for that transition.
+2. Do not hand-edit the parent status. The guard should already have latched the parent as `SPLIT_REQUIRED`; create linked child tasks, then rerun `next-step` on the parent so the gate transitions it to `DECOMPOSED`.
 3. Inspect the workspace diff before starting any child task and classify it as no diff or parent work that must be preserved for child execution.
 4. If the workspace contains parent diff, create a split checkpoint before child execution instead of carrying the dirty workspace into children.
 5. A split checkpoint is a preservation commit, not a reviewed implementation commit and not task completion evidence. Use a clear message such as `checkpoint(split): preserve <task-id> dirty diff before decomposition`, record the checkpoint SHA in the parent notes and child-task plan, and state that child tasks must validate and finish the preserved work through normal gates.
@@ -22,7 +22,7 @@ LatestFailedReview: {{LATEST_FAILED_REVIEW}}
 - Do not discard, revert, stash, shrink, or reshape parent diff only to bypass the guard; preserve operator work unless the operator explicitly chooses a reset or discard path.
 - Do not start a child task on an unscoped dirty workspace. Prefer a clean workspace after the split checkpoint; use staged or explicit changed-file scope only for deliberate child-owned edits made after the checkpoint.
 - Do not mark the parent DONE merely because child tasks were created.
-- Do not leave the parent as ordinary `BLOCKED` when decomposition is the intended path; use `DECOMPOSED` so `next-step` routes to child tasks instead of stale parent recovery.
+- Do not leave the parent as ordinary `BLOCKED` when decomposition is the intended path. The supported route is `SPLIT_REQUIRED` until child tasks are linked, then gate-owned transition to `DECOMPOSED` so `next-step` routes to child tasks instead of stale parent recovery.
 - Preserve the original review-cycle block reason and counts in child-task notes or closeout where relevant.
 - Keep test reviews excluded from the non-test review-cycle count unless workflow config changes explicitly.
 - If splitting cannot proceed cleanly, stop and report the blocker to the operator.

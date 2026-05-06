@@ -26,8 +26,8 @@ test('buildTaskQueueStatusContract blocks agent-authored lifecycle status edits 
 
     assert.equal(contract.decision, 'block');
     assert.equal(contract.authority, 'gate_owned_status_sync');
-    assert.deepEqual(contract.gate_owned_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE']);
-    assert.deepEqual(contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED']);
+    assert.deepEqual(contract.gate_owned_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'SPLIT_REQUIRED', 'DONE']);
+    assert.deepEqual(contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED', 'SPLIT_REQUIRED']);
     assert.equal(contract.agent_may_edit_non_status_task_content, true);
     assert.equal(contract.operator_reset_command, 'gate task-reset --task-id "T-323" --reopen --dry-run --repo-root "."');
     assert.match(contract.reason, /instead of manually editing TASK\.md status cells/);

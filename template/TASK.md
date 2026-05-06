@@ -17,6 +17,7 @@ Task timeline log (per task): `garda-agent-orchestrator/runtime/task-events/<tas
 - `🟧 IN_REVIEW`
 - `🟩 DONE`
 - `🟥 BLOCKED`
+- `🟫 SPLIT_REQUIRED`
 - `🟪 DECOMPOSED`
 
 Status cell format rule: keep canonical token, optionally prefixed by marker (for example `🟦 TODO`).

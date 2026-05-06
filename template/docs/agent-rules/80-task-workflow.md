@@ -11,10 +11,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 
 ## Task Lifecycle
 - Task queue source: `TASK.md`.
-- Status lifecycle: `TODO -> IN_PROGRESS -> IN_REVIEW -> DONE`, `BLOCKED`, or `DECOMPOSED`.
-- Visual markers in `TASK.md` status are allowed (`🟦 TODO`, `🟨 IN_PROGRESS`, `🟧 IN_REVIEW`, `🟩 DONE`, `🟥 BLOCKED`, `🟪 DECOMPOSED`), but canonical status token must remain present.
-- Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`.
-- Agents may add tasks, edit backlog content, and update non-status `TASK.md` metadata when requested, but must not hand-edit active task status cells to `IN_PROGRESS`, `IN_REVIEW`, `DONE`, or `BLOCKED` as a substitute for lifecycle gates.
+- Status lifecycle: `TODO -> IN_PROGRESS -> IN_REVIEW -> DONE`, `BLOCKED`, `SPLIT_REQUIRED`, or `DECOMPOSED`.
+- Visual markers in `TASK.md` status are allowed (`🟦 TODO`, `🟨 IN_PROGRESS`, `🟧 IN_REVIEW`, `🟩 DONE`, `🟥 BLOCKED`, `🟫 SPLIT_REQUIRED`, `🟪 DECOMPOSED`), but canonical status token must remain present.
+- Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, and `DONE`.
+- Agents may add tasks, edit backlog content, and update non-status `TASK.md` metadata when requested, but must not hand-edit active task status cells to `IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, `DONE`, or `BLOCKED` as a substitute for lifecycle gates.
 - Explicit operator reset or discard commands, such as `gate task-reset --reopen` or `gate task-reset --discard`, are the supported exceptions for lifecycle reset/discard status changes.
 - Keep `BLOCKED` as an explicit workflow stop state when the workflow fails closed, record the blocking reason in notes/timeline, and use `DECOMPOSED` only for split parent tasks that are no longer executable lifecycle scopes.
 - If provider-native agent directories are present, use their orchestrator bridge profile before any implementation:
@@ -150,7 +150,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task-event integrity is procedural hardening only: local hash-chain and replay detection help detect tampering after the fact, but they are not a security-grade trust anchor.
 - Task timeline completeness is surfaced in `status` and `doctor`; incomplete timelines are a real workflow defect, not optional trace noise.
 - Orchestrator control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, and internal docs such as `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`) are local workflow artifacts; in deployed workspaces their ignored status is normal.
-- Terminal non-active statuses (`DONE`, `BLOCKED`, `DECOMPOSED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
+- Terminal non-active statuses (`DONE`, `BLOCKED`, `SPLIT_REQUIRED`, `DECOMPOSED`) require full cleanup of temporary reviewer/specialist logs after required artifacts are persisted.
 - Gate-owned status sync is the only normal updater for active lifecycle status cells. Final reporting must not ask the implementation agent to manually synchronize `TASK.md` status; stale queue-vs-gate diagnostics should name the gate evidence or explicit operator reset/discard command.
 - Documentation impact updates are required when behavior/contracts/ops docs changed.
 - Required changelog or evidence updates to ignored orchestrator paths must stay local on disk; do not use `git add -f` unless the user explicitly requests versioning orchestrator internals.
@@ -222,8 +222,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - For infrastructure-driven blocks, you must report: the exact command, `cwd`, chosen CLI path, and `stderr`.
 
 ## DECOMPOSED Semantics
+- `SPLIT_REQUIRED` means a scope-budget or review-cycle auto-split guard latched the parent task before ordinary continuation. Do not run classify, compile, review, full-suite, completion, or final closeout gates on a `SPLIT_REQUIRED` parent.
+- A `SPLIT_REQUIRED` parent clears only when linked child tasks are added so `next-step` can transition it to `DECOMPOSED`, or when an explicit operator reset/discard command clears the task.
 - `DECOMPOSED` means the parent task was intentionally split because scope-budget or review-cycle guardrails made the monolithic lifecycle too large.
 - A `DECOMPOSED` parent is not an executable lifecycle scope: do not run classify-change, compile, review, full-suite, or completion gates on the parent.
 - `next-step` must route a `DECOMPOSED` parent to the next unfinished child task; nested decomposed parents should resolve to the next unfinished leaf child.
 - Existing legacy `BLOCKED` rows whose notes clearly say "Paused for split", "Split into ...", or "Continue via child tasks" may be treated compatibly as decomposed parents until a safe migration updates the status cell.
-- When review-cycle auto split is enabled, the auto-split prompt should move the parent to `DECOMPOSED`, create maximally small child tasks, and execute those children through normal gates.
+- When review-cycle auto split is enabled, the guard should move the parent to `SPLIT_REQUIRED`; the agent should create maximally small child tasks, rerun `next-step` on the parent so the gate transitions it to `DECOMPOSED`, and execute those children through normal gates.

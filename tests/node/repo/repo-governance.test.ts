@@ -432,9 +432,9 @@ test('task-status ownership wording stays synced across orchestration guidance f
 
     const trackedExpectedSnippets = new Map<string, string>([
         ['template/skills/orchestration/SKILL.md', 'reconciles it to `IN_PROGRESS`'],
-        ['template/skills/orchestration-depth1/SKILL.md', 'gate flow owns `IN_PROGRESS`, `IN_REVIEW`, and `DONE`'],
+        ['template/skills/orchestration-depth1/SKILL.md', 'gate flow owns `IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, and `DONE`'],
         ['template/skills/orchestration/references/stage-gates.md', 'Completion finalization reconciles the task to `DONE`.'],
-        ['template/docs/agent-rules/80-task-workflow.md', 'Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, and `DONE`']
+        ['template/docs/agent-rules/80-task-workflow.md', 'Gate flow owns forward `TASK.md` status transitions to `IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, and `DONE`']
     ]);
 
     for (const [relativePath, expectedSnippet] of trackedExpectedSnippets) {

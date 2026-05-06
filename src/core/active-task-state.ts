@@ -11,6 +11,7 @@ export const TASK_QUEUE_STATUS_MARKERS: Readonly<Record<string, string>> = Objec
     IN_REVIEW: '🟧',
     DONE: '🟩',
     BLOCKED: '🟥',
+    SPLIT_REQUIRED: '🟫',
     DECOMPOSED: '🟪'
 });
 
@@ -53,6 +54,10 @@ export function isTaskQueueBlockedStatus(statusCell: string | null): boolean {
     return readTaskQueueStatusToken(statusCell) === 'BLOCKED';
 }
 
+export function isTaskQueueSplitRequiredStatus(statusCell: string | null): boolean {
+    return readTaskQueueStatusToken(statusCell) === 'SPLIT_REQUIRED';
+}
+
 export function isTaskQueueDecomposedStatus(statusCell: string | null): boolean {
     return readTaskQueueStatusToken(statusCell) === 'DECOMPOSED';
 }
@@ -61,6 +66,7 @@ export function isTaskQueueTerminalStatus(statusCell: string | null): boolean {
     const statusToken = readTaskQueueStatusToken(statusCell);
     return statusToken === 'DONE'
         || statusToken === 'BLOCKED'
+        || statusToken === 'SPLIT_REQUIRED'
         || statusToken === 'DECOMPOSED';
 }
 

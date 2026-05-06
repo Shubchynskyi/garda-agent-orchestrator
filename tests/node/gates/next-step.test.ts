@@ -128,11 +128,11 @@ function makeTempRepo(): string {
             'LatestFailedReview: {{LATEST_FAILED_REVIEW}}',
             '',
             '## Instructions',
-            '1. Move the parent task to DECOMPOSED and split into child tasks.',
+            '1. Treat the parent as SPLIT_REQUIRED, create linked child tasks, then rerun next-step so the gate moves it to DECOMPOSED.',
             '',
             '## Constraints',
             '- Do not mark the parent DONE merely because child tasks were created.',
-            '- Do not leave the parent in ordinary BLOCKED after child tasks are created; use DECOMPOSED.',
+            '- Do not hand-edit the parent status to bypass SPLIT_REQUIRED.',
             ''
         ].join('\n'),
         'utf8'
@@ -160,6 +160,11 @@ function eventsRoot(repoRoot: string): string {
 function writeJson(filePath: string, payload: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function writeJsonWithSha(filePath: string, payload: unknown): string {
+    writeJson(filePath, payload);
+    return fileSha256(filePath);
 }
 
 function sha256Text(value: string): string {
@@ -322,6 +327,54 @@ function seedPostPreflightRulePack(repoRoot: string, taskId: string, preflightPa
 
 function normalizeForTimeline(filePath: string): string {
     return filePath.replace(/\\/g, '/');
+}
+
+function seedSplitRequiredLatchEvidence(
+    repoRoot: string,
+    taskId: string,
+    guardKind: 'scope_budget' | 'review_cycle' = 'scope_budget'
+): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (!fs.existsSync(preflightPath)) {
+        writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true });
+    }
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-split-required.json`);
+    const artifactSha256 = writeJsonWithSha(artifactPath, {
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        task_id: taskId,
+        status: 'SPLIT_REQUIRED',
+        guard_kind: guardKind,
+        guard_reason: `${guardKind} guard latched in test`,
+        raw_guard_summary: `${guardKind} guard summary`,
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fileSha256(preflightPath),
+        materialization_phase: 'complete',
+        status_sync: {
+            outcome: 'already_synced',
+            previous_status: 'SPLIT_REQUIRED',
+            next_status: 'SPLIT_REQUIRED',
+            error_message: null
+        },
+        next_actions: [
+            'create_and_link_child_tasks',
+            'rerun_next_step_on_parent_to_transition_to_decomposed',
+            'or_use_explicit_operator_task_reset_or_discard'
+        ],
+        guard_details: {
+            action: 'test'
+        }
+    });
+    appendEvent(repoRoot, taskId, 'SPLIT_REQUIRED_LATCHED', 'BLOCKED', {
+        status: 'SPLIT_REQUIRED',
+        guard_kind: guardKind,
+        guard_reason: `${guardKind} guard latched in test`,
+        artifact_path: normalizeForTimeline(artifactPath),
+        artifact_sha256: artifactSha256,
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fileSha256(preflightPath),
+        status_sync_outcome: 'already_synced'
+    });
 }
 
 function getLoadedRuleFileBasenames(command: string): string[] {
@@ -1046,7 +1099,7 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('OrdinaryDocReviewSkips: docs/plan.md (matched docs/plan.md)'));
     });
 
-    it('blocks oversized strict-profile scopes before compile for decomposition', () => {
+    it('latches oversized strict-profile scopes as split-required before compile', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
             '# TASK.md',
@@ -1101,11 +1154,354 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
 
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('configured budget exceeded: changed_files_count'));
+        assert.equal(result.reason.includes('13>12'), false);
+        assert.ok(text.includes('Status: SPLIT_REQUIRED'));
+        assert.ok(text.includes('NextGate: split-required-latch'));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
+        assert.equal(fs.existsSync(latchPath), true);
+        const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(latch.status, 'SPLIT_REQUIRED');
+        assert.equal(latch.guard_kind, 'scope_budget');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_LATCHED"'));
+        assert.ok(events.includes('"new_status":"SPLIT_REQUIRED"'));
+    });
+
+    it('keeps split-required latch ahead of ordinary recovery after the diff shrinks', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | SPLIT_REQUIRED | P1 | workflow/scope-budget | Add decomposition guard | gpt-5.4 | 2026-05-03 | strict | Guard latched; split into child tasks later. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedSplitRequiredLatchEvidence(repoRoot, TASK_ID);
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(preflightPath.endsWith(`${TASK_ID}-preflight.json`), true);
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('cannot continue through classify, compile, review, full-suite, completion, or final closeout gates'));
+        assert.ok(text.includes('Status: SPLIT_REQUIRED'));
+    });
+
+    it('does not clear split-required latch for unrelated task mentions in parent notes', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-638 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Related to `T-639`. Child tasks still need to be created and linked. |',
+            '| T-639 | 🟦 TODO | P1 | workflow | Related task | gpt-5.4 | 2026-05-05 | strict | Independent follow-up. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-638');
+
+        const result = resolveNextStep({ taskId: 'T-638', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('cannot continue through classify, compile, review, full-suite, completion, or final closeout gates'));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-638 | 🟫 SPLIT_REQUIRED |'));
+        assert.ok(text.includes('Status: SPLIT_REQUIRED'));
+    });
+
+    it('does not clear split-required latch for follow-up task commands without explicit child wording', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-636 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Execute `T-637` as a separate follow-up task after this split is planned. |',
+            '| T-637 | 🟦 TODO | P1 | workflow | Follow-up task | gpt-5.4 | 2026-05-05 | strict | Independent follow-up. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-636');
+
+        const result = resolveNextStep({ taskId: 'T-636', repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.equal(result.commands.length, 0);
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-636 | 🟫 SPLIT_REQUIRED |'));
+    });
+
+    it('clears split-required parent to decomposed when linked child tasks exist', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-640 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-641` through `T-642`; do not continue the parent. |',
+            '| T-641 | 🟩 DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-642 | 🟦 TODO | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-640');
+
+        const result = resolveNextStep({ taskId: 'T-640', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-642"'));
+        assert.ok(result.reason.includes('transitioned the parent from SPLIT_REQUIRED to DECOMPOSED'));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-640 | 🟪 DECOMPOSED |'));
+        assert.ok(text.includes('Status: DECOMPOSED'));
+    });
+
+    it('blocks spoofed split-required rows with child notes but no latch evidence', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-634 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: `T-635`. |',
+            '| T-635 | 🟦 TODO | P1 | workflow | Child | gpt-5.4 | 2026-05-05 | strict | Possible child. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-634', repoRoot });
+
         assert.equal(result.status, 'BLOCKED');
-        assert.equal(result.next_gate, 'scope-budget-decomposition-guard');
-        assert.ok(result.reason.includes('changed_files_count=13>12'));
-        assert.ok(result.commands[0].command.includes('workflow explain'));
-        assert.ok(text.includes('NextGate: scope-budget-decomposition-guard'));
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.match(result.reason, /latch evidence is invalid/i);
+        assert.equal(result.commands.length, 0);
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-634 | 🟫 SPLIT_REQUIRED |'));
+    });
+
+    it('blocks split-required latch clearing when artifact status-sync fields are inconsistent', () => {
+        const repoRoot = makeTempRepo();
+        const taskId = 'T-632';
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-632 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: `T-633`. |',
+            '| T-633 | 🟦 TODO | P1 | workflow | Child | gpt-5.4 | 2026-05-05 | strict | Possible child. |',
+            ''
+        ].join('\n'), 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true });
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-split-required.json`);
+        const artifactSha256 = writeJsonWithSha(artifactPath, {
+            schema_version: 1,
+            timestamp_utc: new Date().toISOString(),
+            task_id: taskId,
+            status: 'SPLIT_REQUIRED',
+            guard_kind: 'scope_budget',
+            guard_reason: 'test guard',
+            raw_guard_summary: 'test guard',
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_sha256: fileSha256(preflightPath),
+            materialization_phase: 'complete',
+            status_sync: {
+                outcome: 'already_synced',
+                previous_status: 'SPLIT_REQUIRED',
+                next_status: 'TODO',
+                error_message: null
+            },
+            next_actions: [],
+            guard_details: {}
+        });
+        appendEvent(repoRoot, taskId, 'SPLIT_REQUIRED_LATCHED', 'BLOCKED', {
+            status: 'SPLIT_REQUIRED',
+            guard_kind: 'scope_budget',
+            artifact_path: normalizeForTimeline(artifactPath),
+            artifact_sha256: artifactSha256
+        });
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.match(result.reason, /status_sync\.next_status is not SPLIT_REQUIRED/i);
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-632 | 🟫 SPLIT_REQUIRED |'));
+    });
+
+    it('does not record split-required latch event when TASK.md status sync fails', () => {
+        const repoRoot = makeTempRepo();
+        const taskId = 'T-644';
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-645 | TODO | P1 | workflow | Different task | gpt-5.4 | 2026-05-03 | strict | Present row. |',
+            ''
+        ].join('\n'), 'utf8');
+        const changedFiles = Array.from({ length: 13 }, (_, index) => `src/sync-fail-${index}.ts`);
+        for (const filePath of changedFiles) {
+            fs.writeFileSync(path.join(repoRoot, filePath), 'export const value = 1;\n', 'utf8');
+        }
+        writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
+            taskId,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Missing task row split latch',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            taskProfile: 'strict',
+            profileSelectionSource: 'workspace_active',
+            activeProfile: 'strict',
+            profileSource: 'built_in',
+            runtimeActiveProfile: 'balanced',
+            runtimeProfileSource: 'built_in'
+        }));
+        writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`), { task_id: taskId, stage: 'POST_PREFLIGHT' });
+        writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
+        writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
+        appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
+        appendEvent(repoRoot, taskId, 'RULE_PACK_LOADED');
+        appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+        appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+        writeJson(preflightPath, {
+            task_id: taskId,
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            scope_category: 'code',
+            metrics: {
+                changed_files_count: snapshot.changed_files.length,
+                changed_lines_total: snapshot.changed_lines_total,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS, code: true, security: true, refactor: true, test: true },
+            changed_files: changedFiles,
+            review_execution_policy: {
+                mode: 'code_first_optional',
+                visible_summary_line: 'Review execution policy: code_first_optional'
+            },
+            profile_selection: {
+                task_profile: 'strict',
+                profile_selection_source: 'workspace_active',
+                effective_profile: 'strict',
+                effective_profile_source: 'built_in',
+                runtime_active_profile: 'balanced',
+                runtime_profile_source: 'built_in'
+            },
+            budget_forecast: {
+                total_estimated_review_tokens: 9000
+            }
+        });
+        appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+        seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.match(result.reason, /could not update TASK\.md/i);
+        const latch = JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-split-required.json`), 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(latch.status_sync, {
+            outcome: 'task_not_found',
+            previous_status: null,
+            next_status: 'SPLIT_REQUIRED',
+            error_message: null
+        });
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${taskId}.jsonl`), 'utf8');
+        assert.equal(events.includes('"event_type":"SPLIT_REQUIRED_LATCHED"'), false);
+    });
+
+    it('regresses review-cycle auto-split TASK.md sync failure without latch event', () => {
+        const repoRoot = makeTempRepo();
+        const taskId = 'T-646';
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: true
+                }
+            }
+        );
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-647 | TODO | P1 | workflow | Different task | gpt-5.4 | 2026-05-03 | strict | Present row. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, taskId);
+        writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true });
+        appendEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-code-0',
+            review_context_sha256: sha256Text('auto-split-sync-fail-context-0'),
+            summary: 'first code failure'
+        });
+        appendEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-code-1',
+            review_context_sha256: sha256Text('auto-split-sync-fail-context-1'),
+            summary: 'second code failure'
+        });
+
+        const result = resolveNextStep({ taskId, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.match(result.reason, /could not update TASK\.md/i);
+        assert.match(result.reason, /Review cycle guard: BLOCK_FOR_OPERATOR_DECISION/i);
+        assert.equal(result.review_cycle_block?.auto_split_enabled, true);
+        const latch = JSON.parse(fs.readFileSync(path.join(reviewsRoot(repoRoot), `${taskId}-split-required.json`), 'utf8')) as Record<string, unknown>;
+        assert.equal(latch.guard_kind, 'review_cycle');
+        assert.deepEqual(latch.status_sync, {
+            outcome: 'task_not_found',
+            previous_status: null,
+            next_status: 'SPLIT_REQUIRED',
+            error_message: null
+        });
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${taskId}.jsonl`), 'utf8');
+        assert.equal(events.includes('"event_type":"SPLIT_REQUIRED_LATCHED"'), false);
     });
 
     it('blocks next-step when scope budget workflow config is invalid', () => {
@@ -1479,8 +1875,8 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /do not run stale lifecycle recovery/);
         assert.match(result.reason, /do not hand-edit active TASK\.md lifecycle statuses/);
         assert.equal(result.task_queue_status_contract.authority, 'gate_owned_status_sync');
-        assert.deepEqual(result.task_queue_status_contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED']);
-        assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
+        assert.deepEqual(result.task_queue_status_contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED', 'SPLIT_REQUIRED']);
+        assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/SPLIT_REQUIRED/DONE'));
         assert.equal(text.includes('classify-change'), false);
         assert.equal(text.includes('compile-gate'), false);
     });
@@ -1578,7 +1974,7 @@ describe('gates/next-step', () => {
         );
     });
 
-    it('materializes auto-split prompt only when review cycle block has auto split enabled', () => {
+    it('latches split-required and materializes auto-split prompt when review cycle auto split is enabled', () => {
         const repoRoot = makeTempRepo();
         writeJson(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
@@ -1622,8 +2018,8 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
 
-        assert.equal(result.status, 'BLOCKED');
-        assert.equal(result.next_gate, 'review-cycle-auto-split');
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
         assert.equal(result.commands.length, 0);
         assert.equal(result.review_cycle_block?.operator_decision_required, false);
         assert.equal(result.review_cycle_block?.wait_for_operator, false);
@@ -1634,13 +2030,20 @@ describe('gates/next-step', () => {
         const promptText = fs.readFileSync(promptPath, 'utf8');
         assert.ok(promptText.includes(`# Review Cycle Auto-Split Prompt for ${TASK_ID}`));
         assert.ok(promptText.includes('GuardReason: "Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
+        assert.equal(promptText.includes('failed_non_test_review_count=2>1'), false);
         assert.ok(promptText.includes('summary="second code failure"'));
         assert.ok(promptText.includes('DECOMPOSED'));
-        assert.ok(text.includes('NextGate: review-cycle-auto-split'));
+        assert.ok(text.includes('Status: SPLIT_REQUIRED'));
+        assert.ok(text.includes('NextGate: split-required-latch'));
         assert.ok(text.includes('OperatorDecisionRequired: false'));
         assert.ok(text.includes('AutoSplitPromptArtifact: path='));
         assert.ok(text.includes('follow AutoSplitPromptArtifact instructions'));
         assert.equal(text.includes('wait for operator choice'), false);
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
+        assert.equal(fs.existsSync(latchPath), true);
+        const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(latch.guard_kind, 'review_cycle');
     });
 
     it('blocks next-step when failed non-test review attempts exceed review cycle guard failed limit', () => {
@@ -4297,7 +4700,7 @@ describe('gates/next-step', () => {
         assert.equal(result.final_report?.required_order.length, 4);
         assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
         assert.match(result.reason, /canonical final closeout is materialized/i);
-        assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE'));
+        assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/SPLIT_REQUIRED/DONE'));
         assert.ok(text.includes('FinalReportOrder:'));
         assert.ok(text.includes('1. review integrity attestation'));
         assert.ok(text.includes('2. implementation summary (include depth, path mode, review verdicts, docs updated)'));

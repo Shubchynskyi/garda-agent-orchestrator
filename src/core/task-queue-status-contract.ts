@@ -1,6 +1,7 @@
 export const GATE_OWNED_TASK_QUEUE_STATUSES = Object.freeze([
     'IN_PROGRESS',
     'IN_REVIEW',
+    'SPLIT_REQUIRED',
     'DONE'
 ] as const);
 
@@ -8,7 +9,8 @@ export const AGENT_BLOCKED_TASK_QUEUE_STATUSES = Object.freeze([
     'IN_PROGRESS',
     'IN_REVIEW',
     'DONE',
-    'BLOCKED'
+    'BLOCKED',
+    'SPLIT_REQUIRED'
 ] as const);
 
 export type GateDecisionStatus = 'pass' | 'block' | 'advisory';
@@ -42,8 +44,8 @@ export function buildTaskQueueStatusContract(taskId: string | null = null): Task
         operator_reset_command: `gate task-reset --task-id "${taskIdValue}" --reopen --dry-run --repo-root "."`,
         reason:
             'Agents may add or edit backlog task content and non-status notes, but active lifecycle status changes are owned by gate flows. ' +
-            'Use completion, review, task-mode, or explicit operator task-reset/discard commands instead of manually editing TASK.md status cells.',
+            'Use completion, review, task-mode, split-required latch, or explicit operator task-reset/discard commands instead of manually editing TASK.md status cells.',
         visible_summary_line:
-            'Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/DONE; explicit operator task-reset/discard only for reset or discard; agents may edit non-status backlog content.'
+            'Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/SPLIT_REQUIRED/DONE; explicit operator task-reset/discard only for reset or discard; agents may edit non-status backlog content.'
     };
 }

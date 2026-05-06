@@ -190,6 +190,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 26. Terminal status contract:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed; successful completion finalization reconciles `TASK.md` to `DONE`.
     - `BLOCKED` when any mandatory gate failed or cannot run; keep the blocked reason explicit, stop the pipeline, and do not hand-edit the active `TASK.md` status cell to `BLOCKED` as a gate substitute.
+    - `SPLIT_REQUIRED` when a scope-budget or review-cycle auto-split guard latched the parent before child tasks were linked; do not run parent lifecycle gates while latched.
     - `DECOMPOSED` when a scope-budget or review-cycle guard intentionally split the parent into child tasks; do not run parent lifecycle gates after decomposition.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 27. Report to user in exact order:
@@ -302,7 +303,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 - Do not move to implementation without plan.
 - Do not move to `IN_REVIEW` without passing compile gate (`COMPILE_GATE_PASSED`).
 - Do not bypass required reviews without deterministic gate override contract.
-- Do not set or hand-edit active `TASK.md` lifecycle status cells (`IN_PROGRESS`, `IN_REVIEW`, `DONE`, `BLOCKED`) as a substitute for gates; task-mode, review-gate, and completion finalization own normal status sync, and explicit operator `task-reset` owns reset/discard.
+- Do not set or hand-edit active `TASK.md` lifecycle status cells (`IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, `DONE`, `BLOCKED`) as a substitute for gates; task-mode, review-gate, split-required latch, and completion finalization own normal status sync, and explicit operator `task-reset` owns reset/discard.
 - Do not set `DONE` without passing compile gate, `required-reviews-check`, `doc-impact-gate`, and `completion-gate`.
 - Do not continue after compile/review when scope changed; rerun preflight and full mandatory gates.
 - Do not use `git add -f` to stage ignored orchestration control-plane files just because gates or changelog rules mention them.
