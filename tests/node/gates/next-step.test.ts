@@ -4779,8 +4779,16 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('  none'));
     });
 
-    it('routes back to task-audit-summary when final closeout review integrity artifacts are tampered', () => {
-        for (const tamper of ['missing-json-attestation', 'forged-json-attestation', 'forged-json-commit-guidance', 'forged-markdown']) {
+    it('routes back to task-audit-summary when final closeout artifacts are tampered or non-canonical', () => {
+        for (const tamper of [
+            'missing-json-attestation',
+            'forged-json-attestation',
+            'forged-json-commit-guidance',
+            'reformatted-json',
+            'forged-markdown',
+            'missing-markdown-final-newline',
+            'extra-markdown-trailing-blank'
+        ]) {
             const repoRoot = makeTempRepo();
             seedStartedTask(repoRoot, TASK_ID); writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }); seedCompilePass(repoRoot, TASK_ID); seedReviewGatePass(repoRoot, TASK_ID); seedDocImpactPass(repoRoot, TASK_ID); seedCompletionPass(repoRoot, TASK_ID);
             materializeFinalCloseout(repoRoot, TASK_ID);
@@ -4794,6 +4802,12 @@ describe('gates/next-step', () => {
                 closeout.review_integrity_attestation = { ...(closeout.review_integrity_attestation as Record<string, unknown>), status: 'NO_REVIEW_REQUIRED', reason: 'forged no-review attestation' }; writeJson(closeoutPath, closeout);
             } else if (tamper === 'forged-json-commit-guidance') {
                 closeout.commit_command_suggestion = 'git commit -m "forged: command"'; writeJson(closeoutPath, closeout);
+            } else if (tamper === 'reformatted-json') {
+                fs.writeFileSync(closeoutPath, JSON.stringify(closeout), 'utf8');
+            } else if (tamper === 'missing-markdown-final-newline') {
+                fs.writeFileSync(closeoutMarkdownPath, fs.readFileSync(closeoutMarkdownPath, 'utf8').trimEnd(), 'utf8');
+            } else if (tamper === 'extra-markdown-trailing-blank') {
+                fs.appendFileSync(closeoutMarkdownPath, '\n', 'utf8');
             } else {
                 fs.writeFileSync(closeoutMarkdownPath, `${fs.readFileSync(closeoutMarkdownPath, 'utf8')}\nforged review integrity line\n`, 'utf8');
             }

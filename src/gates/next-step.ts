@@ -4367,10 +4367,12 @@ function readReadyFinalReportSummary(
     const generatedUtc = typeof closeout.generated_utc === 'string' ? closeout.generated_utc : '';
     const expectedCloseout = { ...summary.final_closeout, generated_utc: generatedUtc, artifact_state: 'MATERIALIZED' as const };
     const expectedAttestation = expectedCloseout.review_integrity_attestation;
-    if (!generatedUtc || !expectedAttestation || expectedAttestation.completion_allowed !== true || JSON.stringify(closeout) !== JSON.stringify(expectedCloseout)) {
+    const expectedJson = `${JSON.stringify(expectedCloseout, null, 2)}\n`;
+    if (!generatedUtc || !expectedAttestation || expectedAttestation.completion_allowed !== true || fs.readFileSync(closeoutJsonPath, 'utf8') !== expectedJson) {
         return null;
     }
-    if (fs.readFileSync(closeoutMarkdownPath, 'utf8').trimEnd() !== formatFinalCloseoutMarkdown(expectedCloseout)) {
+    const expectedMarkdown = `${formatFinalCloseoutMarkdown(expectedCloseout)}\n`;
+    if (fs.readFileSync(closeoutMarkdownPath, 'utf8') !== expectedMarkdown) {
         return null;
     }
 
