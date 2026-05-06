@@ -16,7 +16,8 @@ import {
     runRestartCoherentCycleCommand,
     runRestartReviewCycleCommand,
     runShellSmokePreflightCommand,
-    runCommandTimeoutDiagnosticsCommand
+    runCommandTimeoutDiagnosticsCommand,
+    runProjectMemoryImpactCommand
 } from './gates';
 import {
     parseOptions,
@@ -208,6 +209,28 @@ export async function handleCommandTimeoutDiagnostics(gateArgv: string[]): Promi
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runCommandTimeoutDiagnosticsCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleProjectMemoryImpact(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--changed-file': { key: 'changedFiles', type: 'string[]' },
+        '--changed-files': { key: 'changedFiles', type: 'string[]' },
+        '--confirm-updated': { key: 'confirmUpdated', type: 'boolean' },
+        '--updated-memory-file': { key: 'updatedMemoryFiles', type: 'string[]' },
+        '--updated-memory-files': { key: 'updatedMemoryFiles', type: 'string[]' },
+        '--mode': { key: 'mode', type: 'string' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--update-artifact-path': { key: 'updateArtifactPath', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runProjectMemoryImpactCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;

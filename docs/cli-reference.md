@@ -504,6 +504,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Review gate | `garda gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |
 | Audited no-op | `garda gate record-no-op --task-id "T-001" --reason "Already implemented in current branch"` |
 | Doc impact | `garda gate doc-impact-gate --task-id "T-001" --decision "NO_DOC_UPDATES"` |
+| Project memory impact | `garda gate project-memory-impact --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Completion gate | `garda gate completion-gate --task-id "T-001"` |
 | Scoped diff | `garda gate build-scoped-diff --review-type "db"` |
 | Review context | `garda gate build-review-context --review-type "code" --depth 2` |
@@ -521,6 +522,8 @@ Task-start identity and preflight notes:
 - `classify-change --force-code-review` keeps code review mandatory even when the active fast profile would otherwise lighten a true docs-only scope. Protected control-plane scopes still keep code review mandatory without the flag.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
+
+`project-memory-impact` writes read-only impact diagnostics under `runtime/project-memory/`; update evidence is recorded with `--confirm-updated` after user-owned project memory files have been updated separately.
 
 `validate-manifest --compact` preserves failure diagnostics but reduces the green path to `MANIFEST_VALIDATION_PASSED | entries=<count>`.
 

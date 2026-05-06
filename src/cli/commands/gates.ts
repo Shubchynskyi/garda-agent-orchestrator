@@ -59,9 +59,12 @@ export {
 } from './gate-flows/task-reset-flow';
 
 export {
+    runProjectMemoryImpactCommand
+} from './gate-flows/project-memory-flow';
+
+export {
     executeCommand,
     executeCommandAsync,
     resolveExecutablePath,
     splitCommandLine
 } from './gates-subprocess';
-

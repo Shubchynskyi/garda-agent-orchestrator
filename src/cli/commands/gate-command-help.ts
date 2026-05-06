@@ -33,6 +33,7 @@ const BOOLEAN_GATE_OPTIONS = new Set([
     '--changelog-updated',
     '--compact',
     '--confirm',
+    '--confirm-updated',
     '--discard',
     '--dry-run',
     '--emit-metrics',
@@ -330,6 +331,12 @@ function buildLifecycleGateHelpEntries(
                 `${cliPrefix} gate full-suite-validation --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
                 true
             )
+        },
+        'project-memory-impact': {
+            ...createGateHelpEntry('Assess whether durable project-memory files need manual updates for the current task scope.', [
+                `${cliPrefix} gate project-memory-impact --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                `${cliPrefix} gate project-memory-impact --task-id "${TASK_ID_PLACEHOLDER}" --confirm-updated --updated-memory-file "${buildBundleRelativePath(bundleName, 'live/docs/project-memory/module-map.md')}" --updated-memory-file "${buildBundleRelativePath(bundleName, 'live/docs/project-memory/compact.md')}" --repo-root "."`
+            ], true)
         },
         'log-task-event': {
             ...createSingleUsageEntry(
