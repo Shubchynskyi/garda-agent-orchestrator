@@ -7,6 +7,7 @@ import {
     runCompletionGate
 } from '../../../src/gates/completion';
 import { computeProtectedSnapshotDigest, fileSha256, normalizePath } from '../../../src/gates/helpers';
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 describe('gates/completion — protected control-plane', () => {
     describe('runCompletionGate protected control-plane diff gate', () => {
         function writeJson(filePath: string, value: unknown): void {
@@ -40,6 +41,7 @@ describe('gates/completion — protected control-plane', () => {
             const shellSmokePath = path.join(reviewsRoot, `${taskId}-shell-smoke.json`);
             const protectedManifestPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json');
             const protectedFilePath = path.join(repoRoot, 'garda-agent-orchestrator', 'src', 'cli', 'main.ts');
+            const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
 
             const requiredRuleFiles = [
                 writeRuleFile(repoRoot, '00-core.md'),
@@ -51,6 +53,13 @@ describe('gates/completion — protected control-plane', () => {
 
             fs.mkdirSync(path.dirname(protectedFilePath), { recursive: true });
             fs.writeFileSync(protectedFilePath, 'console.log("before");\n', 'utf8');
+            const workflowConfig = buildDefaultWorkflowConfig();
+            workflowConfig.full_suite_validation.enabled = false;
+            workflowConfig.full_suite_validation.command = 'npm test';
+            workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+            workflowConfig.project_memory_maintenance.enabled = false;
+            workflowConfig.project_memory_maintenance.mode = 'check';
+            writeJson(workflowConfigPath, workflowConfig);
 
             const preflightProtectedSnapshot = {
                 'garda-agent-orchestrator/src/cli/main.ts': fileSha256(protectedFilePath)

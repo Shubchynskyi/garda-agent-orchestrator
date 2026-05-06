@@ -26,6 +26,7 @@ import {
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
+import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import * as childProcess from 'node:child_process';
 
 function createReviewerRoutingFixture(
@@ -71,10 +72,22 @@ function resolveReviewerExecutionFixture(
 function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
+    const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.full_suite_validation.enabled = false;
+    workflowConfig.full_suite_validation.command = 'npm test';
+    workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+    workflowConfig.project_memory_maintenance.enabled = false;
+    workflowConfig.project_memory_maintenance.mode = 'check';
+    fs.writeFileSync(
+        path.join(root, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+        JSON.stringify(workflowConfig, null, 2) + '\n',
+        'utf8'
+    );
     return root;
 }
 

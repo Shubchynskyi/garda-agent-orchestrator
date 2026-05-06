@@ -97,7 +97,35 @@ function createTempRepo(): string {
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
+    seedProjectMemoryOffWorkflowConfig(root);
     return root;
+}
+
+function seedProjectMemoryOffWorkflowConfig(repoRoot: string): void {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+        full_suite_validation: {
+            enabled: false,
+            command: 'npm test',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        },
+        project_memory_maintenance: {
+            enabled: false,
+            mode: 'check',
+            run_before_final_closeout: true,
+            require_user_approval_for_writes: true,
+            max_compact_summary_chars: 12000,
+            read_strategy: 'index_first',
+            impact_artifact_retention_days: 30
+        }
+    }, null, 2), 'utf8');
 }
 
 const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {

@@ -195,19 +195,19 @@ function writeWorkflowConfig(
     enabled: boolean,
     reviewExecutionPolicyMode: 'parallel_all' | 'test_after_code' | 'code_first_optional' | 'strict_sequential' = 'code_first_optional'
 ): void {
+    const config = buildDefaultWorkflowConfig();
+    config.full_suite_validation.enabled = enabled;
+    config.full_suite_validation.command = 'npm test';
+    config.review_execution_policy = {
+        mode: reviewExecutionPolicyMode
+    };
+    config.project_memory_maintenance.enabled = false;
+    config.project_memory_maintenance.mode = 'check';
     const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
         path.join(configDir, 'workflow-config.json'),
-        JSON.stringify({
-            full_suite_validation: {
-                enabled,
-                command: 'npm test'
-            },
-            review_execution_policy: {
-                mode: reviewExecutionPolicyMode
-            }
-        }, null, 2),
+        JSON.stringify(config, null, 2),
         'utf8'
     );
 }
@@ -495,6 +495,7 @@ describe('gates/task-audit-summary', () => {
         reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
         fs.mkdirSync(eventsDir, { recursive: true });
         fs.mkdirSync(reviewsDir, { recursive: true });
+        writeWorkflowConfig(tmpDir, false);
     });
 
     afterEach(() => {

@@ -108,19 +108,13 @@ function makeTempRepo(): string {
             'utf8'
         );
     }
-    fs.writeFileSync(
-        path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
-        JSON.stringify({
-            full_suite_validation: {
-                enabled: false,
-                command: 'npm test'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        }, null, 2),
-        'utf8'
-    );
+    const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.full_suite_validation.enabled = false;
+    workflowConfig.full_suite_validation.command = 'npm test';
+    workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+    workflowConfig.project_memory_maintenance.enabled = false;
+    workflowConfig.project_memory_maintenance.mode = 'check';
+    writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
     fs.writeFileSync(
         path.join(repoRoot, 'template', 'docs', 'prompts', 'review-cycle-auto-split.md'),
         [

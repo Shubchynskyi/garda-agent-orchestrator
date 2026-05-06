@@ -37,12 +37,12 @@ function writeJson(filePath: string, payload: unknown): void {
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
-function writeProjectMemoryWorkflowConfig(repoRoot: string): void {
+function writeProjectMemoryWorkflowConfig(repoRoot: string, enabled = true): void {
     const config = buildDefaultWorkflowConfig();
     config.full_suite_validation.enabled = false;
     config.full_suite_validation.command = 'npm test';
     config.review_execution_policy = { mode: 'code_first_optional' };
-    config.project_memory_maintenance.enabled = true;
+    config.project_memory_maintenance.enabled = enabled;
     config.project_memory_maintenance.mode = 'check';
     config.project_memory_maintenance.run_before_final_closeout = true;
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), config);
@@ -77,6 +77,7 @@ describe('gates/completion review trust', () => {
         try {
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot, 'Codex');
+            writeProjectMemoryWorkflowConfig(repoRoot, false);
             const preflightPath = writePreflight(repoRoot, taskId, {
                 scope_category: 'code',
                 required_reviews: {
