@@ -8,8 +8,15 @@ import {
 } from './workflow-config';
 import { isPlainObject } from './config-merge';
 
-export const PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT =
-    'Refresh Garda project memory after this update. Inspect the repository through the normal orchestrator workflow, update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are stale or still template placeholders, keep `compact.md` concise, and record project-memory update evidence when the workflow asks for it. Do not overwrite user-authored memory without preserving its facts.';
+export const PROJECT_MEMORY_INIT_REFRESH_PROMPT = [
+    'Initialize or refresh Garda project memory.',
+    'Inspect the repository through the normal orchestrator workflow, starting with `garda-agent-orchestrator/live/docs/project-memory/README.md` and `garda-agent-orchestrator/live/docs/project-memory/compact.md`.',
+    'Update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are missing, stale, template-seeded, placeholder-only, or incomplete; keep `compact.md` concise; record confirmed stack, commands, module map, decisions, risks, and unknown/custom stack fallback from source, configs, tests, durable docs, or explicit user answers.',
+    'Do not edit generated `garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md`, do not invent facts, and do not overwrite user-authored memory without preserving its facts.',
+    'Record project-memory update evidence when the workflow asks for it.'
+].join(' ');
+
+export const PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT = PROJECT_MEMORY_INIT_REFRESH_PROMPT;
 
 export interface ProjectMemoryMaintenanceRolloutSummary {
     enabled: boolean;

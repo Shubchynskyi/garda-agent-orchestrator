@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { PackageJsonLike } from '../../../../src/cli/commands/cli-types';
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 
 type UpdateCommandModule = typeof import('../../../../src/cli/commands/update-command');
 
@@ -69,7 +70,7 @@ function makeTempBundleFixture(): { workspaceRoot: string; bundleUpdateModulePat
             "        updatedVersion: '1.1.0',",
             "        workflowConfigMergeStatus: 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update',",
             "        projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',",
-            "        projectMemoryRefreshHandoffPrompt: 'Refresh Garda project memory after this update. Inspect the repository through the normal orchestrator workflow, update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are stale or still template placeholders, keep `compact.md` concise, and record project-memory update evidence when the workflow asks for it. Do not overwrite user-authored memory without preserving its facts.',",
+            `        projectMemoryRefreshHandoffPrompt: ${JSON.stringify(PROJECT_MEMORY_INIT_REFRESH_PROMPT)},`,
             "        rollbackSnapshotPath: 'garda-agent-orchestrator/runtime/update-rollbacks/update-1',",
             "        rollbackStatus: 'NOT_TRIGGERED',",
             "        updateReportPath: 'garda-agent-orchestrator/runtime/update-reports/update-1.md'",
@@ -190,7 +191,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                     updatedVersion: '0.0.1',
                     workflowConfigMergeStatus: 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update',
                     projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',
-                    projectMemoryRefreshHandoffPrompt: 'Refresh Garda project memory after this update. Inspect the repository through the normal orchestrator workflow, update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are stale or still template placeholders, keep `compact.md` concise, and record project-memory update evidence when the workflow asks for it. Do not overwrite user-authored memory without preserving its facts.',
+                    projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
                     rollbackSnapshotPath: 'stale-snapshot',
                     rollbackStatus: 'STALE',
                     updateReportPath: 'stale-report'
@@ -261,7 +262,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                 true
             );
             assert.equal(plainTextLines.includes('ProjectMemoryMaintenanceSummaryLine: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'), true);
-            assert.equal(plainTextLines.some((line) => line.startsWith('ProjectMemoryRefreshHandoffPrompt: Refresh Garda project memory after this update.')), true);
+            assert.equal(plainTextLines.includes(`ProjectMemoryRefreshHandoffPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`), true);
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('- 1.1.0: Major registry note'), true);
             assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
@@ -300,7 +301,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
             );
             assert.equal(parsed.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
-            assert.match(parsed.projectMemoryRefreshHandoffPrompt, /^Refresh Garda project memory after this update\./);
+            assert.equal(parsed.projectMemoryRefreshHandoffPrompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
             assert.equal(parsed.updateMessages[0].title, 'Major registry note');
             assert.equal(parsed.releaseNotes[0].version, '1.1.0');
         } finally {
@@ -327,6 +328,8 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
                 return {
                     previousVersion: 'stale-version',
                     updatedVersion: '0.0.1',
+                    projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',
+                    projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
                     rollbackSnapshotPath: 'stale-snapshot',
                     rollbackStatus: 'STALE',
                     updateReportPath: 'stale-report'
@@ -398,6 +401,7 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
                 true
             );
             assert.equal(plainTextLines.includes('ProjectMemoryMaintenanceSummaryLine: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'), true);
+            assert.equal(plainTextLines.includes(`ProjectMemoryRefreshHandoffPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`), true);
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
             assert.equal(require.cache[fixture.bundleUpdateModulePath], undefined);
@@ -417,6 +421,7 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
                 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
             );
             assert.equal(parsed.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
+            assert.equal(parsed.projectMemoryRefreshHandoffPrompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
             assert.equal(parsed.requestedPackageSpec, 'garda-agent-orchestrator@latest');
             assert.equal(parsed.exactPackageSpec, 'garda-agent-orchestrator@1.1.0');
             assert.equal(parsed.resolvedPackageVersion, '1.1.0');

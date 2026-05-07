@@ -290,7 +290,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push('  6. Mandatory orchestrator flow:');
     lines.push(`     ${gateFlow}`);
     lines.push(`  ${projectMemoryRolloutSummary.summary_line}`);
-    lines.push(`  Project memory refresh handoff: ${projectMemoryRolloutSummary.refresh_handoff_prompt}`);
+    lines.push(`  Project memory init/refresh prompt: ${projectMemoryRolloutSummary.refresh_handoff_prompt}`);
     return lines.join('\n');
 }
 

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../src/core/project-memory-rollout';
+
 function findRepoRoot() {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
@@ -46,12 +48,18 @@ test('AGENT_INIT_PROMPT requires the hard agent-init command before declaring re
 test('AGENT_INIT_PROMPT routes project-memory enrichment to source files', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
     assert.match(content, /Enrich project memory from real repository evidence/i);
+    assert.ok(content.includes(PROJECT_MEMORY_INIT_REFRESH_PROMPT));
     assert.match(content, /garda-agent-orchestrator\/live\/docs\/project-memory\/README\.md/);
     assert.match(content, /garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md/);
     assert.match(content, /do not edit `garda-agent-orchestrator\/live\/docs\/agent-rules\/15-project-memory\.md` directly/i);
     assert.match(content, /do not invent domain architecture, stack details, commands, or ownership boundaries/i);
     assert.match(content, /unknown or custom/i);
     assert.match(content, /placeholder-heavy memory requires explicit, actionable warning/i);
+});
+
+test('CLI reference keeps project-memory init-refresh prompt synchronized', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'docs', 'cli-reference.md'), 'utf8');
+    assert.ok(content.includes(PROJECT_MEMORY_INIT_REFRESH_PROMPT));
 });
 
 test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositories', () => {

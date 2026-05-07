@@ -6,6 +6,7 @@ import * as os from 'node:os';
 
 import { runInit, mergeConfig } from '../../../src/materialization/init';
 import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../src/core/project-memory-rollout';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -499,7 +500,7 @@ describe('runInit', () => {
             assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
 
             const initReport = fs.readFileSync(result.initReportPath, 'utf8');
-            assert.ok(initReport.includes('Project memory refresh handoff prompt: Refresh Garda project memory after this update.'));
+            assert.ok(initReport.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

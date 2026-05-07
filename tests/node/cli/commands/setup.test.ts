@@ -16,6 +16,7 @@ import { runVerify } from '../../../../src/validators/verify';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
 import { DEFAULT_BUNDLE_NAME, resolveInitAnswersRelativePath } from '../../../../src/core/constants';
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
 
 const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
@@ -466,8 +467,8 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
         assert.ok(initReport.includes(`path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json`));
         assert.ok(initReport.includes('full_suite_validation.enabled=true'));
         assert.ok(refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
-        assert.ok(refreshText.includes('ProjectMemoryRefreshHandoff: Refresh Garda project memory after this update.'));
-        assert.ok(initReport.includes('Project memory refresh handoff prompt: Refresh Garda project memory after this update.'));
+        assert.ok(refreshText.includes(`ProjectMemoryRefreshHandoff: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+        assert.ok(initReport.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
@@ -749,7 +750,7 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Mandatory orchestrator flow:'));
     assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate'));
     assert.ok(text.includes('Project memory maintenance: update read_strategy=index_first'));
-    assert.ok(text.includes('Project memory refresh handoff: Refresh Garda project memory after this update.'));
+    assert.ok(text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
 });
 
 test('buildSetupHandoffText renders compact report labels in English while preserving assistant language', () => {

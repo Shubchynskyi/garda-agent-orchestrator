@@ -86,6 +86,10 @@ node garda-agent-orchestrator/bin/garda.js install --target-root "." --init-answ
     - `garda-agent-orchestrator/live/project-discovery.md`
     - update `10-project-context.md`, `20-architecture.md`, `30-code-style.md`, `40-commands.md`, `60-operating-rules.md` with repository-specific facts.
     - Enrich project memory from real repository evidence after the deterministic templates exist:
+      - execute this canonical project-memory initialization/refresh prompt:
+```text
+Initialize or refresh Garda project memory. Inspect the repository through the normal orchestrator workflow, starting with `garda-agent-orchestrator/live/docs/project-memory/README.md` and `garda-agent-orchestrator/live/docs/project-memory/compact.md`. Update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are missing, stale, template-seeded, placeholder-only, or incomplete; keep `compact.md` concise; record confirmed stack, commands, module map, decisions, risks, and unknown/custom stack fallback from source, configs, tests, durable docs, or explicit user answers. Do not edit generated `garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md`, do not invent facts, and do not overwrite user-authored memory without preserving its facts. Record project-memory update evidence when the workflow asks for it.
+```
       - read `garda-agent-orchestrator/live/docs/project-memory/README.md`, then `garda-agent-orchestrator/live/docs/project-memory/compact.md`;
       - update only `garda-agent-orchestrator/live/docs/project-memory/*.md` source files with facts found in source code, configs, tests, and durable docs;
       - do not edit `garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md` directly; it is generated from project-memory sources by init, reinit, update, and agent-init;
