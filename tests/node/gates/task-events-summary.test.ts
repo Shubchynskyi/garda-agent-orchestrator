@@ -10,11 +10,13 @@ import {
     auditCommandCompactness,
     auditGateCommand,
     getCommandAuditFromDetails,
+    buildCompactLatestCycleTaskEventsSummary,
     buildTaskEventsSummary,
     formatTaskEventsSummaryText,
     getOutputTelemetryFromPayload,
     TaskEventsSummaryResult
 } from '../../../src/gates/task-events-summary';
+import { runTaskEventsSummaryCommand } from '../../../src/cli/commands/gate-flows/task-summary-flow';
 
 describe('gates/task-events-summary', () => {
     describe('parseTimestamp', () => {
@@ -1282,6 +1284,297 @@ describe('gates/task-events-summary', () => {
             assert.equal(summary.token_economy!.total_estimated_saved_chars, 780);
             assert.equal(summary.token_economy!.total_estimated_saved_tokens, 195);
             assert.equal(summary.token_economy!.breakdown.length, 1);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('builds a bounded compact latest-cycle contract without full timeline details', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T09:00:00Z',
+                    task_id: 'T-007',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Earlier cycle started.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T09:01:00Z',
+                    task_id: 'T-007',
+                    event_type: 'COMPILE_GATE_FAILED',
+                    outcome: 'FAIL',
+                    actor: 'gate',
+                    message: 'Earlier compile failed.',
+                    details: {
+                        artifact_path: path.join(tmpDir, 'old-compile.json')
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-007',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Latest cycle started.',
+                    details: {
+                        artifact_path: path.join(tmpDir, 'task-mode.json')
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-007',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile gate passed.',
+                    details: {
+                        artifact_path: path.join(tmpDir, 'compile.json'),
+                        raw_char_count: 200,
+                        filtered_char_count: 100,
+                        estimated_saved_chars: 100,
+                        raw_token_count_estimate: 50,
+                        filtered_token_count_estimate: 25,
+                        estimated_saved_tokens: 25,
+                        verbose_payload: 'x'.repeat(1000)
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-007.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const fullSummary = buildTaskEventsSummary({ taskId: 'T-007', eventsRoot: eventsDir, repoRoot: tmpDir });
+            const compactSummary = buildCompactLatestCycleTaskEventsSummary(fullSummary);
+
+            assert.equal(compactSummary.schema_version, 1);
+            assert.equal(compactSummary.mode, 'compact_latest_cycle');
+            assert.equal(compactSummary.latest_cycle.status, 'IN_PROGRESS');
+            assert.equal(compactSummary.latest_cycle.cycle_event_count, 2);
+            assert.equal(compactSummary.latest_cycle.start_index, 3);
+            assert.equal(compactSummary.latest_cycle.blocking_reason, null);
+            assert.deepEqual(
+                compactSummary.latest_cycle.gate_outcomes.map((item) => item.gate),
+                ['enter-task-mode', 'compile-gate']
+            );
+            assert.ok(compactSummary.latest_cycle.evidence_references.some((item) => item.endsWith('/compile.json')));
+            assert.equal(compactSummary.token_economy?.total_estimated_saved_chars, 100);
+            assert.equal(JSON.stringify(compactSummary).includes('verbose_payload'), false);
+            assert.equal('timeline' in compactSummary, false);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('reports the latest-cycle blocker from the latest gate outcome', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-008',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Latest cycle started.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-008',
+                    event_type: 'COMPILE_GATE_FAILED',
+                    outcome: 'FAIL',
+                    actor: 'gate',
+                    message: 'Compile gate failed.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:02:00Z',
+                    task_id: 'T-008',
+                    event_type: 'REVIEW_GATE_FAILED',
+                    outcome: 'FAIL',
+                    actor: 'gate',
+                    message: 'Review gate failed before compile was retried.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:03:00Z',
+                    task_id: 'T-008',
+                    event_type: 'COMPILE_GATE_FAILED',
+                    outcome: 'FAIL',
+                    actor: 'gate',
+                    message: 'Compile gate failed again.'
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-008.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const compactSummary = buildCompactLatestCycleTaskEventsSummary(
+                buildTaskEventsSummary({ taskId: 'T-008', eventsRoot: eventsDir, repoRoot: tmpDir })
+            );
+
+            assert.equal(compactSummary.latest_cycle.status, 'BLOCKED');
+            assert.equal(compactSummary.latest_cycle.blocking_reason?.gate, 'compile-gate');
+            assert.equal(compactSummary.latest_cycle.blocking_reason?.event_type, 'COMPILE_GATE_FAILED');
+            assert.equal(compactSummary.latest_cycle.blocking_reason?.message, 'Compile gate failed again.');
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('includes override-approved review gates in compact latest-cycle outcomes', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-008B',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Latest cycle started.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-008B',
+                    event_type: 'REVIEW_GATE_PASSED_WITH_OVERRIDE',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Review gate passed with override.',
+                    details: {
+                        artifact_path: path.join(tmpDir, 'review-gate.json')
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-008B.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const compactSummary = buildCompactLatestCycleTaskEventsSummary(
+                buildTaskEventsSummary({ taskId: 'T-008B', eventsRoot: eventsDir, repoRoot: tmpDir })
+            );
+            const reviewGate = compactSummary.latest_cycle.gate_outcomes.find(
+                (item) => item.gate === 'required-reviews-check'
+            );
+
+            assert.ok(reviewGate);
+            assert.equal(reviewGate.status, 'PASS');
+            assert.equal(reviewGate.event_type, 'REVIEW_GATE_PASSED_WITH_OVERRIDE');
+            assert.ok(compactSummary.latest_cycle.evidence_references.some((item) => item.endsWith('/review-gate.json')));
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('maps actual doc-impact and project-memory lifecycle events to compact gate outcomes', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-008C',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Latest cycle started.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-008C',
+                    event_type: 'DOC_IMPACT_ASSESSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Doc impact assessed.',
+                    details: {
+                        artifact_path: path.join(tmpDir, 'doc-impact.json')
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:02:00Z',
+                    task_id: 'T-008C',
+                    event_type: 'PROJECT_MEMORY_IMPACT_BLOCKED',
+                    outcome: 'BLOCKED',
+                    actor: 'gate',
+                    message: 'Project memory impact blocked completion.',
+                    details: {
+                        artifact_path: path.join(tmpDir, 'project-memory-impact.json')
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-008C.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const compactSummary = buildCompactLatestCycleTaskEventsSummary(
+                buildTaskEventsSummary({ taskId: 'T-008C', eventsRoot: eventsDir, repoRoot: tmpDir })
+            );
+            const docImpact = compactSummary.latest_cycle.gate_outcomes.find(
+                (item) => item.gate === 'doc-impact-gate'
+            );
+            const projectMemory = compactSummary.latest_cycle.gate_outcomes.find(
+                (item) => item.gate === 'project-memory-impact'
+            );
+
+            assert.ok(docImpact);
+            assert.equal(docImpact.status, 'PASS');
+            assert.equal(docImpact.event_type, 'DOC_IMPACT_ASSESSED');
+            assert.ok(projectMemory);
+            assert.equal(projectMemory.status, 'FAIL');
+            assert.equal(projectMemory.event_type, 'PROJECT_MEMORY_IMPACT_BLOCKED');
+            assert.equal(compactSummary.latest_cycle.status, 'BLOCKED');
+            assert.equal(compactSummary.latest_cycle.blocking_reason?.gate, 'project-memory-impact');
+            assert.ok(compactSummary.latest_cycle.evidence_references.some((item) => item.endsWith('/doc-impact.json')));
+            assert.ok(compactSummary.latest_cycle.evidence_references.some((item) => item.endsWith('/project-memory-impact.json')));
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('renders compact latest-cycle CLI output as JSON without changing legacy --as-json', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const repoRoot = path.join(tmpDir, 'repo');
+            const eventsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-009.jsonl'),
+                [
+                    {
+                        timestamp_utc: '2024-01-15T10:00:00Z',
+                        task_id: 'T-009',
+                        event_type: 'TASK_MODE_ENTERED',
+                        outcome: 'PASS',
+                        actor: 'gate',
+                        message: 'Task mode entered.'
+                    }
+                ].map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const legacy = JSON.parse(runTaskEventsSummaryCommand({
+                taskId: 'T-009',
+                repoRoot,
+                asJson: true
+            }).rendered);
+            const compact = JSON.parse(runTaskEventsSummaryCommand({
+                taskId: 'T-009',
+                repoRoot,
+                compactLatestCycle: true
+            }).rendered);
+
+            assert.ok(Array.isArray(legacy.timeline));
+            assert.equal(compact.mode, 'compact_latest_cycle');
+            assert.equal('timeline' in compact, false);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });

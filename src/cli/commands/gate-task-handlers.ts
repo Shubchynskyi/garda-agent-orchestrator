@@ -284,7 +284,8 @@ export async function handleTaskEventsSummary(gateArgv: string[]): Promise<void>
         '--reviews-root': { key: 'reviewsRoot', type: 'string' },
         '--output-path': { key: 'outputPath', type: 'string' },
         '--as-json': { key: 'asJson', type: 'boolean' },
-        '--include-details': { key: 'includeDetails', type: 'boolean' }
+        '--include-details': { key: 'includeDetails', type: 'boolean' },
+        '--compact-latest-cycle': { key: 'compactLatestCycle', type: 'boolean' }
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runTaskEventsSummaryCommand(options);

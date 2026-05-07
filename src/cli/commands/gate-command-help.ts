@@ -358,7 +358,8 @@ function buildLifecycleGateHelpEntries(
         'task-events-summary': {
             ...createGateHelpEntry('Summarize task timeline events for audit and debugging.', [
                 `${cliPrefix} gate task-events-summary --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
-                `${cliPrefix} gate task-events-summary --task-id "${TASK_ID_PLACEHOLDER}" --as-json --repo-root "."`
+                `${cliPrefix} gate task-events-summary --task-id "${TASK_ID_PLACEHOLDER}" --as-json --repo-root "."`,
+                `${cliPrefix} gate task-events-summary --task-id "${TASK_ID_PLACEHOLDER}" --compact-latest-cycle --repo-root "."`
             ], true)
         },
         'task-audit-summary': {

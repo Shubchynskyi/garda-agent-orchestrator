@@ -1,7 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as gateHelpers from '../../../gates/helpers';
-import { buildTaskEventsSummary, formatTaskEventsSummaryText } from '../../../gates/task-events-summary';
+import {
+    buildCompactLatestCycleTaskEventsSummary,
+    buildTaskEventsSummary,
+    formatTaskEventsSummaryText
+} from '../../../gates/task-events-summary';
 import {
     buildTaskAuditSummary,
     formatTaskAuditSummaryText,
@@ -23,6 +27,7 @@ export interface TaskEventsSummaryCommandOptions {
     outputPath?: unknown;
     asJson?: unknown;
     includeDetails?: unknown;
+    compactLatestCycle?: unknown;
 }
 
 export interface TaskEventsSummaryCommandResult {
@@ -66,8 +71,11 @@ export function runTaskEventsSummaryCommand(
         repoRoot,
         reviewsRoot
     });
-    const rendered = options.asJson === true
-        ? `${JSON.stringify(summary, null, 2)}\n`
+    const outputSummary = options.compactLatestCycle === true
+        ? buildCompactLatestCycleTaskEventsSummary(summary)
+        : summary;
+    const rendered = options.asJson === true || options.compactLatestCycle === true
+        ? `${JSON.stringify(outputSummary, null, 2)}\n`
         : `${formatTaskEventsSummaryText(summary, options.includeDetails === true)}\n`;
     if (options.outputPath) {
         const outputPath = requireResolvedPath(
