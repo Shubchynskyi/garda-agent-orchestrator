@@ -5,6 +5,7 @@ import { isPathInsideRoot } from '../../core/paths';
 import {
     COMPILED_RUNTIME_DEPLOY_CANDIDATES,
     DEPLOY_ITEMS,
+    FORBIDDEN_COMPILED_RUNTIME_DEPLOY_PATHS,
     SKIPPED_ENTRY_NAMES,
     SKIPPED_FILE_SUFFIXES
 } from './cli-constants';
@@ -203,6 +204,10 @@ function copyCompiledRuntimeArtifacts(
     destinationPath: string,
     options: { replaceExisting: boolean }
 ): void {
+    for (const relativePath of FORBIDDEN_COMPILED_RUNTIME_DEPLOY_PATHS) {
+        removePathIfExists(path.join(destinationPath, relativePath));
+    }
+
     const availableCandidates = COMPILED_RUNTIME_DEPLOY_CANDIDATES.filter((relativePath) => {
         return hasCompiledRuntimeRoot(sourceRoot, relativePath);
     });

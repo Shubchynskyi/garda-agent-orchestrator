@@ -524,6 +524,13 @@ function writeCompiledRuntimeFixture(sourceRoot: string): void {
     fs.writeFileSync(path.join(runtimeRoot, 'cli', 'main.js'), 'module.exports = {};\n', 'utf8');
 }
 
+function writeDevBuildRuntimeFixture(sourceRoot: string): void {
+    const runtimeRoot = path.join(sourceRoot, '.node-build', 'src');
+    fs.mkdirSync(path.join(runtimeRoot, 'cli'), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    fs.writeFileSync(path.join(runtimeRoot, 'cli', 'main.js'), 'module.exports = {};\n', 'utf8');
+}
+
 function writeDeploySourceFixture(sourceRoot: string): void {
     fs.mkdirSync(sourceRoot, { recursive: true });
     for (const item of DEPLOY_ITEMS) {
@@ -545,12 +552,14 @@ test('deployFreshBundle copies DEPLOY_ITEMS to destination', () => {
         const sourceRoot = path.join(tmpDir, 'source');
         const destPath = path.join(tmpDir, 'bundle');
         writeDeploySourceFixture(sourceRoot);
+        writeDevBuildRuntimeFixture(sourceRoot);
         deployFreshBundle(sourceRoot, destPath);
         assert.ok(fs.existsSync(destPath));
         for (const item of DEPLOY_ITEMS) {
             assert.ok(fs.existsSync(path.join(destPath, item)), `Missing: ${item}`);
         }
         assert.ok(fs.existsSync(path.join(destPath, 'dist', 'src', 'index.js')), 'Missing compiled runtime output');
+        assert.ok(!fs.existsSync(path.join(destPath, '.node-build')), 'Deployed bundle must not include .node-build');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -620,10 +629,14 @@ test('syncBundleItems replaces existing items', () => {
         fs.mkdirSync(destPath, { recursive: true });
         fs.writeFileSync(path.join(sourceRoot, 'VERSION'), 'new-VERSION', 'utf8');
         fs.writeFileSync(path.join(destPath, 'VERSION'), 'old', 'utf8');
+        writeDevBuildRuntimeFixture(sourceRoot);
+        fs.mkdirSync(path.join(destPath, '.node-build', 'src'), { recursive: true });
+        fs.writeFileSync(path.join(destPath, '.node-build', 'src', 'index.js'), 'module.exports = {};\n', 'utf8');
 
         syncBundleItems(sourceRoot, destPath);
         assert.equal(fs.readFileSync(path.join(destPath, 'VERSION'), 'utf8'), 'new-VERSION');
         assert.ok(fs.existsSync(path.join(destPath, 'dist', 'src', 'index.js')));
+        assert.ok(!fs.existsSync(path.join(destPath, '.node-build')), 'Bundle sync must remove stale deployed .node-build');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

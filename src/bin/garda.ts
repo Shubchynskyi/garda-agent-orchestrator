@@ -4,7 +4,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-interface CliMainModule {
+export interface CliMainModule {
     runCliMainWithHandling: (argv?: string[], packageRoot?: string) => Promise<void>;
 }
 
@@ -67,18 +67,19 @@ export function getRuntimeCandidates(packageRoot: string): string[] {
     const devBuildRuntimeRoot = path.join(packageRoot, '.node-build', 'src');
     const publishRuntimeRoot = path.join(packageRoot, 'dist', 'src');
     const candidates: string[] = [];
-    const runtimeRoots = [publishRuntimeRoot, devBuildRuntimeRoot];
 
-    for (const runtimeRoot of runtimeRoots) {
-        if (hasRuntimeRoot(runtimeRoot)) {
-            candidates.push(runtimeRoot);
-        }
+    if (hasRuntimeRoot(publishRuntimeRoot)) {
+        candidates.push(publishRuntimeRoot);
+    }
+
+    if (looksLikeSourceCheckout(packageRoot) && hasRuntimeRoot(devBuildRuntimeRoot)) {
+        candidates.push(devBuildRuntimeRoot);
     }
 
     return candidates;
 }
 
-function loadCliMainModule(packageRoot: string): CliMainModule {
+export function loadCliMainModule(packageRoot: string): CliMainModule {
     const runtimeCandidates = getRuntimeCandidates(packageRoot);
     if (runtimeCandidates.length === 0) {
         console.error(

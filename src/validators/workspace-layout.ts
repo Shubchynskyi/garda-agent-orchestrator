@@ -152,6 +152,10 @@ export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
     'live/config/garda.config.json'
 ]);
 
+export const FORBIDDEN_DEPLOYED_BUNDLE_PATHS = Object.freeze([
+    '.node-build'
+]);
+
 interface BuildRequiredPathsOptions {
     activeAgentFiles?: readonly string[];
     claudeOrchestratorFullAccess?: boolean;
@@ -534,6 +538,12 @@ export function validateBundleInvariants(
             } else {
                 violations.push(`Required bundle inventory '${relPath}' is missing.`);
             }
+        }
+    }
+
+    for (const relPath of FORBIDDEN_DEPLOYED_BUNDLE_PATHS) {
+        if (pathExists(path.join(bundlePath, relPath))) {
+            violations.push(`Forbidden deployed bundle path '${relPath}' is present.`);
         }
     }
 

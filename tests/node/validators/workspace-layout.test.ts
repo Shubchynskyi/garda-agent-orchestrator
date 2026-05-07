@@ -332,6 +332,27 @@ test('validateBundleInvariants tolerates a missing optional-skill-selection-poli
     }
 });
 
+test('validateBundleInvariants rejects deployed bundle .node-build runtime output', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-forbidden-node-build-test-'));
+    const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+    try {
+        for (const relPath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+            const fullPath = path.join(bundlePath, relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, '{}', 'utf8');
+        }
+
+        fs.mkdirSync(path.join(bundlePath, '.node-build', 'src'), { recursive: true });
+        fs.writeFileSync(path.join(bundlePath, '.node-build', 'src', 'index.js'), 'module.exports = {};\n', 'utf8');
+
+        const result = validateBundleInvariants(bundlePath);
+        assert.equal(result.isValid, false);
+        assert.ok(result.violations.some(v => v.includes("Forbidden deployed bundle path '.node-build'")));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('validateBundleInvariants fails when garda.config runtime inventory entry is missing', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
     const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');

@@ -4,7 +4,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { getRuntimeCandidates, inferBundleNameFromPackageRoot, resolveDelegatedLauncherTarget } from '../../../src/bin/garda';
+import {
+    getRuntimeCandidates,
+    inferBundleNameFromPackageRoot,
+    loadCliMainModule,
+    resolveDelegatedLauncherTarget
+} from '../../../src/bin/garda';
 
 function writeFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -218,12 +223,66 @@ test('getRuntimeCandidates falls back to .node-build when dist runtime is absent
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-fallback-'));
     try {
         createGardaPackageRoot(tempRoot, '2.4.0');
+        writeFile(path.join(tempRoot, 'tests', 'node', 'placeholder.test.ts'), '');
         writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
 
         const candidates = getRuntimeCandidates(tempRoot);
         assert.deepEqual(candidates, [
             path.join(tempRoot, '.node-build', 'src')
         ]);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('getRuntimeCandidates excludes .node-build for deployed bundle roots', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-deployed-'));
+    try {
+        createGardaPackageRoot(tempRoot, '2.4.0');
+        writeFile(path.join(tempRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
+        writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
+
+        const candidates = getRuntimeCandidates(tempRoot);
+        assert.deepEqual(candidates, [
+            path.join(tempRoot, 'dist', 'src')
+        ]);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('getRuntimeCandidates does not use .node-build-only deployed bundle roots', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-deployed-node-build-only-'));
+    try {
+        createGardaPackageRoot(tempRoot, '2.4.0');
+        writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
+
+        const candidates = getRuntimeCandidates(tempRoot);
+        assert.deepEqual(candidates, []);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadCliMainModule fails corrupt deployed dist instead of falling back to .node-build', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-corrupt-deployed-dist-'));
+    try {
+        createGardaPackageRoot(tempRoot, '2.4.0');
+        writeFile(path.join(tempRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
+        writeFile(
+            path.join(tempRoot, 'dist', 'src', 'cli', 'main.js'),
+            'require("./definitely-missing-runtime-module");\n'
+        );
+        writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
+        writeFile(
+            path.join(tempRoot, '.node-build', 'src', 'cli', 'main.js'),
+            'exports.runCliMainWithHandling = async function () {};\n'
+        );
+
+        assert.throws(
+            () => loadCliMainModule(tempRoot),
+            /definitely-missing-runtime-module/
+        );
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }

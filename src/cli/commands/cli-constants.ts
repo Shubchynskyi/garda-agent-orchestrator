@@ -29,7 +29,10 @@ export const DEPLOY_ITEMS = Object.freeze([
 ]);
 
 export const COMPILED_RUNTIME_DEPLOY_CANDIDATES = Object.freeze([
-    'dist',
+    'dist'
+]);
+
+export const FORBIDDEN_COMPILED_RUNTIME_DEPLOY_PATHS = Object.freeze([
     '.node-build'
 ]);
 

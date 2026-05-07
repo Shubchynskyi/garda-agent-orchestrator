@@ -275,6 +275,10 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
             'dist/src/index.js must exist in the installed package'
         );
         assert.ok(
+            !fs.existsSync(path.join(installedPackageRoot, '.node-build')),
+            'installed package must not include .node-build'
+        );
+        assert.ok(
             fs.existsSync(path.join(installedPackageRoot, 'template', 'entrypoints', 'canonical-rule-index.md')),
             'neutral canonical rule-index template must exist in the installed package'
         );
