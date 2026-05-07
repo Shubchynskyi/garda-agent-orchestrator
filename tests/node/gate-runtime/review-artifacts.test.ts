@@ -639,6 +639,55 @@ test('withReviewArtifactReadBarrier waits for a live external review transaction
     }
 });
 
+test('same-process read barrier sees complete staged artifact set during transaction', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-same-process-read-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const reviewPath = path.join(reviewsDir, 'T-021-code.md');
+    const receiptPath = path.join(reviewsDir, 'T-021-code-receipt.json');
+
+    try {
+        writeReviewArtifactText(reviewPath, 'old review\n');
+        loadIndex(reviewsDir);
+
+        await writeReviewArtifactsWithRollback([
+            {
+                artifactPath: reviewPath,
+                contentType: 'text',
+                content: 'new review\n'
+            },
+            {
+                artifactPath: receiptPath,
+                contentType: 'json',
+                payload: {
+                    task_id: 'T-021',
+                    review_type: 'code'
+                }
+            }
+        ], async () => {
+            const snapshot = withReviewArtifactReadBarrier(reviewsDir, () => ({
+                review: fs.readFileSync(reviewPath, 'utf8'),
+                receipt: JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>,
+                indexEntries: loadIndex(reviewsDir).index.entries.map((entry) => entry.fileName).sort()
+            }));
+
+            assert.equal(snapshot.review, 'new review\n');
+            assert.deepEqual(snapshot.receipt, {
+                task_id: 'T-021',
+                review_type: 'code'
+            });
+            assert.equal(snapshot.indexEntries.includes('T-021-code.md'), true);
+            assert.equal(snapshot.indexEntries.includes('T-021-code-receipt.json'), false);
+            return 'done';
+        });
+
+        const committedIndex = loadIndex(reviewsDir).index;
+        assert.equal(committedIndex.entries.some((entry) => entry.fileName === 'T-021-code.md'), true);
+        assert.equal(committedIndex.entries.some((entry) => entry.fileName === 'T-021-code-receipt.json'), true);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('writeReviewArtifactsWithRollback rolls back all artifacts and refreshes the index after callback failure', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-rollback-'));
     const reviewsDir = createReviewsDir(tempDir);
