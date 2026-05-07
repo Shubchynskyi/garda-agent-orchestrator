@@ -1808,6 +1808,7 @@ interface PreflightWorkspaceReadinessOptions {
     failedReviewType?: string | null;
     failedReviewVerdict?: string | null;
     docImpactPath?: string | null;
+    allowDocsOnlyDelta?: boolean;
 }
 
 interface PreflightCycleReadiness {
@@ -3503,6 +3504,11 @@ function readPreflightWorkspaceReadiness(
             `preflight changed_lines_total=${expectedChangedLinesTotal} differs from current changed_lines_total=${currentScope.changed_lines_total}`
         );
     }
+    if (expectedScopeContentSha256 && currentScope.scope_content_sha256 !== expectedScopeContentSha256) {
+        violations.push(
+            `preflight scope_content_sha256=${expectedScopeContentSha256} differs from current scope_content_sha256=${currentScope.scope_content_sha256}`
+        );
+    }
     const expectedScopeSha256 = typeof metrics.scope_sha256 === 'string'
         ? metrics.scope_sha256.trim().toLowerCase()
         : '';
@@ -3512,6 +3518,7 @@ function readPreflightWorkspaceReadiness(
         );
     }
     let currentChangedFiles: string[] | undefined;
+    const allowDocsOnlyDelta = options.allowDocsOnlyDelta !== false;
     if (normalizedDetectionSource === 'explicit_changed_files') {
         const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
         if (currentGitSnapshot) {
@@ -3520,19 +3527,21 @@ function readPreflightWorkspaceReadiness(
                 !unchangedProtectedFiles.has(normalizePath(entry))
             ));
             currentChangedFiles = currentGitChangedFiles;
-            const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
-                repoRoot,
-                currentGitChangedFiles,
-                changedFiles,
-                expectedChangedLinesTotal,
-                includeUntracked,
-                detectionSource,
-                expectedChangedFilesSha256,
-                expectedScopeContentSha256,
-                getDocImpactDeclaredDocsUpdated(options.docImpactPath)
-            );
-            if (docsOnlyDeltaReadiness) {
-                return docsOnlyDeltaReadiness;
+            if (allowDocsOnlyDelta) {
+                const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
+                    repoRoot,
+                    currentGitChangedFiles,
+                    changedFiles,
+                    expectedChangedLinesTotal,
+                    includeUntracked,
+                    detectionSource,
+                    expectedChangedFilesSha256,
+                    expectedScopeContentSha256,
+                    getDocImpactDeclaredDocsUpdated(options.docImpactPath)
+                );
+                if (docsOnlyDeltaReadiness) {
+                    return docsOnlyDeltaReadiness;
+                }
             }
             const currentFileSetHash = stringSha256(currentGitChangedFiles.join('\n'));
             if (currentFileSetHash !== expectedChangedFilesSha256) {
@@ -3552,19 +3561,21 @@ function readPreflightWorkspaceReadiness(
         }
     }
 
-    const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
-        repoRoot,
-        currentScope.changed_files,
-        changedFiles,
-        expectedChangedLinesTotal,
-        includeUntracked,
-        detectionSource,
-        expectedChangedFilesSha256,
-        expectedScopeContentSha256,
-        getDocImpactDeclaredDocsUpdated(options.docImpactPath)
-    );
-    if (docsOnlyDeltaReadiness) {
-        return docsOnlyDeltaReadiness;
+    if (allowDocsOnlyDelta) {
+        const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
+            repoRoot,
+            currentScope.changed_files,
+            changedFiles,
+            expectedChangedLinesTotal,
+            includeUntracked,
+            detectionSource,
+            expectedChangedFilesSha256,
+            expectedScopeContentSha256,
+            getDocImpactDeclaredDocsUpdated(options.docImpactPath)
+        );
+        if (docsOnlyDeltaReadiness) {
+            return docsOnlyDeltaReadiness;
+        }
     }
 
     if (violations.length === 0) {
@@ -4795,6 +4806,18 @@ function getPreflightChangedFiles(preflight: Record<string, unknown> | null): st
         : [];
 }
 
+function getPostDoneAuditedChangedFiles(
+    preflight: Record<string, unknown> | null,
+    docImpactPath: string
+): string[] {
+    return [
+        ...new Set([
+            ...getPreflightChangedFiles(preflight),
+            ...getDocImpactDeclaredDocsUpdated(docImpactPath).map((entry) => normalizePath(entry)).filter(Boolean)
+        ])
+    ].sort();
+}
+
 function isChangelogPath(filePath: string): boolean {
     return /(^|\/)CHANGELOG/i.test(normalizePath(filePath));
 }
@@ -5177,6 +5200,121 @@ function readReadyFinalReportSummary(
         required_order: buildFinalReportOrder(summary, summary.final_report_contract.commit_command_suggestion, summary.final_report_contract.commit_question),
         commit_command_suggestion: summary.final_report_contract.commit_command_suggestion,
         commit_question: summary.final_report_contract.commit_question
+    };
+}
+
+interface PostDoneWorkspaceDriftDecision {
+    blocked: boolean;
+    reason: string;
+}
+
+function readPostDoneWorkspaceDriftDecision(
+    repoRoot: string,
+    preflight: Record<string, unknown> | null,
+    docImpactPath: string,
+    finalCloseoutJsonPath: string
+): PostDoneWorkspaceDriftDecision {
+    if (!preflight) {
+        return { blocked: false, reason: 'No preflight is available for post-DONE drift comparison.' };
+    }
+
+    const normalizedDetectionSource = String(preflight.detection_source || 'git_auto').trim().toLowerCase();
+    const includeUntracked = normalizedDetectionSource === 'git_staged_only'
+        ? false
+        : (typeof preflight.include_untracked === 'boolean' ? preflight.include_untracked : true);
+    let currentSnapshot: WorkspaceSnapshot & { cache_hit: boolean };
+    try {
+        currentSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', includeUntracked, [], {
+            noCache: true,
+            readOnly: true
+        });
+    } catch (error) {
+        const gitMetadataPath = path.join(repoRoot, '.git');
+        if (!fs.existsSync(gitMetadataPath)) {
+            return { blocked: false, reason: 'Workspace inspection is unavailable outside a git worktree.' };
+        }
+        return {
+            blocked: true,
+            reason:
+                'Unable to inspect tracked post-DONE workspace drift for the completed task closeout: ' +
+                `${error instanceof Error ? error.message : String(error)}. ` +
+                'Do not report the task as DONE until workspace drift can be inspected or the task is explicitly reopened/reset.'
+        };
+    }
+    const auditedChangedFiles = getPostDoneAuditedChangedFiles(preflight, docImpactPath);
+    const auditedSet = new Set(auditedChangedFiles);
+    const currentChangedFiles = currentSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean);
+    const unexpectedFiles = currentChangedFiles.filter((entry) => !auditedSet.has(entry));
+    if (unexpectedFiles.length > 0) {
+        return {
+            blocked: true,
+            reason:
+                `Tracked post-DONE workspace drift detected outside completed scope ${describePathList(auditedChangedFiles)}: ` +
+                `${describePathList(unexpectedFiles)}. ` +
+                'Do not reopen stale lifecycle gates automatically. Commit or isolate the already-completed task diff, or explicitly reopen/reset the task before running classify, compile, review, full-suite, or completion gates again.'
+        };
+    }
+    const closeout = safeReadJson(finalCloseoutJsonPath);
+    const implementationSummary = isPlainRecord(closeout?.implementation_summary) ? closeout.implementation_summary : null;
+    const expectedAuditedScopeContentSha256 = typeof implementationSummary?.scope_content_sha256 === 'string'
+        ? implementationSummary.scope_content_sha256.trim().toLowerCase()
+        : '';
+    const expectedAuditedChangedFilesSha256 = typeof implementationSummary?.changed_files_sha256 === 'string'
+        ? implementationSummary.changed_files_sha256.trim().toLowerCase()
+        : '';
+    if ((expectedAuditedScopeContentSha256 || expectedAuditedChangedFilesSha256) && auditedChangedFiles.length > 0) {
+        let currentAuditedScope: WorkspaceSnapshot & { cache_hit: boolean };
+        try {
+            currentAuditedScope = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', includeUntracked, auditedChangedFiles, {
+                noCache: true,
+                readOnly: true
+            });
+        } catch (error) {
+            return {
+                blocked: true,
+                reason:
+                    'Unable to inspect audited post-DONE closeout content: ' +
+                    `${error instanceof Error ? error.message : String(error)}. ` +
+                    'Do not report the task as DONE until workspace drift can be inspected or the task is explicitly reopened/reset.'
+            };
+        }
+        const auditedViolations = [
+            expectedAuditedScopeContentSha256 && currentAuditedScope.scope_content_sha256 !== expectedAuditedScopeContentSha256
+                ? `audited scope_content_sha256=${expectedAuditedScopeContentSha256} differs from current audited scope_content_sha256=${currentAuditedScope.scope_content_sha256}`
+                : '',
+            expectedAuditedChangedFilesSha256 && currentAuditedScope.changed_files_sha256 !== expectedAuditedChangedFilesSha256
+                ? `audited changed_files_sha256=${expectedAuditedChangedFilesSha256} differs from current audited changed_files_sha256=${currentAuditedScope.changed_files_sha256}`
+                : ''
+        ].filter(Boolean);
+        if (auditedViolations.length === 0) {
+            return { blocked: false, reason: 'Audited final closeout scope still matches the current workspace after DONE.' };
+        }
+        return {
+            blocked: true,
+            reason:
+                `Tracked post-DONE workspace drift detected in audited completed scope ${describePathList(auditedChangedFiles)}: ` +
+                `${auditedViolations.join('; ')}. ` +
+                'Do not reopen stale lifecycle gates automatically. Commit or isolate the already-completed task diff, or explicitly reopen/reset the task before running classify, compile, review, full-suite, or completion gates again.'
+        };
+    }
+
+    if (currentSnapshot.changed_files.length === 0) {
+        return { blocked: false, reason: 'Workspace is clean after DONE.' };
+    }
+
+    const readiness = readPreflightWorkspaceReadiness(repoRoot, preflight, {
+        docImpactPath,
+        allowDocsOnlyDelta: false
+    });
+    if (readiness.ready) {
+        return { blocked: false, reason: readiness.reason };
+    }
+
+    return {
+        blocked: true,
+        reason:
+            `Tracked post-DONE workspace drift detected in completed scope ${describePathList(getPreflightChangedFiles(preflight))}: ${readiness.reason} ` +
+            'Do not reopen stale lifecycle gates automatically. Commit or isolate the already-completed task diff, or explicitly reopen/reset the task before running classify, compile, review, full-suite, or completion gates again.'
     };
 }
 
@@ -5682,6 +5820,27 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
+        const hasFinalCloseoutArtifact = fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.json`))
+            || fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.md`));
+        if (hasFinalCloseoutArtifact) {
+            const postDoneDrift = readPostDoneWorkspaceDriftDecision(
+                repoRoot,
+                preflight,
+                path.join(reviewsRoot, `${taskId}-doc-impact.json`),
+                path.join(reviewsRoot, `${taskId}-final-closeout.json`)
+            );
+            if (postDoneDrift.blocked) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'post-done-drift',
+                    title: 'Resolve tracked post-DONE workspace drift.',
+                    reason: postDoneDrift.reason,
+                    commands: [],
+                    finalReport: null
+                });
+            }
+        }
         if (summary.final_report_contract.status !== 'READY') {
             return buildResult({
                 ...resultBase,

@@ -73,6 +73,10 @@ export interface FinalCloseoutImplementationSummary {
     path_mode: string | null;
     review_verdicts: Record<string, string>;
     docs_updated: boolean;
+    changed_files?: string[];
+    changed_files_sha256?: string | null;
+    scope_content_sha256?: string | null;
+    scope_sha256?: string | null;
     changed_files_count: number;
     changed_lines_total: number;
     scope_category: string | null;

@@ -5980,6 +5980,219 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /final closeout artifacts are not materialized yet/i);
     });
 
+    it('routes completed tasks to initial final closeout materialization despite tracked drift', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'post-done-drift.ts'), 'export const drift = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'READY');
+        assert.equal(result.next_gate, 'task-audit-summary');
+        assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
+        assert.match(result.reason, /final closeout artifacts are not materialized yet/i);
+    });
+
+    it('blocks completed tasks on tracked post-DONE drift without reopening lifecycle gates', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'post-done-drift.ts'), 'export const drift = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-done-drift');
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Tracked post-DONE workspace drift detected/);
+        assert.match(result.reason, /src\/post-done-drift\.ts/);
+        assert.match(result.reason, /Do not reopen stale lifecycle gates automatically/);
+        assert.equal(text.includes('gate classify-change'), false);
+        assert.equal(text.includes('gate compile-gate'), false);
+        assert.equal(text.includes('gate full-suite-validation'), false);
+    });
+
+    it('blocks completed tasks on tracked same-path post-DONE implementation drift', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const metrics = preflight.metrics as Record<string, unknown>;
+        delete metrics.scope_sha256;
+        writeJson(preflightPath, preflight);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'app.ts'),
+            'export const value = 1;\nexport const completedValue = 3;\n',
+            'utf8'
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-done-drift');
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Tracked post-DONE workspace drift detected/);
+        assert.match(result.reason, /src\/app\.ts/);
+        assert.match(result.reason, /scope_content_sha256/);
+        assert.equal(text.includes('gate classify-change'), false);
+        assert.equal(text.includes('gate compile-gate'), false);
+        assert.equal(text.includes('gate full-suite-validation'), false);
+    });
+
+    it('blocks completed tasks on tracked post-DONE drift in doc-impact audited files', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI\n\nDocumented closeout.\n', 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            docs_updated: ['docs/cli-reference.md'],
+            behavior_changed: false,
+            changelog_updated: false
+        });
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED');
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '\nPost-DONE drift.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-done-drift');
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Tracked post-DONE workspace drift detected in audited completed scope/);
+        assert.match(result.reason, /docs\/cli-reference\.md/);
+        assert.match(result.reason, /audited scope_content_sha256/);
+        assert.equal(text.includes('gate classify-change'), false);
+        assert.equal(text.includes('gate compile-gate'), false);
+        assert.equal(text.includes('gate full-suite-validation'), false);
+    });
+
+    it('blocks completed tasks when post-DONE doc-impact artifact changes audited files in a clean worktree', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI\n\nDocumented closeout.\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'extra.md'), '# Extra\n\nTracked but not audited.\n', 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            docs_updated: ['docs/cli-reference.md'],
+            behavior_changed: false,
+            changelog_updated: false
+        });
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED');
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        execFileSync('git', ['add', 'src/app.ts', 'docs/cli-reference.md', 'docs/extra.md'], { cwd: repoRoot, stdio: 'ignore' });
+        execFileSync('git', ['commit', '-m', 'complete task'], { cwd: repoRoot, stdio: 'ignore' });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            docs_updated: ['docs/cli-reference.md', 'docs/extra.md'],
+            behavior_changed: false,
+            changelog_updated: false
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-done-drift');
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Tracked post-DONE workspace drift detected in audited completed scope/);
+        assert.match(result.reason, /docs\/extra\.md/);
+        assert.equal(text.includes('gate task-audit-summary'), false);
+        assert.equal(text.includes('gate classify-change'), false);
+        assert.equal(text.includes('gate compile-gate'), false);
+        assert.equal(text.includes('gate full-suite-validation'), false);
+    });
+
+    it('blocks completed tasks when post-DONE workspace inspection fails in a git worktree', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        fs.mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'post-done-drift');
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /Unable to inspect tracked post-DONE workspace drift/);
+    });
+
+    it('allows completed task closeout when only ignored runtime artifacts changed after DONE', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'ignored-local.tmp'),
+            'local runtime evidence\n',
+            'utf8'
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'DONE', result.reason);
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.match(result.reason, /canonical final closeout is materialized/i);
+    });
+
     it('does not let an old completion pass hide a restarted task cycle', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
