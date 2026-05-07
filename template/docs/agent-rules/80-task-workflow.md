@@ -100,8 +100,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - produced diff after implementation, then normal gate flow;
   - audited no-op recorded through `node garda-agent-orchestrator/bin/garda.js gate record-no-op --task-id "<task-id>" --reason "<rationale>"`;
   - explicit `BLOCKED` state explaining why no changes were produced.
-- After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...` with the actual task-specific downstream rules that were opened.
-- Treat `classify-change -> load-rule-pack --stage "POST_PREFLIGHT" -> compile-gate` as one strict same-task chain. Do not parallelize these transitions; use `next-step` between them because a newer `PREFLIGHT_CLASSIFIED` invalidates older post-preflight rule-pack or compile attempts.
+- Legacy update compatibility wording: After preflight decides `required_reviews.*`, re-run `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...`. Current contract: After preflight decides `required_reviews.*`, run the exact POST_PREFLIGHT command printed by `next-step`: `load-rule-pack --stage "POST_PREFLIGHT" --preflight-path ...` when rule files must be read, or `bind-rule-pack-to-preflight` when current-cycle rule files and hashes are unchanged and only evidence must be rebound.
+- Treat `classify-change -> POST_PREFLIGHT rule-pack binding -> compile-gate` as one strict same-task chain. Do not parallelize these transitions; use `next-step` between them because a newer `PREFLIGHT_CLASSIFIED` invalidates older post-preflight rule-pack or compile attempts.
 - Compile gate command must pass before `IN_REVIEW`, but only run it when `next-step` reports `NextGate: compile-gate`:
   `node garda-agent-orchestrator/bin/garda.js gate compile-gate`.
 - Compile lifecycle telemetry must show `IMPLEMENTATION_STARTED` before `COMPILE_GATE_PASSED`.

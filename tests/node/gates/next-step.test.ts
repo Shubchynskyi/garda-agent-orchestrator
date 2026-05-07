@@ -285,13 +285,37 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
         executionProviderSource: 'explicit_provider',
         runtimeIdentityStatus: 'resolved'
     }));
-    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`), { task_id: taskId, stage: 'POST_PREFLIGHT' });
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
     appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
-    appendEvent(repoRoot, taskId, 'RULE_PACK_LOADED');
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY');
     appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+}
+
+function seedCustomStartedTask(repoRoot: string, taskId: string): string {
+    const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
+    writeJson(taskModePath, buildTaskModeArtifact({
+        taskId,
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Seeded custom next-step task',
+        startBanner: 'Garda captures my mind',
+        provider: 'Codex',
+        canonicalSourceOfTruth: 'Codex',
+        executionProviderSource: 'explicit_provider',
+        runtimeIdentityStatus: 'resolved'
+    }));
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
+    appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', {
+        artifact_path: normalizeForTimeline(taskModePath)
+    });
+    seedRulePack(repoRoot, taskId, 'TASK_ENTRY', taskModePath);
+    appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+    appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+    return taskModePath;
 }
 
 function seedTaskModeOnly(repoRoot: string, taskId: string): void {
@@ -310,9 +334,26 @@ function seedTaskModeOnly(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
 }
 
-function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'POST_PREFLIGHT'): void {
-    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`), { task_id: taskId, stage });
-    appendEvent(repoRoot, taskId, 'RULE_PACK_LOADED');
+function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'POST_PREFLIGHT', taskModePath = ''): void {
+    const rulePackPath = path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+    const artifact = buildRulePackArtifact({
+        repoRoot,
+        taskId,
+        stage,
+        taskModePath,
+        loadedRuleFiles: [
+            '00-core.md',
+            '15-project-memory.md',
+            '40-commands.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ]
+    });
+    writeJson(rulePackPath, artifact);
+    appendEvent(repoRoot, taskId, 'RULE_PACK_LOADED', 'PASS', {
+        stage,
+        artifact_path: normalizeForTimeline(rulePackPath)
+    });
 }
 
 function seedHandshake(repoRoot: string, taskId: string): void {
@@ -325,13 +366,14 @@ function seedShellSmoke(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 }
 
-function seedPostPreflightRulePack(repoRoot: string, taskId: string, preflightPath: string): void {
+function seedPostPreflightRulePack(repoRoot: string, taskId: string, preflightPath: string, taskModePath = ''): void {
     const rulePackPath = path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
     const artifact = buildRulePackArtifact({
         repoRoot,
         taskId,
         stage: 'POST_PREFLIGHT',
         preflightPath,
+        taskModePath,
         loadedRuleFiles: [
             '00-core.md',
             '15-project-memory.md',
@@ -838,6 +880,69 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
             actual_execution_mode: 'delegated_subagent',
             reviewer_session_id: reviewerIdentity
         }
+    });
+}
+
+function seedCompletedReviewerLaunchAndInvocation(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    reviewerIdentity: string,
+    options: { includeInvocation?: boolean } = {}
+): void {
+    const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const routeIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: reviewerIdentity
+    });
+    const launchBindingSha256 = 'c'.repeat(64);
+    const preparedIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: reviewerIdentity,
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: fileSha256(reviewContextPath),
+        routing_event_sha256: routeIntegrity.event_sha256,
+        launch_binding_sha256: launchBindingSha256
+    });
+    const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, reviewType, 'reviewer-launch.json');
+    writeJson(launchArtifactPath, {
+        schema_version: 1,
+        evidence_type: 'delegated_reviewer_launch',
+        attestation_state: 'launched',
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: fileSha256(reviewContextPath),
+        routing_event_sha256: routeIntegrity.event_sha256,
+        launch_binding_sha256: launchBindingSha256,
+        prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+        launch_tool: 'test-subagent-spawn',
+        provider_invocation_id: `test-${reviewType}-invocation`,
+        launched_at_utc: '2026-04-28T00:00:00.000Z',
+        fork_context: false
+    });
+    if (options.includeInvocation === false) {
+        return;
+    }
+    appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: reviewerIdentity,
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: fileSha256(reviewContextPath),
+        review_tree_state_sha256: readReviewContextTreeStateSha256(repoRoot, taskId, reviewType),
+        routing_event_sha256: routeIntegrity.event_sha256,
+        reviewer_launch_artifact_path: launchArtifactPath,
+        reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
+        reviewer_launch_attestation_source: 'test-subagent-spawn',
+        reviewer_launch_tool: 'test-subagent-spawn',
+        provider_invocation_id: `test-${reviewType}-invocation`,
+        launched_at_utc: '2026-04-28T00:00:00.000Z'
     });
 }
 
@@ -1567,11 +1672,10 @@ describe('gates/next-step', () => {
             runtimeActiveProfile: 'balanced',
             runtimeProfileSource: 'built_in'
         }));
-        writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`), { task_id: taskId, stage: 'POST_PREFLIGHT' });
         writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
         writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
         appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
-        appendEvent(repoRoot, taskId, 'RULE_PACK_LOADED');
+        seedRulePack(repoRoot, taskId, 'TASK_ENTRY');
         appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
         appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
         const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
@@ -3334,6 +3438,32 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--stage "TASK_ENTRY"'));
     });
 
+    it('preserves custom task-mode path when routing TASK_ENTRY rule-pack loading', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-custom-task-mode.json`);
+        writeJson(customTaskModePath, buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Load TASK_ENTRY rules for a custom task-mode artifact',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            artifact_path: normalizeForTimeline(customTaskModePath)
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.ok(result.commands[0].command.includes('--stage "TASK_ENTRY"'));
+        assert.ok(result.commands[0].command.includes(`--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`));
+    });
+
     it('routes missing handshake and shell-smoke preflight sequentially', () => {
         const repoRoot = makeTempRepo();
         seedTaskModeOnly(repoRoot, TASK_ID);
@@ -3345,6 +3475,26 @@ describe('gates/next-step', () => {
         seedHandshake(repoRoot, TASK_ID);
         const missingShellSmoke = resolveNextStep({ taskId: TASK_ID, repoRoot });
         assert.equal(missingShellSmoke.next_gate, 'shell-smoke-preflight');
+    });
+
+    it('routes stale TASK_ENTRY rule-pack evidence back to load-rule-pack before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '15-project-memory.md'),
+            '# 15-project-memory.md\n\nUpdated after initial rule-pack load.\n',
+            'utf8'
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.ok(result.reason.includes('stale or invalid'));
+        assert.ok(result.reason.includes('15-project-memory.md'));
+        assert.ok(result.commands[0].command.includes('--stage "TASK_ENTRY"'));
     });
 
     it('routes to classify-change before preflight and POST_PREFLIGHT rules after preflight', () => {
@@ -3457,6 +3607,38 @@ describe('gates/next-step', () => {
         assert.ok(!command.includes('<task summary>'));
     });
 
+    it('preserves custom task-mode path when building classify-change commands', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-custom-task-mode.json`);
+        writeJson(customTaskModePath, buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Classify custom task-mode scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            artifact_path: normalizeForTimeline(customTaskModePath)
+        });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY', customTaskModePath);
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--task-intent "Classify custom task-mode scope"'));
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(command.includes(`--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`));
+    });
+
     it('routes restarted task-mode cycles through fresh startup gates before reusing old preflight', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -3566,6 +3748,317 @@ describe('gates/next-step', () => {
             '80-task-workflow.md',
             '90-skill-catalog.md'
         ]);
+    });
+
+    it('routes equivalent current-cycle POST_PREFLIGHT refreshes to evidence binding instead of rereading rules', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const refreshed = 1;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'bind-rule-pack-to-preflight');
+        assert.match(result.title, /Bind existing POST_PREFLIGHT/);
+        assert.match(result.reason, /only the preflight binding must be refreshed/);
+        assert.ok(result.commands[0].command.includes('gate bind-rule-pack-to-preflight'));
+        assert.ok(!result.commands[0].command.includes('--loaded-rule-file'));
+    });
+
+    it('preserves custom task-mode path when binding refreshed POST_PREFLIGHT evidence', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-custom-task-mode.json`);
+        writeJson(customTaskModePath, buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Seeded custom next-step task',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            artifact_path: normalizeForTimeline(customTaskModePath)
+        });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY', customTaskModePath);
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath, customTaskModePath);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const customRefresh = 1;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'bind-rule-pack-to-preflight');
+        assert.ok(result.commands[0].command.includes('gate bind-rule-pack-to-preflight'));
+        assert.ok(result.commands[0].command.includes(`--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`));
+    });
+
+    it('preserves custom task-mode path when running compile after POST_PREFLIGHT binding', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-custom-task-mode.json`);
+        writeJson(customTaskModePath, buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Seeded custom compile task',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            artifact_path: normalizeForTimeline(customTaskModePath)
+        });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY', customTaskModePath);
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath, customTaskModePath);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.ok(result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(result.commands[0].command.includes(`--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`));
+    });
+
+    it('preserves custom task-mode path across review preparation commands', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = seedCustomStartedTask(repoRoot, TASK_ID);
+        const customTaskModeOption = `--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`;
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath, customTaskModePath);
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const contextResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(contextResult.next_gate, 'build-review-context');
+        assert.ok(contextResult.commands[0].command.includes('gate build-review-context'));
+        assert.ok(contextResult.commands[0].command.includes(customTaskModeOption));
+        assert.ok(contextResult.present_artifacts.some((artifact) => (
+            artifact.key === 'task-mode'
+            && artifact.path === normalizeForTimeline(path.relative(repoRoot, customTaskModePath))
+        )));
+
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const routingResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(routingResult.next_gate, 'record-review-routing');
+        assert.ok(routingResult.commands[0].command.includes('gate record-review-routing'));
+        assert.ok(routingResult.commands[0].command.includes(customTaskModeOption));
+
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        const launchResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(launchResult.next_gate, 'prepare-reviewer-launch');
+        assert.ok(launchResult.commands[0].command.includes('gate prepare-reviewer-launch'));
+        assert.ok(launchResult.commands[0].command.includes(customTaskModeOption));
+    });
+
+    it('preserves custom task-mode path across review result and closeout commands', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = seedCustomStartedTask(repoRoot, TASK_ID);
+        const customTaskModeOption = `--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`;
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath, customTaskModePath);
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const reviewGateResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(reviewGateResult.next_gate, 'required-reviews-check');
+        assert.ok(reviewGateResult.commands[0].command.includes('gate required-reviews-check'));
+        assert.ok(reviewGateResult.commands[0].command.includes(customTaskModeOption));
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        const completionResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(completionResult.next_gate, 'completion-gate');
+        assert.ok(completionResult.commands[0].command.includes('gate completion-gate'));
+        assert.ok(completionResult.commands[0].command.includes(customTaskModeOption));
+    });
+
+    it('preserves custom task-mode path when recording delegated review output', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = seedCustomStartedTask(repoRoot, TASK_ID);
+        const customTaskModeOption = `--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`;
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath, customTaskModePath);
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        seedCompletedReviewerLaunchAndInvocation(repoRoot, TASK_ID, 'code', reviewerIdentity);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result');
+        assert.ok(result.commands[0].command.includes('gate record-review-result'));
+        assert.ok(result.commands[0].command.includes(customTaskModeOption));
+    });
+
+    it('preserves custom task-mode path when attesting delegated review invocation', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = seedCustomStartedTask(repoRoot, TASK_ID);
+        const customTaskModeOption = `--task-mode-path "${normalizeForTimeline(path.relative(repoRoot, customTaskModePath))}"`;
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath, customTaskModePath);
+        seedCompilePass(repoRoot, TASK_ID);
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        seedCompletedReviewerLaunchAndInvocation(repoRoot, TASK_ID, 'code', reviewerIdentity, { includeInvocation: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-invocation');
+        assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
+        assert.ok(result.commands[0].command.includes(customTaskModeOption));
+    });
+
+    it('preserves custom task-mode path when restarting an incoherent preflight cycle', () => {
+        const repoRoot = makeTempRepo();
+        const customTaskModePath = seedCustomStartedTask(repoRoot, TASK_ID);
+        const initialPreflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, initialPreflightPath, customTaskModePath);
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        const refreshedPreflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, refreshedPreflightPath, customTaskModePath);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-coherent-cycle');
+        assert.ok(result.commands[0].command.includes('gate restart-coherent-cycle'));
+        assert.ok(result.commands[0].command.includes(`--task-mode-path '${customTaskModePath}'`));
+    });
+
+    it('keeps POST_PREFLIGHT reread guidance when refreshed preflight changes required rule files', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true }, { seedPostPreflight: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(result.title, /Read and record POST_PREFLIGHT/);
+        assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
+        assert.ok(result.commands[0].command.includes('--loaded-rule-file'));
+        assert.deepEqual(getLoadedRuleFileBasenames(result.commands[0].command), [
+            '00-core.md',
+            '15-project-memory.md',
+            '35-strict-coding-rules.md',
+            '40-commands.md',
+            '50-structure-and-docs.md',
+            '70-security.md',
+            '80-task-workflow.md',
+            '90-skill-catalog.md'
+        ]);
+    });
+
+    it('keeps POST_PREFLIGHT reread guidance when prior rule-pack evidence references missing rule files', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        const rulePackPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-rule-pack.json`);
+        const artifact = JSON.parse(fs.readFileSync(rulePackPath, 'utf8')) as Record<string, any>;
+        artifact.stages.post_preflight.loaded_rule_files.push(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', 'deleted-rule.md').replace(/\\/g, '/')
+        );
+        artifact.stages.post_preflight.required_rule_files.push(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', 'deleted-rule.md').replace(/\\/g, '/')
+        );
+        writeJson(rulePackPath, artifact);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(result.title, /Read and record POST_PREFLIGHT/);
+        assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
+        assert.ok(!result.commands[0].command.includes('gate bind-rule-pack-to-preflight'));
+    });
+
+    it('keeps POST_PREFLIGHT reread guidance after a resumed task-mode cycle', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', { restarted: true });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(result.title, /Read and record POST_PREFLIGHT/);
+        assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
+        assert.ok(!result.commands[0].command.includes('gate bind-rule-pack-to-preflight'));
+    });
+
+    it('keeps POST_PREFLIGHT reread guidance when current-cycle evidence belongs to another artifact', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', { restarted: true });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const refreshedPreflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOADED', 'PASS', {
+            stage: 'POST_PREFLIGHT',
+            preflight_path: normalizeForTimeline(refreshedPreflightPath),
+            artifact_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-custom-rule-pack.json`))
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(result.title, /Read and record POST_PREFLIGHT/);
+        assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
+        assert.ok(!result.commands[0].command.includes('gate bind-rule-pack-to-preflight'));
+    });
+
+    it('keeps POST_PREFLIGHT reread guidance when an extra loaded rule file changed', () => {
+        const repoRoot = makeTempRepo();
+        const extraRulePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'docs',
+            'agent-rules',
+            'project-specific-rule.md'
+        );
+        fs.writeFileSync(extraRulePath, '# Project specific rule\n\nInitial content.\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        const rulePackPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-rule-pack.json`);
+        const artifact = JSON.parse(fs.readFileSync(rulePackPath, 'utf8')) as Record<string, any>;
+        const normalizedExtraRulePath = normalizeForTimeline(extraRulePath);
+        artifact.stages.post_preflight.loaded_rule_files.push(normalizedExtraRulePath);
+        artifact.stages.post_preflight.extra_rule_files.push(normalizedExtraRulePath);
+        artifact.stages.post_preflight.loaded_rule_hashes[normalizedExtraRulePath] = fileSha256(extraRulePath);
+        artifact.stages.post_preflight.loaded_rule_count = artifact.stages.post_preflight.loaded_rule_files.length;
+        writeJson(rulePackPath, artifact);
+
+        fs.writeFileSync(extraRulePath, '# Project specific rule\n\nUpdated content.\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(result.title, /Read and record POST_PREFLIGHT/);
+        assert.match(result.reason, /changed or cannot be hashed/);
+        assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
+        assert.ok(!result.commands[0].command.includes('gate bind-rule-pack-to-preflight'));
     });
 
     it('routes refreshed preflight after a closed cycle to restart-coherent-cycle before downstream gates', () => {
@@ -3743,7 +4236,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('gate classify-change'));
     });
 
-    it('does not use protected recovery hints without current task-mode evidence', () => {
+    it('does not use protected recovery hints when startup rule-pack evidence is not current', () => {
         const repoRoot = makeTempRepo();
         appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
         seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
@@ -3757,8 +4250,8 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'classify-change');
-        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
         assert.ok(!result.commands[0].command.includes('T-EVIL'));
     });
 
@@ -5135,8 +5628,8 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'classify-change');
-        assert.ok(result.reason.includes('stale preflight file set'));
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.ok(result.reason.includes('stale or invalid'));
         assert.ok(result.reason.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
     });
 

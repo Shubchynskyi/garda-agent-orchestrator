@@ -93,6 +93,7 @@ export interface RulePackEvidenceResult {
     required_rule_files: string[];
     loaded_rule_files: string[];
     missing_rule_files: string[];
+    stale_loaded_rule_file: string | null;
 }
 
 interface TimelineEventEntry {
@@ -111,6 +112,15 @@ export interface PostPreflightSequenceEvidence {
     latest_post_preflight_rule_pack_binding_sha256: string | null;
     binding_equivalent_to_current_preflight: boolean;
     violations: string[];
+}
+
+export interface PostPreflightRulePackRebindDecision {
+    can_bind: boolean;
+    reason: string;
+    loaded_rule_files: string[];
+    required_rule_files: string[];
+    previous_preflight_path: string | null;
+    previous_rule_pack_sequence: number | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -228,6 +238,91 @@ function normalizeRequiredReviewRecord(requiredReviews: unknown): Record<string,
     }
 
     return Object.fromEntries(normalizedEntries) as Record<string, boolean>;
+}
+
+function stringifyNormalizedRequiredReviews(requiredReviews: unknown): string {
+    return JSON.stringify(normalizeRequiredReviewRecord(requiredReviews) || {});
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+    const rightSet = new Set(right.map(function (item) {
+        return item.toLowerCase();
+    }));
+    return left.every(function (item) {
+        return rightSet.has(item.toLowerCase());
+    });
+}
+
+function normalizeRuleFileList(repoRoot: string, value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    try {
+        return normalizeLoadedRuleFiles(repoRoot, value.map(function (item) { return String(item || ''); }).filter(Boolean));
+    } catch {
+        return [];
+    }
+}
+
+function readRuleHash(record: unknown, ruleFile: string): string | null {
+    if (!isRecord(record)) {
+        return null;
+    }
+    const exact = record[ruleFile];
+    if (typeof exact === 'string' && exact.trim()) {
+        return exact.trim().toLowerCase();
+    }
+    const normalizedRuleFile = normalizePath(ruleFile).toLowerCase();
+    for (const [key, value] of Object.entries(record)) {
+        if (normalizePath(key).toLowerCase() === normalizedRuleFile && typeof value === 'string' && value.trim()) {
+            return value.trim().toLowerCase();
+        }
+    }
+    return null;
+}
+
+function findStaleLoadedRuleFile(loadedRuleHashes: unknown, loadedRuleFiles: readonly string[]): string | null {
+    return loadedRuleFiles.find(function (ruleFile) {
+        const previousHash = readRuleHash(loadedRuleHashes, ruleFile);
+        const currentHash = fileSha256(ruleFile);
+        return !previousHash || !currentHash || previousHash !== currentHash.toLowerCase();
+    }) || null;
+}
+
+function getLatestTaskModeSequence(events: TimelineEventEntry[]): number | null {
+    const latestTaskMode = findLatestTimelineEvent(events, function (entry) {
+        return entry.event_type === 'TASK_MODE_ENTERED';
+    });
+    return latestTaskMode ? latestTaskMode.sequence : null;
+}
+
+function getLatestPostPreflightRulePackEventAfter(
+    events: TimelineEventEntry[],
+    sequence: number,
+    expectedArtifactPath?: string
+): TimelineEventEntry | null {
+    const normalizedExpectedArtifactPath = expectedArtifactPath
+        ? normalizePath(expectedArtifactPath).toLowerCase()
+        : null;
+    return findLatestTimelineEvent(events, function (entry) {
+        if (entry.sequence <= sequence || entry.event_type !== 'RULE_PACK_LOADED') {
+            return false;
+        }
+        const stage = String(entry.details?.stage || '').trim().toUpperCase();
+        if (stage !== 'POST_PREFLIGHT') {
+            return false;
+        }
+        if (!normalizedExpectedArtifactPath) {
+            return true;
+        }
+        const eventArtifactPath = normalizeTimelinePathDetail(
+            entry.details?.artifact_path ?? entry.details?.artifactPath
+        );
+        return (eventArtifactPath || '').toLowerCase() === normalizedExpectedArtifactPath;
+    });
 }
 
 function stripVolatilePreflightFields(value: unknown): unknown {
@@ -519,6 +614,7 @@ export function getPostPreflightSequenceEvidence(
     if (result.violations.length > 0) {
         return result;
     }
+    const latestTaskModeSequence = getLatestTaskModeSequence(events);
 
     const latestPostPreflightRulePack = findLatestTimelineEvent(events, function (entry) {
         if (entry.event_type !== 'RULE_PACK_LOADED') {
@@ -573,8 +669,155 @@ export function getPostPreflightSequenceEvidence(
             'Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate for the same task cycle.'
         );
     }
+    if (
+        latestTaskModeSequence != null
+        && latestPostPreflightRulePack.sequence <= latestTaskModeSequence
+    ) {
+        result.violations.push(
+            `Unsafe stale task-mode cycle detected in '${result.timeline_path}': POST_PREFLIGHT RULE_PACK_LOADED (seq ${latestPostPreflightRulePack.sequence}) ` +
+            `does not occur after the latest TASK_MODE_ENTERED (seq ${latestTaskModeSequence}) for '${normalizedPreflightPath}'. ` +
+            'Re-run load-rule-pack --stage POST_PREFLIGHT or bind-rule-pack-to-preflight in the current task-mode cycle, then rerun compile-gate.'
+        );
+    }
 
     return result;
+}
+
+export function getPostPreflightRulePackRebindDecision(
+    repoRoot: string,
+    taskId: string,
+    preflightPath: string,
+    options: {
+        artifactPath?: string;
+        taskModePath?: string;
+    } = {}
+): PostPreflightRulePackRebindDecision {
+    const resolvedTaskId = assertValidTaskId(taskId);
+    const artifactPath = resolveRulePackArtifactPath(repoRoot, resolvedTaskId, String(options.artifactPath || ''));
+    const artifact = readExistingRulePackArtifact(artifactPath);
+    const stageArtifact = isRecord(artifact?.stages?.post_preflight)
+        ? artifact?.stages?.post_preflight as unknown as Record<string, unknown>
+        : null;
+    const emptyDecision = function (reason: string): PostPreflightRulePackRebindDecision {
+        return {
+            can_bind: false,
+            reason,
+            loaded_rule_files: [],
+            required_rule_files: [],
+            previous_preflight_path: null,
+            previous_rule_pack_sequence: null
+        };
+    };
+
+    if (!stageArtifact) {
+        return emptyDecision('No prior POST_PREFLIGHT rule-pack stage exists; rule files must be read and recorded.');
+    }
+    const stageStatus = String(stageArtifact.status || '').trim().toUpperCase();
+    const stageOutcome = String(stageArtifact.outcome || '').trim().toUpperCase();
+    if (stageStatus !== 'PASSED' || stageOutcome !== 'PASS') {
+        return emptyDecision('Prior POST_PREFLIGHT rule-pack evidence did not pass; rule files must be read and recorded again.');
+    }
+
+    const timelineViolations: string[] = [];
+    const timelinePath = getTaskTimelinePath(repoRoot, resolvedTaskId);
+    const timelineEvents = collectOrderedTimelineEvents(timelinePath, timelineViolations);
+    if (timelineViolations.length > 0) {
+        return emptyDecision(`Rule-pack rebinding cannot verify the current task-mode cycle: ${timelineViolations.join(' ')}`);
+    }
+    const latestTaskModeSequence = getLatestTaskModeSequence(timelineEvents);
+    if (latestTaskModeSequence == null) {
+        return emptyDecision('Rule-pack rebinding requires current task-mode evidence; read the rule files in the active task cycle.');
+    }
+    const latestPostPreflightRulePack = getLatestPostPreflightRulePackEventAfter(timelineEvents, latestTaskModeSequence, artifactPath);
+    if (!latestPostPreflightRulePack) {
+        return emptyDecision('No POST_PREFLIGHT rule-pack evidence exists for this rule-pack artifact in the current task-mode cycle; rule files must be read again.');
+    }
+
+    const loadedRuleFiles = normalizeRuleFileList(repoRoot, stageArtifact.loaded_rule_files);
+    if (loadedRuleFiles.length === 0) {
+        return emptyDecision('Prior POST_PREFLIGHT rule-pack evidence has no loaded rule files to reuse.');
+    }
+
+    const validatedPreflight = validatePreflightForReview(preflightPath, resolvedTaskId);
+    const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, String(options.taskModePath || ''));
+    const validationErrors = [
+        ...validatedPreflight.errors,
+        ...getTaskModeEvidenceViolations(taskModeEvidence)
+    ];
+    if (validationErrors.length > 0) {
+        return emptyDecision(`Rule-pack rebinding cannot validate the current preflight/task-mode evidence: ${validationErrors.join(' ')}`);
+    }
+
+    let effectiveDepth = taskModeEvidence.effective_depth || null;
+    const riskAwareDepth = validatedPreflight.preflight?.risk_aware_depth;
+    if (riskAwareDepth && typeof riskAwareDepth.effective_depth === 'number') {
+        effectiveDepth = riskAwareDepth.effective_depth;
+    }
+    const requiredRuleFiles = getRulePackRequiredFilesFromPreflight(
+        repoRoot,
+        validatedPreflight.required_reviews,
+        effectiveDepth || 2
+    );
+    const previousRequiredRuleFiles = normalizeRuleFileList(repoRoot, stageArtifact.required_rule_files);
+    if (!sameStringSet(previousRequiredRuleFiles, requiredRuleFiles)) {
+        return {
+            can_bind: false,
+            reason: 'Current preflight requires a different downstream rule set; rule files must be read and recorded.',
+            loaded_rule_files: loadedRuleFiles,
+            required_rule_files: requiredRuleFiles,
+            previous_preflight_path: String(stageArtifact.preflight_path || '').trim() || null,
+            previous_rule_pack_sequence: latestPostPreflightRulePack.sequence
+        };
+    }
+    if (
+        stringifyNormalizedRequiredReviews(stageArtifact.required_reviews)
+        !== stringifyNormalizedRequiredReviews(validatedPreflight.required_reviews)
+    ) {
+        return {
+            can_bind: false,
+            reason: 'Current preflight changed required review decisions; rule files must be read and recorded.',
+            loaded_rule_files: loadedRuleFiles,
+            required_rule_files: requiredRuleFiles,
+            previous_preflight_path: String(stageArtifact.preflight_path || '').trim() || null,
+            previous_rule_pack_sequence: latestPostPreflightRulePack.sequence
+        };
+    }
+    if (!requiredRuleFiles.every(function (ruleFile) {
+        return loadedRuleFiles.some(function (loadedRuleFile) {
+            return loadedRuleFile.toLowerCase() === ruleFile.toLowerCase();
+        });
+    })) {
+        return {
+            can_bind: false,
+            reason: 'Prior POST_PREFLIGHT evidence did not load every rule file required by the current preflight.',
+            loaded_rule_files: loadedRuleFiles,
+            required_rule_files: requiredRuleFiles,
+            previous_preflight_path: String(stageArtifact.preflight_path || '').trim() || null,
+            previous_rule_pack_sequence: latestPostPreflightRulePack.sequence
+        };
+    }
+
+    const loadedRuleHashes = stageArtifact.loaded_rule_hashes;
+    const staleRuleFile = findStaleLoadedRuleFile(loadedRuleHashes, loadedRuleFiles);
+    if (staleRuleFile) {
+        return {
+            can_bind: false,
+            reason: `Previously loaded rule file '${normalizePath(staleRuleFile)}' changed or cannot be hashed; read the rule file again.`,
+            loaded_rule_files: loadedRuleFiles,
+            required_rule_files: requiredRuleFiles,
+            previous_preflight_path: String(stageArtifact.preflight_path || '').trim() || null,
+            previous_rule_pack_sequence: latestPostPreflightRulePack.sequence
+        };
+    }
+
+    return {
+        can_bind: true,
+        reason: 'Required downstream rule files and rule hashes are unchanged in the current task-mode cycle; only the preflight binding must be refreshed.',
+        loaded_rule_files: loadedRuleFiles,
+        required_rule_files: requiredRuleFiles,
+        previous_preflight_path: String(stageArtifact.preflight_path || '').trim() || null,
+        previous_rule_pack_sequence: latestPostPreflightRulePack.sequence
+    };
 }
 
 function readExistingRulePackArtifact(artifactPath: string): RulePackArtifact | null {
@@ -765,7 +1008,8 @@ export function getRulePackEvidence(
         effective_depth: null,
         required_rule_files: [],
         loaded_rule_files: [],
-        missing_rule_files: []
+        missing_rule_files: [],
+        stale_loaded_rule_file: null
     };
 
     if (!taskId) {
@@ -936,6 +1180,13 @@ export function getRulePackEvidence(
         return result;
     }
 
+    const staleLoadedRuleFile = findStaleLoadedRuleFile(stageArtifact.loaded_rule_hashes, result.loaded_rule_files);
+    if (staleLoadedRuleFile) {
+        result.stale_loaded_rule_file = staleLoadedRuleFile;
+        result.evidence_status = 'EVIDENCE_LOADED_RULE_STALE';
+        return result;
+    }
+
     if (result.evidence_status === 'PASSED' && result.evidence_outcome === 'PASS') {
         result.evidence_status = 'PASS';
         return result;
@@ -990,6 +1241,10 @@ export function getRulePackEvidenceViolations(result: RulePackEvidenceResult): s
         case 'EVIDENCE_REQUIRED_RULES_MISSING':
             return [
                 `Rule-pack evidence is missing required downstream rule files for stage '${result.stage}': ${result.missing_rule_files.join(', ')}.`
+            ];
+        case 'EVIDENCE_LOADED_RULE_STALE':
+            return [
+                `Rule-pack evidence loaded rule file '${normalizePath(result.stale_loaded_rule_file || '<unknown>')}' changed or cannot be hashed. Re-run load-rule-pack.`
             ];
         case 'EVIDENCE_NOT_PASS':
             return [

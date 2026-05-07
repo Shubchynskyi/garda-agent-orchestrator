@@ -7,6 +7,7 @@ import { fileSha256, normalizePath } from './helpers';
 
 export const REVIEW_CONTEXT_DIFF_MAX_CHARS = 60000;
 export const REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS = 20000;
+const REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS = 160000;
 
 const GIT_NO_COLOR_GLOBAL_ARGS = ['-c', 'color.ui=false'];
 const GIT_DIFF_HARDENING_ARGS = ['--no-ext-diff', '--no-textconv', '--no-color'];
@@ -263,6 +264,7 @@ function buildGitDiffSummaryCacheKey(options: {
     return stringSha256(JSON.stringify({
         schema_version: 1,
         max_chars: REVIEW_CONTEXT_DIFF_MAX_CHARS,
+        collection_max_chars: REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS,
         hardening_args: GIT_DIFF_HARDENING_ARGS,
         preflight_sha256: options.preflightSha256,
         detection_source: options.detectionSource,
@@ -499,15 +501,15 @@ export function buildGitDiffSummary(
         return cached;
     }
     const untrackedDiff = includeUntracked
-        ? buildUntrackedFileDiff(repoRoot, changedFiles, REVIEW_CONTEXT_DIFF_MAX_CHARS)
+        ? buildUntrackedFileDiff(repoRoot, changedFiles, REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS)
         : { text: null, charCount: 0, truncated: false };
-    const remainingTrackedDiffChars = Math.max(0, REVIEW_CONTEXT_DIFF_MAX_CHARS - (untrackedDiff.text || '').length);
+    const remainingTrackedDiffChars = Math.max(0, REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS - (untrackedDiff.text || '').length);
     const diffResult = runGitTextCommand(repoRoot, [...diffBaseArgs, '--', ...literalPathspecs], remainingTrackedDiffChars);
     const fullDiff = [untrackedDiff.text, diffResult.text].filter(Boolean).join('\n');
     const diffTruncated = diffResult.truncated || untrackedDiff.truncated || fullDiff.length > REVIEW_CONTEXT_DIFF_MAX_CHARS;
     const summary = {
         stat: statResult.text,
-        diff: fullDiff ? fullDiff.slice(0, REVIEW_CONTEXT_DIFF_MAX_CHARS) : null,
+        diff: fullDiff ? fullDiff.slice(0, REVIEW_CONTEXT_DIFF_COLLECTION_MAX_CHARS) : null,
         diff_truncated: diffTruncated,
         diff_char_count: diffResult.charCount + untrackedDiff.charCount,
         command_status: diffResult.status,

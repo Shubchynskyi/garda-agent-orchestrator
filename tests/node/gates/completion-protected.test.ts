@@ -50,6 +50,9 @@ describe('gates/completion — protected control-plane', () => {
                 writeRuleFile(repoRoot, '80-task-workflow.md'),
                 writeRuleFile(repoRoot, '90-skill-catalog.md')
             ];
+            const requiredRuleHashes = Object.fromEntries(
+                requiredRuleFiles.map((ruleFile) => [ruleFile, fileSha256(ruleFile)])
+            );
 
             fs.mkdirSync(path.dirname(protectedFilePath), { recursive: true });
             fs.writeFileSync(protectedFilePath, 'console.log("before");\n', 'utf8');
@@ -125,8 +128,8 @@ describe('gates/completion — protected control-plane', () => {
                         loaded_rule_files: requiredRuleFiles,
                         missing_rule_files: [],
                         extra_rule_files: [],
-                        required_rule_hashes: {},
-                        loaded_rule_hashes: {},
+                        required_rule_hashes: requiredRuleHashes,
+                        loaded_rule_hashes: requiredRuleHashes,
                         required_rule_count: requiredRuleFiles.length,
                         loaded_rule_count: requiredRuleFiles.length,
                         effective_depth: 2,

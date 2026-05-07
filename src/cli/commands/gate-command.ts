@@ -24,6 +24,7 @@ import {
     handleRecordReviewReceipt
 } from './gate-review-handlers';
 import {
+    handleBindRulePackToPreflight,
     handleEnterTaskMode,
     handleLoadRulePack,
     handleRestartCoherentCycle,
@@ -81,6 +82,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleRestartReviewCycle(gateArgv);
         case 'load-rule-pack':
             return handleLoadRulePack(gateArgv);
+        case 'bind-rule-pack-to-preflight':
+            return handleBindRulePackToPreflight(gateArgv);
         case 'record-no-op':
             return handleRecordNoOp(gateArgv);
         case 'handshake-diagnostics':

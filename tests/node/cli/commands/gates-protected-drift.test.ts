@@ -824,13 +824,34 @@ describe('cli/commands/gates', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-manifest-drift-expanded';
         const baselineProtectedPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '00-core.md');
-        const extraProtectedPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules', '40-commands.md');
+        const extraProtectedPath = path.join(repoRoot, 'garda-agent-orchestrator', 'src', 'cli', 'main.ts');
+        const extraProtectedFile = 'garda-agent-orchestrator/src/cli/main.ts';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.mkdirSync(path.dirname(extraProtectedPath), { recursive: true });
+        fs.writeFileSync(extraProtectedPath, 'console.log("baseline protected file");\n', 'utf8');
         initializeGitRepo(repoRoot);
+        runGit(repoRoot, ['add', extraProtectedFile]);
+        const extraProtectedStatus = runGit(repoRoot, ['status', '--porcelain', '--', extraProtectedFile]);
+        if (extraProtectedStatus.stdout.trim()) {
+            runGit(repoRoot, ['commit', '-m', 'test: add protected baseline file']);
+        }
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         fs.writeFileSync(baselineProtectedPath, '# baseline protected drift\n', 'utf8');
         writeDriftedProtectedManifest(repoRoot);
+        const manifestPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'protected-control-plane-manifest.json');
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, any>;
+        manifest.protected_roots = [
+            ...new Set([
+                ...(Array.isArray(manifest.protected_roots) ? manifest.protected_roots : []),
+                'garda-agent-orchestrator/src/cli/'
+            ])
+        ];
+        manifest.protected_snapshot[extraProtectedFile] = require('node:crypto')
+            .createHash('sha256')
+            .update(fs.readFileSync(extraProtectedPath, 'utf8'))
+            .digest('hex');
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
         runEnterTaskMode({
             repoRoot,
@@ -848,7 +869,7 @@ describe('cli/commands/gates', () => {
         );
         assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
 
-        fs.writeFileSync(extraProtectedPath, '# expanded protected drift\n', 'utf8');
+        fs.writeFileSync(extraProtectedPath, 'console.log("expanded protected drift");\n', 'utf8');
 
         const commandsPath = path.join(repoRoot, 'commands-manifest-drift-expanded.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -871,7 +892,7 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile gate')));
-        assert.ok(result.outputLines.some((line) => line.includes('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md')));
+        assert.ok(result.outputLines.some((line) => line.includes(extraProtectedFile)));
         assert.ok(result.outputLines.some((line) => line.includes('next-step')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

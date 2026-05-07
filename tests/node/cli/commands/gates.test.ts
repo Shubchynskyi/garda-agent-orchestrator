@@ -16,6 +16,7 @@ import {
 import { getAllShimmedGateNames } from '../../../../src/compat/shim-registry';
 import * as gateReviewHandlers from '../../../../src/cli/commands/gate-review-handlers';
 import {
+    runBindRulePackToPreflightCommand,
     runCompileGateCommand,
     runDocImpactGateCommand,
     runHumanCommitCommand,
@@ -77,6 +78,7 @@ import {
 const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'enter-task-mode',
     'load-rule-pack',
+    'bind-rule-pack-to-preflight',
     'record-no-op',
     'handshake-diagnostics',
     'shell-smoke-preflight',
@@ -1609,6 +1611,248 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('binds current-cycle POST_PREFLIGHT rule-pack evidence after a changed preflight refresh without rereading rules', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-bind-refresh';
+        const appPath = path.join(repoRoot, 'src', 'app.ts');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-bind-refresh.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Bind equivalent rule-pack after preflight refresh'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Bind equivalent rule-pack after preflight refresh',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        fs.writeFileSync(appPath, 'const a = 4;\nconst b = 2;\nconsole.log(a / b);\n', 'utf8');
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Bind equivalent rule-pack after preflight refresh',
+            ['src/app.ts']
+        );
+        assert.equal(refreshedPreflightPath, preflightPath);
+
+        const bindResult = runBindRulePackToPreflightCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            emitMetrics: false
+        });
+        assert.equal(bindResult.exitCode, 0, JSON.stringify(bindResult, null, 2));
+        assert.equal(bindResult.outputLines[0], 'RULE_PACK_BOUND');
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0, JSON.stringify(compileResult, null, 2));
+        assert.equal(compileResult.outputLines[0], 'COMPILE_GATE_PASSED');
+
+        const rulePackArtifact = JSON.parse(
+            fs.readFileSync(path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`), 'utf8')
+        ) as Record<string, any>;
+        const postPreflightStage = rulePackArtifact.stages.post_preflight;
+        const refreshedPreflightSha256 = createHash('sha256').update(fs.readFileSync(refreshedPreflightPath)).digest('hex');
+        assert.equal(postPreflightStage.preflight_hash_sha256, refreshedPreflightSha256);
+        assert.equal(postPreflightStage.actor, 'orchestrator:rule-pack-rebind');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects POST_PREFLIGHT rebinding when no current task-mode cycle loaded the rules', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-bind-resume-reject';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale rebind after resume'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale rebind after resume',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale rebind after resume'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale rebind after resume',
+            ['src/app.ts']
+        );
+
+        const bindResult = runBindRulePackToPreflightCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            emitMetrics: false
+        });
+
+        assert.equal(bindResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(bindResult.outputLines[0], 'RULE_PACK_BIND_FAILED');
+        assert.ok(bindResult.outputLines.some((line) => line.includes('No POST_PREFLIGHT rule-pack evidence exists for this rule-pack artifact in the current task-mode cycle')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects POST_PREFLIGHT rebinding when current-cycle evidence belongs to another artifact', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-bind-artifact-reject';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale default rule-pack rebind after custom artifact load'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale default rule-pack rebind after custom artifact load',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale default rule-pack rebind after custom artifact load'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale default rule-pack rebind after custom artifact load',
+            ['src/app.ts']
+        );
+        const customRulePackPath = path.join(repoRoot, 'custom-artifacts', `${taskId}-rule-pack.json`);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, refreshedPreflightPath, true, customRulePackPath).exitCode, 0);
+
+        const bindResult = runBindRulePackToPreflightCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            emitMetrics: false
+        });
+
+        assert.equal(bindResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(bindResult.outputLines[0], 'RULE_PACK_BIND_FAILED');
+        assert.ok(bindResult.outputLines.some((line) => line.includes('for this rule-pack artifact in the current task-mode cycle')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects POST_PREFLIGHT rebinding when an extra loaded rule file changed', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-bind-extra-rule-reject';
+        const extraRulePath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'docs',
+            'agent-rules',
+            'project-specific-rule.md'
+        );
+        fs.writeFileSync(extraRulePath, '# Project specific rule\n\nInitial content.\n', 'utf8');
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject stale extra rule file rebind'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale extra rule file rebind',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        const rulePackPath = path.join(getReviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
+        const artifact = JSON.parse(fs.readFileSync(rulePackPath, 'utf8')) as Record<string, any>;
+        const normalizedExtraRulePath = extraRulePath.replace(/\\/g, '/');
+        artifact.stages.post_preflight.loaded_rule_files.push(normalizedExtraRulePath);
+        artifact.stages.post_preflight.extra_rule_files.push(normalizedExtraRulePath);
+        artifact.stages.post_preflight.loaded_rule_hashes[normalizedExtraRulePath] = createHash('sha256')
+            .update(fs.readFileSync(extraRulePath))
+            .digest('hex');
+        artifact.stages.post_preflight.loaded_rule_count = artifact.stages.post_preflight.loaded_rule_files.length;
+        fs.writeFileSync(rulePackPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+
+        fs.writeFileSync(extraRulePath, '# Project specific rule\n\nUpdated content.\n', 'utf8');
+        const refreshedPreflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject stale extra rule file rebind',
+            ['src/app.ts']
+        );
+
+        const bindResult = runBindRulePackToPreflightCommand({
+            repoRoot,
+            taskId,
+            preflightPath: refreshedPreflightPath,
+            emitMetrics: false
+        });
+
+        assert.equal(bindResult.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(bindResult.outputLines[0], 'RULE_PACK_BIND_FAILED');
+        assert.ok(bindResult.outputLines.some((line) => line.includes('changed or cannot be hashed')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('reuses binding-equivalent POST_PREFLIGHT rule-pack evidence from a custom artifact path after an identical preflight refresh', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-post-preflight-binding-equivalent-custom-path';
@@ -1737,6 +1981,62 @@ describe('cli/commands/gates', () => {
         const rulePackEvidence = compileArtifact.rule_pack as Record<string, unknown>;
         assert.equal(postPreflightSequence.binding_equivalent_to_current_preflight, true);
         assert.equal(rulePackEvidence.binding_equivalent_to_current_preflight, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate when binding-equivalent POST_PREFLIGHT evidence predates a resumed task-mode cycle', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-binding-equivalent-resumed-cycle';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-binding-equivalent-resumed-cycle.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject binding-equivalent POST_PREFLIGHT evidence from a previous task-mode cycle'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Reject binding-equivalent POST_PREFLIGHT evidence from a previous task-mode cycle',
+            ['src/app.ts']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject binding-equivalent POST_PREFLIGHT evidence from a previous task-mode cycle'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Unsafe stale task-mode cycle detected')));
+        assert.ok(result.outputLines.some((line) => line.includes('does not occur after the latest TASK_MODE_ENTERED')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

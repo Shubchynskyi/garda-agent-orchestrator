@@ -39,7 +39,7 @@ Mandatory gate order:
 3. `gate handshake-diagnostics`
 4. `gate shell-smoke-preflight`
 5. `gate classify-change`
-6. `gate load-rule-pack --stage POST_PREFLIGHT`
+6. POST_PREFLIGHT rule-pack command printed by `next-step`: `gate load-rule-pack --stage POST_PREFLIGHT` or `gate bind-rule-pack-to-preflight`
 7. implement only after preflight
 8. `gate compile-gate`
 9. `gate build-review-context` for each required review

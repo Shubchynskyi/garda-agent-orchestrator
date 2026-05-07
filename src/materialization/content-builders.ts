@@ -682,7 +682,7 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 10. Run handshake diagnostics when requested by \`next-step\`: via \`node bin/garda.js gate handshake-diagnostics ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} handshake-diagnostics ...\` inside a materialized/deployed workspace.
 11. Run shell smoke preflight when requested by \`next-step\`: via \`node bin/garda.js gate shell-smoke-preflight ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} shell-smoke-preflight ...\` inside a materialized/deployed workspace.
 12. Run preflight classification before implementation when requested by \`next-step\`: via \`node bin/garda.js gate classify-change ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} classify-change ...\` inside a materialized/deployed workspace.
-13. After preflight, refresh downstream rule-pack evidence when requested by \`next-step\`: via \`node bin/garda.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack --stage "POST_PREFLIGHT" ...\` inside a materialized/deployed workspace.
+13. After preflight, refresh downstream rule-pack evidence when requested by \`next-step\`: via \`node bin/garda.js gate load-rule-pack --stage "POST_PREFLIGHT" ...\` when rules must be read, or \`node bin/garda.js gate bind-rule-pack-to-preflight ...\` when \`next-step\` says current-cycle rule files and hashes are already loaded. Use the matching \`${getNodeGateCommandPrefix()}\` command inside a materialized/deployed workspace, and preserve any custom \`--task-mode-path\` on both POST_PREFLIGHT rule-pack commands.
 14. Run compile gate before review only after \`next-step\` reports it as the next gate: via \`node bin/garda.js gate compile-gate ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} compile-gate ...\` inside a materialized/deployed workspace.
 15. Before each required review, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`${getNodeGateCommandPrefix()} build-review-context ...\` inside a materialized/deployed workspace, only when \`next-step\` names that review; that step auto-emits \`REVIEW_PHASE_STARTED\`, \`SKILL_SELECTED\`, and \`SKILL_REFERENCE_LOADED\`. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} Dependent downstream review preparation or reviewer launch must wait until the required upstream PASS artifact and receipt exist for the same cycle.
 16. Do not fan out known producer-consumer validation commands as raw shell sidecars around the gate flow. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
@@ -757,7 +757,7 @@ Mandatory gate order:
 3. \`gate handshake-diagnostics\`
 4. \`gate shell-smoke-preflight\`
 5. \`gate classify-change\`
-6. \`gate load-rule-pack --stage POST_PREFLIGHT\`
+6. POST_PREFLIGHT rule-pack command printed by \`next-step\`: \`gate load-rule-pack --stage POST_PREFLIGHT\` or \`gate bind-rule-pack-to-preflight\`
 7. implement only after preflight
 8. \`gate compile-gate\`
 9. \`gate build-review-context\` for each required review

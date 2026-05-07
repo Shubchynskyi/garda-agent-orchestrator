@@ -503,6 +503,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Restart coherent cycle | `garda gate restart-coherent-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Restart review cycle | `garda gate restart-review-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
+| Bind rule pack to preflight | `garda gate bind-rule-pack-to-preflight --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Classify change | `garda gate classify-change --use-staged --task-id "T-001" --task-intent "..."` |
 | Compile gate | `garda gate compile-gate --task-id "T-001"` |
 | Optional skill activation | `garda gate activate-optional-skill --task-id "T-001" --skill-id "<selected-skill-id>"` |
@@ -524,6 +525,8 @@ Use `garda next-step "T-001"` as the task-loop command before and after gates; i
 Task-start identity and preflight notes:
 - `enter-task-mode` and related runtime identity checks normalize explicit provider aliases such as `github-copilot-cli` to the canonical provider id `GitHubCopilot`; artifacts record the canonical id.
 - When `classify-change` receives `--task-id` but no `--output-path`, it writes the canonical task preflight artifact at `garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json`. Non-task ad hoc classification can still run without writing an artifact.
+- After a preflight refresh, `next-step` distinguishes rereading rules from rebinding evidence. If the same current-cycle POST_PREFLIGHT rule files and hashes are already loaded, it may print `bind-rule-pack-to-preflight`; if required reviews, rule files, rule hashes, or task-mode cycle changed, it prints `load-rule-pack --stage POST_PREFLIGHT` so rules are read again.
+- If task-mode evidence lives at a nondefault path, preserve the same `--task-mode-path` across `classify-change`, POST_PREFLIGHT `load-rule-pack`, and `bind-rule-pack-to-preflight`.
 - `classify-change --force-code-review` keeps code review mandatory even when the active fast profile would otherwise lighten a true docs-only scope. Protected control-plane scopes still keep code review mandatory without the flag.
 
 `doc-impact-gate` accepts only `DOCS_UPDATED` and `NO_DOC_UPDATES` for `--decision`. `NO_DOC_UPDATES` is fail-closed and cannot be combined with `docs_updated`, `behavior_changed=true`, or `changelog_updated=true`.
@@ -547,7 +550,7 @@ Zero-diff task contract:
 - A clean-tree `classify-change` result is baseline-only evidence, not proof that the task is complete.
 - `required-reviews-check` and `completion-gate` now block zero-diff implementation tasks unless the task later produces a real diff or an audited no-op artifact is recorded.
 - When `completion-gate` fails on stage-sequence or coherent-cycle ordering, it now prints a ready-to-rerun `restart-coherent-cycle` command that replays `enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate` before reviews continue.
-- `restart-review-cycle` is the narrower recovery path for review-only reruns: it refreshes `classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate -> build-review-context`, prepares review contexts in dependency order, and reports `PendingReviewTypes` when downstream reviews are still blocked by missing same-cycle upstream PASS evidence.
+- `restart-review-cycle` is the narrower recovery path for review-only reruns: it refreshes `classify-change -> POST_PREFLIGHT rule-pack binding -> compile-gate -> build-review-context`, prepares review contexts in dependency order, and reports `PendingReviewTypes` when downstream reviews are still blocked by missing same-cycle upstream PASS evidence.
 - Use `garda gate record-no-op --task-id "<task-id>" --reason "<rationale>"` only when the task is genuinely `already done`, `no changes required`, or `audit only`.
 
 ---

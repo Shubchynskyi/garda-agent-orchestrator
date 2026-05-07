@@ -168,6 +168,16 @@ function buildPreflightGateHelpEntries(
                 buildPostPreflightRulePackSnippet(cliPrefix, bundleName)
             ], true)
         },
+        'bind-rule-pack-to-preflight': {
+            ...createGateHelpEntry(
+                'Rebind already-loaded POST_PREFLIGHT rule-pack evidence to the latest equivalent preflight without asking the agent to reread rule files.',
+                [
+                    `${cliPrefix} gate bind-rule-pack-to-preflight --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                    `${cliPrefix} gate bind-rule-pack-to-preflight --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --task-mode-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-task-mode.json`)}" --repo-root "."`
+                ],
+                true
+            )
+        },
         'record-no-op': {
             ...createGateHelpEntry(
                 'Record an audited no-op classification when the task intentionally produces no code changes.',

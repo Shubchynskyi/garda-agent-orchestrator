@@ -92,9 +92,11 @@ import {
     type ResolvedClassificationConfig
 } from './classify-change';
 import {
+    getPostPreflightRulePackRebindDecision,
     getPostPreflightSequenceEvidence,
     getRulePackEvidence,
-    getRulePackEvidenceViolations
+    getRulePackEvidenceViolations,
+    type PostPreflightRulePackRebindDecision
 } from './rule-pack';
 import {
     collectOrderedTimelineEvents,
@@ -1824,6 +1826,7 @@ interface FailedGateRecovery {
 interface RulePackReadiness {
     ready: boolean;
     reason: string;
+    rebind: PostPreflightRulePackRebindDecision | null;
 }
 
 interface StartupCycleReadiness {
@@ -3650,14 +3653,21 @@ function readPostPreflightRulePackReadiness(
     repoRoot: string,
     taskId: string,
     preflightPath: string,
-    rulePackPath: string
+    rulePackPath: string,
+    taskModePath: string
 ): RulePackReadiness {
+    const rebind = getPostPreflightRulePackRebindDecision(repoRoot, taskId, preflightPath, {
+        artifactPath: rulePackPath,
+        taskModePath
+    });
     const evidence = getRulePackEvidence(repoRoot, taskId, 'POST_PREFLIGHT', {
         preflightPath,
-        artifactPath: rulePackPath
+        artifactPath: rulePackPath,
+        taskModePath
     });
     const sequenceEvidence = getPostPreflightSequenceEvidence(repoRoot, taskId, preflightPath, {
-        artifactPath: rulePackPath
+        artifactPath: rulePackPath,
+        taskModePath
     });
     const violations = [
         ...getRulePackEvidenceViolations(evidence),
@@ -3666,7 +3676,8 @@ function readPostPreflightRulePackReadiness(
     if (violations.length === 0 && evidence.binding_equivalent_to_current_preflight && sequenceEvidence.binding_equivalent_to_current_preflight) {
         return {
             ready: true,
-            reason: 'POST_PREFLIGHT rule-pack evidence is current for the latest preflight.'
+            reason: 'POST_PREFLIGHT rule-pack evidence is current for the latest preflight.',
+            rebind: null
         };
     }
     if (violations.length === 0) {
@@ -3674,13 +3685,16 @@ function readPostPreflightRulePackReadiness(
     }
     return {
         ready: false,
-        reason: violations.join(' ')
+        reason: violations.join(' '),
+        rebind
     };
 }
 
 function readStartupCycleReadiness(
+    repoRoot: string,
     eventsRoot: string,
-    taskId: string
+    taskId: string,
+    taskModePath: string
 ): StartupCycleReadiness {
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const timelineErrors: string[] = [];
@@ -3724,6 +3738,24 @@ function readStartupCycleReadiness(
             nextGate: 'load-rule-pack',
             title: 'Record TASK_ENTRY rule files for the current task-mode cycle.',
             reason: `The latest TASK_MODE_ENTERED event is seq ${latestTaskMode.sequence}, but no RULE_PACK_LOADED event exists after it. Load TASK_ENTRY rules before handshake, preflight, compile, review, or completion.`
+        };
+    }
+
+    const rulePackArtifactPath = getTimelineEventDetailString(latestRulePack, 'artifact_path')
+        || getTimelineEventDetailString(latestRulePack, 'artifactPath');
+    const rulePackEvidence = getRulePackEvidence(repoRoot, taskId, 'TASK_ENTRY', {
+        artifactPath: rulePackArtifactPath,
+        taskModePath
+    });
+    const rulePackViolations = getRulePackEvidenceViolations(rulePackEvidence);
+    if (rulePackViolations.length > 0) {
+        return {
+            ready: false,
+            nextGate: 'load-rule-pack',
+            title: 'Refresh TASK_ENTRY rule files for the current task-mode cycle.',
+            reason:
+                `The latest TASK_ENTRY rule-pack evidence after TASK_MODE_ENTERED seq ${latestTaskMode.sequence} is stale or invalid: ` +
+                `${rulePackViolations.join(' ')} Load TASK_ENTRY rules again before handshake, preflight, compile, review, or completion.`
         };
     }
 
@@ -3865,7 +3897,8 @@ function readCoherentCycleReadiness(
     eventsRoot: string,
     reviewsRoot: string,
     taskId: string,
-    preflightPath: string
+    preflightPath: string,
+    taskModePath: string | null
 ): CoherentCycleReadiness {
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const timelineErrors: string[] = [];
@@ -3938,7 +3971,6 @@ function readCoherentCycleReadiness(
     const outputFiltersPath = typeof compileEvidence?.output_filters_path === 'string' && compileEvidence.output_filters_path.trim()
         ? compileEvidence.output_filters_path.trim()
         : getDefaultOutputFiltersPath(repoRoot);
-    const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
     const cycleAnchor = latestBoundary
         ? ` after latest ${latestBoundary.event_type} (seq ${latestBoundary.sequence})`
         : '';
@@ -3963,6 +3995,32 @@ function buildCommand(label: string, command: string): NextStepCommand {
 
 function buildNavigatorCommand(cliPrefix: string, taskId: string): string {
     return `${cliPrefix} next-step "${taskId}" --repo-root "."`;
+}
+
+function resolveActiveTaskModeArtifactPath(
+    repoRoot: string,
+    eventsRoot: string,
+    reviewsRoot: string,
+    taskId: string
+): string {
+    const defaultTaskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const timelineErrors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    if (timelineErrors.length > 0 || events.length === 0) {
+        return defaultTaskModePath;
+    }
+
+    const latestTaskMode = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'TASK_MODE_ENTERED'
+    );
+    const rawArtifactPath = latestTaskMode?.details?.artifact_path ?? latestTaskMode?.details?.artifactPath;
+    const artifactPath = typeof rawArtifactPath === 'string' ? rawArtifactPath.trim() : '';
+    if (!artifactPath) {
+        return defaultTaskModePath;
+    }
+    return resolvePathInsideRepo(artifactPath, repoRoot, { allowMissing: true }) || defaultTaskModePath;
 }
 
 function buildProjectMemoryImpactCommand(
@@ -4886,9 +4944,11 @@ function getPreflightRefreshChangedFiles(
 }
 
 function buildClassifyChangeCommand(params: {
+    repoRoot: string;
     cliPrefix: string;
     taskId: string;
     taskMode: Record<string, unknown> | null;
+    taskModePath: string | null;
     preflightCommandPath: string;
     includePlannedScope: boolean;
     changedFiles?: string[];
@@ -4904,6 +4964,7 @@ function buildClassifyChangeCommand(params: {
     for (const changedFile of changedFiles) {
         parts.push(`--changed-file ${quoteCommandValue(changedFile)}`);
     }
+    parts.push(...buildTaskModePathCommandParts(params.repoRoot, params.taskId, params.taskModePath));
     parts.push(`--output-path ${quoteCommandValue(params.preflightCommandPath)}`);
     parts.push('--repo-root "."');
     return parts.join(' ');
@@ -5119,11 +5180,17 @@ function readReadyFinalReportSummary(
     };
 }
 
-function buildTaskEntryRulePackCommand(repoRoot: string, cliPrefix: string, taskId: string): string {
+function buildTaskEntryRulePackCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    taskModePath: string | null
+): string {
     return [
         `${cliPrefix} gate load-rule-pack`,
         `--task-id "${taskId}"`,
         '--stage "TASK_ENTRY"',
+        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
         `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/00-core.md')}"`,
         `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/15-project-memory.md')}"`,
         `--loaded-rule-file "${buildBundleRelativePath(repoRoot, 'live/docs/agent-rules/40-commands.md')}"`,
@@ -5181,18 +5248,138 @@ function buildPostPreflightRulePackCommandForFiles(
     repoRoot: string,
     cliPrefix: string,
     taskId: string,
-    ruleFileNames: string[]
+    ruleFileNames: string[],
+    taskModePath: string | null
 ): string {
     return [
         `${cliPrefix} gate load-rule-pack`,
         `--task-id "${taskId}"`,
         '--stage "POST_PREFLIGHT"',
         `--preflight-path "${buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`)}"`,
+        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
         ...ruleFileNames.map((fileName) => (
             `--loaded-rule-file "${buildBundleRelativePath(repoRoot, `live/docs/agent-rules/${fileName}`)}"`
         )),
         '--repo-root "."'
     ].join(' ');
+}
+
+function buildPostPreflightRulePackBindCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    taskModePath: string | null
+): string {
+    return [
+        `${cliPrefix} gate bind-rule-pack-to-preflight`,
+        `--task-id "${taskId}"`,
+        `--preflight-path "${buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`)}"`,
+        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
+        '--repo-root "."'
+    ].join(' ');
+}
+
+function buildTaskModePathCommandParts(
+    repoRoot: string,
+    taskId: string,
+    taskModePath: string | null
+): string[] {
+    const trimmedTaskModePath = String(taskModePath || '').trim();
+    if (!trimmedTaskModePath) {
+        return [];
+    }
+    const resolvedTaskModePath = resolvePathInsideRepo(trimmedTaskModePath, repoRoot, { allowMissing: true });
+    if (!resolvedTaskModePath) {
+        return [];
+    }
+    const defaultTaskModePath = resolvePathInsideRepo(
+        buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-task-mode.json`),
+        repoRoot,
+        { allowMissing: true }
+    );
+    if (
+        defaultTaskModePath
+        && normalizePath(resolvedTaskModePath).toLowerCase() === normalizePath(defaultTaskModePath).toLowerCase()
+    ) {
+        return [];
+    }
+    return [`--task-mode-path "${toRepoDisplayPath(repoRoot, resolvedTaskModePath)}"`];
+}
+
+function buildCompileGateCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    taskModePath: string | null
+): string {
+    return [
+        `${cliPrefix} gate compile-gate`,
+        `--task-id "${taskId}"`,
+        `--preflight-path "${preflightCommandPath}"`,
+        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
+        '--repo-root "."'
+    ].join(' ');
+}
+
+function buildReviewContextCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    reviewType: string,
+    reviewDepth: number,
+    preflightCommandPath: string,
+    taskModePath: string | null
+): string {
+    return [
+        `${cliPrefix} gate build-review-context`,
+        `--review-type "${reviewType}"`,
+        `--depth "${reviewDepth}"`,
+        `--preflight-path "${preflightCommandPath}"`,
+        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
+        '--repo-root "."'
+    ].join(' ');
+}
+
+function buildReviewPhaseCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    gateName: string,
+    parts: string[],
+    taskModePath: string | null
+): string {
+    return [
+        `${cliPrefix} gate ${gateName}`,
+        `--task-id "${taskId}"`,
+        ...parts,
+        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
+        '--repo-root "."'
+    ].join(' ');
+}
+
+function buildRequiredReviewsCheckCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    taskModePath: string | null
+): string {
+    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'required-reviews-check', [
+        `--preflight-path "${preflightCommandPath}"`
+    ], taskModePath);
+}
+
+function buildCompletionGateCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    taskModePath: string | null
+): string {
+    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'completion-gate', [
+        `--preflight-path "${preflightCommandPath}"`
+    ], taskModePath);
 }
 
 function resolveRulePackStage(rulePack: Record<string, unknown> | null): string | null {
@@ -5229,13 +5416,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const cliPrefix = buildCliPrefix(repoRoot);
+    const taskModePath = resolveActiveTaskModeArtifactPath(repoRoot, eventsRoot, reviewsRoot, taskId);
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     const preflightCommandPath = buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`);
     const navigatorCommand = buildNavigatorCommand(cliPrefix, taskId);
     const rulePackPath = path.join(reviewsRoot, `${taskId}-rule-pack.json`);
     const preflight = safeReadJson(preflightPath);
     const rulePack = safeReadJson(rulePackPath);
-    const taskMode = safeReadJson(path.join(reviewsRoot, `${taskId}-task-mode.json`));
+    const taskMode = safeReadJson(taskModePath);
     const taskEntries = readTaskQueueEntries(repoRoot);
     const taskEntry = taskEntries.get(taskId) || null;
     const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
@@ -5246,7 +5434,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     } catch (error: unknown) {
         const fallbackFullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
         const coreArtifacts = artifactState(repoRoot, [
-            { key: 'task-mode', path: path.join(reviewsRoot, `${taskId}-task-mode.json`) },
+            { key: 'task-mode', path: taskModePath },
             { key: 'rule-pack', path: rulePackPath },
             { key: 'handshake', path: path.join(reviewsRoot, `${taskId}-handshake.json`) },
             { key: 'shell-smoke', path: path.join(reviewsRoot, `${taskId}-shell-smoke.json`) },
@@ -5347,7 +5535,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         )
     };
     const coreArtifacts = artifactState(repoRoot, [
-        { key: 'task-mode', path: path.join(reviewsRoot, `${taskId}-task-mode.json`) },
+        { key: 'task-mode', path: taskModePath },
         { key: 'rule-pack', path: rulePackPath },
         { key: 'handshake', path: path.join(reviewsRoot, `${taskId}-handshake.json`) },
         { key: 'shell-smoke', path: path.join(reviewsRoot, `${taskId}-shell-smoke.json`) },
@@ -5681,10 +5869,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const startupCycleReadiness = readStartupCycleReadiness(eventsRoot, taskId);
+    const startupCycleReadiness = readStartupCycleReadiness(repoRoot, eventsRoot, taskId, taskModePath);
     if (!startupCycleReadiness.ready) {
         const command = startupCycleReadiness.nextGate === 'load-rule-pack'
-            ? buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId)
+            ? buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskModePath)
             : startupCycleReadiness.nextGate === 'handshake-diagnostics'
                 ? `${cliPrefix} gate handshake-diagnostics --task-id "${taskId}" --repo-root "."`
                 : `${cliPrefix} gate shell-smoke-preflight --task-id "${taskId}" --repo-root "."`;
@@ -5710,7 +5898,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             nextGate: 'load-rule-pack',
             title: 'Record TASK_ENTRY rule files.',
             reason: 'Task execution must record the loaded core workflow rule pack before preflight.',
-            commands: [buildCommand('Load TASK_ENTRY rules', buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId))]
+            commands: [buildCommand('Load TASK_ENTRY rules', buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskModePath))]
         });
     }
 
@@ -5756,9 +5944,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
 
         const classifyCommand = buildClassifyChangeCommand({
+            repoRoot,
             cliPrefix,
             taskId,
             taskMode,
+            taskModePath,
             preflightCommandPath,
             includePlannedScope: true
         });
@@ -5780,9 +5970,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const preflightCycleReadiness = readPreflightCycleReadiness(eventsRoot, taskId);
     if (!preflightCycleReadiness.ready) {
         const classifyCommand = buildClassifyChangeCommand({
+            repoRoot,
             cliPrefix,
             taskId,
             taskMode,
+            taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
             changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
@@ -5833,9 +6025,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         : { ready: false, reason: 'No current preflight exists.' };
     if (!preflightWorkspaceReadiness.ready) {
         const classifyCommand = buildClassifyChangeCommand({
+            repoRoot,
             cliPrefix,
             taskId,
             taskMode,
+            taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
             changedFiles: preflightWorkspaceReadiness.currentChangedFiles
@@ -5861,7 +6055,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         eventsRoot,
         reviewsRoot,
         taskId,
-        preflightPath
+        preflightPath,
+        taskModePath
     );
     if (!coherentCycleReadiness.ready) {
         return buildResult({
@@ -5883,25 +6078,40 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         repoRoot,
         taskId,
         preflightPath,
-        rulePackPath
+        rulePackPath,
+        taskModePath
     );
     if (resolveRulePackStage(rulePack) !== 'POST_PREFLIGHT' || !postPreflightRulePackReadiness.ready) {
+        const canBindPostPreflightRules = resolveRulePackStage(rulePack) === 'POST_PREFLIGHT'
+            && postPreflightRulePackReadiness.rebind?.can_bind === true;
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
-            nextGate: 'load-rule-pack',
-            title: 'Record POST_PREFLIGHT rule files.',
-            reason: postPreflightRulePackReadiness.ready
+            nextGate: canBindPostPreflightRules ? 'bind-rule-pack-to-preflight' : 'load-rule-pack',
+            title: canBindPostPreflightRules
+                ? 'Bind existing POST_PREFLIGHT rule-pack evidence to the current preflight.'
+                : 'Read and record POST_PREFLIGHT rule files.',
+            reason: canBindPostPreflightRules
+                ? `${postPreflightRulePackReadiness.rebind?.reason || 'Rule files are already loaded.'} Rebind the machine-readable evidence to the latest preflight before compile.`
+                : postPreflightRulePackReadiness.ready
                 ? 'Preflight exists; downstream rule files and risk-specific packs must be recorded for the current scope.'
                 : postPreflightRulePackReadiness.reason,
             commands: [
                 buildCommand(
-                    'Load POST_PREFLIGHT rules',
-                    buildPostPreflightRulePackCommandForFiles(
+                    canBindPostPreflightRules ? 'Bind POST_PREFLIGHT rules to current preflight' : 'Load POST_PREFLIGHT rules',
+                    canBindPostPreflightRules
+                        ? buildPostPreflightRulePackBindCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            taskModePath
+                        )
+                        : buildPostPreflightRulePackCommandForFiles(
                         repoRoot,
                         cliPrefix,
                         taskId,
-                        getPostPreflightRuleFileNames(preflight, taskMode)
+                        getPostPreflightRuleFileNames(preflight, taskMode),
+                        taskModePath
                     )
                 )
             ]
@@ -6100,7 +6310,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ? readCompileReadiness(repoRoot, reviewsRoot, taskId, preflightPath)
         : { ready: false, reason: 'No current preflight exists.' };
     if (!isGatePassed(summary, 'compile-gate') || !compileReadiness.ready) {
-        const compileCommand = `${cliPrefix} gate compile-gate --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+        const compileCommand = buildCompileGateCommand(
+            repoRoot,
+            cliPrefix,
+            taskId,
+            preflightCommandPath,
+            taskModePath
+        );
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
@@ -6229,7 +6445,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Restart review cycle for reviewer launch retry',
-                        `${cliPrefix} gate restart-review-cycle --task-id "${taskId}" --task-intent ${quoteCommandValue(taskIntent)} --repo-root "."`
+                        [
+                            `${cliPrefix} gate restart-review-cycle`,
+                            `--task-id "${taskId}"`,
+                            `--task-intent ${quoteCommandValue(taskIntent)}`,
+                            ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
+                            '--repo-root "."'
+                        ].join(' ')
                     )
                 ]
             });
@@ -6292,7 +6514,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Build review context',
-                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${reviewDepth}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
                     )
                 ]
             });
@@ -6328,7 +6550,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Build review context',
-                        `${cliPrefix} gate build-review-context --review-type "${reviewType}" --depth "${reviewDepth}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
                     )
                 ]
             });
@@ -6357,7 +6579,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record fresh delegated review routing',
-                        `${cliPrefix} gate record-review-routing --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
+                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-routing', [
+                            `--review-type "${reviewType}"`,
+                            '--reviewer-execution-mode "delegated_subagent"',
+                            `--reviewer-identity "${reviewerIdentity}"`
+                        ], taskModePath)
                     )
                 ]
             });
@@ -6394,9 +6620,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     title: `Prepare '${reviewType}' delegated reviewer launch metadata.`,
                     reason: `Required review '${reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. This prepares hashes and prompt paths only; it is not completed invocation evidence. ${reviewerReadinessChain}`,
                     commands: [
-                        buildCommand(
-                            'Prepare delegated reviewer launch metadata',
-                            `${cliPrefix} gate prepare-reviewer-launch --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --repo-root "."`
+                    buildCommand(
+                        'Prepare delegated reviewer launch metadata',
+                            buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'prepare-reviewer-launch', [
+                                `--review-type "${reviewType}"`,
+                                '--reviewer-execution-mode "delegated_subagent"',
+                                `--reviewer-identity "${reviewerIdentity}"`,
+                                `--reviewer-launch-artifact-path "${launchArtifactPath}"`
+                            ], taskModePath)
                         )
                     ]
                 });
@@ -6429,7 +6660,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated reviewer launch attestation',
-                        `${cliPrefix} gate record-review-invocation --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --repo-root "."`
+                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-invocation', [
+                            `--review-type "${reviewType}"`,
+                            '--reviewer-execution-mode "delegated_subagent"',
+                            `--reviewer-identity "${reviewerIdentity}"`,
+                            `--reviewer-launch-artifact-path "${launchArtifactPath}"`
+                        ], taskModePath)
                     )
                 ]
             });
@@ -6452,7 +6688,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',
-                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path "${reviewOutputPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
+                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
+                            `--review-type "${reviewType}"`,
+                            `--preflight-path "${preflightCommandPath}"`,
+                            `--review-output-path "${reviewOutputPath}"`,
+                            '--reviewer-execution-mode "delegated_subagent"',
+                            `--reviewer-identity "${reviewerIdentity}"`
+                        ], taskModePath)
                     )
                 ]
             });
@@ -6475,7 +6717,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',
-                        `${cliPrefix} gate record-review-result --task-id "${taskId}" --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --review-output-path "${reviewOutputPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --repo-root "."`
+                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
+                            `--review-type "${reviewType}"`,
+                            `--preflight-path "${preflightCommandPath}"`,
+                            `--review-output-path "${reviewOutputPath}"`,
+                            '--reviewer-execution-mode "delegated_subagent"',
+                            `--reviewer-identity "${reviewerIdentity}"`
+                        ], taskModePath)
                     )
                 ]
             });
@@ -6518,7 +6766,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Run required reviews check',
-                    `${cliPrefix} gate required-reviews-check --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                    buildRequiredReviewsCheckCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
                 )
             ]
         });
@@ -6597,7 +6845,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Run completion gate',
-                    `${cliPrefix} gate completion-gate --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                    buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
                 )
             ]
         });
@@ -6612,7 +6860,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         commands: [
             buildCommand(
                 'Run completion gate',
-                `${cliPrefix} gate completion-gate --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
             )
         ]
     });

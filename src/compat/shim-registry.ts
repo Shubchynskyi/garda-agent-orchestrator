@@ -4,6 +4,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'restart-coherent-cycle',
     'restart-review-cycle',
     'load-rule-pack',
+    'bind-rule-pack-to-preflight',
     'record-no-op',
     'compile-gate',
     'full-suite-validation',

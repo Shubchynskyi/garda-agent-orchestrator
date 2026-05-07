@@ -192,8 +192,46 @@ function getDiffSectionFilePath(section: string): string {
     return match ? normalizePath(match[1] || '') : '';
 }
 
+function getPromptDiffSectionPriority(reviewType: string, filePath: string): number {
+    const normalized = normalizePath(filePath).toLowerCase();
+    if (reviewType === 'test') {
+        return isTestLikeChangedFile(normalized) ? 0 : 1;
+    }
+    if (reviewType !== 'api') {
+        return 0;
+    }
+    if (normalized === 'src/gates/rule-pack.ts') {
+        return 0;
+    }
+    if (normalized.startsWith('src/cli/') || normalized.startsWith('src/compat/')) {
+        return 1;
+    }
+    if (normalized === 'docs/cli-reference.md') {
+        return 2;
+    }
+    if (normalized.startsWith('tests/node/cli/') || normalized === 'tests/node/gates/build-review-context.test.ts') {
+        return 3;
+    }
+    if (normalized.startsWith('src/gates/')) {
+        return 4;
+    }
+    if (isTestLikeChangedFile(normalized)) {
+        return 5;
+    }
+    if (normalized.startsWith('docs/') || normalized.startsWith('template/')) {
+        return 6;
+    }
+    if (normalized.startsWith('src/') && !isTestLikeChangedFile(normalized)) {
+        return 4;
+    }
+    if (normalized.startsWith('bin/') || normalized.startsWith('scripts/')) {
+        return 4;
+    }
+    return 5;
+}
+
 function prioritizePromptDiffForReview(reviewType: string, diffText: string): string {
-    if (reviewType !== 'test' || !diffText.trim()) {
+    if ((reviewType !== 'test' && reviewType !== 'api') || !diffText.trim()) {
         return diffText;
     }
     const sections = splitGitDiffSections(diffText);
@@ -204,7 +242,7 @@ function prioritizePromptDiffForReview(reviewType: string, diffText: string): st
         .map((section, index) => ({
             section,
             index,
-            priority: isTestLikeChangedFile(getDiffSectionFilePath(section)) ? 0 : 1
+            priority: getPromptDiffSectionPriority(reviewType, getDiffSectionFilePath(section))
         }))
         .sort((left, right) => left.priority - right.priority || left.index - right.index)
         .map((entry) => entry.section)
@@ -228,7 +266,7 @@ function buildTaskScopeMarkdown(options: {
     const lines: string[] = [];
     const fullDiffText = options.gitDiff.diff || '';
     const promptDiffSourceText = prioritizePromptDiffForReview(options.reviewType, fullDiffText);
-    const promptDiffMaxChars = options.reviewType === 'code'
+    const promptDiffMaxChars = options.reviewType === 'code' || options.reviewType === 'api'
         ? REVIEW_CONTEXT_DIFF_MAX_CHARS
         : REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS;
     const promptDiffText = promptDiffSourceText.slice(0, promptDiffMaxChars);
@@ -993,7 +1031,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
                 char_count: gitDiff.diff_char_count,
                 truncated: gitDiff.diff_truncated,
                 max_chars: REVIEW_CONTEXT_DIFF_MAX_CHARS,
-                prompt_max_chars: reviewType === 'code'
+                prompt_max_chars: reviewType === 'code' || reviewType === 'api'
                     ? REVIEW_CONTEXT_DIFF_MAX_CHARS
                     : REVIEW_CONTEXT_NON_CODE_PROMPT_DIFF_MAX_CHARS,
                 command_status: gitDiff.command_status,

@@ -14,6 +14,7 @@
 
 export {
     runEnterTaskModeCommand,
+    runBindRulePackToPreflightCommand,
     runLoadRulePackCommand,
     runRecordNoOpCommand,
     runHandshakeDiagnosticsCommand,

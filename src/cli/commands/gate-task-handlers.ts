@@ -7,6 +7,7 @@ import { formatCompletionGateResult, runCompletionGate } from '../../gates/compl
 import { formatNextStepText, resolveNextStepFromCliOptions } from '../../gates/next-step';
 import { withCompletionGateFinalizationLockAsync } from '../../gates/finalization-lock';
 import {
+    runBindRulePackToPreflightCommand,
     runEnterTaskModeCommand,
     runHandshakeDiagnosticsCommand,
     runHumanCommitCommand,
@@ -77,6 +78,25 @@ export async function handleLoadRulePack(gateArgv: string[]): Promise<void> {
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runLoadRulePackCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleBindRulePackToPreflight(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
+        '--actor': { key: 'actor', type: 'string' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--metrics-path': { key: 'metricsPath', type: 'string' },
+        '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runBindRulePackToPreflightCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;

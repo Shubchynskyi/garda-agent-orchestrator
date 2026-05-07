@@ -1865,7 +1865,7 @@ describe('gates/build-review-context', () => {
             });
 
             const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
-            assert.ok(promptArtifact.includes('[diff truncated at 60000 chars'));
+            assert.ok(promptArtifact.includes('[diff excerpt truncated at 60000 chars'));
             assert.equal(result.task_scope.diff.truncated, true);
             assert.equal(typeof result.task_scope.diff.cache_path, 'string');
             assert.equal(fs.existsSync(String(result.task_scope.diff.cache_path)), true);
@@ -1884,6 +1884,107 @@ describe('gates/build-review-context', () => {
             assert.ok(securityPromptArtifact.includes('[diff excerpt truncated at 20000 chars'));
             assert.ok(securityPromptArtifact.includes('full bounded scoped diff cache'));
             assert.equal(securityResult.task_scope.diff.cached, true);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('prioritizes gate implementation diff sections in API review prompt excerpts', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-api-priority-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'template', 'docs', 'agent-rules'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src', 'cli', 'commands'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src', 'gates'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'tests', 'node', 'cli', 'commands'), { recursive: true });
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            for (const ruleFile of getRulePack('api').full) {
+                fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+            }
+            fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'template', 'docs', 'agent-rules', '80-task-workflow.md'), '# Workflow\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'cli', 'commands', 'gate-command.ts'), 'export const beforeGate = true;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'gates', 'rule-pack.ts'), 'export const before = true;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.ts'), 'import assert from "node:assert/strict";\n', 'utf8');
+            runGit(repoRoot, ['add', '.']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI\nbind-rule-pack-to-preflight --task-mode-path\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'template', 'docs', 'agent-rules', '80-task-workflow.md'), `# Workflow\n${'template filler\n'.repeat(9000)}`, 'utf8');
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'cli', 'commands', 'gate-command.ts'),
+                'export function handleBindRulePackToPreflight() { return "api-cli-visible"; }\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'src', 'gates', 'rule-pack.ts'),
+                'export function getPostPreflightRulePackRebindDecision() { return "api-priority-visible"; }\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.ts'),
+                'import assert from "node:assert/strict";\nassert.equal("api-test-visible", "api-test-visible");\n',
+                'utf8'
+            );
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-api-priority', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-901-api-priority-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-api-priority',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'mixed',
+                changed_files: [
+                    'docs/cli-reference.md',
+                    'template/docs/agent-rules/80-task-workflow.md',
+                    'src/cli/commands/gate-command.ts',
+                    'src/gates/rule-pack.ts',
+                    'tests/node/cli/commands/gates.test.ts'
+                ],
+                required_reviews: { api: true },
+                triggers: { runtime_changed: true, runtime_code_changed: true, api: true }
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'api',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: tokenConfigPath,
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-901-api-priority-api-scoped.json'),
+                outputPath: path.join(reviewsRoot, 'T-901-api-priority-api-review-context.json'),
+                repoRoot
+            });
+
+            const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
+            const gateDiffIndex = promptArtifact.indexOf('diff --git a/src/gates/rule-pack.ts');
+            const cliDiffIndex = promptArtifact.indexOf('diff --git a/src/cli/commands/gate-command.ts');
+            const docsDiffIndex = promptArtifact.indexOf('diff --git a/docs/cli-reference.md');
+            const testDiffIndex = promptArtifact.indexOf('diff --git a/tests/node/cli/commands/gates.test.ts');
+            const templateDiffIndex = promptArtifact.indexOf('diff --git a/template/docs/agent-rules/80-task-workflow.md');
+            assert.ok(gateDiffIndex >= 0, 'API review prompt excerpt should include gate implementation diff');
+            assert.ok(cliDiffIndex >= 0, 'API review prompt excerpt should include CLI command diff');
+            assert.ok(docsDiffIndex >= 0, 'API review prompt excerpt should include CLI documentation diff');
+            assert.ok(testDiffIndex >= 0, 'API review prompt excerpt should include CLI API test diff');
+            assert.ok(promptArtifact.includes('api-priority-visible'));
+            assert.ok(promptArtifact.includes('api-cli-visible'));
+            assert.ok(promptArtifact.includes('api-test-visible'));
+            assert.ok(gateDiffIndex < cliDiffIndex, 'API review prompt excerpt should prioritize rebind decision before CLI surface');
+            assert.ok(cliDiffIndex < docsDiffIndex, 'API review prompt excerpt should prioritize CLI surface before docs');
+            assert.ok(docsDiffIndex < testDiffIndex, 'API review prompt excerpt should prioritize CLI docs before API tests');
+            assert.ok(templateDiffIndex < 0 || testDiffIndex < templateDiffIndex, 'API review prompt excerpt should defer bulky template docs');
+            assert.equal(result.task_scope.diff.prompt_max_chars, 60000);
+            assert.ok(promptArtifact.includes('[diff excerpt truncated at 60000 chars'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 

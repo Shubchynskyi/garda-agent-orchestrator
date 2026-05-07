@@ -128,6 +128,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 11. Apply depth escalation from preflight output when required.
 12. Refresh downstream rule-pack evidence for the actual required review set when `next-step` requests it:
    - Node: `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "<opened-rule-file>"`
+   - When `next-step` prints `bind-rule-pack-to-preflight`, run that command instead; it is allowed only for unchanged current-cycle rule files and hashes where evidence needs a new preflight binding.
    - `load-rule-pack` must include every downstream rule file actually opened after preflight, including risk-specific rule packs required by the selected reviews.
    - This step is order-dependent: do not parallelize it with `classify-change` or `compile-gate` for the same task cycle.
 13. Execute implementation path:

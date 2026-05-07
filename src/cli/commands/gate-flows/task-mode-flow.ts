@@ -24,7 +24,11 @@ import {
     assertValidTaskId
 } from '../../../gate-runtime/task-events';
 import { withFilesystemLock } from '../../../gate-runtime/task-events-locking';
-import { buildRulePackArtifact, resolveRulePackArtifactPath } from '../../../gates/rule-pack';
+import {
+    buildRulePackArtifact,
+    getPostPreflightRulePackRebindDecision,
+    resolveRulePackArtifactPath
+} from '../../../gates/rule-pack';
 import {
     buildHandshakeDiagnostics,
     formatHandshakeDiagnosticsResult,
@@ -117,6 +121,17 @@ export interface LoadRulePackCommandOptions {
     preflightPath?: string;
     taskModePath?: string;
     loadedRuleFiles?: unknown;
+    actor?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+export interface BindRulePackToPreflightCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    preflightPath?: string;
+    taskModePath?: string;
     actor?: unknown;
     artifactPath?: string;
     metricsPath?: string;
@@ -857,6 +872,66 @@ export function runLoadRulePackCommand(options: LoadRulePackCommandOptions): { o
             `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
             `RequiredRuleCount: ${stageArtifact.required_rule_count}`,
             `LoadedRuleCount: ${stageArtifact.loaded_rule_count}`
+        ],
+        exitCode: 0
+    };
+}
+
+export function runBindRulePackToPreflightCommand(options: BindRulePackToPreflightCommandOptions): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const artifactPath = resolveRulePackArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
+    const preflightPath = String(options.preflightPath || '').trim();
+    if (!preflightPath) {
+        return {
+            outputLines: [
+                'RULE_PACK_BIND_FAILED',
+                'Stage: POST_PREFLIGHT',
+                `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+                'Reason: PreflightPath is required for POST_PREFLIGHT rule-pack rebinding.'
+            ],
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
+    const decision = getPostPreflightRulePackRebindDecision(repoRoot, taskId, preflightPath, {
+        artifactPath,
+        taskModePath: String(options.taskModePath || '')
+    });
+
+    if (!decision.can_bind) {
+        return {
+            outputLines: [
+                'RULE_PACK_BIND_FAILED',
+                'Stage: POST_PREFLIGHT',
+                `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+                `Reason: ${decision.reason}`
+            ],
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
+
+    const result = runLoadRulePackCommand({
+        ...options,
+        taskId,
+        stage: 'POST_PREFLIGHT',
+        preflightPath,
+        loadedRuleFiles: decision.loaded_rule_files,
+        actor: String(options.actor || 'orchestrator:rule-pack-rebind'),
+        artifactPath
+    });
+    if (result.exitCode !== 0) {
+        return result;
+    }
+
+    return {
+        outputLines: [
+            'RULE_PACK_BOUND',
+            'Stage: POST_PREFLIGHT',
+            `RulePackArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+            `RequiredRuleCount: ${decision.required_rule_files.length}`,
+            `ReusedLoadedRuleCount: ${decision.loaded_rule_files.length}`,
+            `PreviousPreflightPath: ${decision.previous_preflight_path || '<none>'}`,
+            `PreviousRulePackSequence: ${decision.previous_rule_pack_sequence ?? '<none>'}`
         ],
         exitCode: 0
     };
