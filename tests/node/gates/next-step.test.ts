@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
@@ -19,6 +20,7 @@ import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-me
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
+const requireFromTest = createRequire(__filename);
 
 const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
@@ -1432,6 +1434,36 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('Status: DECOMPOSED'));
     });
 
+    it('blocks split-required parent clearing while the shared TASK.md status lock is held', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const lockPath = `${taskPath}.garda-status-sync.lock`;
+        fs.writeFileSync(taskPath, [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-980 | 🟫 SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-981` through `T-982`; do not continue the parent. |',
+            '| T-981 | 🟩 DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-982 | 🟦 TODO | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-980');
+        fs.writeFileSync(lockPath, 'held by another status sync\n', 'utf8');
+
+        try {
+            const result = resolveNextStep({ taskId: 'T-980', repoRoot });
+            const taskMd = fs.readFileSync(taskPath, 'utf8');
+
+            assert.equal(result.status, 'SPLIT_REQUIRED');
+            assert.equal(result.next_gate, 'split-required-latch');
+            assert.ok(result.reason.includes('Could not acquire TASK.md status-sync lock'));
+            assert.ok(taskMd.includes('| T-980 | 🟫 SPLIT_REQUIRED |'));
+        } finally {
+            fs.unlinkSync(lockPath);
+        }
+    });
+
     it('blocks spoofed split-required rows with child notes but no latch evidence', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -1765,11 +1797,12 @@ describe('gates/next-step', () => {
         assert.ok(nestedResult.reason.includes('T-409 -> T-415'));
         assert.equal(nestedResult.reason.includes('T-410'), false);
 
-        assert.equal(completedNestedResult.status, 'DECOMPOSED');
+        assert.equal(completedNestedResult.status, 'DONE');
         assert.equal(completedNestedResult.next_gate, null);
         assert.equal(completedNestedResult.commands.length, 0);
-        assert.ok(completedNestedResult.reason.includes('No unfinished child task'));
+        assert.ok(completedNestedResult.reason.includes('transitioned completed parent task(s) to DONE: T-413'));
         assert.equal(completedNestedResult.reason.includes('T-410'), false);
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-413 | 🟩 DONE |'));
     });
 
     it('does not route completed explicit leaves to same-sentence continuation tasks', () => {
@@ -1791,11 +1824,350 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: 'T-409', repoRoot });
 
-        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.status, 'DONE');
         assert.equal(result.next_gate, null);
         assert.equal(result.commands.length, 0);
-        assert.ok(result.reason.includes('No unfinished child task'));
+        assert.ok(result.reason.includes('transitioned completed parent task(s) to DONE: T-409'));
         assert.equal(result.reason.includes('T-410'), false);
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-409 | 🟩 DONE |'));
+    });
+
+    it('marks nested decomposed parents DONE when all explicit descendants are DONE', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-322 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-409`, `T-410`, `T-411`, and `T-412` through normal gates. |',
+            '| T-409 | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-322`. Execute leaf tasks `T-413`, `T-414`, and `T-415` through normal gates. |',
+            '| T-413 | 🟪 DECOMPOSED | P1 | workflow | Nested advisory parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-409`. Execute child tasks `T-416` and `T-417` through normal gates. |',
+            '| T-416 | 🟩 DONE | P1 | workflow | Source child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-417 | 🟩 DONE | P1 | testing | Test child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-414 | 🟩 DONE | P1 | security | Path safety child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-415 | 🟩 DONE | P1 | testing | Advisory regressions | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-410 | 🟩 DONE | P1 | workflow | Enforcement continuation | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-411 | 🟩 DONE | P1 | workflow | Materialization continuation | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-412 | 🟩 DONE | P1 | testing | Split cleanup continuation | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-322', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DONE');
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('transitioned completed parent task(s) to DONE: T-413, T-409, T-322'));
+        assert.ok(taskMd.includes('| T-322 | 🟩 DONE |'));
+        assert.ok(taskMd.includes('| T-409 | 🟩 DONE |'));
+        assert.ok(taskMd.includes('| T-413 | 🟩 DONE |'));
+    });
+
+    it('revalidates decomposed parent completion at write time before marking DONE', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const allDoneContent = [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-800 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-801` through normal gates. |',
+            '| T-801 | 🟩 DONE | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n');
+        const changedContent = allDoneContent.replace(
+            '| T-801 | 🟩 DONE |',
+            '| T-801 | TODO |'
+        );
+        fs.writeFileSync(taskPath, changedContent, 'utf8');
+
+        const mutableFs = requireFromTest('node:fs') as typeof fs;
+        const originalReadFileSync = mutableFs.readFileSync as unknown as (
+            filePath: fs.PathOrFileDescriptor,
+            options?: unknown
+        ) => string | Buffer;
+        let taskMdReadCount = 0;
+        mutableFs.readFileSync = ((filePath: fs.PathOrFileDescriptor, options?: unknown): string | Buffer => {
+            if (typeof filePath === 'string' && path.resolve(filePath) === path.resolve(taskPath)) {
+                taskMdReadCount += 1;
+                if (taskMdReadCount === 1) {
+                    return allDoneContent;
+                }
+            }
+            return originalReadFileSync(filePath, options);
+        }) as typeof fs.readFileSync;
+
+        try {
+            const result = resolveNextStep({ taskId: 'T-800', repoRoot });
+
+            assert.equal(result.status, 'DECOMPOSED');
+            assert.equal(result.next_gate, 'task-status-sync');
+            assert.ok(result.reason.includes('write-time revalidation'));
+            const taskMd = originalReadFileSync(taskPath, 'utf8') as string;
+            assert.ok(taskMd.includes('| T-800 | 🟪 DECOMPOSED |'));
+            assert.ok(taskMd.includes('| T-801 | TODO |'));
+        } finally {
+            mutableFs.readFileSync = originalReadFileSync as unknown as typeof fs.readFileSync;
+        }
+    });
+
+    it('revalidates already-DONE nested parent descendants at write time before marking root DONE', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const allDoneContent = [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-900 | 🟪 DECOMPOSED | P1 | workflow | Root parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-901` through normal gates. |',
+            '| T-901 | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-902` through normal gates. |',
+            '| T-902 | 🟩 DONE | P1 | workflow | Nested child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n');
+        const changedContent = allDoneContent
+            .replace('| T-901 | 🟪 DECOMPOSED |', '| T-901 | 🟩 DONE |')
+            .replace('| T-902 | 🟩 DONE |', '| T-902 | TODO |');
+        fs.writeFileSync(taskPath, changedContent, 'utf8');
+
+        const mutableFs = requireFromTest('node:fs') as typeof fs;
+        const originalReadFileSync = mutableFs.readFileSync as unknown as (
+            filePath: fs.PathOrFileDescriptor,
+            options?: unknown
+        ) => string | Buffer;
+        let taskMdReadCount = 0;
+        mutableFs.readFileSync = ((filePath: fs.PathOrFileDescriptor, options?: unknown): string | Buffer => {
+            if (typeof filePath === 'string' && path.resolve(filePath) === path.resolve(taskPath)) {
+                taskMdReadCount += 1;
+                if (taskMdReadCount === 1) {
+                    return allDoneContent;
+                }
+            }
+            return originalReadFileSync(filePath, options);
+        }) as typeof fs.readFileSync;
+
+        try {
+            const result = resolveNextStep({ taskId: 'T-900', repoRoot });
+
+            assert.equal(result.status, 'DECOMPOSED');
+            assert.equal(result.next_gate, 'task-status-sync');
+            assert.ok(result.reason.includes('write-time revalidation'));
+            const taskMd = originalReadFileSync(taskPath, 'utf8') as string;
+            assert.ok(taskMd.includes('| T-900 | 🟪 DECOMPOSED |'));
+            assert.ok(taskMd.includes('| T-901 | 🟩 DONE |'));
+            assert.ok(taskMd.includes('| T-902 | TODO |'));
+        } finally {
+            mutableFs.readFileSync = originalReadFileSync as unknown as typeof fs.readFileSync;
+        }
+    });
+
+    it('ignores T-408-style operational backticks after an explicit child list', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-408 | 🟪 DECOMPOSED | P0 | workflow | Split parent | gpt-5.5 | 2026-05-06 | strict | Parent stopped after scope-budget split. Child tasks: `T-420`, `T-421`, and `T-422`. Continue via child tasks and let `next-step` transition this parent to `DECOMPOSED` after detecting the linked children. |',
+            '| T-420 | 🟩 DONE | P0 | workflow | First child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-421 | 🟩 DONE | P1 | docs | Second child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-422 | 🟩 DONE | P1 | testing | Third child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-408', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DONE');
+        assert.equal(result.next_gate, null);
+        assert.ok(!result.reason.includes('next-step'));
+        assert.ok(!result.reason.includes('DECOMPOSED`'));
+        assert.ok(taskMd.includes('| T-408 | 🟩 DONE |'));
+    });
+
+    it('rolls back decomposed parent DONE sync when mandatory completion event append fails', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-950 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-951` through normal gates. |',
+            '| T-951 | 🟩 DONE | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+        const targetEventPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            'T-950.jsonl'
+        );
+        const mutableFs = requireFromTest('node:fs') as typeof fs;
+        const originalAppendFileSync = mutableFs.appendFileSync;
+        mutableFs.appendFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | Uint8Array, options?: unknown): void => {
+            if (typeof filePath === 'string' && path.resolve(filePath) === path.resolve(targetEventPath)) {
+                throw new Error('forced event append failure');
+            }
+            return (originalAppendFileSync as unknown as (...args: unknown[]) => void)(filePath, data, options);
+        }) as typeof fs.appendFileSync;
+
+        try {
+            const result = resolveNextStep({ taskId: 'T-950', repoRoot });
+            const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+            assert.equal(result.status, 'DECOMPOSED');
+            assert.equal(result.next_gate, 'task-status-sync');
+            assert.ok(result.reason.includes('Rolled back TASK.md status changes'));
+            assert.ok(taskMd.includes('| T-950 | 🟪 DECOMPOSED |'));
+        } finally {
+            mutableFs.appendFileSync = originalAppendFileSync;
+        }
+    });
+
+    it('records a compensating status event before rolling back when completion event append fails', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-960 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-961` through normal gates. |',
+            '| T-961 | 🟩 DONE | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+        const targetEventPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'task-events',
+            'T-960.jsonl'
+        );
+        const mutableFs = requireFromTest('node:fs') as typeof fs;
+        const originalAppendFileSync = mutableFs.appendFileSync;
+        let targetAppendCount = 0;
+        mutableFs.appendFileSync = ((filePath: fs.PathOrFileDescriptor, data: string | Uint8Array, options?: unknown): void => {
+            if (typeof filePath === 'string' && path.resolve(filePath) === path.resolve(targetEventPath)) {
+                targetAppendCount += 1;
+                if (targetAppendCount === 2) {
+                    throw new Error('forced completion event append failure');
+                }
+            }
+            return (originalAppendFileSync as unknown as (...args: unknown[]) => void)(filePath, data, options);
+        }) as typeof fs.appendFileSync;
+
+        try {
+            const result = resolveNextStep({ taskId: 'T-960', repoRoot });
+            const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+            const eventLog = fs.readFileSync(targetEventPath, 'utf8')
+                .trim()
+                .split('\n')
+                .map((line) => JSON.parse(line) as { event_type: string; details?: Record<string, unknown> });
+            const statusEvents = eventLog.filter((event) => event.event_type === 'STATUS_CHANGED');
+
+            assert.equal(result.status, 'DECOMPOSED');
+            assert.equal(result.next_gate, 'task-status-sync');
+            assert.ok(result.reason.includes('Compensating STATUS_CHANGED event(s) recorded for: T-960'));
+            assert.ok(result.reason.includes('Rolled back TASK.md status changes for: T-960'));
+            assert.ok(taskMd.includes('| T-960 | 🟪 DECOMPOSED |'));
+            assert.deepEqual(statusEvents.map((event) => event.details?.new_status), ['DONE', 'DECOMPOSED']);
+        } finally {
+            mutableFs.appendFileSync = originalAppendFileSync;
+        }
+    });
+
+    it('fails closed when the shared TASK.md status lock is held during decomposed parent sync', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const lockPath = `${taskPath}.garda-status-sync.lock`;
+        fs.writeFileSync(taskPath, [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-970 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-971` through normal gates. |',
+            '| T-971 | 🟩 DONE | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(lockPath, 'held by another status sync\n', 'utf8');
+
+        try {
+            const result = resolveNextStep({ taskId: 'T-970', repoRoot });
+            const taskMd = fs.readFileSync(taskPath, 'utf8');
+
+            assert.equal(result.status, 'DECOMPOSED');
+            assert.equal(result.next_gate, 'task-status-sync');
+            assert.ok(result.reason.includes('Could not acquire TASK.md status-sync lock'));
+            assert.ok(taskMd.includes('| T-970 | 🟪 DECOMPOSED |'));
+        } finally {
+            fs.unlinkSync(lockPath);
+        }
+    });
+
+    it('does not mark decomposed parents DONE when an explicit range child is missing', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-601 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Split into child tasks `T-602` through `T-603`. |',
+            '| T-602 | 🟩 DONE | P1 | workflow | Existing child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-601', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.ok(result.reason.includes('Explicit child task link(s) could not be found'));
+        assert.ok(result.reason.includes('T-603'));
+        assert.ok(taskMd.includes('| T-601 | 🟪 DECOMPOSED |'));
+    });
+
+    it('does not mark decomposed parents DONE when a backticked explicit child is missing', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-604 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Split into child tasks `custom.child` and `T-605`. |',
+            '| T-605 | 🟩 DONE | P1 | workflow | Existing child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-604', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.ok(result.reason.includes('Explicit child task link(s) could not be found'));
+        assert.ok(result.reason.includes('custom.child'));
+        assert.ok(taskMd.includes('| T-604 | 🟪 DECOMPOSED |'));
+    });
+
+    it('does not mark decomposed parents DONE when a plain conventional child ID is missing', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-700 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Split into child tasks T-701 and T-702. |',
+            '| T-701 | 🟩 DONE | P1 | workflow | Existing child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-700', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.ok(result.reason.includes('Explicit child task link(s) could not be found'));
+        assert.ok(result.reason.includes('T-702'));
+        assert.ok(taskMd.includes('| T-700 | 🟪 DECOMPOSED |'));
     });
 
     it('routes decomposed parent tasks to nonnumeric child task IDs', () => {
@@ -2051,10 +2423,11 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: 'T-600', repoRoot });
 
-        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.status, 'DONE');
         assert.equal(result.next_gate, null);
         assert.equal(result.commands.length, 0);
-        assert.ok(result.reason.includes('No unfinished child task'));
+        assert.ok(result.reason.includes('transitioned completed parent task(s) to DONE: T-600'));
+        assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-600 | 🟩 DONE |'));
     });
 
     it('does not treat ordinary blocked task notes as decomposed parents', () => {
