@@ -206,21 +206,6 @@ function buildDomainReviewSurface(triggers: Record<string, unknown>): Record<str
     };
 }
 
-function hasAnyRiskTrigger(triggers: Record<string, unknown>): boolean {
-    return [
-        'db',
-        'security',
-        'api',
-        'test',
-        'performance',
-        'infra',
-        'dependency',
-        'refactor',
-        'refactor_intent',
-        'refactor_heuristic'
-    ].some((key) => triggers[key] === true);
-}
-
 function isZeroDiffBaselineOnlyNoReviewableScope(
     result: ClassificationResult,
     domainSurface: Record<string, boolean>,
@@ -243,7 +228,6 @@ function isZeroDiffBaselineOnlyNoReviewableScope(
         && zeroDiffGuard?.status === 'BASELINE_ONLY'
         && zeroDiffGuard?.completion_requires_audited_no_op === true
         && triggers.protected_control_plane_changed !== true
-        && !hasAnyRiskTrigger(triggers)
         && !Object.values(domainSurface).some((value) => value === true);
 }
 
@@ -654,7 +638,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 );
                 for (const [reviewType, currentValue] of Object.entries(result.required_reviews)) {
                     const guardrailDecision = guardrailDecisions.get(reviewType);
-                    if (currentValue === true) {
+                    if (guardrailDecision?.decision === 'zero_diff_no_reviewable_scope') {
+                        (result.required_reviews as Record<string, boolean>)[reviewType] = false;
+                    } else if (currentValue === true) {
                         (result.required_reviews as Record<string, boolean>)[reviewType] = true;
                     } else if (
                         guardrailDecision?.effective_value === true

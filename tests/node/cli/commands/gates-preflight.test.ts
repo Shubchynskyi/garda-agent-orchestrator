@@ -984,6 +984,53 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change suppresses intent-only refactor reviews for git-auto zero-diff baseline-only closeout', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-zero-diff-refactor-intent.json');
+        const taskId = 'T-930-zero-diff-refactor-intent';
+        seedStrictProfileConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        const taskSummary = 'Finish protected-manifest and completion regression fixture cleanup from checkpoint';
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            taskId,
+            taskIntent: taskSummary,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.detection_source, 'git_auto');
+        assert.equal(payload.scope_category, 'empty');
+        assert.equal(payload.metrics.changed_files_count, 0);
+        assert.equal(payload.triggers.refactor_intent, true);
+        assert.equal(payload.zero_diff_guard.status, 'BASELINE_ONLY');
+        assert.equal(payload.profile_guardrails.zero_diff_no_reviewable_scope, true);
+        assert.equal(payload.required_reviews.code, false);
+        assert.equal(payload.required_reviews.refactor, false);
+        assert.equal(payload.budget_forecast.required_reviews.length, 0);
+        assert.equal(
+            payload.profile_guardrails.decisions.find((decision: Record<string, unknown>) => decision.review_type === 'refactor')?.decision,
+            'zero_diff_no_reviewable_scope'
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change strict profile keeps reviews for zero-diff with planned task scope', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-strict-zero-diff-planned.json');

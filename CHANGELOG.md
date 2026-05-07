@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- suppressed intent-only code/refactor reviews for zero-diff baseline-only task closeouts while preserving protected control-plane and domain-surface review triggers
 - made project-memory readiness explicit in `status`, `doctor explain PROJECT_MEMORY_PENDING`, and `preprompt`, including the canonical init/refresh prompt while `ProjectMemoryInitialized` or `ProjectMemoryValidated` is false
 - blocked release/package handoff on dirty tracked or untracked worktrees by adding `validate:clean-worktree` to `validate:release` and `prepack`
 - defaulted project-memory maintenance to update mode for fresh and missing-key materializations, preserved explicit existing choices, and surfaced a first-run memory refresh handoff in setup/update output
