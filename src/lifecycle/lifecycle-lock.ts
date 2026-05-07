@@ -26,10 +26,20 @@ interface LifecycleOperationLockMetadata extends JsonObject {
 interface LifecycleOperationLockInspection {
     exists: boolean;
     ageMs: number | null;
+    freshness: LifecycleLockFreshness;
     ownerHostMatchesCurrent: boolean | null;
     ownerAlive: boolean | null;
     staleReason: 'owner_dead' | 'age_exceeded' | null;
     metadata: LifecycleOperationLockMetadata;
+}
+
+type LifecycleLockFreshnessSource = 'heartbeat' | 'owner_file' | 'lock_dir' | 'unknown';
+
+interface LifecycleLockFreshness {
+    freshnessSource: LifecycleLockFreshnessSource;
+    heartbeatAgeMs: number | null;
+    ownerFileAgeMs: number | null;
+    lockDirAgeMs: number | null;
 }
 
 export interface LifecycleLockTelemetry {
@@ -41,6 +51,7 @@ export interface LifecycleLockTelemetry {
 export interface LifecycleLockOptions {
     allowForeignHostStaleRecovery?: unknown;
     queueTimeoutMs?: unknown;
+    heartbeatIntervalMs?: unknown;
 }
 
 interface LifecycleAsyncQueueEntry {
@@ -61,6 +72,7 @@ interface LifecycleAsyncContextState {
 
 const LIFECYCLE_LOCK_METADATA_GRACE_MS = 2000;
 const LIFECYCLE_LOCK_STALE_MS = 30 * 60 * 1000;
+const DEFAULT_LIFECYCLE_LOCK_HEARTBEAT_INTERVAL_MS = 10_000;
 const DEFAULT_LIFECYCLE_ASYNC_QUEUE_TIMEOUT_MS = 10 * 60 * 1000;
 const FOREIGN_HOST_LIFECYCLE_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS';
 const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
@@ -143,6 +155,14 @@ function toPositiveInteger(value: unknown, fallback: number): number {
     return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
 }
 
+function toOptionalPositiveInteger(value: unknown): number | null {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    const normalized = Number(value);
+    return Number.isInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
 function isForeignHostLifecycleStaleRecoveryEnabled(options: LifecycleLockOptions = {}): boolean {
     if (options.allowForeignHostStaleRecovery !== undefined) {
         return parseBooleanLike(options.allowForeignHostStaleRecovery);
@@ -184,11 +204,52 @@ function readLifecycleOperationLockMetadata(lockPath: string): LifecycleOperatio
     }
 }
 
+function parseUtcAgeMs(value: string | null | undefined): number | null {
+    const timestampMs = Date.parse(String(value || ''));
+    if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+        return null;
+    }
+    return Math.max(0, Date.now() - timestampMs);
+}
+
+function getPathAgeMs(targetPath: string): number | null {
+    try {
+        const stats = fs.statSync(targetPath);
+        return Math.max(0, Date.now() - stats.mtimeMs);
+    } catch {
+        return null;
+    }
+}
+
+function readLifecycleLockFreshness(lockPath: string, metadata: LifecycleOperationLockMetadata): LifecycleLockFreshness {
+    const heartbeatAgeMs = parseUtcAgeMs(metadata.heartbeat_at_utc);
+    const ownerFileAgeMs = getPathAgeMs(path.join(lockPath, LIFECYCLE_OPERATION_LOCK_OWNER_FILE_NAME));
+    const lockDirAgeMs = getPathAgeMs(lockPath);
+
+    if (heartbeatAgeMs !== null) {
+        return { freshnessSource: 'heartbeat', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
+    }
+    if (ownerFileAgeMs !== null) {
+        return { freshnessSource: 'owner_file', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
+    }
+    if (lockDirAgeMs !== null) {
+        return { freshnessSource: 'lock_dir', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
+    }
+    return { freshnessSource: 'unknown', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
+}
+
 function inspectLifecycleOperationLock(lockPath: string): LifecycleOperationLockInspection {
+    const missingFreshness: LifecycleLockFreshness = {
+        freshnessSource: 'unknown',
+        heartbeatAgeMs: null,
+        ownerFileAgeMs: null,
+        lockDirAgeMs: null
+    };
     if (!fs.existsSync(lockPath)) {
         return {
             exists: false,
             ageMs: null,
+            freshness: missingFreshness,
             ownerHostMatchesCurrent: null,
             ownerAlive: null,
             staleReason: null,
@@ -205,14 +266,15 @@ function inspectLifecycleOperationLock(lockPath: string): LifecycleOperationLock
         };
     }
     const metadata = readLifecycleOperationLockMetadata(lockPath);
-    let ageMs: number | null = null;
-    try {
-        const stats = fs.statSync(lockPath);
-        ageMs = Math.max(0, Date.now() - stats.mtimeMs);
-    } catch {
+    const freshness = readLifecycleLockFreshness(lockPath, metadata);
+    const ageMs = freshness.freshnessSource === 'unknown'
+        ? null
+        : (freshness.heartbeatAgeMs ?? freshness.ownerFileAgeMs ?? freshness.lockDirAgeMs);
+    if (freshness.lockDirAgeMs === null) {
         return {
             exists: false,
             ageMs: null,
+            freshness,
             ownerHostMatchesCurrent: null,
             ownerAlive: null,
             staleReason: null,
@@ -223,22 +285,23 @@ function inspectLifecycleOperationLock(lockPath: string): LifecycleOperationLock
     const ownerHostMatchesCurrent = isCurrentHostOwner(metadata.hostname);
 
     if (metadata.pid === null) {
-        if (ownerHostMatchesCurrent === false && ageMs >= LIFECYCLE_LOCK_STALE_MS) {
-            return { exists: true, ageMs, ownerHostMatchesCurrent, ownerAlive: null, staleReason: 'age_exceeded', metadata };
+        if (ownerHostMatchesCurrent === false && ageMs !== null && ageMs >= LIFECYCLE_LOCK_STALE_MS) {
+            return { exists: true, ageMs, freshness, ownerHostMatchesCurrent, ownerAlive: null, staleReason: 'age_exceeded', metadata };
         }
-        if (ownerHostMatchesCurrent !== false && ageMs >= LIFECYCLE_LOCK_METADATA_GRACE_MS) {
-            return { exists: true, ageMs, ownerHostMatchesCurrent, ownerAlive: false, staleReason: 'owner_dead', metadata };
+        if (ownerHostMatchesCurrent !== false && ageMs !== null && ageMs >= LIFECYCLE_LOCK_METADATA_GRACE_MS) {
+            return { exists: true, ageMs, freshness, ownerHostMatchesCurrent, ownerAlive: false, staleReason: 'owner_dead', metadata };
         }
-        return { exists: true, ageMs, ownerHostMatchesCurrent, ownerAlive: null, staleReason: null, metadata };
+        return { exists: true, ageMs, freshness, ownerHostMatchesCurrent, ownerAlive: null, staleReason: null, metadata };
     }
 
     const ownerAlive = ownerHostMatchesCurrent === false ? null : isProcessLikelyAlive(metadata.pid);
     const staleReason = ownerAlive === false
         ? 'owner_dead'
-        : (ownerHostMatchesCurrent === false && ageMs >= LIFECYCLE_LOCK_STALE_MS ? 'age_exceeded' : null);
+        : (ownerHostMatchesCurrent === false && ageMs !== null && ageMs >= LIFECYCLE_LOCK_STALE_MS ? 'age_exceeded' : null);
     return {
         exists: true,
         ageMs,
+        freshness,
         ownerHostMatchesCurrent,
         ownerAlive,
         staleReason,
@@ -260,6 +323,39 @@ function writeLifecycleOperationLockMetadata(lockPath: string, targetRoot: strin
         target_root: targetRoot
     };
     fs.writeFileSync(ownerPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function writeLifecycleOperationLockHeartbeat(lockPath: string, lockId: string): void {
+    const metadata = readLifecycleOperationLockMetadata(lockPath);
+    if (!lifecycleLockMetadataMatchesLockId(metadata, lockId)) {
+        return;
+    }
+    const ownerPath = path.join(lockPath, LIFECYCLE_OPERATION_LOCK_OWNER_FILE_NAME);
+    const payload: LifecycleOperationLockMetadata = {
+        ...metadata,
+        heartbeat_at_utc: new Date().toISOString()
+    };
+    fs.writeFileSync(ownerPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function startLifecycleLockHeartbeat(
+    lockPath: string,
+    lockId: string,
+    options: LifecycleLockOptions
+): ReturnType<typeof setInterval> | null {
+    const heartbeatIntervalMs = toOptionalPositiveInteger(options.heartbeatIntervalMs)
+        ?? DEFAULT_LIFECYCLE_LOCK_HEARTBEAT_INTERVAL_MS;
+    const timer = setInterval(() => {
+        try {
+            writeLifecycleOperationLockHeartbeat(lockPath, lockId);
+        } catch (error: unknown) {
+            process.stderr.write(
+                `WARNING: LIFECYCLE_LOCK_HEARTBEAT_FAILED: lock=${redactPath(lockPath, path.dirname(lockPath))}; message=${error instanceof Error ? error.message : String(error)}\n`
+            );
+        }
+    }, heartbeatIntervalMs);
+    timer.unref?.();
+    return timer;
 }
 
 function getCurrentLifecycleAsyncTargetDepth(normalizedTarget: string): number {
@@ -578,12 +674,15 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
             const ownerOperation = inspection.metadata.operation || 'unknown';
             const redactedTarget = redactPath(normalizedTarget, normalizedTarget);
             const redactedLockPath = redactPath(lockPath, normalizedTarget);
+            const heartbeatAge = inspection.freshness.heartbeatAgeMs !== null ? `${inspection.freshness.heartbeatAgeMs}ms` : 'unknown';
+            const ownerFileAge = inspection.freshness.ownerFileAgeMs !== null ? `${inspection.freshness.ownerFileAgeMs}ms` : 'unknown';
+            const lockDirAge = inspection.freshness.lockDirAgeMs !== null ? `${inspection.freshness.lockDirAgeMs}ms` : 'unknown';
             const foreignHostHint = foreignHostAgeExceeded
                 ? ` Cross-host stale recovery is disabled by default; verify the remote owner is gone, then rerun with ${FOREIGN_HOST_LIFECYCLE_STALE_RECOVERY_ENV}=1 or ${FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV}=1 to reclaim this aged lock.`
                 : '';
             throw new Error(
                 `Another lifecycle operation is already running for '${redactedTarget}' ` +
-                `(operation='${ownerOperation}', pid=${ownerPid}, host=${ownerHost}, lock='${redactedLockPath}').` +
+                `(operation='${ownerOperation}', pid=${ownerPid}, host=${ownerHost}, lock='${redactedLockPath}', freshness_source=${inspection.freshness.freshnessSource}, heartbeat_age_ms=${heartbeatAge}, owner_file_age_ms=${ownerFileAge}, lock_dir_age_ms=${lockDirAge}).` +
                 foreignHostHint
             );
         }
@@ -596,6 +695,7 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
         throw error;
     }
 
+    const heartbeatTimer = startLifecycleLockHeartbeat(lockPath, lockId, options);
     ACTIVE_LIFECYCLE_OPERATION_LOCKS.set(normalizedTarget, 1);
     const elapsedMs = Date.now() - startedAt;
     if (staleLockRecovered) {
@@ -608,6 +708,9 @@ function acquireLifecycleOperationLock(targetRoot: string, operation: string, op
             const currentCount = ACTIVE_LIFECYCLE_OPERATION_LOCKS.get(normalizedTarget) || 0;
             if (currentCount <= 1) {
                 ACTIVE_LIFECYCLE_OPERATION_LOCKS.delete(normalizedTarget);
+                if (heartbeatTimer) {
+                    clearInterval(heartbeatTimer);
+                }
                 releaseLifecycleOperationLockPath(lockPath, lockId, normalizedTarget);
                 return;
             }

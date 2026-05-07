@@ -60,12 +60,14 @@ test('appendTaskEvent does not reclaim aged foreign-host lock without explicit o
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const lockPath = path.join(eventsRoot, '.T-TEST.lock');
         fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(lockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999,
             hostname: 'remote-build-host',
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         const result = appendTaskEvent(
@@ -107,12 +109,14 @@ test('appendTaskEvent reclaims aged foreign-host lock when explicit override is 
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const lockPath = path.join(eventsRoot, '.T-TEST.lock');
         fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(lockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999,
             hostname: 'remote-build-host',
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         const result = appendTaskEvent(
@@ -530,12 +534,14 @@ test('appendTaskEventAsync does not reclaim aged foreign-host lock without expli
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const lockPath = path.join(eventsRoot, '.T-ASYNC.lock');
         fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(lockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999,
             hostname: 'remote-build-host',
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         const result = await appendTaskEventAsync(
@@ -577,12 +583,14 @@ test('appendTaskEventAsync reclaims aged foreign-host lock when explicit overrid
         const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
         const lockPath = path.join(eventsRoot, '.T-ASYNC.lock');
         fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(lockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999,
             hostname: 'remote-build-host',
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         const result = await appendTaskEventAsync(

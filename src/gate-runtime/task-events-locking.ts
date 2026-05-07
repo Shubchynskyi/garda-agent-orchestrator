@@ -15,6 +15,7 @@ const MAX_LOCK_RETRIES = 500;
 const LOCK_CONTENTION_WARN_THRESHOLD = 10;
 const LOCK_METADATA_GRACE_MS = 2000;
 const LOCK_OWNER_COMMAND_MAX_LENGTH = 160;
+const DEFAULT_LOCK_HEARTBEAT_INTERVAL_MS = 10_000;
 export const FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV = 'GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS';
 const TRANSIENT_LOCK_ACQUIRE_ERROR_CODES = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
 const TRANSIENT_LOCK_RELEASE_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
@@ -23,6 +24,7 @@ export interface LockOptions {
     timeoutMs?: unknown;
     retryMs?: unknown;
     staleMs?: unknown;
+    heartbeatIntervalMs?: unknown;
     allowForeignHostStaleRecovery?: unknown;
     ownerLabel?: unknown;
 }
@@ -30,6 +32,7 @@ export interface LockOptions {
 export interface LockHandle {
     lockPath: string;
     lockId?: string;
+    heartbeatTimer?: ReturnType<typeof setInterval>;
 }
 
 export interface LockOwnerMetadata {
@@ -45,10 +48,20 @@ export interface LockOwnerMetadata {
 export interface LockInspectionResult {
     exists: boolean;
     ageMs: number | null;
+    freshness: LockFreshness;
     metadata: LockOwnerMetadata;
     ownerHostMatchesCurrent: boolean | null;
     ownerAlive: boolean | null;
     staleReason: 'owner_dead' | 'age_exceeded' | null;
+}
+
+export type LockFreshnessSource = 'heartbeat' | 'owner_file' | 'lock_dir' | 'unknown';
+
+export interface LockFreshness {
+    freshnessSource: LockFreshnessSource;
+    heartbeatAgeMs: number | null;
+    ownerFileAgeMs: number | null;
+    lockDirAgeMs: number | null;
 }
 
 export type LockContentionLevel = 'none' | 'low' | 'moderate' | 'high';
@@ -84,6 +97,10 @@ export interface TaskEventLockHealth {
     task_id: string | null;
     status: TaskEventLockStatus;
     age_ms: number | null;
+    heartbeat_age_ms: number | null;
+    owner_file_age_ms: number | null;
+    lock_dir_age_ms: number | null;
+    freshness_source: LockFreshnessSource;
     owner_pid: number | null;
     owner_hostname: string | null;
     owner_created_at_utc: string | null;
@@ -114,6 +131,14 @@ export interface TaskEventLockCleanupResult {
 function toPositiveInteger(value: unknown, fallback: number): number {
     const parsed = Number.parseInt(String(value), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function toOptionalPositiveInteger(value: unknown): number | null {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    const parsed = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function resolveMaxLockRetries(timeoutMs: number, retryMs: number): number {
@@ -182,6 +207,41 @@ function writeLockMetadata(lockPath: string, lockId: string, options: LockOption
         command: getLockOwnerCommand(options)
     };
     fs.writeFileSync(metadataPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function writeLockHeartbeat(lockPath: string, lockId: string): void {
+    const metadata = readLockMetadata(lockPath);
+    if (!lockMetadataMatchesLockId(metadata, lockId)) {
+        return;
+    }
+    const metadataPath = path.join(lockPath, 'owner.json');
+    const payload = {
+        lock_id: metadata.lock_id,
+        pid: metadata.pid,
+        hostname: metadata.hostname,
+        created_at_utc: metadata.created_at_utc,
+        heartbeat_at_utc: new Date().toISOString(),
+        command: metadata.command
+    };
+    fs.writeFileSync(metadataPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function startLockHeartbeat(lockPath: string, lockId: string, options: LockOptions | undefined): ReturnType<typeof setInterval> | undefined {
+    const heartbeatIntervalMs = toOptionalPositiveInteger(options?.heartbeatIntervalMs) ?? DEFAULT_LOCK_HEARTBEAT_INTERVAL_MS;
+    if (heartbeatIntervalMs <= 0) {
+        return undefined;
+    }
+    const timer = setInterval(() => {
+        try {
+            writeLockHeartbeat(lockPath, lockId);
+        } catch (error: unknown) {
+            process.stderr.write(
+                `WARNING: LOCK_HEARTBEAT_FAILED: lock=${redactLockPath(lockPath)}; message=${getErrorMessage(error)}\n`
+            );
+        }
+    }, heartbeatIntervalMs);
+    timer.unref?.();
+    return timer;
 }
 
 function readLockMetadata(lockPath: string): LockOwnerMetadata {
@@ -270,6 +330,40 @@ function readLockMetadata(lockPath: string): LockOwnerMetadata {
             metadata_status: 'invalid_json'
         };
     }
+}
+
+function parseUtcAgeMs(value: string | null | undefined): number | null {
+    const timestampMs = Date.parse(String(value || ''));
+    if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+        return null;
+    }
+    return Math.max(0, Date.now() - timestampMs);
+}
+
+function getPathAgeMs(targetPath: string): number | null {
+    try {
+        const stats = fs.statSync(targetPath);
+        return Math.max(0, Date.now() - stats.mtimeMs);
+    } catch {
+        return null;
+    }
+}
+
+function readLockFreshness(lockPath: string, metadata: LockOwnerMetadata): LockFreshness {
+    const heartbeatAgeMs = parseUtcAgeMs(metadata.heartbeat_at_utc);
+    const ownerFileAgeMs = getPathAgeMs(path.join(lockPath, 'owner.json'));
+    const lockDirAgeMs = getPathAgeMs(lockPath);
+
+    if (heartbeatAgeMs !== null) {
+        return { freshnessSource: 'heartbeat', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
+    }
+    if (ownerFileAgeMs !== null) {
+        return { freshnessSource: 'owner_file', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
+    }
+    if (lockDirAgeMs !== null) {
+        return { freshnessSource: 'lock_dir', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
+    }
+    return { freshnessSource: 'unknown', heartbeatAgeMs, ownerFileAgeMs, lockDirAgeMs };
 }
 
 function isProcessLikelyAlive(pid: number | null): boolean | null {
@@ -476,14 +570,15 @@ function claimOwnedLockForRelease(lockPath: string, lockId: string): string | nu
 
 function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
     const metadata = readLockMetadata(lockPath);
-    let ageMs: number | null = null;
-    try {
-        const stats = fs.statSync(lockPath);
-        ageMs = Math.max(0, Date.now() - stats.mtimeMs);
-    } catch {
+    const freshness = readLockFreshness(lockPath, metadata);
+    const ageMs = freshness.freshnessSource === 'unknown'
+        ? null
+        : (freshness.heartbeatAgeMs ?? freshness.ownerFileAgeMs ?? freshness.lockDirAgeMs);
+    if (freshness.lockDirAgeMs === null) {
         return {
             exists: false,
             ageMs: null,
+            freshness,
             metadata,
             ownerHostMatchesCurrent: null,
             ownerAlive: null,
@@ -499,6 +594,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
         return {
             exists: true,
             ageMs,
+            freshness,
             metadata,
             ownerHostMatchesCurrent,
             ownerAlive,
@@ -514,6 +610,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
         return {
             exists: true,
             ageMs,
+            freshness,
             metadata,
             ownerHostMatchesCurrent,
             ownerAlive: null,
@@ -527,6 +624,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
         return {
             exists: true,
             ageMs,
+            freshness,
             metadata,
             ownerHostMatchesCurrent,
             ownerAlive: null,
@@ -535,12 +633,14 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
     }
 
     if (staleMs > 0
+        && ageMs !== null
         && ageMs >= staleMs
         && ownerHostMatchesCurrent === false
         && ownerAlive !== true) {
         return {
             exists: true,
             ageMs,
+            freshness,
             metadata,
             ownerHostMatchesCurrent,
             ownerAlive,
@@ -551,6 +651,7 @@ function inspectLock(lockPath: string, staleMs: number): LockInspectionResult {
     return {
         exists: true,
         ageMs,
+        freshness,
         metadata,
         ownerHostMatchesCurrent,
         ownerAlive,
@@ -578,6 +679,9 @@ export function reclaimStaleFilesystemLock(lockPath: string, options: LockOption
 
 function formatLockDiagnostic(lockPath: string, inspection: LockInspectionResult, timeoutMs: number, waitedMs: number): string {
     const ageText = typeof inspection.ageMs === 'number' ? `${inspection.ageMs}ms` : 'unknown';
+    const heartbeatAgeText = typeof inspection.freshness.heartbeatAgeMs === 'number' ? `${inspection.freshness.heartbeatAgeMs}ms` : 'unknown';
+    const ownerFileAgeText = typeof inspection.freshness.ownerFileAgeMs === 'number' ? `${inspection.freshness.ownerFileAgeMs}ms` : 'unknown';
+    const lockDirAgeText = typeof inspection.freshness.lockDirAgeMs === 'number' ? `${inspection.freshness.lockDirAgeMs}ms` : 'unknown';
     const ownerPidText = inspection.metadata.pid !== null ? String(inspection.metadata.pid) : 'unknown';
     const ownerAliveText = inspection.ownerAlive === null ? 'unknown' : (inspection.ownerAlive ? 'yes' : 'no');
     const ownerHostText = redactHostnameValue(inspection.metadata.hostname) || 'unknown';
@@ -589,6 +693,10 @@ function formatLockDiagnostic(lockPath: string, inspection: LockInspectionResult
         `waited_ms=${waitedMs}`,
         `timeout_ms=${timeoutMs}`,
         `lock_age_ms=${ageText}`,
+        `freshness_source=${inspection.freshness.freshnessSource}`,
+        `heartbeat_age_ms=${heartbeatAgeText}`,
+        `owner_file_age_ms=${ownerFileAgeText}`,
+        `lock_dir_age_ms=${lockDirAgeText}`,
         `owner_pid=${ownerPidText}`,
         `owner_alive=${ownerAliveText}`,
         `owner_hostname=${ownerHostText}`,
@@ -786,8 +894,9 @@ export async function acquireFilesystemLockAsync(lockPath: string, options: Lock
                     `CONTENTION_RESOLVED: lock=${redactLockPath(lockPath)}; retries=${retries}; elapsed_ms=${elapsedMs}; contention_level=${contentionLevel}; stale_recovered=${staleLockRecovered}\n`
                 );
             }
+            const heartbeatTimer = startLockHeartbeat(lockPath, lockId, options);
             return {
-                handle: { lockPath, lockId },
+                handle: { lockPath, lockId, heartbeatTimer },
                 telemetry: {
                     retries,
                     elapsedMs,
@@ -875,6 +984,9 @@ export function releaseFilesystemLock(lockHandle: LockHandle | null): void {
     if (!lockHandle.lockId) {
         return;
     }
+    if (lockHandle.heartbeatTimer) {
+        clearInterval(lockHandle.heartbeatTimer);
+    }
     const claimedPath = claimOwnedLockForRelease(lockHandle.lockPath, lockHandle.lockId);
     if (!claimedPath) {
         return;
@@ -929,6 +1041,10 @@ function buildTaskEventLockHealth(lockRoot: string, entryName: string, inspectio
         task_id: parsed.taskId,
         status: inspection.staleReason ? 'STALE' : 'ACTIVE',
         age_ms: inspection.ageMs,
+        heartbeat_age_ms: inspection.freshness.heartbeatAgeMs,
+        owner_file_age_ms: inspection.freshness.ownerFileAgeMs,
+        lock_dir_age_ms: inspection.freshness.lockDirAgeMs,
+        freshness_source: inspection.freshness.freshnessSource,
         owner_pid: inspection.metadata.pid,
         owner_hostname: redactHostnameValue(inspection.metadata.hostname),
         owner_created_at_utc: inspection.metadata.created_at_utc,

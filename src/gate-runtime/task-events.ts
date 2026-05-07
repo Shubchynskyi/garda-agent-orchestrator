@@ -13,6 +13,8 @@ export {
     scanTaskEventLocks,
     type AcquireLockTelemetry,
     type LockContentionLevel,
+    type LockFreshness,
+    type LockFreshnessSource,
     type LockInspectionResult,
     type LockOptions,
     type LockOwnerMetadata,

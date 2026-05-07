@@ -260,12 +260,14 @@ test('writeReviewArtifactJson does not reclaim aged foreign-host review-artifact
     delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
     try {
         fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(lockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999999,
             hostname: 'remote-build-host',
             created_at_utc: new Date().toISOString()
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         assert.throws(
@@ -296,12 +298,14 @@ test('writeReviewArtifactJson reclaims aged foreign-host review-artifact lock wh
     process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = '1';
     try {
         fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(lockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999999,
             hostname: 'remote-build-host',
             created_at_utc: new Date().toISOString()
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         writeReviewArtifactJson(
@@ -367,12 +371,14 @@ test('scanReviewArtifactLocks reports active and stale review-artifact locks wit
         }, null, 2) + '\n', 'utf8');
 
         fs.mkdirSync(staleLockPath, { recursive: true });
-        fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+        const staleOwnerPath = path.join(staleLockPath, 'owner.json');
+        fs.writeFileSync(staleOwnerPath, JSON.stringify({
             pid: 999999999,
             hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(staleOwnerPath, oldTime, oldTime);
         fs.utimesSync(staleLockPath, oldTime, oldTime);
 
         const result = scanReviewArtifactLocks(tempDir);
@@ -413,12 +419,14 @@ test('cleanupStaleReviewArtifactLocks removes only proven-stale review-artifact 
         }, null, 2) + '\n', 'utf8');
 
         fs.mkdirSync(staleLockPath, { recursive: true });
-        fs.writeFileSync(path.join(staleLockPath, 'owner.json'), JSON.stringify({
+        const staleOwnerPath = path.join(staleLockPath, 'owner.json');
+        fs.writeFileSync(staleOwnerPath, JSON.stringify({
             pid: 999999999,
             hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(staleOwnerPath, oldTime, oldTime);
         fs.utimesSync(staleLockPath, oldTime, oldTime);
 
         const dryRun = cleanupStaleReviewArtifactLocks(tempDir, { dryRun: true });
@@ -444,12 +452,14 @@ test('cleanupStaleReviewArtifactLocks retains aged foreign-host review-artifact 
 
     try {
         fs.mkdirSync(lockPath, { recursive: true });
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(lockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999999,
             hostname: 'remote-build-host',
             created_at_utc: new Date().toISOString()
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(lockPath, oldTime, oldTime);
 
         const result = cleanupStaleReviewArtifactLocks(tempDir, { dryRun: false });
@@ -474,12 +484,14 @@ test('scanReviewArtifactLocks includes the shared reviews-index lock', () => {
 
     try {
         fs.mkdirSync(indexLockPath, { recursive: true });
-        fs.writeFileSync(path.join(indexLockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(indexLockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999999,
             hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(indexLockPath, oldTime, oldTime);
 
         const result = scanReviewArtifactLocks(tempDir);
@@ -501,12 +513,14 @@ test('scanReviewArtifactLocks includes the shared reviews transaction lock', () 
 
     try {
         fs.mkdirSync(transactionLockPath, { recursive: true });
-        fs.writeFileSync(path.join(transactionLockPath, 'owner.json'), JSON.stringify({
+        const ownerPath = path.join(transactionLockPath, 'owner.json');
+        fs.writeFileSync(ownerPath, JSON.stringify({
             pid: 999999999,
             hostname: os.hostname(),
             created_at_utc: '2026-03-30T10:00:00.000Z'
         }, null, 2) + '\n', 'utf8');
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(ownerPath, oldTime, oldTime);
         fs.utimesSync(transactionLockPath, oldTime, oldTime);
 
         const result = scanReviewArtifactLocks(tempDir);

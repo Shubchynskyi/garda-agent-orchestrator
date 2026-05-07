@@ -112,6 +112,9 @@ test('withLifecycleOperationLock does not reclaim aged foreign-host lock without
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         let error: Error | null = null;
         try {
@@ -137,6 +140,74 @@ test('withLifecycleOperationLock does not reclaim aged foreign-host lock without
     }
 });
 
+test('withLifecycleOperationLock treats recent heartbeat as fresh when lock directory mtime is old', () => {
+    const tmp = mkTmpDir();
+    const previousLifecycleEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    const previousFileLockEnv = process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+    delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-recent-heartbeat',
+            acquired_at_utc: new Date(Date.now() - (31 * 60 * 1000)).toISOString(),
+            heartbeat_at_utc: new Date().toISOString(),
+            target_root: tmp
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
+
+        assert.throws(
+            () => withLifecycleOperationLock(tmp, 'should-not-reclaim', () => 'nope'),
+            /freshness_source=heartbeat.*heartbeat_age_ms=.*owner_file_age_ms=.*lock_dir_age_ms=/
+        );
+        assert.ok(fs.existsSync(lockPath), 'fresh heartbeat foreign-host lock should remain in place');
+    } finally {
+        if (previousLifecycleEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_LIFECYCLE_LOCKS = previousLifecycleEnv;
+        }
+        if (previousFileLockEnv === undefined) {
+            delete process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS;
+        } else {
+            process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousFileLockEnv;
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLock uses stale heartbeat age even when lock directory mtime is fresh', () => {
+    const tmp = mkTmpDir();
+    try {
+        const lockPath = getLifecycleOperationLockPath(tmp);
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            operation: 'remote-stale-heartbeat',
+            acquired_at_utc: new Date(Date.now() - (31 * 60 * 1000)).toISOString(),
+            heartbeat_at_utc: new Date(Date.now() - (31 * 60 * 1000)).toISOString(),
+            target_root: tmp
+        }));
+
+        const result = withLifecycleOperationLock(tmp, 'reclaim-stale-heartbeat', () => 'reclaimed', {
+            allowForeignHostStaleRecovery: true
+        });
+        assert.equal(result, 'reclaimed');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('withLifecycleOperationLock reclaims aged pid-only lock with dead PID and unknown host', () => {
     const tmp = mkTmpDir();
     try {
@@ -151,6 +222,9 @@ test('withLifecycleOperationLock reclaims aged pid-only lock with dead PID and u
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = withLifecycleOperationLock(tmp, 'recover-pid-only', () => 'reclaimed');
         assert.equal(result, 'reclaimed');
@@ -176,6 +250,9 @@ test('withLifecycleOperationLock reclaims aged foreign-host lock when explicit o
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed');
         assert.equal(result, 'reclaimed');
@@ -204,6 +281,9 @@ test('withLifecycleOperationLock reclaims aged foreign-host lock with call-scope
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed', {
             allowForeignHostStaleRecovery: true
@@ -231,6 +311,9 @@ test('withLifecycleOperationLock explicit false override wins over env-based rec
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         assert.throws(
             () => withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed', {
@@ -318,6 +401,29 @@ test('withLifecycleOperationLockAsync acquires and releases lock', async () => {
         assert.equal(result, 42);
         const lockPath = getLifecycleOperationLockPath(tmp);
         assert.ok(!fs.existsSync(lockPath), 'lock should be released after callback');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('withLifecycleOperationLockAsync refreshes heartbeat during long callbacks', async () => {
+    const tmp = mkTmpDir();
+    try {
+        await withLifecycleOperationLockAsync(tmp, 'async-heartbeat', async () => {
+            const lockPath = getLifecycleOperationLockPath(tmp);
+            const ownerPath = path.join(lockPath, 'owner.json');
+            const initialOwner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            const refreshedOwner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+
+            assert.equal(refreshedOwner.lock_id, initialOwner.lock_id);
+            assert.ok(
+                Date.parse(refreshedOwner.heartbeat_at_utc) > Date.parse(initialOwner.heartbeat_at_utc),
+                'heartbeat should advance while async lifecycle callback is running'
+            );
+        }, {
+            heartbeatIntervalMs: 20
+        });
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -583,6 +689,9 @@ test('withLifecycleOperationLockAsync does not reclaim aged foreign-host lock wi
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         let error: Error | null = null;
         try {
@@ -662,6 +771,9 @@ test('withLifecycleOperationLockAsync reclaims aged foreign-host lock when expli
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = await withLifecycleOperationLockAsync(tmp, 'async-foreign', async () => 'reclaimed');
         assert.equal(result, 'reclaimed');
@@ -690,6 +802,9 @@ test('withLifecycleOperationLockAsync reclaims aged foreign-host lock with call-
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = await withLifecycleOperationLockAsync(tmp, 'async-foreign', async () => 'reclaimed', {
             allowForeignHostStaleRecovery: true
@@ -714,6 +829,9 @@ test('withLifecycleOperationLockAsync reclaims aged pid-only lock with dead PID 
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = await withLifecycleOperationLockAsync(tmp, 'async-pid-only', async () => 'reclaimed');
         assert.equal(result, 'reclaimed');
@@ -739,6 +857,9 @@ test('withLifecycleOperationLockAsync explicit false override wins over env-base
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         await assert.rejects(
             () => withLifecycleOperationLockAsync(tmp, 'async-foreign', async () => 'reclaimed', {
@@ -775,6 +896,9 @@ test('withLifecycleOperationLock reclaims aged foreign-host lock when shared fil
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = withLifecycleOperationLock(tmp, 'reclaim-foreign-host', () => 'reclaimed');
         assert.equal(result, 'reclaimed');
@@ -812,6 +936,9 @@ test('withLifecycleOperationLockAsync reclaims aged foreign-host lock when share
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = await withLifecycleOperationLockAsync(tmp, 'reclaim-foreign-host', async () => 'reclaimed');
         assert.equal(result, 'reclaimed');
@@ -841,6 +968,9 @@ test('withLifecycleOperationLock reclaims SIGKILL-orphaned lock with missing met
         // Age the lock beyond the grace period
         const oldTime = new Date(Date.now() - 5000);
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = withLifecycleOperationLock(tmp, 'reclaim-orphan', () => 'recovered');
         assert.equal(result, 'recovered');
@@ -906,6 +1036,9 @@ test('withLifecycleOperationLock reclaims SIGKILL-orphaned lock with corrupt met
         fs.writeFileSync(path.join(lockPath, 'owner.json'), 'NOT VALID JSON{{{', 'utf8');
         const oldTime = new Date(Date.now() - 5000);
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = withLifecycleOperationLock(tmp, 'reclaim-corrupt', () => 'recovered');
         assert.equal(result, 'recovered');
@@ -927,6 +1060,9 @@ test('withLifecycleOperationLock reclaims lock with partial metadata (hostname o
         }), 'utf8');
         const oldTime = new Date(Date.now() - 5000);
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const result = withLifecycleOperationLock(tmp, 'reclaim-partial', () => 'recovered');
         assert.equal(result, 'recovered');
@@ -1181,3 +1317,4 @@ test('getLastLifecycleLockTelemetry returns telemetry after async lock', async (
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
+

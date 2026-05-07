@@ -1158,12 +1158,14 @@ describe('runGc', () => {
         fs.mkdirSync(eventsDir, { recursive: true });
         const staleLock = path.join(eventsDir, '.T-777.jsonl.lock');
         fs.mkdirSync(staleLock, { recursive: true });
+        const ownerPath = path.join(staleLock, 'owner.json');
         fs.writeFileSync(
-            path.join(staleLock, 'owner.json'),
+            ownerPath,
             JSON.stringify({ hostname: os.hostname(), timestamp_utc: new Date().toISOString() })
         );
         fs.writeFileSync(path.join(staleLock, 'payload.txt'), 'lock-payload');
         const staleTime = new Date(Date.now() - 5_000);
+        fs.utimesSync(ownerPath, staleTime, staleTime);
         fs.utimesSync(staleLock, staleTime, staleTime);
 
         const expectedBytes = fs.statSync(path.join(staleLock, 'owner.json')).size

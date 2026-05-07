@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import {
     acquireFilesystemLock,
     acquireFilesystemLockAsync,
+    inspectFilesystemLock,
     releaseFilesystemLock,
     scanTaskEventLocks,
     cleanupStaleTaskEventLocks
@@ -165,6 +166,9 @@ test('acquireFilesystemLock does not reclaim aged live lock on the current host'
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         assert.throws(
             () => acquireFilesystemLock(lockPath),
@@ -186,6 +190,9 @@ test('acquireFilesystemLock reclaims aged pid-only lock with dead PID and unknow
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle, telemetry } = acquireFilesystemLock(lockPath);
         assert.equal(telemetry.staleLockRecovered, true);
@@ -212,6 +219,9 @@ test('acquireFilesystemLock does not reclaim aged foreign-host lock without expl
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         assert.throws(
             () => acquireFilesystemLock(lockPath, { timeoutMs: 75, retryMs: 10 }),
@@ -224,6 +234,56 @@ test('acquireFilesystemLock does not reclaim aged foreign-host lock without expl
         } else {
             process.env.GARDA_RECOVER_FOREIGN_HOST_FILE_LOCKS = previousEnv;
         }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('inspectFilesystemLock treats recent heartbeat as fresh when lock directory mtime is old', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-foreign-recent-heartbeat.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date(Date.now() - (31 * 60 * 1000)).toISOString(),
+            heartbeat_at_utc: new Date().toISOString()
+        }));
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
+
+        const inspection = inspectFilesystemLock(lockPath);
+        assert.equal(inspection.staleReason, null);
+        assert.equal(inspection.freshness.freshnessSource, 'heartbeat');
+        assert.ok((inspection.freshness.lockDirAgeMs ?? 0) >= 30 * 60 * 1000);
+        assert.ok((inspection.freshness.heartbeatAgeMs ?? Number.MAX_SAFE_INTEGER) < 60_000);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('acquireFilesystemLock uses stale heartbeat age even when lock directory mtime is fresh', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-foreign-stale-heartbeat.lock');
+    try {
+        fs.mkdirSync(lockPath);
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: 'remote-build-host',
+            created_at_utc: new Date(Date.now() - (31 * 60 * 1000)).toISOString(),
+            heartbeat_at_utc: new Date(Date.now() - (31 * 60 * 1000)).toISOString()
+        }));
+
+        const { handle, telemetry } = acquireFilesystemLock(lockPath, {
+            allowForeignHostStaleRecovery: true
+        });
+        assert.equal(telemetry.staleLockRecovered, true);
+        assert.equal(telemetry.staleLockReason, 'age_exceeded');
+        releaseFilesystemLock(handle);
+    } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
@@ -242,6 +302,9 @@ test('acquireFilesystemLock reclaims aged foreign-host lock when explicit overri
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle, telemetry } = acquireFilesystemLock(lockPath);
         assert.ok(fs.existsSync(lockPath), 'recovered foreign-host lock should be replaced by the current owner');
@@ -272,6 +335,9 @@ test('acquireFilesystemLock reclaims aged foreign-host lock with call-scoped ove
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle, telemetry } = acquireFilesystemLock(lockPath, { allowForeignHostStaleRecovery: true });
         assert.equal(telemetry.staleLockRecovered, true);
@@ -296,6 +362,9 @@ test('acquireFilesystemLock explicit false override wins over env-based recovery
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         assert.throws(
             () => acquireFilesystemLock(lockPath, { timeoutMs: 75, retryMs: 10, allowForeignHostStaleRecovery: false }),
@@ -348,6 +417,9 @@ test('acquireFilesystemLock reclaims lock with missing owner metadata', () => {
         // Age the lock beyond the metadata grace period so it is treated as stale
         const oldTime = new Date(Date.now() - 5000);
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle } = acquireFilesystemLock(lockPath);
         assert.ok(fs.existsSync(lockPath));
@@ -388,6 +460,9 @@ test('acquireFilesystemLock reclaims lock with corrupt owner.json', () => {
         // Age the lock beyond the metadata grace period
         const oldTime = new Date(Date.now() - 5000);
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle } = acquireFilesystemLock(lockPath);
         const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
@@ -410,6 +485,9 @@ test('acquireFilesystemLock reclaims lock with partial metadata (hostname only, 
         }), 'utf8');
         const oldTime = new Date(Date.now() - 5000);
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle } = acquireFilesystemLock(lockPath);
         const owner = JSON.parse(fs.readFileSync(path.join(lockPath, 'owner.json'), 'utf8'));
@@ -453,6 +531,30 @@ test('acquireFilesystemLockAsync creates lock and releases correctly', async () 
     }
 });
 
+test('acquireFilesystemLockAsync refreshes heartbeat while lock is held', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-heartbeat.lock');
+    try {
+        const { handle } = await acquireFilesystemLockAsync(lockPath, {
+            timeoutMs: 2000,
+            heartbeatIntervalMs: 20
+        });
+        const ownerPath = path.join(lockPath, 'owner.json');
+        const initialOwner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const refreshedOwner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+
+        assert.equal(refreshedOwner.lock_id, initialOwner.lock_id);
+        assert.ok(
+            Date.parse(refreshedOwner.heartbeat_at_utc) > Date.parse(initialOwner.heartbeat_at_utc),
+            'heartbeat should advance while async lock is held'
+        );
+        releaseFilesystemLock(handle);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('acquireFilesystemLockAsync reclaims orphaned lock without metadata', async () => {
     const tmp = mkTmpDir();
     const lockPath = path.join(tmp, '.test-async-orphan.lock');
@@ -461,6 +563,9 @@ test('acquireFilesystemLockAsync reclaims orphaned lock without metadata', async
         // Age the lock beyond the metadata grace period
         const oldTime = new Date(Date.now() - 5000);
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle } = await acquireFilesystemLockAsync(lockPath, {
             timeoutMs: 5000,
@@ -539,6 +644,36 @@ test('acquireFilesystemLockAsync keeps waiting until timeout when retryMs is muc
     }
 });
 
+test('acquireFilesystemLockAsync contention wait does not block event-loop timers', async () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-async-event-loop.lock');
+    let cleanupChild: (() => Promise<void>) | null = null;
+    try {
+        cleanupChild = await holdLockInChildProcess(lockPath, 120);
+        let timerFired = false;
+        const timerPromise = new Promise<void>((resolve) => {
+            setTimeout(() => {
+                timerFired = true;
+                resolve();
+            }, 20);
+        });
+
+        const { handle } = await acquireFilesystemLockAsync(lockPath, {
+            timeoutMs: 1000,
+            retryMs: 20,
+            staleMs: 60000
+        });
+        await timerPromise;
+        assert.equal(timerFired, true, 'timer should fire while async lock acquisition is waiting');
+        releaseFilesystemLock(handle);
+    } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('acquireFilesystemLockAsync does not reclaim aged foreign-host lock without explicit override', async () => {
     const tmp = mkTmpDir();
     const lockPath = path.join(tmp, '.test-async-foreign-aged.lock');
@@ -553,6 +688,9 @@ test('acquireFilesystemLockAsync does not reclaim aged foreign-host lock without
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         await assert.rejects(
             () => acquireFilesystemLockAsync(lockPath, { timeoutMs: 75, retryMs: 10 }),
@@ -610,6 +748,9 @@ test('acquireFilesystemLockAsync reclaims aged foreign-host lock when explicit o
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, { timeoutMs: 250, retryMs: 10 });
         assert.equal(telemetry.staleLockRecovered, true);
@@ -637,6 +778,9 @@ test('acquireFilesystemLockAsync reclaims aged foreign-host lock with call-scope
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
             timeoutMs: 250,
@@ -662,6 +806,9 @@ test('acquireFilesystemLockAsync reclaims aged pid-only lock with dead PID and u
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
             timeoutMs: 250,
@@ -691,6 +838,9 @@ test('acquireFilesystemLockAsync explicit false override wins over env-based rec
         }));
         const oldTime = new Date(Date.now() - (31 * 60 * 1000));
         fs.utimesSync(lockPath, oldTime, oldTime);
+        if (fs.existsSync(path.join(lockPath, 'owner.json'))) {
+            fs.utimesSync(path.join(lockPath, 'owner.json'), oldTime, oldTime);
+        }
 
         await assert.rejects(
             () => acquireFilesystemLockAsync(lockPath, {
@@ -850,6 +1000,9 @@ test('scanTaskEventLocks classifies orphaned lock without metadata as stale', ()
     // Age the lock beyond the metadata grace period
     const oldTime = new Date(Date.now() - 5000);
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = scanTaskEventLocks(orchRoot);
         assert.equal(result.locks.length, 1);
@@ -921,6 +1074,9 @@ test('scanTaskEventLocks classifies aged foreign-host locks as stale', () => {
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = scanTaskEventLocks(orchRoot);
         assert.equal(result.locks.length, 1);
@@ -948,6 +1104,9 @@ test('scanTaskEventLocks reports aged pid-only locks as stale dead-owner candida
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = scanTaskEventLocks(orchRoot);
         assert.equal(result.locks.length, 1);
@@ -995,6 +1154,9 @@ test('cleanupStaleTaskEventLocks removes stale locks on non-dry-run', () => {
     fs.mkdirSync(staleLock);
     const oldTime = new Date(Date.now() - 5000);
     fs.utimesSync(staleLock, oldTime, oldTime);
+    if (fs.existsSync(path.join(staleLock, 'owner.json'))) {
+        fs.utimesSync(path.join(staleLock, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
         assert.ok(result.removed_locks.includes('.T-STALE.lock'));
@@ -1013,6 +1175,9 @@ test('cleanupStaleTaskEventLocks dry-run does not remove locks', () => {
     fs.mkdirSync(staleLock);
     const oldTime = new Date(Date.now() - 5000);
     fs.utimesSync(staleLock, oldTime, oldTime);
+    if (fs.existsSync(path.join(staleLock, 'owner.json'))) {
+        fs.utimesSync(path.join(staleLock, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: true });
         assert.ok(result.removable_stale_locks.includes('.T-STALE-DRY.lock'));
@@ -1058,6 +1223,9 @@ test('cleanupStaleTaskEventLocks retains aged foreign-host locks without explici
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
         assert.ok(result.retained_live_locks.includes('.T-REMOTE-LIVE.lock'));
@@ -1083,6 +1251,9 @@ test('cleanupStaleTaskEventLocks removes aged foreign-host locks when explicit o
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
         assert.ok(result.removed_locks.includes('.T-REMOTE-LIVE.lock'));
@@ -1110,6 +1281,9 @@ test('cleanupStaleTaskEventLocks removes aged foreign-host locks with direct opt
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, {
             dryRun: false,
@@ -1134,6 +1308,9 @@ test('cleanupStaleTaskEventLocks removes aged pid-only locks with dead PID and u
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, { dryRun: false });
         assert.ok(result.removed_locks.includes('.T-PID-ONLY-LIVE.lock'));
@@ -1158,6 +1335,9 @@ test('cleanupStaleTaskEventLocks explicit false override wins over env-based rec
     }));
     const oldTime = new Date(Date.now() - (31 * 60 * 1000));
     fs.utimesSync(lockDir, oldTime, oldTime);
+    if (fs.existsSync(path.join(lockDir, 'owner.json'))) {
+        fs.utimesSync(path.join(lockDir, 'owner.json'), oldTime, oldTime);
+    }
     try {
         const result = cleanupStaleTaskEventLocks(orchRoot, {
             dryRun: false,
@@ -1210,6 +1390,9 @@ test('cleanupStaleTaskEventLocks handles mixed stale and active locks', () => {
     fs.mkdirSync(staleLock);
     const oldTime = new Date(Date.now() - 5000);
     fs.utimesSync(staleLock, oldTime, oldTime);
+    if (fs.existsSync(path.join(staleLock, 'owner.json'))) {
+        fs.utimesSync(path.join(staleLock, 'owner.json'), oldTime, oldTime);
+    }
 
     // Active lock (current process)
     const activeDir = path.join(eventsRoot, '.T-ACTIVE-MIX.lock');
@@ -1241,6 +1424,9 @@ test('cleanupStaleTaskEventLocks does not remove a lock recreated after stale cl
     fs.mkdirSync(staleLock);
     const oldTime = new Date(Date.now() - 5000);
     fs.utimesSync(staleLock, oldTime, oldTime);
+    if (fs.existsSync(path.join(staleLock, 'owner.json'))) {
+        fs.utimesSync(path.join(staleLock, 'owner.json'), oldTime, oldTime);
+    }
 
     const realFs = require('node:fs');
     const originalRenameSync = realFs.renameSync;
@@ -1299,3 +1485,5 @@ test('acquireFilesystemLock cleans up lock directory when metadata write fails',
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
+
+
