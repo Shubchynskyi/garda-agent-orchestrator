@@ -17,9 +17,29 @@ const RECOGNIZED_PACKAGE_NAMES = new Set([
 
 function resolveBundleName(): string {
     const bundleName = process.env.GARDA_BUNDLE_NAME;
-    return bundleName && bundleName.trim()
-        ? bundleName.trim()
-        : DEFAULT_BUNDLE_NAME;
+    return bundleName === undefined
+        ? DEFAULT_BUNDLE_NAME
+        : validateBundleName(bundleName, 'GARDA_BUNDLE_NAME');
+}
+
+function validateBundleName(bundleName: string, source: string): string {
+    if (
+        bundleName === ''
+        || bundleName.trim() !== bundleName
+        || bundleName === '.'
+        || bundleName === '..'
+        || bundleName.startsWith('-')
+        || path.isAbsolute(bundleName)
+        || bundleName.includes('/')
+        || bundleName.includes('\\')
+    ) {
+        throw new Error(
+            `${PRODUCT_NAME} ${source} must be a deployed bundle directory name, not a path: ` +
+            `${JSON.stringify(bundleName)}. Pass a direct child directory name such as ` +
+            `"${DEFAULT_BUNDLE_NAME}".`
+        );
+    }
+    return bundleName;
 }
 
 function isRecognizedPackageName(value: unknown): boolean {
@@ -148,6 +168,7 @@ function findSourceCheckoutRoot(startDir: string): string | null {
 
 function findDeployedBundleRoot(startDir: string): string | null {
     const effectiveName = resolveBundleName();
+    const allowFallback = process.env.GARDA_BUNDLE_NAME === undefined;
     let current = path.resolve(startDir);
 
     while (true) {
@@ -155,7 +176,7 @@ function findDeployedBundleRoot(startDir: string): string | null {
         if (isGardaPackageRoot(bundleRoot)) {
             return bundleRoot;
         }
-        const inferredBundleRoot = findDeployedBundleRootInWorkspace(current, effectiveName);
+        const inferredBundleRoot = findDeployedBundleRootInWorkspace(current, effectiveName, allowFallback);
         if (inferredBundleRoot) {
             return inferredBundleRoot;
         }
@@ -168,7 +189,7 @@ function findDeployedBundleRoot(startDir: string): string | null {
     }
 }
 
-function findDeployedBundleRootInWorkspace(workspaceRoot: string, preferredName: string): string | null {
+function findDeployedBundleRootInWorkspace(workspaceRoot: string, preferredName: string, allowFallback: boolean): string | null {
     let entries: fs.Dirent[];
     try {
         entries = fs.readdirSync(workspaceRoot, { withFileTypes: true });
@@ -176,7 +197,7 @@ function findDeployedBundleRootInWorkspace(workspaceRoot: string, preferredName:
         return null;
     }
 
-    let fallbackMatch: string | null = null;
+    const fallbackMatches: string[] = [];
     for (const entry of entries) {
         if (!entry.isDirectory()) {
             continue;
@@ -191,12 +212,37 @@ function findDeployedBundleRootInWorkspace(workspaceRoot: string, preferredName:
         if (entry.name === preferredName) {
             return candidateRoot;
         }
-        if (fallbackMatch === null) {
-            fallbackMatch = candidateRoot;
-        }
+        fallbackMatches.push(candidateRoot);
     }
 
-    return fallbackMatch;
+    if (fallbackMatches.length === 0) {
+        return null;
+    }
+    const candidateNames = fallbackMatches
+        .map((candidateRoot) => path.basename(candidateRoot))
+        .sort((left, right) => left.localeCompare(right));
+    if (!allowFallback) {
+        throw new Error(
+            `${PRODUCT_NAME} deployed bundle '${preferredName}' was not found in ${workspaceRoot}. ` +
+            `Detected candidates: ${candidateNames.join(', ')}. ` +
+            'Use an existing direct child deployed bundle name.'
+        );
+    }
+    if (fallbackMatches.length === 1) {
+        const fallbackRoot = fallbackMatches[0];
+        const fallbackName = path.basename(fallbackRoot);
+        console.error(
+            `${PRODUCT_NAME} deployed bundle '${preferredName}' was not found in ${workspaceRoot}; ` +
+            `using the single detected fallback candidate '${fallbackName}'. ` +
+            'Pass --bundle-name explicitly to select a deployed bundle by name.'
+        );
+        return fallbackRoot;
+    }
+
+    throw new Error(
+        `Multiple ${PRODUCT_NAME} deployed bundle candidates found in ${workspaceRoot}: ` +
+        `${candidateNames.join(', ')}. Pass --bundle-name explicitly to select one.`
+    );
 }
 
 function extractTargetRootArg(argv: string[], cwd: string): string | null {
@@ -283,8 +329,14 @@ function delegateToLocalCli(cliPath: string, argv: string[]): never {
 function extractBundleNameArg(argv: string[]): string | null {
     for (let index = 0; index < argv.length; index += 1) {
         const token = argv[index];
-        if (token === '--bundle-name' && index + 1 < argv.length) {
-            return argv[index + 1];
+        if (token === '--bundle-name') {
+            const value = argv[index + 1];
+            if (value === undefined || value.startsWith('-')) {
+                throw new Error(
+                    `${PRODUCT_NAME} --bundle-name requires a deployed bundle directory name value.`
+                );
+            }
+            return value;
         }
         if (token.startsWith('--bundle-name=')) {
             return token.slice('--bundle-name='.length);
@@ -316,14 +368,14 @@ export function inferBundleNameFromPackageRoot(packageRoot: string): string | nu
 
 export async function main(argv: string[] = process.argv.slice(2), cwd: string = process.cwd()): Promise<void> {
     const bundleNameArg = extractBundleNameArg(argv);
-    if (bundleNameArg) {
-        process.env.GARDA_BUNDLE_NAME = bundleNameArg;
+    if (bundleNameArg !== null) {
+        process.env.GARDA_BUNDLE_NAME = validateBundleName(bundleNameArg, '--bundle-name');
     }
     const packageRoot = findPackageRoot(__dirname);
-    if (!process.env.GARDA_BUNDLE_NAME) {
+    if (process.env.GARDA_BUNDLE_NAME === undefined) {
         const inferredBundleName = inferBundleNameFromPackageRoot(packageRoot);
         if (inferredBundleName) {
-            process.env.GARDA_BUNDLE_NAME = inferredBundleName;
+            process.env.GARDA_BUNDLE_NAME = validateBundleName(inferredBundleName, 'inferred bundle name');
         }
     }
     const delegatedCli = resolveDelegatedLauncherTarget(argv, cwd, __filename, packageRoot);
