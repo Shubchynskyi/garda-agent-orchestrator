@@ -544,6 +544,43 @@ test('getStatusSnapshot blocks ready while project memory is not initialized', (
     }
 });
 
+test('getStatusSnapshot keeps malformed agent-init state distinct from project-memory pending', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md'],
+                ProjectMemoryInitialized: false,
+                ProjectMemoryValidated: false
+            }
+        });
+        fs.writeFileSync(
+            path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'agent-init-state.json'),
+            '{"ProjectMemoryInitialized":',
+            'utf8'
+        );
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'AGENT_STATE_INVALID');
+        assert.equal(snapshot.agentInitializationComplete, false);
+        assert.equal(snapshot.readyForTasks, false);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(output.includes('AgentInitStateStatus: INVALID'));
+        assert.ok(!output.includes('ProjectMemoryInitRefreshPrompt:'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getStatusSnapshot blocks ready while project memory is not validated', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {
@@ -571,6 +608,39 @@ test('getStatusSnapshot blocks ready while project memory is not validated', () 
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('Initialize or refresh Garda project memory'));
         assert.ok(output.includes('ProjectMemoryInitRefreshPrompt: Initialize or refresh Garda project memory.'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot omits project-memory init prompt after memory is validated', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                OrdinaryDocPathsConfirmed: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md'],
+                ProjectMemoryInitialized: true,
+                ProjectMemoryValidated: true
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, null);
+        assert.equal(snapshot.agentInitializationComplete, true);
+        assert.equal(snapshot.readyForTasks, true);
+        const output = formatStatusSnapshot(snapshot);
+        assert.ok(!output.includes('ProjectMemoryInitRefreshPrompt:'));
+        assert.ok(!output.includes('Initialize or refresh Garda project memory'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -62,6 +62,9 @@ garda status why-blocked --target-root "."
 
 Notes:
 - `status` prints the normal workspace readiness snapshot.
+- While a valid `runtime/agent-init-state.json` has `ProjectMemoryInitialized=false` or `ProjectMemoryValidated=false`, `status` reports `PROJECT_MEMORY_PENDING` and prints `ProjectMemoryInitRefreshPrompt`.
+- Malformed or invalid `agent-init-state.json` remains an `AGENT_STATE_INVALID` readiness problem; rerun `garda agent-init` after repair so the memory readiness fields can be trusted.
+- When both `ProjectMemoryInitialized=true` and `ProjectMemoryValidated=true`, `status` treats durable project memory as already confirmed and does not recommend the expensive full init/refresh prompt again.
 - In a self-hosted source checkout, `status` still shows trusted protected-manifest `DRIFT`, but when the trusted manifest itself was recorded as `is_source_checkout=true` that drift is downgraded to informational instead of forcing readiness to `false` on its own.
 - `status --compact` preserves the not-ready output but reduces the green path to a single summary line: `GARDA_STATUS: ready | source=<provider>`.
 - `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
@@ -106,6 +109,8 @@ garda preprompt task --task-id "T-137" --target-root "."
 Notes:
 - `preprompt task` does not modify task state, timelines, or review artifacts.
 - `preprompt task --json` reuses the current preflight artifact when present to derive required review types and the post-implementation command sequence.
+- `preprompt task --json` exposes `project_memory.initialization_state` and `project_memory.init_refresh_prompt`; the top-level prompt is present only while `agent-init-state.json` is missing, invalid, or does not yet record both `ProjectMemoryInitialized=true` and `ProjectMemoryValidated=true`.
+- Missing or incomplete project-memory files make `project_memory.status` partial and add warnings, but they do not by themselves set the top-level `init_refresh_prompt` when agent-init state already records validated memory.
 - When the repo maps `optional-skill-selection-policy` through `garda-agent-orchestrator/live/config/garda.config.json`, `preprompt task --json` also shows `diagnostics.optional_skills`, including the policy mode, compact selection summary, selected skill ids, `selected_installed_skill_paths`, or an explicit `as_is` fallback reason. A stray policy file that is not mapped through `garda.config.json` does not activate the feature. The diagnostics reuse the current preflight scope when present and otherwise fall back to task-start context such as task summary and persisted planned scope.
 - If `diagnostics.optional_skills.blocker` is present under `required` or `strict`, `preprompt task` remains read-only but exits non-zero so the startup flow cannot proceed past that blocker silently.
 - If the workspace is dirty but no reusable staged scope or existing preflight scope is available, the output reports that blocker instead of inventing a misleading `--use-staged` classify command.

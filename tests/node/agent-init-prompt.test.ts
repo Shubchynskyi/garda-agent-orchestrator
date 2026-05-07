@@ -60,6 +60,24 @@ test('AGENT_INIT_PROMPT routes project-memory enrichment to source files', () =>
 test('CLI reference keeps project-memory init-refresh prompt synchronized', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'docs', 'cli-reference.md'), 'utf8');
     assert.ok(content.includes(PROJECT_MEMORY_INIT_REFRESH_PROMPT));
+    assert.match(content, /ProjectMemoryInitialized=false/);
+    assert.match(content, /ProjectMemoryValidated=false/);
+    assert.match(content, /ProjectMemoryInitRefreshPrompt/);
+    assert.match(content, /AGENT_STATE_INVALID/);
+    assert.match(content, /do not by themselves set the top-level `init_refresh_prompt`/);
+    assert.match(content, /does not recommend the expensive full init\/refresh prompt again/i);
+});
+
+test('README explains first-run and update project-memory initialization handoff', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'README.md'), 'utf8');
+    assert.match(content, /initializes or refreshes project memory from repository evidence/i);
+    assert.match(content, /After CLI setup or update/i);
+    assert.match(content, /Setup and update reports always include the canonical project-memory init\/refresh handoff prompt/i);
+    assert.match(content, /`garda status` and `garda preprompt task` surface the state-gated project-memory init\/refresh prompt/i);
+    assert.match(content, /ProjectMemoryInitialized=true/);
+    assert.match(content, /ProjectMemoryValidated=true/);
+    assert.match(content, /Malformed agent-init state is reported as invalid first/i);
+    assert.match(content, /does not ask for full memory initialization again/i);
 });
 
 test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositories', () => {

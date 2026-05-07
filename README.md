@@ -51,7 +51,7 @@ npm install -g garda-agent-orchestrator
 garda setup
 ```
 
-Then give [AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md) to your coding agent. The agent reuses existing init answers, confirms active agent files, fills project context, offers optional skill packs, and finishes with `garda agent-init`.
+Then give [AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md) to your coding agent. The agent reuses existing init answers, confirms active agent files, initializes or refreshes project memory from repository evidence, offers optional skill packs, and finishes with `garda agent-init`.
 
 After `garda agent-init` passes, pick a task from `TASK.md` and tell the agent:
 
@@ -193,7 +193,9 @@ Garda was not started from scratch in this repository. Earlier versions were dev
 ## Important Notes
 
 - `garda setup` can collect the 6 init answers itself and write `runtime/init-answers.json` without an agent.
-- After CLI setup, use `AGENT_INIT_PROMPT.md` so the agent reuses existing init answers, clarifies language when it cannot recognize it confidently, explicitly confirms which agent entrypoint files are actively used, fills project-specific context, optionally manages built-in skill packs, and finishes with the hard `garda agent-init` gate.
+- After CLI setup or update, use `AGENT_INIT_PROMPT.md` so the agent reuses existing init answers, clarifies language when it cannot recognize it confidently, explicitly confirms which agent entrypoint files are actively used, initializes or refreshes `live/docs/project-memory/**` from repository evidence, optionally manages built-in skill packs, and finishes with the hard `garda agent-init` gate.
+- Setup and update reports always include the canonical project-memory init/refresh handoff prompt because users may be upgrading from stale or template-seeded memory.
+- With a valid `runtime/agent-init-state.json`, `garda status` and `garda preprompt task` surface the state-gated project-memory init/refresh prompt while the state does not yet record both `ProjectMemoryInitialized=true` and `ProjectMemoryValidated=true`. Malformed agent-init state is reported as invalid first; rerun `garda agent-init` after repair so the memory readiness fields can be trusted. Once both flags are true, green-path task startup does not ask for full memory initialization again.
 - Optional skills are discovered from the compact `live/config/skills-index.json` index. After the user selects a built-in pack, it should be installed into `live/skills/**` without reading the full optional `SKILL.md` immediately. Full optional skill files should be opened only later, when the selected skill is actually activated for a task or a hard activation rule requires it.
 - `garda` without arguments is now non-destructive and only prints overview/help.
 - The public CLI owns the validated runtime surface for lifecycle commands and gate routes.

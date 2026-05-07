@@ -296,6 +296,76 @@ test('preprompt task --json recommends canonical project-memory prompt while age
     }
 });
 
+test('preprompt task --json keeps init-refresh prompt state-gated when memory files are missing', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-443';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        seedInitAnswers(repoRoot, 'Codex');
+        seedProjectMemoryFixture(repoRoot);
+        seedProjectMemoryAgentInitState(repoRoot);
+        fs.rmSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'README.md'),
+            { force: true }
+        );
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const projectMemory = payload.project_memory as Record<string, unknown>;
+        const initializationState = projectMemory.initialization_state as Record<string, unknown>;
+        assert.equal(projectMemory.status, 'partial');
+        assert.equal(projectMemory.init_refresh_prompt, null);
+        assert.equal(initializationState.initialized, true);
+        assert.equal(initializationState.validated, true);
+        assert.equal(initializationState.pending, false);
+        assert.ok((projectMemory.missing_files as string[]).some((entry) => entry.endsWith('/README.md')));
+        assert.ok((projectMemory.warnings as string[]).some((entry) => entry.includes(PROJECT_MEMORY_INIT_REFRESH_PROMPT)));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json treats invalid project-memory readiness state as pending', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-443';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        seedInitAnswers(repoRoot, 'Codex');
+        seedProjectMemoryFixture(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'agent-init-state.json'),
+            '{"ProjectMemoryInitialized":',
+            'utf8'
+        );
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const projectMemory = payload.project_memory as Record<string, unknown>;
+        const initializationState = projectMemory.initialization_state as Record<string, unknown>;
+        assert.equal(projectMemory.status, 'partial');
+        assert.equal(projectMemory.init_refresh_prompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
+        assert.equal(initializationState.initialized, false);
+        assert.equal(initializationState.validated, false);
+        assert.equal(initializationState.pending, true);
+        assert.match(String(initializationState.error), /Invalid JSON/);
+        assert.ok((projectMemory.warnings as string[]).some((entry) => entry.includes('agent-init state is invalid')));
+        assert.ok((projectMemory.warnings as string[]).some((entry) => entry.includes(PROJECT_MEMORY_INIT_REFRESH_PROMPT)));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('preprompt task project-memory suggestions vary by task area', async () => {
     const repoRoot = createTempRepo();
     const taskId = 'T-403';
