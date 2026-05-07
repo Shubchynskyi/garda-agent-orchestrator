@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
+import { buildGuardedCommandHelpText } from '../../../../src/cli/commands/cli-format-output';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator', version: '1.0.0' };
 
@@ -169,6 +170,14 @@ test('workflow set updates project memory maintenance settings deterministically
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
+});
+
+test('workflow help describes project-memory update as the default policy', () => {
+    const helpText = buildGuardedCommandHelpText('workflow');
+
+    assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
+    assert.ok(helpText.includes('workflow set --project-memory-enabled true --project-memory-mode update'));
+    assert.ok(!helpText.includes('Project memory maintenance is disabled by default'));
 });
 
 test('workflow validate and explain include workflow guard diagnostics', () => {

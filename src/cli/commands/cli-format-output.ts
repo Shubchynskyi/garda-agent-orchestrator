@@ -507,7 +507,7 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
             `${PRIMARY_CLI_NAME} workflow set --scope-budget-max-review-tokens 50000`,
             `${PRIMARY_CLI_NAME} workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15`,
             `${PRIMARY_CLI_NAME} workflow set --review-cycle-auto-split-enabled true`,
-            `${PRIMARY_CLI_NAME} workflow set --project-memory-enabled true --project-memory-mode check`
+            `${PRIMARY_CLI_NAME} workflow set --project-memory-enabled true --project-memory-mode update`
         ]),
         hints: Object.freeze([
             'Default mode: workflow with no subcommand behaves like workflow show.',
@@ -516,7 +516,7 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
             'Scope budget guard can block oversized tasks before compile/review loops.',
             'Review cycle guard can block runaway non-test review attempts; test review is excluded by default.',
             'Review cycle auto split is disabled by default and can be enabled with --review-cycle-auto-split-enabled true.',
-            'Project memory maintenance is disabled by default; future task-flow enforcement uses off, check, update, or strict mode.'
+            'Project memory maintenance defaults to update mode; use off, check, update, or strict mode for explicit repo-local policy.'
         ])
     })
 });

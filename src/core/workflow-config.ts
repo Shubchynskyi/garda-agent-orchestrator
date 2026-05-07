@@ -64,7 +64,11 @@ export interface WorkflowConfigReadResult {
 }
 
 function hasOwnCaseInsensitiveKey(record: Record<string, unknown>, expectedKey: string): boolean {
-    return Object.keys(record).some((candidate) => candidate.toLowerCase() === expectedKey.toLowerCase());
+    return findOwnCaseInsensitiveKey(record, expectedKey) !== undefined;
+}
+
+function findOwnCaseInsensitiveKey(record: Record<string, unknown>, expectedKey: string): string | undefined {
+    return Object.keys(record).find((candidate) => candidate.toLowerCase() === expectedKey.toLowerCase());
 }
 
 const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
@@ -88,6 +92,16 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         read_strategy: 'index_first',
         impact_artifact_retention_days: 30
     })
+});
+
+const LEGACY_PROJECT_MEMORY_MAINTENANCE_GENERATED_DEFAULT: ProjectMemoryMaintenanceConfig = Object.freeze({
+    enabled: false,
+    mode: 'check',
+    run_before_final_closeout: true,
+    require_user_approval_for_writes: true,
+    max_compact_summary_chars: 12000,
+    read_strategy: 'index_first',
+    impact_artifact_retention_days: 30
 });
 
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {
@@ -123,12 +137,48 @@ function readWorkflowConfigTemplate(bundleRoot: string): WorkflowConfigData {
     }
 }
 
+function isExactLegacyProjectMemoryGeneratedDefault(input: unknown): boolean {
+    if (!isPlainObject(input)) {
+        return false;
+    }
+
+    const expected = LEGACY_PROJECT_MEMORY_MAINTENANCE_GENERATED_DEFAULT as Record<string, unknown>;
+    const actualKeys = Object.keys(input).sort();
+    const expectedKeys = Object.keys(expected).sort();
+    if (actualKeys.length !== expectedKeys.length) {
+        return false;
+    }
+
+    return expectedKeys.every((key, index) => actualKeys[index] === key && input[key] === expected[key]);
+}
+
+function migrateLegacyProjectMemoryGeneratedDefault(
+    existingConfig: Record<string, unknown> | null
+): Record<string, unknown> | null {
+    if (!isPlainObject(existingConfig)) {
+        return existingConfig;
+    }
+
+    const projectMemoryKey = findOwnCaseInsensitiveKey(existingConfig, 'project_memory_maintenance');
+    if (
+        projectMemoryKey === undefined
+        || !isExactLegacyProjectMemoryGeneratedDefault(existingConfig[projectMemoryKey])
+    ) {
+        return existingConfig;
+    }
+
+    const migrated = cloneJsonValue(existingConfig);
+    delete migrated[projectMemoryKey];
+    return migrated;
+}
+
 export function mergeWorkflowConfigWithTemplate(
     templateConfig: WorkflowConfigData,
     existingConfig: Record<string, unknown> | null,
     options: WorkflowConfigMergeOptions = {}
 ): Record<string, unknown> {
-    const nextConfig = mergeConfig(templateConfig, existingConfig);
+    const existingConfigForMerge = migrateLegacyProjectMemoryGeneratedDefault(existingConfig);
+    const nextConfig = mergeConfig(templateConfig, existingConfigForMerge);
     const existingConfigOmittedReviewExecutionPolicy = isPlainObject(existingConfig)
         && !hasOwnCaseInsensitiveKey(existingConfig, 'review_execution_policy');
     const preserveMissingConfigLegacyOmission = existingConfig === null

@@ -473,6 +473,68 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
     }
 });
 
+test('handleSetup migrates exact legacy generated project-memory maintenance default during refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-project-memory-legacy-default-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                },
+                project_memory_maintenance: {
+                    enabled: false,
+                    mode: 'check',
+                    run_before_final_closeout: true,
+                    require_user_approval_for_writes: true,
+                    max_compact_summary_chars: 12000,
+                    read_strategy: 'index_first',
+                    impact_artifact_retention_days: 30
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const refreshOutput = await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.equal(workflowConfig.project_memory_maintenance.enabled, true);
+        assert.equal(workflowConfig.project_memory_maintenance.mode, 'update');
+
+        const initReport = readInitReport(workspaceRoot);
+        const refreshText = refreshOutput.join('\n');
+        assert.ok(refreshText.includes(`WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update`));
+        assert.ok(refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
+        assert.ok(initReport.includes('Workflow config merge status: existing_values_preserved_and_missing_keys_filled'));
+        assert.ok(initReport.includes('project_memory_maintenance.mode=update'));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('handleSetup reports workflow-config template fallback when preserved refresh finds a missing live config', async () => {
     const repoRoot = findRepoRoot(__dirname);
     const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));

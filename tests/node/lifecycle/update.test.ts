@@ -655,6 +655,109 @@ describe('runUpdate', () => {
         }
     });
 
+    it('migrates exact legacy generated project-memory maintenance default during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    project_memory_maintenance: {
+                        enabled: false,
+                        mode: 'check',
+                        run_before_final_closeout: true,
+                        require_user_approval_for_writes: true,
+                        max_compact_summary_chars: 12000,
+                        read_strategy: 'index_first',
+                        impact_artifact_retention_days: 30
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(
+                result.workflowConfigMergeStatus,
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
+            );
+            assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
+
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.project_memory_maintenance.enabled, true);
+            assert.equal(workflowConfig.project_memory_maintenance.mode, 'update');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves legacy-looking custom project-memory maintenance opt-out during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    project_memory_maintenance: {
+                        enabled: false,
+                        mode: 'check',
+                        run_before_final_closeout: true,
+                        require_user_approval_for_writes: true,
+                        max_compact_summary_chars: 9000,
+                        read_strategy: 'index_first',
+                        impact_artifact_retention_days: 30
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(
+                result.workflowConfigMergeStatus,
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=false project_memory_maintenance.mode=off'
+            );
+            assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: disabled read_strategy=index_first max_compact_summary_chars=9000 require_user_approval_for_writes=true');
+
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.project_memory_maintenance.enabled, false);
+            assert.equal(workflowConfig.project_memory_maintenance.mode, 'check');
+            assert.equal(workflowConfig.project_memory_maintenance.max_compact_summary_chars, 9000);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('fills missing project-memory maintenance mode from update default', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
