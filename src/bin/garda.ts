@@ -11,6 +11,8 @@ export interface CliMainModule {
 const PRODUCT_NAME = 'Garda Agent Orchestrator';
 const DEFAULT_BUNDLE_NAME = 'garda-agent-orchestrator';
 const PRIMARY_CLI_ENTRYPOINT = path.join('bin', 'garda.js');
+const DELEGATION_TIMEOUT_ENV = 'GARDA_LAUNCHER_DELEGATION_TIMEOUT_MS';
+const DELEGATION_TIMEOUT_KILL_GRACE_MS = 1000;
 const RECOGNIZED_PACKAGE_NAMES = new Set([
     'garda-agent-orchestrator'
 ]);
@@ -309,21 +311,90 @@ export function resolveDelegatedLauncherTarget(
     return null;
 }
 
-function delegateToLocalCli(cliPath: string, argv: string[]): never {
-    const result = childProcess.spawnSync(process.execPath, [cliPath, ...argv], {
+export function getDelegationForwardSignals(platform: NodeJS.Platform = process.platform): NodeJS.Signals[] {
+    return platform === 'win32'
+        ? ['SIGINT', 'SIGTERM', 'SIGBREAK']
+        : ['SIGINT', 'SIGTERM'];
+}
+
+export function getDelegationExitCode(status: number | null, signal: NodeJS.Signals | null): number {
+    if (status !== null) {
+        return status;
+    }
+    if (signal === 'SIGINT') {
+        return 130;
+    }
+    if (signal === 'SIGTERM') {
+        return 143;
+    }
+    if (signal === 'SIGBREAK') {
+        return 149;
+    }
+    if (signal === 'SIGKILL') {
+        return 137;
+    }
+    return 1;
+}
+
+function readDelegationTimeoutMs(): number | null {
+    const rawValue = process.env[DELEGATION_TIMEOUT_ENV];
+    if (rawValue === undefined || rawValue === '') {
+        return null;
+    }
+    const timeoutMs = Number(rawValue);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+        throw new Error(`${PRODUCT_NAME} ${DELEGATION_TIMEOUT_ENV} must be a positive integer number of milliseconds.`);
+    }
+    return timeoutMs;
+}
+
+export async function delegateToLocalCli(cliPath: string, argv: string[]): Promise<never> {
+    const timeoutMs = readDelegationTimeoutMs();
+    const child = childProcess.spawn(process.execPath, [cliPath, ...argv], {
         stdio: 'inherit',
         env: process.env
     });
 
-    if (result.error) {
-        throw result.error;
+    const forwardedSignalHandlers = getDelegationForwardSignals().map((signal) => {
+        const handler = (): void => {
+            child.kill(signal);
+        };
+        process.once(signal, handler);
+        return { signal, handler };
+    });
+
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    let hardKillHandle: NodeJS.Timeout | null = null;
+    if (timeoutMs !== null) {
+        timeoutHandle = setTimeout(() => {
+            console.error(`${PRODUCT_NAME} delegated CLI timed out after ${timeoutMs}ms; terminating child process.`);
+            child.kill('SIGTERM');
+            hardKillHandle = setTimeout(() => {
+                child.kill('SIGKILL');
+            }, DELEGATION_TIMEOUT_KILL_GRACE_MS);
+        }, timeoutMs);
     }
 
-    if (result.status !== null) {
-        process.exit(result.status);
+    try {
+        const result = await new Promise<{ status: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+            child.once('error', reject);
+            child.once('close', (status, signal) => {
+                resolve({ status, signal });
+            });
+        });
+        process.exit(getDelegationExitCode(result.status, result.signal));
+    } finally {
+        for (const { signal, handler } of forwardedSignalHandlers) {
+            process.removeListener(signal, handler);
+        }
+        if (timeoutHandle !== null) {
+            clearTimeout(timeoutHandle);
+        }
+        if (hardKillHandle !== null) {
+            clearTimeout(hardKillHandle);
+        }
     }
-
-    process.exit(1);
+    throw new Error(`${PRODUCT_NAME} delegated CLI exited without a terminal status.`);
 }
 
 function extractBundleNameArg(argv: string[]): string | null {
@@ -380,7 +451,7 @@ export async function main(argv: string[] = process.argv.slice(2), cwd: string =
     }
     const delegatedCli = resolveDelegatedLauncherTarget(argv, cwd, __filename, packageRoot);
     if (delegatedCli) {
-        delegateToLocalCli(delegatedCli, argv);
+        await delegateToLocalCli(delegatedCli, argv);
     }
     const { runCliMainWithHandling } = loadCliMainModule(packageRoot);
     await runCliMainWithHandling(argv, packageRoot);

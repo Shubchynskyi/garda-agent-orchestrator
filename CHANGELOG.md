@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- replaced launcher delegation `spawnSync` with async `spawn`, signal forwarding, optional `GARDA_LAUNCHER_DELEGATION_TIMEOUT_MS`, and regression coverage for exit, output, timeout, and signal behavior
 - made launcher deployed-bundle discovery fail closed on ambiguous fallback candidates, reject path-like or malformed `--bundle-name` values, and prevent explicit bundle-name misses from falling back to a different deployed bundle
 - suppressed intent-only code/refactor reviews for zero-diff baseline-only task closeouts while preserving protected control-plane and domain-surface review triggers
 - made project-memory readiness explicit in `status`, `doctor explain PROJECT_MEMORY_PENDING`, and `preprompt`, including the canonical init/refresh prompt while `ProjectMemoryInitialized` or `ProjectMemoryValidated` is false
