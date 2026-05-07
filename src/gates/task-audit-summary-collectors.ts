@@ -11,6 +11,7 @@ import {
     type OptionalSkillSelectionTimelineEvidence
 } from '../runtime/optional-skill-selection';
 import { normalizeReviewReceiptReviewerProvenance } from '../gate-runtime/review-context';
+import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 import { buildReviewTrustSummary, type ReviewTrustSummary } from './review-trust-summary';
 import {
     validateHistoricalReviewRecordedTelemetryEventMatch,
@@ -361,6 +362,22 @@ export function buildUnavailableRequiredReviewTrustSummary(
 }
 
 export function readReviewTrustSummary(
+    requiredReviews: Record<string, boolean>,
+    reviewsRoot: string,
+    taskId: string,
+    scopeCategory: string | null,
+    preflightSha256?: string | null
+): FinalCloseoutReviewTrustSummary | null {
+    return withReviewArtifactReadBarrier(reviewsRoot, () => readReviewTrustSummaryUnlocked(
+        requiredReviews,
+        reviewsRoot,
+        taskId,
+        scopeCategory,
+        preflightSha256
+    ));
+}
+
+function readReviewTrustSummaryUnlocked(
     requiredReviews: Record<string, boolean>,
     reviewsRoot: string,
     taskId: string,
@@ -934,6 +951,13 @@ function collectReviewIntegrityIssues(options: {
 }
 
 export function buildReviewIntegrityAttestation(options: {
+    requiredReviews: Record<string, boolean>; reviewsRoot: string; taskId: string; scopeCategory: string | null; preflightSha256?: string | null;
+    reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
+}): FinalCloseoutReviewIntegrityAttestation {
+    return withReviewArtifactReadBarrier(options.reviewsRoot, () => buildReviewIntegrityAttestationUnlocked(options));
+}
+
+function buildReviewIntegrityAttestationUnlocked(options: {
     requiredReviews: Record<string, boolean>; reviewsRoot: string; taskId: string; scopeCategory: string | null; preflightSha256?: string | null;
     reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
 }): FinalCloseoutReviewIntegrityAttestation {

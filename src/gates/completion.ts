@@ -301,13 +301,11 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     }
 
     const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);
-    const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);
     const docImpactEvidence = readJsonArtifact(docImpactPath, 'Doc impact gate', errors);
     const compileCommandsPath = readOptionalArtifactStringField(compileEvidence, 'commands_path');
     const compileOutputFiltersPath = readOptionalArtifactStringField(compileEvidence, 'output_filters_path');
 
     ensurePassedArtifactStatus(compileEvidence, 'Compile gate', errors);
-    ensurePassedArtifactStatus(reviewEvidence, 'Review gate', errors);
     ensurePassedArtifactStatus(docImpactEvidence, 'Doc impact gate', errors);
     errors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
     errors.push(...getRulePackEvidenceViolations(rulePackEvidence));
@@ -420,8 +418,14 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         );
     }
     errors.push(...runtimeIdentity.violations);
+    const scopeCategory = typeof preflight.scope_category === 'string' ? preflight.scope_category : null;
 
-    withReviewArtifactReadBarrier(reviewsRoot, () => {
+    const {
+        receiptReviewTrustSummary,
+        reviewGateTrustSummary
+    } = withReviewArtifactReadBarrier(reviewsRoot, () => {
+        const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);
+        ensurePassedArtifactStatus(reviewEvidence, 'Review gate', errors);
         for (const [reviewKey] of REVIEW_CONTRACTS) {
             const required = !!requiredReviews[reviewKey];
             if (!required) {
@@ -504,6 +508,26 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
                 errors.push(...findingsEvidence.violations);
             }
         }
+        const receiptReviewTrustSummary = readReviewTrustSummary(
+            requiredReviews,
+            reviewsRoot,
+            resolvedTaskId || '',
+            scopeCategory,
+            validatedPreflight.preflight_hash
+        );
+        const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
+            reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)
+                ? reviewEvidence as Record<string, unknown>
+                : null,
+            requiredReviews,
+            resolvedTaskId || '',
+            scopeCategory,
+            validatedPreflight.preflight_hash
+        );
+        return {
+            receiptReviewTrustSummary,
+            reviewGateTrustSummary
+        };
     });
 
     // T-003: review-skill invocation evidence for code-changing tasks
@@ -547,23 +571,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         observed_execution_modes: reviewSkillEvidence.reviewer_execution_modes,
         enforcement_level: 'hard_block'
     };
-    const scopeCategory = typeof preflight.scope_category === 'string' ? preflight.scope_category : null;
-    const receiptReviewTrustSummary = readReviewTrustSummary(
-        requiredReviews,
-        reviewsRoot,
-        resolvedTaskId || '',
-        scopeCategory,
-        validatedPreflight.preflight_hash
-    );
-    const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
-        reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)
-            ? reviewEvidence as Record<string, unknown>
-            : null,
-        requiredReviews,
-        resolvedTaskId || '',
-        scopeCategory,
-        validatedPreflight.preflight_hash
-    );
     const hasRequiredReviews = Object.values(requiredReviews).some((value) => value === true);
     const reviewTrustSummary = reviewGateTrustSummary
         ?? (hasRequiredReviews

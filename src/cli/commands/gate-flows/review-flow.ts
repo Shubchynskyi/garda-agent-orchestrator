@@ -68,6 +68,7 @@ import { resolveBudgetTokensFromForecast, resolveOutputFiltersPath } from './out
 import { readTaskQueueStatus, syncTaskQueueStatus } from './task-queue-sync';
 import {
     getCompileGateEvidence,
+    formatReviewArtifactRootEscapeViolation,
     formatReviewArtifactPathEscapeViolation,
     isReviewArtifactPathInsideRoots,
     testCompileScopeDrift,
@@ -484,15 +485,6 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         errors.push('Code review override was requested but code review is not required by preflight.');
     }
 
-    const artifactEvidence = testReviewArtifacts(
-        repoRoot,
-        resolvedTaskId,
-        required,
-        verdicts,
-        skipReviewsList,
-        options.reviewsRoot || ''
-    );
-
     const reviewArtifactsMap: Record<string, {
         path: string;
         content: string;
@@ -501,10 +493,36 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         reviewContextSha256?: string | null;
         artifactSha256?: string | null;
         receipt?: ReviewReceipt | null;
+        receiptReadError?: string | null;
     }> = {};
-    const artifactReviewsRoot = artifactEvidence.reviews_root ? path.resolve(artifactEvidence.reviews_root) : '';
-    withReviewArtifactReadBarrier(artifactReviewsRoot, () => {
-        for (const entry of artifactEvidence.checked) {
+    const artifactReviewsRoot = options.reviewsRoot
+        ? requireResolvedPath(
+            gateHelpers.resolvePathInsideRepo(String(options.reviewsRoot || '').trim(), repoRoot, { allowMissing: true }),
+            'ReviewsRoot'
+        )
+        : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+    const artifactEvidence: ReviewArtifactsAuditResult = gateHelpers.isPathRealpathInsideRoot(
+        artifactReviewsRoot,
+        repoRoot,
+        { allowMissing: true }
+    ) ? withReviewArtifactReadBarrier(artifactReviewsRoot, () => {
+        const evidence = testReviewArtifacts(
+            repoRoot,
+            resolvedTaskId,
+            required,
+            verdicts,
+            skipReviewsList,
+            options.reviewsRoot || ''
+        );
+        const evidenceReviewsRoot = evidence.reviews_root ? path.resolve(evidence.reviews_root) : artifactReviewsRoot;
+        if (evidenceReviewsRoot !== artifactReviewsRoot) {
+            errors.push(
+                `Review artifact evidence root changed during validation: expected ${gateHelpers.normalizePath(artifactReviewsRoot)}, got ${gateHelpers.normalizePath(evidenceReviewsRoot)}.`
+            );
+            return evidence;
+        }
+
+        for (const entry of evidence.checked) {
             if (entry.present && entry.path) {
                 try {
                     let reviewContext: Record<string, unknown> | undefined;
@@ -517,6 +535,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                     const artifactSha256 = gateHelpers.fileSha256(artifactPath);
                     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
                     let receipt: ReviewReceipt | null = null;
+                    let receiptReadError: string | null = null;
                     if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
                         if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, receiptPath)) {
                             errors.push(formatReviewArtifactPathEscapeViolation('Review receipt path', receiptPath));
@@ -525,6 +544,7 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                             try {
                                 receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
                             } catch {
+                                receiptReadError = `Review receipt for '${entry.review}' is invalid JSON: ${gateHelpers.normalizePath(receiptPath)}.`;
                                 receipt = null;
                             }
                         }
@@ -550,14 +570,22 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
                             ? gateHelpers.fileSha256(reviewContextPath)
                             : null,
                         artifactSha256,
-                        receipt
+                        receipt,
+                        receiptReadError
                     };
                 } catch (e) {
                     // ignore
                 }
             }
         }
-    });
+        return evidence;
+    }) : {
+        reviews_root: gateHelpers.normalizePath(artifactReviewsRoot),
+        checked: [],
+        violations: [formatReviewArtifactRootEscapeViolation(artifactReviewsRoot)],
+        compaction_warnings: [],
+        compaction_warning_count: 0
+    };
 
     const runtimeIdentity = resolveRuntimeReviewerIdentity({
         repoRoot,

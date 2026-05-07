@@ -7,6 +7,7 @@ import {
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../gate-runtime/review-context';
+import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getReviewArtifactFindingsEvidence, isTrivialReview } from './completion';
 import { fileSha256, isPathRealpathInsideRoot, normalizePath, toPlainRecord } from './helpers';
@@ -210,6 +211,53 @@ interface ReviewArtifactEntry {
     reviewContextSha256?: string | null;
     artifactSha256?: string | null;
     receipt?: ReviewReceipt | null;
+    receiptReadError?: string | null;
+}
+
+function readReviewReceiptSnapshot(options: {
+    reviewKey: string;
+    reviewArtifact: ReviewArtifactEntry;
+    artifactPath: string;
+    receiptPath: string;
+}): {
+    artifactSha256: string | null;
+    receipt: ReviewReceipt | null;
+    receiptReadError: string | null;
+} {
+    const reviewsRoot = path.dirname(path.resolve(options.receiptPath));
+    return withReviewArtifactReadBarrier(reviewsRoot, () => {
+        let artifactSha256 = options.reviewArtifact.artifactSha256 ?? null;
+        if (!artifactSha256 && options.artifactPath) {
+            artifactSha256 = fileSha256(options.artifactPath);
+        }
+        if (options.reviewArtifact.receipt || options.reviewArtifact.receiptReadError) {
+            return {
+                artifactSha256,
+                receipt: options.reviewArtifact.receipt ?? null,
+                receiptReadError: options.reviewArtifact.receiptReadError ?? null
+            };
+        }
+        if (!fs.existsSync(options.receiptPath) || !fs.statSync(options.receiptPath).isFile()) {
+            return {
+                artifactSha256,
+                receipt: null,
+                receiptReadError: null
+            };
+        }
+        try {
+            return {
+                artifactSha256,
+                receipt: JSON.parse(fs.readFileSync(options.receiptPath, 'utf8')) as ReviewReceipt,
+                receiptReadError: null
+            };
+        } catch {
+            return {
+                artifactSha256,
+                receipt: null,
+                receiptReadError: `Review receipt for '${options.reviewKey}' is invalid JSON: ${normalizePath(options.receiptPath)}.`
+            };
+        }
+    });
 }
 
 function validateDerivedReviewReceiptPath(options: {
@@ -658,73 +706,83 @@ export function validateReviewArtifactGateEligibility(options: {
         });
         if (receiptPathViolation) {
             errors.push(receiptPathViolation);
-        } else if (reviewArtifact.receipt || fs.existsSync(receiptPath)) {
-            try {
-                const receipt = reviewArtifact.receipt ?? JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
-                validatedReceipt = receipt;
-                const currentArtifactHash = reviewArtifact.artifactSha256 ?? fileSha256(artifactPath);
-                currentArtifactSha256 = currentArtifactHash;
-                if (receipt.task_id !== resolvedTaskId) {
-                    errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
-                } else if (receipt.review_type !== reviewKey) {
-                    errors.push(`Review receipt for '${reviewKey}' has mismatched review type: ${receipt.review_type}.`);
-                } else if (receipt.review_artifact_sha256 !== currentArtifactHash) {
-                    errors.push(`Review artifact hash mismatch for '${reviewKey}'. Artifact was modified after receipt was issued.`);
-                } else if (required && !skippedByOverride && !reviewArtifact.reviewContextSha256) {
-                    errors.push(`Required review '${reviewKey}' is missing a verifiable review-context hash.`);
-                } else if (required && !skippedByOverride && !receipt.review_context_sha256) {
-                    errors.push(`Review receipt for '${reviewKey}' is missing review_context_sha256.`);
-                } else if (reviewArtifact.reviewContextSha256 && receipt.review_context_sha256 !== reviewArtifact.reviewContextSha256) {
-                    errors.push(`Review context hash mismatch for '${reviewKey}'. Review-context artifact was modified after receipt was issued.`);
-                } else if (required && !skippedByOverride && reviewContextTreeStateSha256 && !normalizeSha256String(receipt.review_tree_state_sha256)) {
-                    errors.push(`Review receipt for '${reviewKey}' is missing review_tree_state_sha256.`);
-                } else if (
-                    reviewContextTreeStateSha256
-                    && normalizeSha256String(receipt.review_tree_state_sha256)
-                    && normalizeSha256String(receipt.review_tree_state_sha256) !== reviewContextTreeStateSha256
-                ) {
-                    errors.push(
-                        `Review tree-state hash mismatch for '${reviewKey}'. ` +
-                        'Review-context tree_state does not match the receipt binding.'
-                    );
-                } else {
-                    receiptValid = true;
-                }
-                if (receipt.reviewer_execution_mode) {
-                    reviewerExecutionMode = normalizeCompatibilityReviewerExecutionMode(receipt.reviewer_execution_mode);
-                    if (!reviewerExecutionMode) {
+        } else {
+            const receiptSnapshot = readReviewReceiptSnapshot({
+                reviewKey,
+                reviewArtifact,
+                artifactPath,
+                receiptPath
+            });
+            if (receiptSnapshot.receipt) {
+                try {
+                    const receipt = receiptSnapshot.receipt;
+                    validatedReceipt = receipt;
+                    const currentArtifactHash = receiptSnapshot.artifactSha256 ?? fileSha256(artifactPath);
+                    currentArtifactSha256 = currentArtifactHash;
+                    if (receipt.task_id !== resolvedTaskId) {
+                        errors.push(`Review receipt for '${reviewKey}' belongs to a different task: ${receipt.task_id}.`);
+                    } else if (receipt.review_type !== reviewKey) {
+                        errors.push(`Review receipt for '${reviewKey}' has mismatched review type: ${receipt.review_type}.`);
+                    } else if (receipt.review_artifact_sha256 !== currentArtifactHash) {
+                        errors.push(`Review artifact hash mismatch for '${reviewKey}'. Artifact was modified after receipt was issued.`);
+                    } else if (required && !skippedByOverride && !reviewArtifact.reviewContextSha256) {
+                        errors.push(`Required review '${reviewKey}' is missing a verifiable review-context hash.`);
+                    } else if (required && !skippedByOverride && !receipt.review_context_sha256) {
+                        errors.push(`Review receipt for '${reviewKey}' is missing review_context_sha256.`);
+                    } else if (reviewArtifact.reviewContextSha256 && receipt.review_context_sha256 !== reviewArtifact.reviewContextSha256) {
+                        errors.push(`Review context hash mismatch for '${reviewKey}'. Review-context artifact was modified after receipt was issued.`);
+                    } else if (required && !skippedByOverride && reviewContextTreeStateSha256 && !normalizeSha256String(receipt.review_tree_state_sha256)) {
+                        errors.push(`Review receipt for '${reviewKey}' is missing review_tree_state_sha256.`);
+                    } else if (
+                        reviewContextTreeStateSha256
+                        && normalizeSha256String(receipt.review_tree_state_sha256)
+                        && normalizeSha256String(receipt.review_tree_state_sha256) !== reviewContextTreeStateSha256
+                    ) {
                         errors.push(
-                            `Review receipt for '${reviewKey}' has invalid reviewer_execution_mode ` +
-                            `('${String(receipt.reviewer_execution_mode)}').`
+                            `Review tree-state hash mismatch for '${reviewKey}'. ` +
+                            'Review-context tree_state does not match the receipt binding.'
                         );
+                    } else {
+                        receiptValid = true;
                     }
-                }
-                if (receipt.reviewer_identity) {
-                    reviewerIdentity = String(receipt.reviewer_identity);
-                }
-                if (receipt.reviewer_fallback_reason) {
-                    reviewerFallbackReason = String(receipt.reviewer_fallback_reason);
-                }
-                if (receipt.reviewer_provenance != null) {
-                    reviewerProvenance = normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
-                    if (!reviewerProvenance) {
-                        errors.push(`Review receipt for '${reviewKey}' has invalid reviewer_provenance.`);
+                    if (receipt.reviewer_execution_mode) {
+                        reviewerExecutionMode = normalizeCompatibilityReviewerExecutionMode(receipt.reviewer_execution_mode);
+                        if (!reviewerExecutionMode) {
+                            errors.push(
+                                `Review receipt for '${reviewKey}' has invalid reviewer_execution_mode ` +
+                                `('${String(receipt.reviewer_execution_mode)}').`
+                            );
+                        }
                     }
+                    if (receipt.reviewer_identity) {
+                        reviewerIdentity = String(receipt.reviewer_identity);
+                    }
+                    if (receipt.reviewer_fallback_reason) {
+                        reviewerFallbackReason = String(receipt.reviewer_fallback_reason);
+                    }
+                    if (receipt.reviewer_provenance != null) {
+                        reviewerProvenance = normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+                        if (!reviewerProvenance) {
+                            errors.push(`Review receipt for '${reviewKey}' has invalid reviewer_provenance.`);
+                        }
+                    }
+                    if (receipt.trust_level) {
+                        trustLevel = String(receipt.trust_level).trim().toUpperCase();
+                    }
+                    reusedExistingReview = receipt.reused_existing_review === true;
+                    reusedFromReviewTreeStateSha256 = normalizeSha256String(receipt.reused_from_review_tree_state_sha256);
+                    if (reusedExistingReview && !reusedFromReviewTreeStateSha256) {
+                        errors.push(`Review receipt for '${reviewKey}' is missing reused_from_review_tree_state_sha256 for reused evidence.`);
+                    }
+                    receiptReviewContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
+                } catch {
+                    errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
                 }
-                if (receipt.trust_level) {
-                    trustLevel = String(receipt.trust_level).trim().toUpperCase();
-                }
-                reusedExistingReview = receipt.reused_existing_review === true;
-                reusedFromReviewTreeStateSha256 = normalizeSha256String(receipt.reused_from_review_tree_state_sha256);
-                if (reusedExistingReview && !reusedFromReviewTreeStateSha256) {
-                    errors.push(`Review receipt for '${reviewKey}' is missing reused_from_review_tree_state_sha256 for reused evidence.`);
-                }
-                receiptReviewContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
-            } catch {
-                errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
+            } else if (receiptSnapshot.receiptReadError) {
+                errors.push(receiptSnapshot.receiptReadError);
+            } else if (required && !skippedByOverride) {
+                errors.push(`Verifiable review receipt missing for '${reviewKey}': ${normalizePath(receiptPath)}. Run 'gate record-review-receipt' to fix.`);
             }
-        } else if (required && !skippedByOverride) {
-            errors.push(`Verifiable review receipt missing for '${reviewKey}': ${normalizePath(receiptPath)}. Run 'gate record-review-receipt' to fix.`);
         }
 
         if (required && !skippedByOverride && receiptValid) {

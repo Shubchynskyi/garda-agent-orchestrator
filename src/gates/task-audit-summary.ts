@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
+import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
 import { fileSha256, toPosix } from './helpers';
 import {
@@ -817,14 +818,16 @@ function collectRequiredReviewBlockers(
     events: TaskAuditEvent[],
     currentCycle: TaskCycleBindingSnapshot | null
 ): BlockerEntry[] {
-    return collectKnownRequiredReviewTypes(requiredReviews)
-        .flatMap((reviewType) => {
-            if (!shouldValidateRequiredReviewArtifactForCurrentCycle(reviewType, events, currentCycle)) {
-                return [];
-            }
-            const blocker = buildRequiredReviewBlocker(reviewType, taskId, reviewsRoot);
-            return blocker ? [blocker] : [];
-        });
+    return withReviewArtifactReadBarrier(reviewsRoot, () => (
+        collectKnownRequiredReviewTypes(requiredReviews)
+            .flatMap((reviewType) => {
+                if (!shouldValidateRequiredReviewArtifactForCurrentCycle(reviewType, events, currentCycle)) {
+                    return [];
+                }
+                const blocker = buildRequiredReviewBlocker(reviewType, taskId, reviewsRoot);
+                return blocker ? [blocker] : [];
+            })
+    ));
 }
 
 function collectEvidenceArtifacts(
@@ -834,16 +837,18 @@ function collectEvidenceArtifacts(
     taskEventFile: string,
     projectMemoryImpact: ProjectMemoryImpactLifecycleEvidence
 ): EvidenceArtifact[] {
-    const evidence = ARTIFACT_PATTERNS.map(({ kind, suffix }) => {
-        const artifactPath = path.join(reviewsRoot, `${taskId}${suffix}`);
-        const exists = fs.existsSync(artifactPath);
-        return {
-            kind,
-            path: toPosix(artifactPath),
-            exists,
-            sha256: exists ? fileSha256(artifactPath) : null
-        };
-    });
+    const evidence = withReviewArtifactReadBarrier(reviewsRoot, () => (
+        ARTIFACT_PATTERNS.map(({ kind, suffix }) => {
+            const artifactPath = path.join(reviewsRoot, `${taskId}${suffix}`);
+            const exists = fs.existsSync(artifactPath);
+            return {
+                kind,
+                path: toPosix(artifactPath),
+                exists,
+                sha256: exists ? fileSha256(artifactPath) : null
+            };
+        })
+    ));
 
     if (projectMemoryImpact.required || projectMemoryImpact.evidence_status !== 'NOT_REQUIRED') {
         for (const [kind, artifactPath] of [
@@ -1078,13 +1083,67 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
     const profileReviewDecisions = readProfileReviewDecisions(taskMode, preflight, scopeCategory);
+    const reviewGatePath = path.join(reviewsRoot, `${safeTaskId}-review-gate.json`);
+    const reviewSnapshot = withReviewArtifactReadBarrier(reviewsRoot, () => {
+        const requiredReviewBlockers = collectRequiredReviewBlockers(
+            requiredReviews,
+            safeTaskId,
+            reviewsRoot,
+            events,
+            currentCycle
+        );
+        const evidence = collectEvidenceArtifacts(
+            repoRoot,
+            reviewsRoot,
+            safeTaskId,
+            taskEventFile,
+            projectMemoryImpactEvidence
+        );
+        const reviewGate = safeReadJson(reviewGatePath);
+        const reviewVerdicts = readReviewVerdicts(requiredReviews, reviewGate);
+        const receiptReviewTrustSummary = readReviewTrustSummary(
+            requiredReviews,
+            reviewsRoot,
+            safeTaskId,
+            scopeCategory,
+            preflightSha256
+        );
+        const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
+            reviewGate,
+            requiredReviews,
+            safeTaskId,
+            scopeCategory,
+            preflightSha256
+        );
+        const hasRequiredReviews = Object.values(requiredReviews).some((value) => value);
+        const reviewTrustSummary = reviewGateTrustSummary
+            ?? (hasRequiredReviews
+                ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
+                : receiptReviewTrustSummary);
+        const reviewIntegrityAttestation = buildReviewIntegrityAttestation({
+            requiredReviews,
+            reviewsRoot,
+            taskId: safeTaskId,
+            scopeCategory,
+            preflightSha256,
+            reviewTrustSummary,
+            repoRoot,
+            timelineEvents: events
+        });
+        return {
+            evidence,
+            requiredReviewBlockers,
+            reviewIntegrityAttestation,
+            reviewTrustSummary,
+            reviewVerdicts
+        };
+    });
     blockers.push(...auditedChangedFiles.violations.map((reason) => ({
         gate: 'doc-impact-gate',
         reason
     })));
-    const requiredReviewBlockers = collectRequiredReviewBlockers(requiredReviews, safeTaskId, reviewsRoot, events, currentCycle);
     if (!hasCompletionPass) {
-        blockers.push(...requiredReviewBlockers);
+        blockers.push(...reviewSnapshot.requiredReviewBlockers);
     }
     if (projectMemoryImpactRequired && projectMemoryImpactEvidence.evidence_status !== 'CURRENT') {
         blockers.push({
@@ -1104,7 +1163,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         blockers.push(completionReviewOrderBlocker);
     }
     const tokenEconomy = buildTokenEconomySummary(safeTaskId, events, repoRoot, reviewsRoot);
-    const evidence = collectEvidenceArtifacts(repoRoot, reviewsRoot, safeTaskId, taskEventFile, projectMemoryImpactEvidence);
+    const evidence = reviewSnapshot.evidence;
     const hasFailedGate = gates.some((g) => g.status === 'FAIL');
     const failedGateNames = gates.filter((g) => g.status === 'FAIL').map((g) => g.gate);
     const hasNonCompletionFailure = failedGateNames.some((gateName) => gateName !== 'completion-gate');
@@ -1215,38 +1274,11 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         ? 'Worktree is already clean; no further commit necessary.'
         : 'Do you want me to commit now? (yes/no)';
     
-    const reviewGatePath = path.join(reviewsRoot, `${safeTaskId}-review-gate.json`);
-    const reviewGate = safeReadJson(reviewGatePath);
-    const reviewVerdicts = readReviewVerdicts(requiredReviews, reviewGate);
-    const receiptReviewTrustSummary = readReviewTrustSummary(
-        requiredReviews,
-        reviewsRoot,
-        safeTaskId,
-        scopeCategory,
-        preflightSha256
-    );
-    const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
-        reviewGate,
-        requiredReviews,
-        safeTaskId,
-        scopeCategory,
-        preflightSha256
-    );
-    const hasRequiredReviews = Object.values(requiredReviews).some((value) => value);
-    const reviewTrustSummary = reviewGateTrustSummary
-        ?? (hasRequiredReviews
-            ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
-            : receiptReviewTrustSummary);
-    const reviewIntegrityAttestation = buildReviewIntegrityAttestation({
-        requiredReviews,
-        reviewsRoot,
-        taskId: safeTaskId,
-        scopeCategory,
-        preflightSha256,
+    const {
+        reviewVerdicts,
         reviewTrustSummary,
-        repoRoot,
-        timelineEvents: events
-    });
+        reviewIntegrityAttestation
+    } = reviewSnapshot;
     const reviewIntegrityBlocker = hasCompletionPass && reviewIntegrityAttestation.completion_allowed === false
         ? {
             gate: 'review-integrity',
