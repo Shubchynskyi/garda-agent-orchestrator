@@ -17,6 +17,8 @@ Desktop.ini
 dist/
 .node-build/
 .scripts-build/
+.scripts-build.lock/
+.node-build.lock/
 .tmp_rtk_bin_*/
 
 # Dependencies

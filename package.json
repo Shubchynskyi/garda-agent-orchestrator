@@ -26,14 +26,16 @@
     "test": "node scripts/node-foundation/build-scripts.cjs test.js",
     "test:node-foundation": "node scripts/node-foundation/build-scripts.cjs test.js",
     "validate:version-parity": "node scripts/node-foundation/build-scripts.cjs validate-release.js",
+    "validate:clean-worktree": "node scripts/node-foundation/build-scripts.cjs validate-release.js clean-worktree",
     "lint": "eslint \"src/**/*.ts\" \"tests/node/**/*.ts\" \"scripts/node-foundation/**/*.ts\"",
     "coverage": "c8 --reporter=text --reporter=lcov npm test",
     "audit:prod": "npm audit --omit=dev",
     "audit:all": "npm audit",
     "quality": "npm run typecheck && npm run lint && npm run coverage && npm run audit:prod",
-    "validate:release": "npm run validate:version-parity && npm run build && npm run quality && node --test .node-build/tests/node/packaging/pack-smoke.test.js",
+    "validate:release": "npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run quality && node --test .node-build/tests/node/packaging/pack-smoke.test.js && npm run validate:clean-worktree",
+    "release:preflight": "npm run validate:release",
     "typecheck": "tsc -p tsconfig.node-foundation.json",
-    "prepack": "npm run build:publish-runtime && node scripts/package-legacy-entrypoint-compat.cjs create",
+    "prepack": "npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create",
     "postpack": "node scripts/package-legacy-entrypoint-compat.cjs remove"
   },
   "files": [

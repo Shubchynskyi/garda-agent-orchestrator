@@ -151,7 +151,7 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 - **Compatibility note:** as of `v1.0.0`, the codebase also builds on `Node 20.20.2` and `Node 22.22.2`. However, those versions are not part of the official support contract, and runtime diagnostics still enforce the documented `>=24.0.0` baseline.
 - **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/garda.ts` compiles into the public `bin/garda.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
 - **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and the wider repo graph (`tsconfig.node-foundation.json` / `tsconfig.tests.json`) covers `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
-- **Release validation is explicit:** `npm run validate:release` proves `build -> test -> pack -> install/invoke` for the published CLI contract.
+- **Release validation is explicit:** `npm run validate:release` requires a clean tracked/untracked worktree, proves `build -> test -> pack -> install/invoke`, and checks the worktree again before release handoff.
 - **GitHub Actions CI mirrors the hot path:** `ci.yml` runs `typecheck`, `test`, `validate:release`, and a cross-platform lifecycle smoke that installs from the current workflow branch instead of drifting to the repository default branch.
 - Root `tsconfig.json` extends `tsconfig.node-foundation.json`, so editors like IntelliJ IDEA or WebStorm can discover the repository without custom setup.
 

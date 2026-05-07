@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- blocked release/package handoff on dirty tracked or untracked worktrees by adding `validate:clean-worktree` to `validate:release` and `prepack`
 - defaulted project-memory maintenance to update mode for fresh and missing-key materializations, preserved explicit existing choices, and surfaced a first-run memory refresh handoff in setup/update output
 - restricted decomposed parent routing to explicit child task links so parent and continuation mentions cannot skip unfinished leaf tasks
 - reused accepted non-test review evidence after test-only deltas when current-cycle code reuse proves the production scope is unchanged, while keeping test review mandatory and rejecting sensitive test-path deltas

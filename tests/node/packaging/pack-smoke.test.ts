@@ -114,6 +114,15 @@ function spawnNpm(args: string[], cwd: string): childProcess.SpawnSyncReturns<st
     });
 }
 
+function spawnGit(args: string[], cwd: string): childProcess.SpawnSyncReturns<string> {
+    return childProcess.spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        timeout: 120_000,
+        windowsHide: true
+    });
+}
+
 function formatSpawnFailure(label: string, result: childProcess.SpawnSyncReturns<string>): string {
     const lines = [`${label} failed:`];
     if (result.error) lines.push(`error=${result.error.message}`);
@@ -129,6 +138,40 @@ function tailOutput(output: string): string {
         return output;
     }
     return `[truncated to last ${SPAWN_OUTPUT_TAIL_LENGTH} chars]\n${output.slice(-SPAWN_OUTPUT_TAIL_LENGTH)}`;
+}
+
+function runGit(args: string[], cwd: string): void {
+    const result = spawnGit(args, cwd);
+    if (result.status !== 0) {
+        throw new Error(formatSpawnFailure(`git ${args.join(' ')}`, result));
+    }
+}
+
+function initializeCleanPackFixture(repoRoot: string): void {
+    fs.writeFileSync(
+        path.join(repoRoot, '.gitignore'),
+        [
+            'node_modules/',
+            '.scripts-build/',
+            '.scripts-build.lock/',
+            '.node-build/',
+            '.node-build.lock/',
+            '*.tgz',
+            ''
+        ].join('\n'),
+        'utf8'
+    );
+
+    const buildResult = spawnNpm(['run', 'build:publish-runtime'], repoRoot);
+    if (buildResult.status !== 0) {
+        throw new Error(formatSpawnFailure('npm run build:publish-runtime', buildResult));
+    }
+
+    runGit(['-c', 'init.defaultBranch=main', 'init'], repoRoot);
+    runGit(['config', 'user.email', 'test@example.com'], repoRoot);
+    runGit(['config', 'user.name', 'Garda Test'], repoRoot);
+    runGit(['add', '-A'], repoRoot);
+    runGit(['commit', '--no-gpg-sign', '-m', 'pack fixture baseline'], repoRoot);
 }
 
 function assertNoConsumerInstallLifecycleScripts(packageJson: { scripts?: Record<string, string> }): void {
@@ -210,6 +253,7 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
     try {
         assertNoConsumerInstallLifecycleScripts(packageJson);
         copyPackFixture(repoRoot, fixtureRoot);
+        initializeCleanPackFixture(fixtureRoot);
 
         const tarballFilename = npmPack(fixtureRoot);
         const tarballPath = path.join(fixtureRoot, tarballFilename);
