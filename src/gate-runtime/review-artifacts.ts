@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
 import {
     acquireFilesystemLock,
+    acquireFilesystemLockAsync,
     filesystemLockRequiresExplicitForeignHostRecovery,
     FOREIGN_HOST_FILE_LOCK_STALE_RECOVERY_ENV,
     inspectFilesystemLock,
@@ -11,18 +12,29 @@ import {
     reclaimStaleFilesystemLock,
     releaseFilesystemLock
 } from './task-events';
-import { parseReviewArtifactFileName, upsertEntry } from './reviews-index';
+import {
+    beginInProcessReviewTransactionSnapshot,
+    currentProcessOwnsReviewTransactionLock,
+    parseReviewArtifactFileName,
+    rebuildAndPersistIndex,
+    resolveIndexPath,
+    resolveReviewTransactionLockPath,
+    type ReviewsIndexMutationStatus,
+    upsertEntry
+} from './reviews-index';
 
-const DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS = 1000;
+const DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS = 25;
 const DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS = 30 * 1000;
 const REVIEWS_INDEX_FILE_NAME = 'reviews-index.json';
+const inProcessReviewTransactionQueues = new Map<string, Promise<void>>();
 
 export interface ReviewArtifactLockOptions {
     lockTimeoutMs?: unknown;
     lockRetryMs?: unknown;
     lockStaleMs?: unknown;
     allowForeignHostStaleRecovery?: unknown;
+    requireIndexUpdate?: unknown;
 }
 
 export interface ReviewArtifactLockTelemetry {
@@ -34,6 +46,9 @@ export interface ReviewArtifactWriteResult {
     artifact_path: string;
     lock_path: string;
     telemetry: ReviewArtifactLockTelemetry;
+    index_update_status: ReviewsIndexMutationStatus;
+    index_path: string;
+    index_update_error?: string;
 }
 
 export interface ReviewArtifactRollbackState {
@@ -79,7 +94,7 @@ export interface ReviewArtifactLockCleanupResult {
 }
 
 const REVIEW_ARTIFACT_LOCK_SUBSYSTEM_NOTE =
-    'Review-artifact locks under runtime/reviews/*.lock and the shared runtime/.reviews-index.lock participate in the review-artifact lock subsystem.';
+    'Review-artifact locks under runtime/reviews/*.lock plus shared runtime/.reviews-index.lock and runtime/.reviews-transaction.lock participate in the review-artifact lock subsystem.';
 
 interface ReviewArtifactLockTarget {
     lockName: string;
@@ -179,6 +194,25 @@ function resolveSharedReviewsIndexLockTarget(orchestratorRoot: string): ReviewAr
     };
 }
 
+function resolveSharedReviewTransactionLockTarget(orchestratorRoot: string): ReviewArtifactLockTarget | null {
+    const reviewsRoot = getReviewsRoot(orchestratorRoot);
+    const lockPath = resolveReviewTransactionLockPath(reviewsRoot);
+    try {
+        if (!fs.existsSync(lockPath) || !fs.statSync(lockPath).isDirectory()) {
+            return null;
+        }
+    } catch {
+        return null;
+    }
+    return {
+        lockName: path.basename(lockPath),
+        lockPath: lockPath.replace(/\\/g, '/'),
+        artifactPath: reviewsRoot.replace(/\\/g, '/'),
+        taskId: null,
+        artifactType: 'reviews-transaction'
+    };
+}
+
 function resolveReviewArtifactLockTargets(orchestratorRoot: string): ReviewArtifactLockTarget[] {
     const reviewsRoot = getReviewsRoot(orchestratorRoot);
     const targets = listReviewArtifactLockEntries(reviewsRoot)
@@ -186,6 +220,10 @@ function resolveReviewArtifactLockTargets(orchestratorRoot: string): ReviewArtif
     const sharedIndexLock = resolveSharedReviewsIndexLockTarget(orchestratorRoot);
     if (sharedIndexLock) {
         targets.push(sharedIndexLock);
+    }
+    const sharedTransactionLock = resolveSharedReviewTransactionLockTarget(orchestratorRoot);
+    if (sharedTransactionLock) {
+        targets.push(sharedTransactionLock);
     }
     return targets.sort((left, right) => left.lockName.localeCompare(right.lockName));
 }
@@ -320,6 +358,19 @@ export function getReviewArtifactLockPath(artifactPath: string): string {
     return `${artifactPath}.lock`;
 }
 
+export function getReviewArtifactTransactionLockPath(reviewsDir: string): string {
+    return resolveReviewTransactionLockPath(reviewsDir);
+}
+
+function parseBooleanLike(value: unknown): boolean {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function shouldRequireIndexUpdate(options: ReviewArtifactLockOptions): boolean {
+    return parseBooleanLike(options.requireIndexUpdate);
+}
+
 export function writeArtifactFileAtomically(filePath: string, content: string): string {
     return writeFileAtomically(filePath, content, { encoding: 'utf8' });
 }
@@ -348,24 +399,155 @@ export function withReviewArtifactLock<T>(
     }
 }
 
+function withReviewArtifactTransactionLock<T>(
+    reviewsDir: string,
+    callback: () => T,
+    options: ReviewArtifactLockOptions = {}
+): { result: T; lock_path: string; telemetry: ReviewArtifactLockTelemetry } {
+    const lockPath = resolveReviewTransactionLockPath(reviewsDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const { handle, telemetry } = acquireFilesystemLock(lockPath, {
+        timeoutMs: options.lockTimeoutMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS,
+        retryMs: options.lockRetryMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS,
+        staleMs: options.lockStaleMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS,
+        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery,
+        ownerLabel: 'review-artifact-transaction'
+    });
+    try {
+        return {
+            result: callback(),
+            lock_path: lockPath,
+            telemetry
+        };
+    } finally {
+        releaseFilesystemLock(handle);
+    }
+}
+
+export function withReviewArtifactReadBarrier<T>(
+    reviewsDir: string,
+    callback: () => T,
+    options: ReviewArtifactLockOptions = {}
+): T {
+    if (currentProcessOwnsReviewTransactionLock(reviewsDir)) {
+        return callback();
+    }
+    const lockPath = resolveReviewTransactionLockPath(reviewsDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const { handle } = acquireFilesystemLock(lockPath, {
+        timeoutMs: options.lockTimeoutMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS,
+        retryMs: options.lockRetryMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS,
+        staleMs: options.lockStaleMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS,
+        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery,
+        ownerLabel: 'review-artifact-read-barrier'
+    });
+    try {
+        return callback();
+    } finally {
+        releaseFilesystemLock(handle);
+    }
+}
+
+async function withInProcessReviewTransactionQueue<T>(lockPath: string, callback: () => Promise<T>): Promise<T> {
+    const previous = inProcessReviewTransactionQueues.get(lockPath) || Promise.resolve();
+    const next = previous.catch(() => undefined).then(callback);
+    const queueTail = next.then(() => undefined, () => undefined);
+    inProcessReviewTransactionQueues.set(lockPath, queueTail);
+    try {
+        return await next;
+    } finally {
+        if (inProcessReviewTransactionQueues.get(lockPath) === queueTail) {
+            inProcessReviewTransactionQueues.delete(lockPath);
+        }
+    }
+}
+
+async function withReviewArtifactTransactionLockAsync<T>(
+    reviewsDir: string,
+    callback: () => Promise<T>,
+    options: ReviewArtifactLockOptions = {}
+): Promise<{ result: T; lock_path: string; telemetry: ReviewArtifactLockTelemetry }> {
+    const lockPath = resolveReviewTransactionLockPath(reviewsDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    return await withInProcessReviewTransactionQueue(lockPath, async () => {
+        const { handle, telemetry } = await acquireFilesystemLockAsync(lockPath, {
+            timeoutMs: options.lockTimeoutMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_TIMEOUT_MS,
+            retryMs: options.lockRetryMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_RETRY_MS,
+            staleMs: options.lockStaleMs ?? DEFAULT_REVIEW_ARTIFACT_LOCK_STALE_MS,
+            allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery,
+            ownerLabel: 'review-artifact-transaction'
+        });
+        const releaseTransactionSnapshot = beginInProcessReviewTransactionSnapshot(reviewsDir);
+        try {
+            return {
+                result: await callback(),
+                lock_path: lockPath,
+                telemetry
+            };
+        } finally {
+            try {
+                releaseTransactionSnapshot();
+            } finally {
+                releaseFilesystemLock(handle);
+            }
+        }
+    });
+}
+
+function writeReviewArtifactTextUnlocked(
+    artifactPath: string,
+    content: string,
+    options: ReviewArtifactLockOptions = {},
+    updateIndex: boolean = true
+): ReviewArtifactWriteResult {
+    const rollbackState = shouldRequireIndexUpdate(options)
+        ? captureReviewArtifactRollbackState(artifactPath)
+        : null;
+    const { lock_path, telemetry } = withReviewArtifactLock(artifactPath, () => {
+        writeArtifactFileAtomically(artifactPath, content);
+    }, options);
+    const reviewsDir = path.dirname(artifactPath);
+    const indexUpdate = updateIndex
+        ? upsertEntry(reviewsDir, path.basename(artifactPath))
+        : {
+            status: 'updated' as const,
+            index_path: resolveIndexPath(reviewsDir),
+            file_name: path.basename(artifactPath)
+        };
+    if (indexUpdate.status === 'failed' && shouldRequireIndexUpdate(options)) {
+        if (rollbackState) {
+            try {
+                restoreReviewArtifactFromRollbackStateUnlocked(artifactPath, rollbackState, {
+                    ...options,
+                    requireIndexUpdate: false
+                });
+            } catch {
+                // Preserve the index failure as the primary critical write error.
+            }
+        }
+        throw new Error(
+            `Review artifact index update failed for '${path.basename(artifactPath)}': ${indexUpdate.error || 'unknown error'}`
+        );
+    }
+    return {
+        artifact_path: artifactPath,
+        lock_path,
+        telemetry,
+        index_update_status: indexUpdate.status,
+        index_path: indexUpdate.index_path,
+        ...(indexUpdate.error ? { index_update_error: indexUpdate.error } : {})
+    };
+}
+
 export function writeReviewArtifactText(
     artifactPath: string,
     content: string,
     options: ReviewArtifactLockOptions = {}
 ): ReviewArtifactWriteResult {
-    const { lock_path, telemetry } = withReviewArtifactLock(artifactPath, () => {
-        writeArtifactFileAtomically(artifactPath, content);
-    }, options);
-    try {
-        upsertEntry(path.dirname(artifactPath), path.basename(artifactPath));
-    } catch {
-        // Index update is best-effort; artifact write succeeded
-    }
-    return {
-        artifact_path: artifactPath,
-        lock_path,
-        telemetry
-    };
+    const { result } = withReviewArtifactTransactionLock(path.dirname(artifactPath), () => (
+        writeReviewArtifactTextUnlocked(artifactPath, content, options)
+    ), options);
+    return result;
 }
 
 export function writeReviewArtifactJson(
@@ -422,33 +604,117 @@ export function restoreReviewArtifactFromRollbackState(
     );
 }
 
+function restoreReviewArtifactFromRollbackStateUnlocked(
+    artifactPath: string,
+    rollbackState: ReviewArtifactRollbackState,
+    options: ReviewArtifactLockOptions & { ensureTrailingNewline?: boolean } = {}
+): void {
+    withReviewArtifactLock(artifactPath, () => {
+        if (!rollbackState.existed) {
+            if (fs.existsSync(artifactPath)) {
+                fs.rmSync(artifactPath, { force: true });
+            }
+            return;
+        }
+        const content = rollbackState.content || '';
+        writeArtifactFileAtomically(
+            artifactPath,
+            options.ensureTrailingNewline && !content.endsWith('\n') ? `${content}\n` : content
+        );
+    }, options);
+}
+
+function getReviewArtifactTransactionEntryContent(entry: ReviewArtifactTransactionalWrite): string {
+    if (entry.contentType === 'json') {
+        return `${JSON.stringify(entry.payload, null, 2)}\n`;
+    }
+    return entry.content;
+}
+
+function createReviewArtifactTransactionStagingDir(reviewsDir: string): string {
+    fs.mkdirSync(reviewsDir, { recursive: true });
+    return fs.mkdtempSync(path.join(reviewsDir, '.transaction-'));
+}
+
+function writeReviewArtifactTransactionEntryToStaging(
+    entry: ReviewArtifactTransactionalWrite,
+    stagingDir: string,
+    index: number
+): string {
+    const stagedPath = path.join(stagingDir, `${String(index).padStart(4, '0')}-${path.basename(entry.artifactPath)}`);
+    writeArtifactFileAtomically(stagedPath, getReviewArtifactTransactionEntryContent(entry));
+    return stagedPath;
+}
+
+function commitStagedReviewArtifactTransactionEntry(
+    entry: ReviewArtifactTransactionalWrite,
+    stagedPath: string
+): void {
+    const content = fs.readFileSync(stagedPath, 'utf8');
+    writeReviewArtifactTextUnlocked(entry.artifactPath, content, {
+        ...entry.options,
+        requireIndexUpdate: false
+    }, false);
+}
+
+function assertTransactionIndexPersisted(reviewsDir: string, phase: string): void {
+    const result = rebuildAndPersistIndex(reviewsDir);
+    if (result.status === 'failed') {
+        throw new Error(`Review artifact transaction index ${phase} failed: ${result.error || 'unknown error'}`);
+    }
+}
+
+function resolveSingleTransactionReviewsDir(writes: readonly ReviewArtifactTransactionalWrite[]): string {
+    const reviewsDir = path.dirname(writes[0].artifactPath);
+    for (const entry of writes) {
+        if (path.dirname(entry.artifactPath) !== reviewsDir) {
+            throw new Error('Review artifact transaction writes must target one reviews directory.');
+        }
+    }
+    return reviewsDir;
+}
+
 export async function writeReviewArtifactsWithRollback<T>(
     writes: readonly ReviewArtifactTransactionalWrite[],
-    afterWrites: () => Promise<T>
+    afterWrites: () => Promise<T>,
+    options: ReviewArtifactLockOptions = {}
 ): Promise<T> {
-    const rollbackStates = writes.map((entry) => ({
-        artifactPath: entry.artifactPath,
-        rollbackState: captureReviewArtifactRollbackState(entry.artifactPath),
-        options: entry.options
-    }));
-    try {
-        for (const entry of writes) {
-            if (entry.contentType === 'json') {
-                writeReviewArtifactJson(entry.artifactPath, entry.payload, entry.options);
-            } else {
-                writeReviewArtifactText(entry.artifactPath, entry.content, entry.options);
-            }
-        }
+    if (writes.length === 0) {
         return await afterWrites();
-    } catch (error: unknown) {
-        try {
-            for (let index = rollbackStates.length - 1; index >= 0; index -= 1) {
-                const entry = rollbackStates[index];
-                restoreReviewArtifactFromRollbackState(entry.artifactPath, entry.rollbackState, entry.options);
-            }
-        } catch {
-            // Preserve the original write or post-write failure.
-        }
-        throw error;
     }
+    const reviewsDir = resolveSingleTransactionReviewsDir(writes);
+    const { result } = await withReviewArtifactTransactionLockAsync(reviewsDir, async () => {
+        const rollbackStates = writes.map((entry) => ({
+            artifactPath: entry.artifactPath,
+            rollbackState: captureReviewArtifactRollbackState(entry.artifactPath),
+            options: entry.options
+        }));
+        const stagingDir = createReviewArtifactTransactionStagingDir(reviewsDir);
+        try {
+            const stagedWrites = writes.map((entry, index) => ({
+                entry,
+                stagedPath: writeReviewArtifactTransactionEntryToStaging(entry, stagingDir, index)
+            }));
+            for (const stagedWrite of stagedWrites) {
+                commitStagedReviewArtifactTransactionEntry(stagedWrite.entry, stagedWrite.stagedPath);
+            }
+            const afterWritesResult = await afterWrites();
+            assertTransactionIndexPersisted(reviewsDir, 'commit');
+            return afterWritesResult;
+        } catch (error: unknown) {
+            try {
+                for (let index = rollbackStates.length - 1; index >= 0; index -= 1) {
+                    const entry = rollbackStates[index];
+                    restoreReviewArtifactFromRollbackStateUnlocked(entry.artifactPath, entry.rollbackState, entry.options);
+                }
+                assertTransactionIndexPersisted(reviewsDir, 'rollback');
+            } catch {
+                // Preserve the original write or post-write failure.
+            }
+            throw error;
+        } finally {
+            fs.rmSync(stagingDir, { recursive: true, force: true });
+        }
+    }, options);
+    return result;
 }

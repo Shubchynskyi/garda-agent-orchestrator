@@ -7,6 +7,7 @@ import {
     extractReviewVerdictToken,
     formatReviewVerdictTokenList
 } from '../../../gate-runtime/review-context';
+import { withReviewArtifactReadBarrier } from '../../../gate-runtime/review-artifacts';
 import { getWorkspaceSnapshot } from '../../../gates/compile-gate';
 import * as gateHelpers from '../../../gates/helpers';
 import {
@@ -133,55 +134,56 @@ export function testReviewArtifacts(
         return result;
     }
 
-    const skipSet = new Set(skipReviewsList.map(function (item: string) { return String(item || '').toLowerCase(); }));
+    return withReviewArtifactReadBarrier(reviewsRoot, () => {
+        const skipSet = new Set(skipReviewsList.map(function (item: string) { return String(item || '').toLowerCase(); }));
 
-    for (const [reviewKey, passToken] of reviewContracts) {
-        if (!requiredReviews[reviewKey]) {
-            continue;
-        }
-        const actualVerdict = verdicts[reviewKey] || 'NOT_REQUIRED';
-        if (actualVerdict !== passToken || skipSet.has(reviewKey)) {
-            continue;
-        }
+        for (const [reviewKey, passToken] of reviewContracts) {
+            if (!requiredReviews[reviewKey]) {
+                continue;
+            }
+            const actualVerdict = verdicts[reviewKey] || 'NOT_REQUIRED';
+            if (actualVerdict !== passToken || skipSet.has(reviewKey)) {
+                continue;
+            }
 
-        const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
-        const entry: ReviewArtifactCheckEntry = {
-            review: reviewKey,
-            path: gateHelpers.normalizePath(artifactPath),
-            pass_token: passToken,
-            present: false,
-            token_found: false,
-            sha256: null,
-            review_context_path: null,
-            review_context_present: false,
-            review_context_valid: false,
-            compaction_audit: null
-        };
+            const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
+            const entry: ReviewArtifactCheckEntry = {
+                review: reviewKey,
+                path: gateHelpers.normalizePath(artifactPath),
+                pass_token: passToken,
+                present: false,
+                token_found: false,
+                sha256: null,
+                review_context_path: null,
+                review_context_present: false,
+                review_context_valid: false,
+                compaction_audit: null
+            };
 
-        if (!isReviewArtifactPathInsideRoots(repoRoot, reviewsRoot, artifactPath, { allowMissing: true })) {
-            result.violations.push(formatReviewArtifactPathEscapeViolation('Review artifact path', artifactPath));
-            result.checked.push(entry);
-            continue;
-        }
+            if (!isReviewArtifactPathInsideRoots(repoRoot, reviewsRoot, artifactPath, { allowMissing: true })) {
+                result.violations.push(formatReviewArtifactPathEscapeViolation('Review artifact path', artifactPath));
+                result.checked.push(entry);
+                continue;
+            }
 
-        if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
-            result.violations.push(`Review artifact not found for claimed '${passToken}': ${entry.path}`);
-            result.checked.push(entry);
-            continue;
-        }
+            if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+                result.violations.push(`Review artifact not found for claimed '${passToken}': ${entry.path}`);
+                result.checked.push(entry);
+                continue;
+            }
 
-        entry.present = true;
-        entry.sha256 = gateHelpers.fileSha256(artifactPath);
-        const content = fs.readFileSync(artifactPath, 'utf8');
-        const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
-        const acceptedTokens = buildReviewVerdictTokenSet(reviewKey, passToken, failToken);
-        entry.token_found = extractReviewVerdictToken(content, passToken, failToken, reviewKey) === passToken;
-        if (!entry.token_found) {
-            result.violations.push(
-                `Review artifact '${entry.path}' does not contain an accepted pass token ` +
-                `(${formatReviewVerdictTokenList(acceptedTokens.passTokens)}).`
-            );
-        }
+            entry.present = true;
+            entry.sha256 = gateHelpers.fileSha256(artifactPath);
+            const content = fs.readFileSync(artifactPath, 'utf8');
+            const failToken = passToken.replace(/\bPASSED\b/g, 'FAILED');
+            const acceptedTokens = buildReviewVerdictTokenSet(reviewKey, passToken, failToken);
+            entry.token_found = extractReviewVerdictToken(content, passToken, failToken, reviewKey) === passToken;
+            if (!entry.token_found) {
+                result.violations.push(
+                    `Review artifact '${entry.path}' does not contain an accepted pass token ` +
+                    `(${formatReviewVerdictTokenList(acceptedTokens.passTokens)}).`
+                );
+            }
 
         let reviewContextPath: string | null = null;
         let reviewContextPathSafe = true;
@@ -232,11 +234,12 @@ export function testReviewArtifacts(
             result.compaction_warnings.push(...compactionSummary.warnings);
         }
 
-        result.checked.push(entry);
-    }
+            result.checked.push(entry);
+        }
 
-    result.compaction_warning_count = result.compaction_warnings.length;
-    return result;
+        result.compaction_warning_count = result.compaction_warnings.length;
+        return result;
+    });
 }
 
 export function getCompileGateEvidence(

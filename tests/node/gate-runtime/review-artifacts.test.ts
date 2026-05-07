@@ -8,13 +8,35 @@ import { spawn } from 'node:child_process';
 import {
     cleanupStaleReviewArtifactLocks,
     getReviewArtifactLockPath,
+    getReviewArtifactTransactionLockPath,
     scanReviewArtifactLocks,
+    withReviewArtifactReadBarrier,
     writeReviewArtifactJson,
+    writeReviewArtifactsWithRollback,
     writeReviewArtifactText
 } from '../../../src/gate-runtime/review-artifacts';
+import {
+    loadIndex,
+    resolveIndexPath,
+    resolveIndexLockPath
+} from '../../../src/gate-runtime/reviews-index';
+import {
+    acquireFilesystemLock,
+    releaseFilesystemLock
+} from '../../../src/gate-runtime/task-events';
 
 function listTempArtifacts(directoryPath: string): string[] {
     return fs.readdirSync(directoryPath).filter((entry) => entry.includes('.tmp-'));
+}
+
+function createReviewsDir(root: string): string {
+    const reviewsDir = path.join(root, 'runtime', 'reviews');
+    fs.mkdirSync(reviewsDir, { recursive: true });
+    return reviewsDir;
+}
+
+async function delay(milliseconds: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function holdReviewArtifactLock(lockPath: string, holdMs: number): Promise<() => Promise<void>> {
@@ -118,6 +140,62 @@ test('writeReviewArtifactText replaces existing content without leaving temp fil
     assert.deepEqual(listTempArtifacts(tempDir), []);
 
     fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('writeReviewArtifactText reports review index update status', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-index-status-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const artifactPath = path.join(reviewsDir, 'T-011-code.md');
+
+    try {
+        const result = writeReviewArtifactText(artifactPath, 'REVIEW PASSED\n');
+
+        assert.equal(result.index_update_status, 'updated');
+        assert.ok(result.index_path.endsWith('/runtime/reviews/reviews-index.json') || result.index_path.endsWith('\\runtime\\reviews\\reviews-index.json'));
+        const index = loadIndex(reviewsDir).index;
+        assert.ok(index.entries.some((entry) => entry.fileName === 'T-011-code.md'));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactText surfaces index failures and rolls back critical writes', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-index-failure-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const artifactPath = path.join(reviewsDir, 'T-012-code.md');
+    const criticalArtifactPath = path.join(reviewsDir, 'T-012-test.md');
+    const indexLockPath = resolveIndexLockPath(reviewsDir);
+
+    try {
+        fs.mkdirSync(indexLockPath, { recursive: true });
+        fs.writeFileSync(path.join(indexLockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            hostname: os.hostname(),
+            created_at_utc: new Date().toISOString()
+        }, null, 2) + '\n', 'utf8');
+
+        const result = writeReviewArtifactText(
+            artifactPath,
+            'REVIEW PASSED\n',
+            { lockTimeoutMs: 75, lockRetryMs: 10 }
+        );
+
+        assert.equal(result.index_update_status, 'failed');
+        assert.match(result.index_update_error || '', /file lock/);
+        assert.equal(fs.readFileSync(artifactPath, 'utf8'), 'REVIEW PASSED\n');
+
+        assert.throws(
+            () => writeReviewArtifactText(
+                criticalArtifactPath,
+                'REVIEW PASSED\n',
+                { lockTimeoutMs: 75, lockRetryMs: 10, requireIndexUpdate: true }
+            ),
+            /Review artifact index update failed/
+        );
+        assert.equal(fs.existsSync(criticalArtifactPath), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 test('writeReviewArtifactJson fails when a live review-artifact lock already exists', () => {
@@ -411,6 +489,309 @@ test('scanReviewArtifactLocks includes the shared reviews-index lock', () => {
         assert.equal(sharedLock!.artifact_type, 'reviews-index');
         assert.equal(sharedLock!.status, 'STALE');
         assert.ok(sharedLock!.artifact_path.endsWith('/runtime/reviews/reviews-index.json'));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('scanReviewArtifactLocks includes the shared reviews transaction lock', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-lock-scan-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const transactionLockPath = getReviewArtifactTransactionLockPath(reviewsDir);
+
+    try {
+        fs.mkdirSync(transactionLockPath, { recursive: true });
+        fs.writeFileSync(path.join(transactionLockPath, 'owner.json'), JSON.stringify({
+            pid: 999999999,
+            hostname: os.hostname(),
+            created_at_utc: '2026-03-30T10:00:00.000Z'
+        }, null, 2) + '\n', 'utf8');
+        const oldTime = new Date(Date.now() - (31 * 60 * 1000));
+        fs.utimesSync(transactionLockPath, oldTime, oldTime);
+
+        const result = scanReviewArtifactLocks(tempDir);
+        const sharedLock = result.locks.find((lock) => lock.lock_name === '.reviews-transaction.lock');
+        assert.ok(sharedLock, 'expected shared reviews transaction lock to be reported');
+        assert.equal(sharedLock!.task_id, null);
+        assert.equal(sharedLock!.artifact_type, 'reviews-transaction');
+        assert.equal(sharedLock!.status, 'STALE');
+        assert.ok(sharedLock!.artifact_path.endsWith('/runtime/reviews'));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('loadIndex waits for a live review artifact transaction lock before rebuilding', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-read-barrier-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const transactionLockPath = getReviewArtifactTransactionLockPath(reviewsDir);
+    let cleanupChild: (() => Promise<void>) | null = null;
+
+    try {
+        cleanupChild = await holdReviewArtifactLock(transactionLockPath, 140);
+        const startedAt = Date.now();
+        const result = loadIndex(reviewsDir);
+        const elapsedMs = Date.now() - startedAt;
+
+        assert.ok(elapsedMs >= 90, `index load should wait for transaction lock, got ${elapsedMs} ms`);
+        assert.equal(result.source, 'rebuilt');
+    } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('loadIndex waits for the transaction lock before returning a fresh cache hit', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-cache-barrier-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const transactionLockPath = getReviewArtifactTransactionLockPath(reviewsDir);
+    let cleanupChild: (() => Promise<void>) | null = null;
+
+    try {
+        writeReviewArtifactText(path.join(reviewsDir, 'T-016-code.md'), 'REVIEW PASSED\n');
+        const warmCache = loadIndex(reviewsDir);
+        assert.equal(warmCache.source, 'cache');
+
+        cleanupChild = await holdReviewArtifactLock(transactionLockPath, 140);
+        const startedAt = Date.now();
+        const result = loadIndex(reviewsDir);
+        const elapsedMs = Date.now() - startedAt;
+
+        assert.ok(elapsedMs >= 90, `cache-hit index load should wait for transaction lock, got ${elapsedMs} ms`);
+        assert.equal(result.source, 'cache');
+    } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('loadIndex read-only mode does not create a transaction lock when no transaction is active', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-readonly-index-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const transactionLockPath = getReviewArtifactTransactionLockPath(reviewsDir);
+
+    try {
+        const result = loadIndex(reviewsDir, { readOnly: true });
+
+        assert.equal(result.source, 'rebuilt');
+        assert.equal(fs.existsSync(transactionLockPath), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('loadIndex uses the in-process pre-transaction snapshot during an async review transaction', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-snapshot-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const existingPath = path.join(reviewsDir, 'T-019-code.md');
+    const newPath = path.join(reviewsDir, 'T-020-code.md');
+
+    try {
+        writeReviewArtifactText(existingPath, 'old review\n');
+        loadIndex(reviewsDir);
+
+        await writeReviewArtifactsWithRollback([
+            {
+                artifactPath: newPath,
+                contentType: 'text',
+                content: 'new review\n'
+            }
+        ], async () => {
+            const duringTransaction = loadIndex(reviewsDir).index;
+            assert.equal(duringTransaction.entries.some((entry) => entry.fileName === 'T-019-code.md'), true);
+            assert.equal(duringTransaction.entries.some((entry) => entry.fileName === 'T-020-code.md'), false);
+            return 'done';
+        });
+
+        const committed = loadIndex(reviewsDir).index;
+        assert.equal(committed.entries.some((entry) => entry.fileName === 'T-020-code.md'), true);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('withReviewArtifactReadBarrier waits for a live external review transaction lock', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-read-barrier-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const transactionLockPath = getReviewArtifactTransactionLockPath(reviewsDir);
+    let cleanupChild: (() => Promise<void>) | null = null;
+
+    try {
+        cleanupChild = await holdReviewArtifactLock(transactionLockPath, 120);
+        const startedAt = Date.now();
+
+        const result = withReviewArtifactReadBarrier(reviewsDir, () => 'read-complete', {
+            lockTimeoutMs: 1_000,
+            lockRetryMs: 10
+        });
+
+        assert.equal(result, 'read-complete');
+        assert.ok(Date.now() - startedAt >= 90);
+    } finally {
+        if (cleanupChild) {
+            await cleanupChild();
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactsWithRollback rolls back all artifacts and refreshes the index after callback failure', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-rollback-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const existingPath = path.join(reviewsDir, 'T-013-code.md');
+    const newPath = path.join(reviewsDir, 'T-013-code-receipt.json');
+
+    try {
+        writeReviewArtifactText(existingPath, 'old review\n');
+
+        await assert.rejects(
+            () => writeReviewArtifactsWithRollback([
+                {
+                    artifactPath: existingPath,
+                    contentType: 'text',
+                    content: 'new review\n'
+                },
+                {
+                    artifactPath: newPath,
+                    contentType: 'json',
+                    payload: { task_id: 'T-013' }
+                }
+            ], async () => {
+                throw new Error('simulated telemetry failure');
+            }),
+            /simulated telemetry failure/
+        );
+
+        assert.equal(fs.readFileSync(existingPath, 'utf8'), 'old review\n');
+        assert.equal(fs.existsSync(newPath), false);
+        const index = loadIndex(reviewsDir).index;
+        assert.ok(index.entries.some((entry) => entry.fileName === 'T-013-code.md'));
+        assert.equal(index.entries.some((entry) => entry.fileName === 'T-013-code-receipt.json'), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactsWithRollback does not publish new index entries before afterWrites succeeds', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-index-commit-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const newPath = path.join(reviewsDir, 'T-017-code.md');
+
+    try {
+        loadIndex(reviewsDir);
+        const indexPath = resolveIndexPath(reviewsDir);
+
+        await writeReviewArtifactsWithRollback([
+            {
+                artifactPath: newPath,
+                contentType: 'text',
+                content: 'REVIEW PASSED\n'
+            }
+        ], async () => {
+            const duringTransactionIndex = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as {
+                entries: Array<{ fileName: string }>;
+            };
+            assert.equal(
+                duringTransactionIndex.entries.some((entry) => entry.fileName === 'T-017-code.md'),
+                false
+            );
+            return 'done';
+        });
+
+        const committedIndex = loadIndex(reviewsDir).index;
+        assert.equal(
+            committedIndex.entries.some((entry) => entry.fileName === 'T-017-code.md'),
+            true
+        );
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactsWithRollback rolls back visible artifacts when commit index persistence fails', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-index-failure-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const newPath = path.join(reviewsDir, 'T-018-code.md');
+    const indexLockPath = resolveIndexLockPath(reviewsDir);
+    let lockHandle: ReturnType<typeof acquireFilesystemLock>['handle'] | null = null;
+
+    try {
+        loadIndex(reviewsDir);
+        lockHandle = acquireFilesystemLock(indexLockPath, {
+            timeoutMs: 500,
+            retryMs: 10
+        }).handle;
+
+        await assert.rejects(
+            () => writeReviewArtifactsWithRollback([
+                {
+                    artifactPath: newPath,
+                    contentType: 'text',
+                    content: 'REVIEW PASSED\n'
+                }
+            ], async () => 'after-writes-ok', { lockTimeoutMs: 75, lockRetryMs: 10 }),
+            /Review artifact transaction index commit failed/
+        );
+
+        assert.equal(fs.existsSync(newPath), false);
+    } finally {
+        if (lockHandle) {
+            releaseFilesystemLock(lockHandle);
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('writeReviewArtifactsWithRollback uses an async transaction lock for concurrent async callbacks', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-transaction-async-lock-'));
+    const reviewsDir = createReviewsDir(tempDir);
+    const firstPath = path.join(reviewsDir, 'T-014-code.md');
+    const secondPath = path.join(reviewsDir, 'T-015-code.md');
+    let firstCallbackStarted = false;
+    let secondCallbackStarted = false;
+
+    try {
+        const first = writeReviewArtifactsWithRollback([
+            {
+                artifactPath: firstPath,
+                contentType: 'text',
+                content: 'first review\n'
+            }
+        ], async () => {
+            firstCallbackStarted = true;
+            await delay(120);
+            return 'first';
+        }, { lockTimeoutMs: 1_000, lockRetryMs: 10 });
+
+        await delay(20);
+
+        const second = writeReviewArtifactsWithRollback([
+            {
+                artifactPath: secondPath,
+                contentType: 'text',
+                content: 'second review\n'
+            }
+        ], async () => {
+            secondCallbackStarted = true;
+            return 'second';
+        }, { lockTimeoutMs: 1_000, lockRetryMs: 10 });
+
+        const progressProbe = Promise.race([
+            first.then(() => 'first-complete'),
+            delay(250).then(() => 'timeout')
+        ]);
+        assert.equal(await progressProbe, 'first-complete');
+
+        const results = await Promise.all([first, second]);
+        assert.deepEqual(results, ['first', 'second']);
+        assert.equal(firstCallbackStarted, true);
+        assert.equal(secondCallbackStarted, true);
+        assert.equal(fs.readFileSync(firstPath, 'utf8'), 'first review\n');
+        assert.equal(fs.readFileSync(secondPath, 'utf8'), 'second review\n');
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

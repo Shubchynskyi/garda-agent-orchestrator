@@ -72,6 +72,7 @@ import {
     type ProjectMemoryImpactLifecycleEvidence
 } from './project-memory-impact';
 import { resolveReviewExecutionPolicyModeFromPreflight } from '../core/review-execution-policy';
+import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 
 export { detectCodeChanged, preflightRequiresAnyReview } from './preflight-code-change';
 
@@ -420,88 +421,90 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     }
     errors.push(...runtimeIdentity.violations);
 
-    for (const [reviewKey] of REVIEW_CONTRACTS) {
-        const required = !!requiredReviews[reviewKey];
-        if (!required) {
-            continue;
-        }
-        const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
-        const recordedReviewContextPath = findLatestRecordedReviewContextPath(orderedEvents, reviewKey);
-        const reviewContextPath = resolveCanonicalReviewContextPath({
-            reviewsRoot,
-            taskId: resolvedTaskId,
-            reviewType: reviewKey,
-            explicitPath: recordedReviewContextPath
-        });
-        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-        const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
-
-        if (!artifactExists) {
-            if (required) {
-                errors.push(`Required review artifact not found: ${normalizePath(artifactPath)}`);
+    withReviewArtifactReadBarrier(reviewsRoot, () => {
+        for (const [reviewKey] of REVIEW_CONTRACTS) {
+            const required = !!requiredReviews[reviewKey];
+            if (!required) {
+                continue;
             }
-            continue;
-        }
+            const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
+            const recordedReviewContextPath = findLatestRecordedReviewContextPath(orderedEvents, reviewKey);
+            const reviewContextPath = resolveCanonicalReviewContextPath({
+                reviewsRoot,
+                taskId: resolvedTaskId,
+                reviewType: reviewKey,
+                explicitPath: recordedReviewContextPath
+            });
+            const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+            const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
 
-        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
-        let reviewContext: Record<string, unknown> | null = null;
-        let receipt: ReviewReceipt | null = null;
-        if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
-            try {
-                const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-                if (parsedReviewContext && typeof parsedReviewContext === 'object' && !Array.isArray(parsedReviewContext)) {
-                    reviewContext = parsedReviewContext as Record<string, unknown>;
+            if (!artifactExists) {
+                if (required) {
+                    errors.push(`Required review artifact not found: ${normalizePath(artifactPath)}`);
+                }
+                continue;
+            }
+
+            const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+            let reviewContext: Record<string, unknown> | null = null;
+            let receipt: ReviewReceipt | null = null;
+            if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
+                try {
+                    const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+                    if (parsedReviewContext && typeof parsedReviewContext === 'object' && !Array.isArray(parsedReviewContext)) {
+                        reviewContext = parsedReviewContext as Record<string, unknown>;
+                        if (required) {
+                            errors.push(...getReviewContextContractViolations({
+                                contextPath: reviewContextPath,
+                                reviewContext,
+                                expectedTaskId: resolvedTaskId,
+                                expectedReviewType: reviewKey,
+                                expectedPreflightPath: validatedPreflight.preflight_path,
+                                expectedPreflightSha256: validatedPreflight.preflight_hash,
+                                requireReviewType: true,
+                                requireTaskId: true,
+                                requirePreflightPath: true,
+                                requirePreflightSha256: true,
+                                ...buildReviewContextPreflightDiffExpectations(validatedPreflight.preflight, reviewKey)
+                            }));
+                        }
+                    }
+                } catch {
                     if (required) {
-                        errors.push(...getReviewContextContractViolations({
-                            contextPath: reviewContextPath,
-                            reviewContext,
-                            expectedTaskId: resolvedTaskId,
-                            expectedReviewType: reviewKey,
-                            expectedPreflightPath: validatedPreflight.preflight_path,
-                            expectedPreflightSha256: validatedPreflight.preflight_hash,
-                            requireReviewType: true,
-                            requireTaskId: true,
-                            requirePreflightPath: true,
-                            requirePreflightSha256: true,
-                            ...buildReviewContextPreflightDiffExpectations(validatedPreflight.preflight, reviewKey)
-                        }));
+                        errors.push(`Required review-context artifact is invalid JSON: ${normalizePath(reviewContextPath)}`);
                     }
                 }
-            } catch {
-                if (required) {
-                    errors.push(`Required review-context artifact is invalid JSON: ${normalizePath(reviewContextPath)}`);
-                }
+            } else if (required) {
+                errors.push(`Required review-context artifact not found: ${normalizePath(reviewContextPath)}`);
             }
-        } else if (required) {
-            errors.push(`Required review-context artifact not found: ${normalizePath(reviewContextPath)}`);
-        }
-        if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
-            try {
-                const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-                if (parsedReceipt && typeof parsedReceipt === 'object' && !Array.isArray(parsedReceipt)) {
-                    receipt = parsedReceipt as ReviewReceipt;
+            if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
+                try {
+                    const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+                    if (parsedReceipt && typeof parsedReceipt === 'object' && !Array.isArray(parsedReceipt)) {
+                        receipt = parsedReceipt as ReviewReceipt;
+                    }
+                } catch {
+                    if (required) {
+                        errors.push(`Required review receipt is invalid JSON: ${normalizePath(receiptPath)}`);
+                    }
                 }
-            } catch {
-                if (required) {
-                    errors.push(`Required review receipt is invalid JSON: ${normalizePath(receiptPath)}`);
-                }
+            } else if (required) {
+                errors.push(`Required review receipt not found: ${normalizePath(receiptPath)}`);
             }
-        } else if (required) {
-            errors.push(`Required review receipt not found: ${normalizePath(receiptPath)}`);
+            const findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
+            reviewArtifacts[reviewKey] = {
+                path: normalizePath(artifactPath),
+                content: artifactContent,
+                reviewContextPath: normalizePath(reviewContextPath),
+                reviewContext,
+                receipt,
+                findings_evidence: findingsEvidence
+            };
+            if (Array.isArray(findingsEvidence.violations) && findingsEvidence.violations.length > 0) {
+                errors.push(...findingsEvidence.violations);
+            }
         }
-        const findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
-        reviewArtifacts[reviewKey] = {
-            path: normalizePath(artifactPath),
-            content: artifactContent,
-            reviewContextPath: normalizePath(reviewContextPath),
-            reviewContext,
-            receipt,
-            findings_evidence: findingsEvidence
-        };
-        if (Array.isArray(findingsEvidence.violations) && findingsEvidence.violations.length > 0) {
-            errors.push(...findingsEvidence.violations);
-        }
-    }
+    });
 
     // T-003: review-skill invocation evidence for code-changing tasks
     const reviewSkillEvidence = validateReviewSkillEvidence(

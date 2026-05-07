@@ -6,6 +6,7 @@ import {
 } from '../../exit-codes';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../../gate-runtime/token-telemetry';
 import { applyOutputFilterProfile } from '../../../gate-runtime/output-filters';
+import { withReviewArtifactReadBarrier } from '../../../gate-runtime/review-artifacts';
 import { type ReviewReceipt } from '../../../gate-runtime/review-context';
 import {
     emitMandatoryReviewPhaseStartedEvent,
@@ -502,59 +503,61 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         receipt?: ReviewReceipt | null;
     }> = {};
     const artifactReviewsRoot = artifactEvidence.reviews_root ? path.resolve(artifactEvidence.reviews_root) : '';
-    for (const entry of artifactEvidence.checked) {
-        if (entry.present && entry.path) {
-            try {
-                let reviewContext: Record<string, unknown> | undefined;
-                let reviewContextPath: string | null = null;
-                const artifactPath = path.resolve(entry.path);
-                if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, artifactPath)) {
-                    errors.push(formatReviewArtifactPathEscapeViolation('Review artifact path', artifactPath));
-                    continue;
-                }
-                const artifactSha256 = gateHelpers.fileSha256(artifactPath);
-                const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-                let receipt: ReviewReceipt | null = null;
-                if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
-                    if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, receiptPath)) {
-                        errors.push(formatReviewArtifactPathEscapeViolation('Review receipt path', receiptPath));
+    withReviewArtifactReadBarrier(artifactReviewsRoot, () => {
+        for (const entry of artifactEvidence.checked) {
+            if (entry.present && entry.path) {
+                try {
+                    let reviewContext: Record<string, unknown> | undefined;
+                    let reviewContextPath: string | null = null;
+                    const artifactPath = path.resolve(entry.path);
+                    if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, artifactPath)) {
+                        errors.push(formatReviewArtifactPathEscapeViolation('Review artifact path', artifactPath));
                         continue;
-                    } else {
-                        try {
-                            receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
-                        } catch {
-                            receipt = null;
+                    }
+                    const artifactSha256 = gateHelpers.fileSha256(artifactPath);
+                    const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+                    let receipt: ReviewReceipt | null = null;
+                    if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
+                        if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, receiptPath)) {
+                            errors.push(formatReviewArtifactPathEscapeViolation('Review receipt path', receiptPath));
+                            continue;
+                        } else {
+                            try {
+                                receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
+                            } catch {
+                                receipt = null;
+                            }
                         }
                     }
-                }
-                if (entry.review_context_present && entry.review_context_path) {
-                    reviewContextPath = path.resolve(entry.review_context_path);
-                    if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, reviewContextPath)) {
-                        errors.push(formatReviewArtifactPathEscapeViolation('Review context artifact path', reviewContextPath));
-                        reviewContextPath = null;
-                    } else if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
-                        const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-                        if (isPlainObject(parsedReviewContext)) {
-                            reviewContext = parsedReviewContext;
+                    if (entry.review_context_present && entry.review_context_path) {
+                        reviewContextPath = path.resolve(entry.review_context_path);
+                        if (!isReviewArtifactPathInsideRoots(repoRoot, artifactReviewsRoot, reviewContextPath)) {
+                            errors.push(formatReviewArtifactPathEscapeViolation('Review context artifact path', reviewContextPath));
+                            reviewContextPath = null;
+                        } else if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
+                            const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
+                            if (isPlainObject(parsedReviewContext)) {
+                                reviewContext = parsedReviewContext;
+                            }
                         }
                     }
+                    reviewArtifactsMap[entry.review] = {
+                        path: artifactPath,
+                        content: fs.readFileSync(artifactPath, 'utf8'),
+                        reviewContext,
+                        reviewContextPath,
+                        reviewContextSha256: reviewContextPath && fs.existsSync(reviewContextPath)
+                            ? gateHelpers.fileSha256(reviewContextPath)
+                            : null,
+                        artifactSha256,
+                        receipt
+                    };
+                } catch (e) {
+                    // ignore
                 }
-                reviewArtifactsMap[entry.review] = {
-                    path: artifactPath,
-                    content: fs.readFileSync(artifactPath, 'utf8'),
-                    reviewContext,
-                    reviewContextPath,
-                    reviewContextSha256: reviewContextPath && fs.existsSync(reviewContextPath)
-                        ? gateHelpers.fileSha256(reviewContextPath)
-                        : null,
-                    artifactSha256,
-                    receipt
-                };
-            } catch (e) {
-                // ignore
             }
         }
-    }
+    });
 
     const runtimeIdentity = resolveRuntimeReviewerIdentity({
         repoRoot,

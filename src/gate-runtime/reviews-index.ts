@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
-import { withFilesystemLock } from './task-events-locking';
+import { inspectFilesystemLock, withFilesystemLock } from './task-events-locking';
 
 // Bounded metadata cache for runtime/reviews artifacts.
 // Avoids full readdirSync scans growing linearly with historical
@@ -9,10 +9,11 @@ import { withFilesystemLock } from './task-events-locking';
 // changes or when the index is stale.
 
 const INDEX_FILE_NAME = 'reviews-index.json';
-const DEFAULT_INDEX_LOCK_TIMEOUT_MS = 1000;
+const DEFAULT_INDEX_LOCK_TIMEOUT_MS = 5000;
 const DEFAULT_INDEX_LOCK_RETRY_MS = 25;
 const DEFAULT_INDEX_LOCK_STALE_MS = 30 * 1000;
 const SELF_WRITE_MARKER_TOLERANCE_MS = 0.01;
+const inProcessReviewTransactionSnapshots = new Map<string, { depth: number; index: ReviewsIndex }>();
 
 // Known artifact type suffixes used to split task-id from artifact-type.
 // Ordered longest-first so greedy suffix matching selects the right boundary.
@@ -79,6 +80,34 @@ export interface ReviewsIndex {
 export interface ReviewsIndexLoadResult {
     index: ReviewsIndex;
     source: 'cache' | 'rebuilt';
+}
+
+export type ReviewsIndexMutationStatus =
+    | 'updated'
+    | 'skipped_unparseable_name'
+    | 'skipped_missing_artifact'
+    | 'failed';
+
+export interface ReviewsIndexMutationResult {
+    status: ReviewsIndexMutationStatus;
+    index_path: string;
+    file_name?: string;
+    error?: string;
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function cloneReviewsIndex(index: ReviewsIndex): ReviewsIndex {
+    return {
+        version: index.version,
+        directoryMtimeMs: index.directoryMtimeMs,
+        ...(typeof index.directoryCtimeMs === 'number' ? { directoryCtimeMs: index.directoryCtimeMs } : {}),
+        ...(typeof index.directoryEntryCount === 'number' ? { directoryEntryCount: index.directoryEntryCount } : {}),
+        generatedAtMs: index.generatedAtMs,
+        entries: index.entries.map((entry) => ({ ...entry }))
+    };
 }
 
 function getDirectoryTimestampSnapshot(dirPath: string): { mtimeMs: number; ctimeMs: number } {
@@ -306,11 +335,81 @@ export function resolveIndexLockPath(reviewsDir: string): string {
     return path.join(path.dirname(reviewsDir), '.reviews-index.lock');
 }
 
+export function resolveReviewTransactionLockPath(reviewsDir: string): string {
+    return path.join(path.dirname(reviewsDir), '.reviews-transaction.lock');
+}
+
+export function beginInProcessReviewTransactionSnapshot(reviewsDir: string): () => void {
+    const lockPath = resolveReviewTransactionLockPath(reviewsDir);
+    const existing = inProcessReviewTransactionSnapshots.get(lockPath);
+    if (existing) {
+        existing.depth += 1;
+        return () => {
+            const current = inProcessReviewTransactionSnapshots.get(lockPath);
+            if (!current) return;
+            current.depth -= 1;
+            if (current.depth <= 0) {
+                inProcessReviewTransactionSnapshots.delete(lockPath);
+            }
+        };
+    }
+
+    inProcessReviewTransactionSnapshots.set(lockPath, {
+        depth: 1,
+        index: rebuildIndex(reviewsDir)
+    });
+    return () => {
+        const current = inProcessReviewTransactionSnapshots.get(lockPath);
+        if (!current) return;
+        current.depth -= 1;
+        if (current.depth <= 0) {
+            inProcessReviewTransactionSnapshots.delete(lockPath);
+        }
+    };
+}
+
+function getInProcessReviewTransactionSnapshot(reviewsDir: string): ReviewsIndex | null {
+    const snapshot = inProcessReviewTransactionSnapshots.get(resolveReviewTransactionLockPath(reviewsDir));
+    return snapshot ? cloneReviewsIndex(snapshot.index) : null;
+}
+
+export function currentProcessOwnsReviewTransactionLock(reviewsDir: string): boolean {
+    const inspection = inspectFilesystemLock(resolveReviewTransactionLockPath(reviewsDir), {
+        staleMs: DEFAULT_INDEX_LOCK_STALE_MS
+    });
+    return inspection.exists
+        && inspection.metadata.pid === process.pid
+        && inspection.ownerHostMatchesCurrent !== false
+        && inspection.ownerAlive !== false;
+}
+
 function withIndexUpdateLock<T>(reviewsDir: string, callback: () => T): T {
     const { result } = withFilesystemLock(resolveIndexLockPath(reviewsDir), {
         timeoutMs: DEFAULT_INDEX_LOCK_TIMEOUT_MS,
         retryMs: DEFAULT_INDEX_LOCK_RETRY_MS,
-        staleMs: DEFAULT_INDEX_LOCK_STALE_MS
+        staleMs: DEFAULT_INDEX_LOCK_STALE_MS,
+        ownerLabel: 'reviews-index'
+    }, callback);
+    return result;
+}
+
+function withReviewTransactionReadBarrier<T>(
+    reviewsDir: string,
+    callback: () => T,
+    options: { readOnly?: boolean } = {}
+): T {
+    if (currentProcessOwnsReviewTransactionLock(reviewsDir)) {
+        return callback();
+    }
+    const lockPath = resolveReviewTransactionLockPath(reviewsDir);
+    if (options.readOnly && !fs.existsSync(lockPath)) {
+        return callback();
+    }
+    const { result } = withFilesystemLock(resolveReviewTransactionLockPath(reviewsDir), {
+        timeoutMs: DEFAULT_INDEX_LOCK_TIMEOUT_MS,
+        retryMs: DEFAULT_INDEX_LOCK_RETRY_MS,
+        staleMs: DEFAULT_INDEX_LOCK_STALE_MS,
+        ownerLabel: 'reviews-index-read-barrier'
     }, callback);
     return result;
 }
@@ -325,85 +424,146 @@ export function loadIndex(
     reviewsDir: string,
     options: { maxStalenessMs?: number; forceRebuild?: boolean; readOnly?: boolean } = {}
 ): ReviewsIndexLoadResult {
-    const indexPath = resolveIndexPath(reviewsDir);
-
-    if (!options.forceRebuild && !isIndexStale(indexPath, reviewsDir, options.maxStalenessMs)) {
-        const cached = readIndexFile(indexPath);
-        if (cached) {
-            return { index: cached, source: 'cache' };
+    if (currentProcessOwnsReviewTransactionLock(reviewsDir)) {
+        const transactionSnapshot = getInProcessReviewTransactionSnapshot(reviewsDir);
+        if (transactionSnapshot) {
+            return {
+                index: transactionSnapshot,
+                source: 'cache'
+            };
         }
     }
 
-    if (options.readOnly) {
-        return { index: rebuildIndex(reviewsDir), source: 'rebuilt' };
-    }
+    return withReviewTransactionReadBarrier(reviewsDir, () => {
+        const indexPath = resolveIndexPath(reviewsDir);
 
-    return withIndexUpdateLock(reviewsDir, () => {
         if (!options.forceRebuild && !isIndexStale(indexPath, reviewsDir, options.maxStalenessMs)) {
             const cached = readIndexFile(indexPath);
             if (cached) {
-                return { index: cached, source: 'cache' as const };
+                return { index: cached, source: 'cache' };
             }
         }
 
-        const index = rebuildIndex(reviewsDir);
-        try {
-            writeIndex(indexPath, index);
-        } catch {
-            // Non-fatal: return the fresh index even if we can't persist it
+        if (options.readOnly) {
+            return {
+                index: rebuildIndex(reviewsDir),
+                source: 'rebuilt' as const
+            };
         }
-        return { index, source: 'rebuilt' as const };
-    });
+
+        return withIndexUpdateLock(reviewsDir, () => {
+            if (!options.forceRebuild && !isIndexStale(indexPath, reviewsDir, options.maxStalenessMs)) {
+                const cached = readIndexFile(indexPath);
+                if (cached) {
+                    return { index: cached, source: 'cache' as const };
+                }
+            }
+
+            const index = rebuildIndex(reviewsDir);
+            try {
+                writeIndex(indexPath, index);
+            } catch {
+                // Non-fatal: return the fresh index even if we can't persist it
+            }
+            return { index, source: 'rebuilt' as const };
+        });
+    }, { readOnly: options.readOnly === true });
+}
+
+export function rebuildAndPersistIndex(reviewsDir: string): ReviewsIndexMutationResult {
+    const indexPath = resolveIndexPath(reviewsDir);
+    try {
+        return withIndexUpdateLock(reviewsDir, () => {
+            const index = rebuildIndex(reviewsDir);
+            writeIndex(indexPath, index);
+            return {
+                status: 'updated' as const,
+                index_path: indexPath
+            };
+        });
+    } catch (error: unknown) {
+        return {
+            status: 'failed',
+            index_path: indexPath,
+            error: getErrorMessage(error)
+        };
+    }
 }
 
 /**
  * Add or update a single entry in the index without a full rebuild.
  * If the index doesn't exist or is corrupt, a full rebuild is triggered.
  */
-export function upsertEntry(reviewsDir: string, fileName: string): void {
-    const parsed = parseReviewArtifactFileName(fileName);
-    if (!parsed) return;
-
+export function upsertEntry(reviewsDir: string, fileName: string): ReviewsIndexMutationResult {
     const indexPath = resolveIndexPath(reviewsDir);
-    withIndexUpdateLock(reviewsDir, () => {
-        const fullPath = path.join(reviewsDir, fileName);
-        let stat: fs.Stats;
-        try {
-            stat = fs.statSync(fullPath);
-            if (!stat.isFile()) return;
-        } catch {
-            return;
-        }
+    const parsed = parseReviewArtifactFileName(fileName);
+    if (!parsed) {
+        return {
+            status: 'skipped_unparseable_name',
+            index_path: indexPath,
+            file_name: fileName
+        };
+    }
 
-        let index = readIndexFile(indexPath);
-
-        if (!index) {
-            index = rebuildIndex(reviewsDir);
-        } else {
-            const existingIdx = index.entries.findIndex(e => e.fileName === fileName);
-            const entry: ReviewsIndexEntry = {
-                fileName,
-                taskId: parsed.taskId,
-                artifactType: parsed.artifactType,
-                mtimeMs: stat.mtimeMs,
-                sizeBytes: stat.size
-            };
-
-            if (existingIdx >= 0) {
-                index.entries[existingIdx] = entry;
-            } else {
-                index.entries.push(entry);
+    try {
+        return withIndexUpdateLock(reviewsDir, () => {
+            const fullPath = path.join(reviewsDir, fileName);
+            let stat: fs.Stats;
+            try {
+                stat = fs.statSync(fullPath);
+                if (!stat.isFile()) {
+                    return {
+                        status: 'skipped_missing_artifact' as const,
+                        index_path: indexPath,
+                        file_name: fileName
+                    };
+                }
+            } catch {
+                return {
+                    status: 'skipped_missing_artifact' as const,
+                    index_path: indexPath,
+                    file_name: fileName
+                };
             }
 
-            refreshIndexDirectoryMetadata(index, reviewsDir);
-        }
+            let index = readIndexFile(indexPath);
 
-        try {
+            if (!index) {
+                index = rebuildIndex(reviewsDir);
+            } else {
+                const existingIdx = index.entries.findIndex(e => e.fileName === fileName);
+                const entry: ReviewsIndexEntry = {
+                    fileName,
+                    taskId: parsed.taskId,
+                    artifactType: parsed.artifactType,
+                    mtimeMs: stat.mtimeMs,
+                    sizeBytes: stat.size
+                };
+
+                if (existingIdx >= 0) {
+                    index.entries[existingIdx] = entry;
+                } else {
+                    index.entries.push(entry);
+                }
+
+                refreshIndexDirectoryMetadata(index, reviewsDir);
+            }
+
             writeIndex(indexPath, index);
-        } catch {
-            // Non-fatal
-        }
-    });
+            return {
+                status: 'updated' as const,
+                index_path: indexPath,
+                file_name: fileName
+            };
+        });
+    } catch (error: unknown) {
+        return {
+            status: 'failed',
+            index_path: indexPath,
+            file_name: fileName,
+            error: getErrorMessage(error)
+        };
+    }
 }
 
 /**
