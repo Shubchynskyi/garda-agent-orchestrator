@@ -5,6 +5,7 @@ import {
     resolveAgentInitStateRelativePathForTarget,
     resolveInitAnswersRelativePathForTarget
 } from '../core/constants';
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../core/project-memory-rollout';
 import { pathExists, readTextFile } from '../core/filesystem';
 import { isPathInsideRoot } from '../core/paths';
 import { validateInitAnswers } from '../schemas/init-answers';
@@ -615,7 +616,7 @@ function buildPendingCheckpointLine(snapshot: StatusSnapshot): string | null {
         case 'ORDINARY_DOC_PATHS_PENDING':
             return '  Pending checkpoint: Confirm ordinary document paths during AGENT_INIT_PROMPT flow';
         case 'PROJECT_MEMORY_PENDING':
-            return '  Pending checkpoint: Bootstrap and validate project memory during AGENT_INIT_PROMPT flow';
+            return '  Pending checkpoint: Initialize or refresh Garda project memory during AGENT_INIT_PROMPT flow';
         case 'PROJECT_COMMANDS_PENDING':
             return `  Missing project commands: ${snapshot.missingProjectCommands.length}`;
         case 'VALIDATION_PENDING':
@@ -835,6 +836,9 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     const pendingCheckpointLine = buildPendingCheckpointLine(snapshot);
     if (pendingCheckpointLine) {
         lines.push(pendingCheckpointLine);
+    }
+    if (snapshot.agentInitializationPendingReason === 'PROJECT_MEMORY_PENDING') {
+        lines.push(`ProjectMemoryInitRefreshPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`);
     }
     if (snapshot.initAnswersError) {
         lines.push(`InitAnswersStatus: INVALID (${snapshot.initAnswersError})`);

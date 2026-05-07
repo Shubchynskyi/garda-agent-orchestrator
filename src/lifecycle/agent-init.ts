@@ -327,9 +327,13 @@ function bootstrapProjectMemory(bundleRoot: string, timestampIso: string) {
         ...validation.missingFiles
     ]);
 
+    const initialized = missingOrUnseededFiles.size === 0;
+    const validated = validation.passed && validation.issues.length === 0;
+
     return {
-        initialized: missingOrUnseededFiles.size === 0,
-        validated: validation.passed && validation.issues.length === 0,
+        // Contract: initialized is file presence after seed/preserve; validated is strict content readiness.
+        initialized,
+        validated,
         mode: validation.mode,
         dir: buildProjectMemoryLiveRelativePath(),
         readFirst: PROJECT_MEMORY_READ_FIRST_FILE_NAMES.map((fileName) => buildProjectMemoryLiveRelativePath(fileName)),

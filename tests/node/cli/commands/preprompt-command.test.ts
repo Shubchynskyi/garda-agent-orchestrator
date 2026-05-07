@@ -7,6 +7,7 @@ import * as childProcess from 'node:child_process';
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
 import { COMMAND_SUMMARY } from '../../../../src/cli/commands/cli-helpers';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { computeOptionalSkillTaskTextSha256 } from '../../../../src/runtime/optional-skill-selection';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
 import {
@@ -127,6 +128,47 @@ function seedProjectMemoryFixture(repoRoot: string): void {
     );
 }
 
+function seedProjectMemoryAgentInitState(
+    repoRoot: string,
+    overrides: Record<string, unknown> = {}
+): void {
+    const statePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'agent-init-state.json');
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(
+        statePath,
+        JSON.stringify({
+            Version: 1,
+            UpdatedAt: '2026-01-01T00:00:00.000Z',
+            OrchestratorVersion: null,
+            AssistantLanguage: 'English',
+            SourceOfTruth: 'Codex',
+            AssistantLanguageConfirmed: true,
+            ActiveAgentFilesConfirmed: true,
+            ProjectRulesUpdated: true,
+            SkillsPromptCompleted: true,
+            OrdinaryDocPathsConfirmed: true,
+            OrdinaryDocPaths: ['CHANGELOG.md'],
+            VerificationPassed: true,
+            ManifestValidationPassed: true,
+            ActiveAgentFiles: ['AGENTS.md'],
+            LastSeededFullSuiteCommand: 'npm test',
+            ProjectMemoryInitialized: true,
+            ProjectMemoryValidated: true,
+            ProjectMemoryMode: 'strict',
+            ProjectMemoryDir: 'live/docs/project-memory',
+            ProjectMemoryReadFirst: [
+                'live/docs/project-memory/README.md',
+                'live/docs/project-memory/compact.md'
+            ],
+            ProjectMemorySummaryRule: 'live/docs/agent-rules/15-project-memory.md',
+            ProjectMemoryBootstrapReport: 'runtime/project-memory/bootstrap-report.json',
+            ProjectMemoryWarnings: [],
+            ...overrides
+        }, null, 2),
+        'utf8'
+    );
+}
+
 test('COMMAND_SUMMARY includes preprompt', () => {
     assert.equal(
         COMMAND_SUMMARY.find((entry) => entry[0] === 'preprompt')?.[1],
@@ -162,6 +204,7 @@ test('preprompt task --json returns read-only startup context for a queued task'
         assert.ok(Array.isArray(projectMemory.read_first));
         assert.ok((projectMemory.read_first as string[]).some((entry) => entry.endsWith('/README.md')));
         assert.ok((projectMemory.warnings as string[]).some((entry) => entry.includes('agent-init')));
+        assert.equal(projectMemory.init_refresh_prompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
         assert.equal((payload.task as Record<string, unknown>).id, taskId);
         assert.equal((payload.commands as Record<string, unknown>).startup_pending, true);
         assert.equal((payload.commands as Record<string, unknown>).post_implementation_sequence_available, false);
@@ -185,6 +228,7 @@ test('preprompt task --json exposes project-memory read-first and focused sugges
         seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
         seedInitAnswers(repoRoot, 'Codex');
         seedProjectMemoryFixture(repoRoot);
+        seedProjectMemoryAgentInitState(repoRoot);
         const taskPath = path.join(repoRoot, 'TASK.md');
         fs.writeFileSync(
             taskPath,
@@ -220,6 +264,38 @@ test('preprompt task --json exposes project-memory read-first and focused sugges
     }
 });
 
+test('preprompt task --json recommends canonical project-memory prompt while agent-init state is pending', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-442';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        seedInitAnswers(repoRoot, 'Codex');
+        seedProjectMemoryFixture(repoRoot);
+        seedProjectMemoryAgentInitState(repoRoot, {
+            ProjectMemoryInitialized: true,
+            ProjectMemoryValidated: false
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const projectMemory = payload.project_memory as Record<string, unknown>;
+        const initializationState = projectMemory.initialization_state as Record<string, unknown>;
+        assert.equal(projectMemory.status, 'partial');
+        assert.equal(projectMemory.init_refresh_prompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
+        assert.equal(initializationState.initialized, true);
+        assert.equal(initializationState.validated, false);
+        assert.equal(initializationState.pending, true);
+        assert.ok((projectMemory.warnings as string[]).some((entry) => entry.includes(PROJECT_MEMORY_INIT_REFRESH_PROMPT)));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('preprompt task project-memory suggestions vary by task area', async () => {
     const repoRoot = createTempRepo();
     const taskId = 'T-403';
@@ -227,6 +303,7 @@ test('preprompt task project-memory suggestions vary by task area', async () => 
         seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
         seedInitAnswers(repoRoot, 'Codex');
         seedProjectMemoryFixture(repoRoot);
+        seedProjectMemoryAgentInitState(repoRoot);
         const taskPath = path.join(repoRoot, 'TASK.md');
         fs.writeFileSync(
             taskPath,
@@ -261,6 +338,7 @@ test('preprompt task text output includes ProjectMemoryReadFirst', async () => {
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
         seedInitAnswers(repoRoot, 'Codex');
         seedProjectMemoryFixture(repoRoot);
+        seedProjectMemoryAgentInitState(repoRoot);
 
         const result = await runCliWithCapturedOutput(
             ['preprompt', 'task', '--task-id', taskId],
@@ -271,6 +349,7 @@ test('preprompt task text output includes ProjectMemoryReadFirst', async () => {
         const output = result.logs.join('\n');
         assert.ok(output.includes('ProjectMemoryReadFirst:'));
         assert.ok(output.includes('garda-agent-orchestrator/live/docs/project-memory/README.md'));
+        assert.ok(!output.includes('ProjectMemoryInitRefreshPrompt:'));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

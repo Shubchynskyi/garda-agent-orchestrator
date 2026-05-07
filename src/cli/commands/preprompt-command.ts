@@ -10,7 +10,9 @@ import {
     resolveLiveProjectMemoryDir,
     resolveProjectMemoryBootstrapReportPath
 } from '../../core/project-memory';
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../core/project-memory-rollout';
 import { getWorkspaceSnapshot } from '../../gates/compile-gate';
+import { readAgentInitStateSafe } from '../../runtime/agent-init-state';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 import {
     buildOptionalSkillSelectionArtifact,
@@ -63,6 +65,14 @@ interface ProjectMemoryBrief {
     directory: string;
     summary_rule: string;
     bootstrap_report_path: string;
+    initialization_state: {
+        state_path: string;
+        initialized: boolean;
+        validated: boolean;
+        pending: boolean;
+        error: string | null;
+    };
+    init_refresh_prompt: string | null;
     read_first: string[];
     suggested_files: string[];
     missing_files: string[];
@@ -294,7 +304,14 @@ function buildProjectMemoryBrief(
     const summaryMissing = !fileExists(summaryRulePath);
     const suggestedMissing = suggestedFiles.filter((displayPath) => fileExists(path.join(targetRoot, ...displayPath.split('/'))) === false);
     const warnings: string[] = [];
-    const agentInitPointer = 'Run `node garda-agent-orchestrator/bin/garda.js agent-init --target-root "."` or update/reinit to materialize project memory.';
+    const agentInitStateResult = readAgentInitStateSafe(targetRoot);
+    const projectMemoryInitialized = agentInitStateResult.state?.ProjectMemoryInitialized === true;
+    const projectMemoryValidated = agentInitStateResult.state?.ProjectMemoryValidated === true;
+    const projectMemoryStatePending = !projectMemoryInitialized || !projectMemoryValidated || agentInitStateResult.error !== null;
+    const agentInitPointer = [
+        `Give the agent this canonical prompt: "${PROJECT_MEMORY_INIT_REFRESH_PROMPT}"`,
+        'Then run `node garda-agent-orchestrator/bin/garda.js agent-init --target-root "."` to record initialized/validated state.'
+    ].join(' ');
 
     if (directoryMissing) {
         warnings.push(`Project memory directory is missing. ${agentInitPointer}`);
@@ -307,15 +324,30 @@ function buildProjectMemoryBrief(
     if (!directoryMissing && suggestedMissing.length > 0) {
         warnings.push(`Some task-suggested project-memory files are missing: ${suggestedMissing.join(', ')}. Inspect source evidence as fallback.`);
     }
+    if (agentInitStateResult.error) {
+        warnings.push(`Project memory agent-init state is invalid: ${agentInitStateResult.error}. ${agentInitPointer}`);
+    } else if (projectMemoryStatePending) {
+        warnings.push(`Project memory is not recorded as initialized and validated in agent-init state. ${agentInitPointer}`);
+    }
+
+    const fileStatus = directoryMissing
+        ? 'missing'
+        : (readFirstMissing.length > 0 || summaryMissing || suggestedMissing.length > 0) ? 'partial' : 'ready';
 
     return {
-        status: directoryMissing
-            ? 'missing'
-            : (readFirstMissing.length > 0 || summaryMissing || suggestedMissing.length > 0) ? 'partial' : 'ready',
+        status: fileStatus === 'ready' && projectMemoryStatePending ? 'partial' : fileStatus,
         read_strategy: 'index_first',
         directory: toPortableRepoPath(targetRoot, memoryDir),
         summary_rule: toPortableRepoPath(targetRoot, summaryRulePath),
         bootstrap_report_path: toPortableRepoPath(targetRoot, bootstrapReportPath),
+        initialization_state: {
+            state_path: toPortableRepoPath(targetRoot, agentInitStateResult.statePath),
+            initialized: projectMemoryInitialized,
+            validated: projectMemoryValidated,
+            pending: projectMemoryStatePending,
+            error: agentInitStateResult.error
+        },
+        init_refresh_prompt: projectMemoryStatePending ? PROJECT_MEMORY_INIT_REFRESH_PROMPT : null,
         read_first: readFirst,
         suggested_files: suggestedFiles,
         missing_files: [...new Set(missingFiles)],
@@ -968,6 +1000,7 @@ function formatTaskBriefText(result: Record<string, unknown>): string {
     if (projectMemory) {
         lines.push(
             `ProjectMemoryStatus: ${projectMemory.status}`,
+            `ProjectMemoryState: initialized=${projectMemory.initialization_state.initialized}; validated=${projectMemory.initialization_state.validated}; pending=${projectMemory.initialization_state.pending}`,
             `ProjectMemorySummaryRule: ${projectMemory.summary_rule}`,
             'ProjectMemoryReadFirst:',
             ...projectMemory.read_first.map((entry) => `  - ${entry}`),
@@ -977,6 +1010,9 @@ function formatTaskBriefText(result: Record<string, unknown>): string {
                 : ['  none']),
             `ProjectMemoryFallback: ${projectMemory.unknown_custom_stack_fallback}`
         );
+        if (projectMemory.init_refresh_prompt) {
+            lines.push(`ProjectMemoryInitRefreshPrompt: ${projectMemory.init_refresh_prompt}`);
+        }
         if (projectMemory.warnings.length > 0) {
             lines.push(
                 'ProjectMemoryWarnings:',

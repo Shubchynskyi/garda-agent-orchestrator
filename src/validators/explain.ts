@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { pathExists } from '../core/filesystem';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, PRIMARY_PACKAGE_NAME, resolveBundleName } from '../core/constants';
+import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../core/project-memory-rollout';
 
 export interface ExplainEntry {
     id: string;
@@ -135,8 +136,9 @@ function getExplainDatabase(): readonly ExplainEntry[] {
     {
         id: 'PROJECT_MEMORY_PENDING',
         title: 'Project memory bootstrap or validation is incomplete',
-        description: 'The agent-init state does not show project memory as initialized and validated.',
+        description: 'The agent-init state does not show project memory as initialized and validated. ProjectMemoryInitialized means required live memory files exist; ProjectMemoryValidated means strict validation passed with no missing, template-seed, placeholder-heavy, or oversized required memory files.',
         remediation: [
+            `Give your agent this canonical prompt: "${PROJECT_MEMORY_INIT_REFRESH_PROMPT}"`,
             "Re-open AGENT_INIT_PROMPT.md with your agent and enrich project-memory source files from real repository evidence.",
             `Then run '${PRIMARY_CLI_NAME} agent-init --active-agent-files "<active agent files>" --project-rules-updated yes --skills-prompted yes --ordinary-doc-paths "<confirmed ordinary doc paths>"' to seed missing memory files, regenerate 15-project-memory.md, and record bootstrap status.`,
             `Inspect ${bn}/runtime/project-memory/bootstrap-report.json for missing files or validation warnings.`

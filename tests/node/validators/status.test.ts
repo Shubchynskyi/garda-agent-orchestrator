@@ -537,7 +537,8 @@ test('getStatusSnapshot blocks ready while project memory is not initialized', (
         assert.equal(snapshot.agentInitializationComplete, false);
         assert.equal(snapshot.readyForTasks, false);
         const output = formatStatusSnapshot(snapshot);
-        assert.ok(output.includes('Bootstrap and validate project memory'));
+        assert.ok(output.includes('Initialize or refresh Garda project memory'));
+        assert.ok(output.includes('ProjectMemoryInitRefreshPrompt: Initialize or refresh Garda project memory.'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -568,7 +569,8 @@ test('getStatusSnapshot blocks ready while project memory is not validated', () 
         assert.equal(snapshot.agentInitializationComplete, false);
         assert.equal(snapshot.readyForTasks, false);
         const output = formatStatusSnapshot(snapshot);
-        assert.ok(output.includes('Bootstrap and validate project memory'));
+        assert.ok(output.includes('Initialize or refresh Garda project memory'));
+        assert.ok(output.includes('ProjectMemoryInitRefreshPrompt: Initialize or refresh Garda project memory.'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

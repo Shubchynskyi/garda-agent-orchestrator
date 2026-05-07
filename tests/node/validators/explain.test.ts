@@ -84,6 +84,7 @@ test('explainFailure renders executable project memory remediation command shape
 
     assert.equal(result.found, true);
     assert.equal(result.failureId, 'PROJECT_MEMORY_PENDING');
+    assert.ok(output.includes('Initialize or refresh Garda project memory.'));
     assert.ok(output.includes('--active-agent-files'));
     assert.ok(output.includes('--project-rules-updated'));
     assert.ok(output.includes('--skills-prompted'));

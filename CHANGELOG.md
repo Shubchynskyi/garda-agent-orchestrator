@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made project-memory readiness explicit in `status`, `doctor explain PROJECT_MEMORY_PENDING`, and `preprompt`, including the canonical init/refresh prompt while `ProjectMemoryInitialized` or `ProjectMemoryValidated` is false
 - blocked release/package handoff on dirty tracked or untracked worktrees by adding `validate:clean-worktree` to `validate:release` and `prepack`
 - defaulted project-memory maintenance to update mode for fresh and missing-key materializations, preserved explicit existing choices, and surfaced a first-run memory refresh handoff in setup/update output
 - restricted decomposed parent routing to explicit child task links so parent and continuation mentions cannot skip unfinished leaf tasks
