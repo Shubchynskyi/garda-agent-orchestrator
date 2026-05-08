@@ -399,16 +399,25 @@ export function buildCommandSummaryLines(): string[] {
     return lines;
 }
 
-type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow';
+export type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow';
+export type CommandHelpName =
+    | GuardedCommandHelpName
+    | 'stats'
+    | 'status'
+    | 'doctor'
+    | 'debug'
+    | 'cleanup'
+    | 'gc'
+    | 'clean';
 
-interface GuardedCommandHelpDescriptor {
+interface CommandHelpDescriptor {
     readonly summary: string;
     readonly usage: readonly string[];
     readonly examples: readonly string[];
     readonly hints?: readonly string[];
 }
 
-const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedCommandHelpDescriptor>> = Object.freeze({
+const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = Object.freeze({
     'agent-init': Object.freeze({
         summary: 'Finalize mandatory agent onboarding after AGENT_INIT_PROMPT work is complete.',
         usage: Object.freeze([
@@ -518,6 +527,105 @@ const GUARDED_COMMAND_HELP: Readonly<Record<GuardedCommandHelpName, GuardedComma
             'Review cycle auto split is disabled by default and can be enabled with --review-cycle-auto-split-enabled true.',
             'Project memory maintenance defaults to update mode; use off, check, update, or strict mode for explicit repo-local policy.'
         ])
+    }),
+    stats: Object.freeze({
+        summary: 'Show token-overhead and runtime analytics per task or across all tasks.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} stats [--task-id "<task-id>"] [--target-root PATH] [--events-root PATH] [--reviews-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} stats --json`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} stats`,
+            `${PRIMARY_CLI_NAME} stats --task-id "T-001"`,
+            `${PRIMARY_CLI_NAME} stats --json`
+        ]),
+        hints: Object.freeze([
+            'Default mode: stats with no task id prints aggregate task analytics.',
+            'Use --task-id for task-specific statistics. Positional task ids are intentionally not part of this command yet.'
+        ])
+    }),
+    status: Object.freeze({
+        summary: 'Show current project status without changing files.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} status [--target-root PATH] [--bundle-root PATH] [--json]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} status`,
+            `${PRIMARY_CLI_NAME} status --json`
+        ]),
+        hints: Object.freeze([
+            'Status is read-only and is safe to run before task work.'
+        ])
+    }),
+    doctor: Object.freeze({
+        summary: 'Run verify plus manifest validation using existing init answers.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} doctor [--target-root PATH] [--bundle-root PATH] [--json] [--cleanup-stale-locks] [--dry-run]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} doctor`,
+            `${PRIMARY_CLI_NAME} doctor --cleanup-stale-locks --dry-run`
+        ]),
+        hints: Object.freeze([
+            'Doctor is for diagnostics and validation; use --dry-run when checking cleanup behavior.'
+        ])
+    }),
+    debug: Object.freeze({
+        summary: 'Show environment and runtime triage snapshots for bug reports.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} debug env [--target-root PATH] [--json]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} debug env`,
+            `${PRIMARY_CLI_NAME} debug env --json`
+        ]),
+        hints: Object.freeze([
+            'Default help lists the debug namespace. The currently supported debug subcommand is env.'
+        ])
+    }),
+    cleanup: Object.freeze({
+        summary: 'Remove stale runtime artifacts and manage review-artifact storage policy.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} cleanup [--target-root PATH] [--dry-run] [--confirm] [--max-age-days N] [--max-backups N] [--max-aggregate-lines N]`,
+            `${PRIMARY_CLI_NAME} cleanup policy [show|edit] [--target-root PATH]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} cleanup --dry-run`,
+            `${PRIMARY_CLI_NAME} cleanup policy`,
+            `${PRIMARY_CLI_NAME} cleanup policy edit`
+        ]),
+        hints: Object.freeze([
+            'Use dry-run first when removing runtime artifacts.',
+            'The policy subcommand is the human-facing review-artifact storage policy editor/viewer.'
+        ])
+    }),
+    gc: Object.freeze({
+        summary: 'Extended cleanup with dry-run default, allowlist, stale locks, and isolation sandbox cleanup.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} gc [--target-root PATH] [--category NAME] [--max-age-days N] [--max-aggregate-lines N] [--confirm]`,
+            `${PRIMARY_CLI_NAME} clean [--target-root PATH] [--category NAME] [--confirm]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} gc`,
+            `${PRIMARY_CLI_NAME} gc --category stale-locks`,
+            `${PRIMARY_CLI_NAME} gc --confirm`
+        ]),
+        hints: Object.freeze([
+            'gc is dry-run by default; pass --confirm to delete.'
+        ])
+    }),
+    clean: Object.freeze({
+        summary: 'Alias for gc extended cleanup.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} clean [--target-root PATH] [--category NAME] [--max-age-days N] [--max-aggregate-lines N] [--confirm]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} clean`,
+            `${PRIMARY_CLI_NAME} clean --confirm`
+        ]),
+        hints: Object.freeze([
+            'clean is an alias for gc and is dry-run by default unless --confirm is passed.'
+        ])
     })
 });
 
@@ -565,8 +673,12 @@ export function styleHelpCommandLine(line: string): string {
         .join(' ');
 }
 
-export function buildGuardedCommandHelpText(commandName: GuardedCommandHelpName): string {
-    const entry = GUARDED_COMMAND_HELP[commandName];
+export function isKnownCommandHelpName(commandName: string): commandName is CommandHelpName {
+    return Object.prototype.hasOwnProperty.call(COMMAND_HELP, commandName);
+}
+
+export function buildCommandHelpText(commandName: CommandHelpName): string {
+    const entry = COMMAND_HELP[commandName];
     const lines: string[] = [];
     lines.push('GARDA_COMMAND_HELP');
     lines.push(cyan(commandName));
@@ -589,6 +701,10 @@ export function buildGuardedCommandHelpText(commandName: GuardedCommandHelpName)
         lines.push(`  ${green(exampleLine)}`);
     }
     return lines.join('\n');
+}
+
+export function buildGuardedCommandHelpText(commandName: GuardedCommandHelpName): string {
+    return buildCommandHelpText(commandName);
 }
 
 export function buildParityBlockedCommandText(options: {
@@ -701,6 +817,8 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             `  - use \`${PRIMARY_CLI_NAME} cleanup policy edit\` for the dialog-first review-artifact storage policy editor, or \`${PRIMARY_CLI_NAME} cleanup policy\` to inspect current settings.`,
             '  - gc/clean is dry-run by default; pass --confirm to actually delete. Supports --category and --max-aggregate-lines.',
             `  - running \`${PRIMARY_CLI_NAME} profile create\` with no profile name in a TTY starts the full interactive profile builder.`,
+            `  - use \`${PRIMARY_CLI_NAME} help <command>\` or \`${PRIMARY_CLI_NAME} <command> help\` for command-specific usage.`,
+            `  - use \`${PRIMARY_CLI_NAME} gate help <gate-name>\` or \`${PRIMARY_CLI_NAME} gate <gate-name> --help\` for gate-specific usage.`,
             `  - ${PRODUCT_ACRONYM} = ${PRODUCT_ACRONYM_EXPANSION}. Available command names: ${ALL_CLI_NAMES.join(', ')}.`
         ]
     ];

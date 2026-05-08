@@ -5,7 +5,11 @@ import {
 } from '../../validators/workspace-layout';
 import { assertOfflinePolicy } from '../../policy/offline-mode';
 import { EXIT_VALIDATION_FAILURE } from '../exit-codes';
-import { buildGuardedCommandHelpText, buildParityBlockedCommandText } from './cli-format-output';
+import {
+    buildCommandHelpText,
+    buildParityBlockedCommandText,
+    isKnownCommandHelpName
+} from './cli-format-output';
 import { buildGateCommandOverviewText, buildGateHelpText } from './gate-command-help';
 import { isFailedValidationResult } from './shared-command-utils';
 import { PackageJsonLike, printHelp } from './cli-helpers';
@@ -59,6 +63,49 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
     return resolveTargetOrBundleParityRoot(commandArgv);
 }
 
+function isHelpFlag(argument: string): boolean {
+    return argument === '--help' || argument === '-h';
+}
+
+function isHelpSubcommand(commandArgv: string[]): boolean {
+    return String(commandArgv[0] || '').trim().toLowerCase() === 'help';
+}
+
+function hasHelpFlag(commandArgv: string[]): boolean {
+    return commandArgv.some((argument) => isHelpFlag(argument));
+}
+
+function printHelpCommand(commandArgv: string[], packageJson: PackageJsonLike): boolean {
+    const commandHelpName = String(commandArgv[0] || '').trim();
+    if (!commandHelpName) {
+        printHelp(packageJson);
+        return true;
+    }
+    if (commandHelpName === 'gate') {
+        const gateName = String(commandArgv[1] || '').trim();
+        console.log(gateName ? buildGateHelpText(gateName) : buildGateCommandOverviewText());
+        return true;
+    }
+    if (isKnownCommandHelpName(commandHelpName)) {
+        console.log(buildCommandHelpText(commandHelpName));
+        return true;
+    }
+    return false;
+}
+
+function printCommandHelpIfRequested(commandName: string, commandArgv: string[]): boolean {
+    if (commandName === 'gate' && isHelpSubcommand(commandArgv)) {
+        const gateName = String(commandArgv[1] || '').trim();
+        console.log(gateName ? buildGateHelpText(gateName) : buildGateCommandOverviewText());
+        return true;
+    }
+    if (isKnownCommandHelpName(commandName) && (isHelpSubcommand(commandArgv) || hasHelpFlag(commandArgv))) {
+        console.log(buildCommandHelpText(commandName));
+        return true;
+    }
+    return false;
+}
+
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
     const { commandName, commandArgv, packageJson, packageRoot, globalFlags } = options;
     const isIntrospection = commandArgv.some((arg) => arg === '--help' || arg === '-h' || arg === '--version' || arg === '-v');
@@ -66,7 +113,9 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         || (commandName === 'gate' && String(commandArgv[0] || '').trim() === 'next-step');
 
     if (commandName === 'help') {
-        printHelp(packageJson);
+        if (!printHelpCommand(commandArgv, packageJson)) {
+            printHelp(packageJson);
+        }
         return;
     }
 
@@ -88,7 +137,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
                         return buildGateCommandOverviewText(parityRoot);
                     }
                 })()
-                : buildGuardedCommandHelpText(commandName as 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow');
+                : buildCommandHelpText(commandName as 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow');
             throw new Error(
                 buildParityBlockedCommandText({
                     commandName,
@@ -110,6 +159,10 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
                 );
             }
         }
+    }
+
+    if (printCommandHelpIfRequested(commandName, commandArgv)) {
+        return;
     }
 
     if (!isIntrospection) {

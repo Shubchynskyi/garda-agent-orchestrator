@@ -13,13 +13,19 @@ import {
     normalizePathValue,
     PackageJsonLike,
     parseOptions,
-    printHelp
+    printHelp,
+    buildCommandHelpText
 } from './cli-helpers';
 import { PRIMARY_CLI_NAME } from '../../core/constants';
 import { ParsedOptionsRecord } from './shared-command-utils';
 
 export function handleDebug(commandArgv: string[], packageJson: PackageJsonLike): void {
     const subcommand = commandArgv.length > 0 ? commandArgv[0].toLowerCase() : '';
+    const subcommandHelp = commandArgv.length > 1 ? commandArgv[1].toLowerCase() === 'help' : false;
+    if (subcommand === 'help' || subcommandHelp || commandArgv.some((argument) => argument === '--help' || argument === '-h')) {
+        console.log(buildCommandHelpText('debug'));
+        return;
+    }
     if (subcommand !== 'env') {
         console.log(`Usage: ${PRIMARY_CLI_NAME} debug env [--target-root PATH] [--json]`);
         console.log('');
@@ -55,6 +61,10 @@ export function handleDebug(commandArgv: string[], packageJson: PackageJsonLike)
 }
 
 export function handleStats(commandArgv: string[], _packageJson: PackageJsonLike): void {
+    if (commandArgv[0] === 'help' || commandArgv.some((argument) => argument === '--help' || argument === '-h')) {
+        console.log(buildCommandHelpText('stats'));
+        return;
+    }
     const statsDefinitions = {
         '--task-id': { key: 'taskId', type: 'string' },
         '--target-root': { key: 'targetRoot', type: 'string' },

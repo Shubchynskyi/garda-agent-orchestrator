@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import {
     applyNoColorFlag,
     buildBannerText,
+    buildCommandHelpText,
     buildHelpText,
     COMMAND_SUMMARY,
     convertSourceOfTruthToEntrypoint,
@@ -812,6 +813,16 @@ test('buildHelpText includes all command descriptions', () => {
     assert.ok(text.includes('--source-path'));
     assert.ok(text.includes('--snapshot-path'));
     assert.ok(text.includes('rollback'));
+    assert.ok(text.includes('help <command>'));
+    assert.ok(text.includes('gate help <gate-name>'));
+});
+
+test('buildCommandHelpText renders command-specific stats help', () => {
+    const text = buildCommandHelpText('stats');
+    assert.ok(text.includes('GARDA_COMMAND_HELP'));
+    assert.ok(text.includes('stats'));
+    assert.ok(text.includes('--task-id "<task-id>"'));
+    assert.ok(text.includes('garda stats --json'));
 });
 
 test('COMMAND_SUMMARY has expected commands', () => {
@@ -990,5 +1001,142 @@ test('runCliMain with --no-color sets NO_COLOR and disables supportsColor', asyn
     } finally {
         if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
         if (savedForceColor === undefined) { delete process.env.FORCE_COLOR; } else { process.env.FORCE_COLOR = savedForceColor; }
+    }
+});
+
+async function captureRunCliMain(argv: string[]): Promise<string> {
+    const { runCliMain } = await import('../../../../src/cli/main');
+    const savedNoColor = process.env.NO_COLOR;
+    const captured: string[] = [];
+    const originalLog = console.log;
+    try {
+        process.env.NO_COLOR = '1';
+        console.log = (...args: unknown[]): void => {
+            captured.push(args.map((arg) => String(arg)).join(' '));
+        };
+        await runCliMain(argv);
+    } finally {
+        console.log = originalLog;
+        if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
+    }
+    return captured.join('\n');
+}
+
+test('runCliMain prints command help for the user-facing invocation matrix', async () => {
+    const commands: Array<{ command: string; expectedUsage: string }> = [
+        { command: 'stats', expectedUsage: 'garda stats' },
+        { command: 'status', expectedUsage: 'garda status' },
+        { command: 'doctor', expectedUsage: 'garda doctor' },
+        { command: 'cleanup', expectedUsage: 'garda cleanup' },
+        { command: 'gc', expectedUsage: 'garda gc' },
+        { command: 'profile', expectedUsage: 'garda profile' },
+        { command: 'review-capabilities', expectedUsage: 'garda review-capabilities' },
+        { command: 'templates', expectedUsage: 'garda templates' }
+    ];
+
+    for (const { command, expectedUsage } of commands) {
+        const invocations = [
+            ['help', command],
+            [command, 'help'],
+            [command, '--help'],
+            [command, '-h']
+        ];
+        for (const argv of invocations) {
+            const text = await captureRunCliMain(argv);
+            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+            assert.ok(text.includes(command), `${argv.join(' ')} should name the command`);
+            assert.ok(text.includes(expectedUsage), `${argv.join(' ')} should include command-specific usage`);
+        }
+    }
+});
+
+test('runCliMain prints debug help for namespace and debug env help forms', async () => {
+    const invocations = [
+        ['help', 'debug'],
+        ['debug', 'help'],
+        ['debug', '--help'],
+        ['debug', '-h'],
+        ['debug', 'env', 'help'],
+        ['debug', 'env', '--help'],
+        ['debug', 'env', '-h']
+    ];
+
+    for (const argv of invocations) {
+        const text = await captureRunCliMain(argv);
+        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+        assert.ok(text.includes('debug'), `${argv.join(' ')} should name debug`);
+        assert.ok(text.includes('garda debug env'), `${argv.join(' ')} should include debug env usage`);
+    }
+});
+
+test('runCliMain command help does not execute side-effect-prone command bodies', async () => {
+    const doctorInvocations = [
+        ['doctor', '--help'],
+        ['doctor', '-h'],
+        ['doctor', 'help'],
+        ['help', 'doctor']
+    ];
+    for (const argv of doctorInvocations) {
+        const text = await captureRunCliMain(argv);
+        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+        assert.ok(text.includes('garda doctor'), `${argv.join(' ')} should include doctor usage`);
+        assert.ok(!text.includes('Workspace ready'), `${argv.join(' ')} should not run status formatting`);
+        assert.ok(!text.includes('Agent setup required'), `${argv.join(' ')} should not run status formatting`);
+        assert.ok(!text.includes('Not installed'), `${argv.join(' ')} should not run status formatting`);
+    }
+
+    const cleanupInvocations = [
+        ['cleanup', '--help'],
+        ['cleanup', '-h'],
+        ['cleanup', 'help'],
+        ['help', 'cleanup'],
+        ['gc', '--help'],
+        ['gc', '-h'],
+        ['gc', 'help'],
+        ['help', 'gc']
+    ];
+    for (const argv of cleanupInvocations) {
+        const text = await captureRunCliMain(argv);
+        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+        assert.ok(!text.includes('GARDA_CLEANUP'), `${argv.join(' ')} should not run cleanup`);
+    }
+
+    const statsInvocations = [
+        ['stats', '--help'],
+        ['stats', '-h'],
+        ['stats', 'help'],
+        ['help', 'stats']
+    ];
+    for (const argv of statsInvocations) {
+        const text = await captureRunCliMain(argv);
+        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+        assert.ok(!text.includes('GARDA_STATS'), `${argv.join(' ')} should not run stats`);
+    }
+});
+
+test('runCliMain prints gate help through overview and per-gate aliases', async () => {
+    const overviewInvocations = [
+        ['help', 'gate'],
+        ['gate', 'help'],
+        ['gate', '--help'],
+        ['gate', '-h']
+    ];
+    for (const argv of overviewInvocations) {
+        const text = await captureRunCliMain(argv);
+        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print gate overview help`);
+        assert.ok(text.includes('gate <gate-name>'), `${argv.join(' ')} should include gate overview usage`);
+    }
+
+    const perGateInvocations = [
+        ['help', 'gate', 'task-events-summary'],
+        ['gate', 'help', 'task-events-summary'],
+        ['gate', 'task-events-summary', '--help'],
+        ['gate', 'task-events-summary', '-h']
+    ];
+    for (const argv of perGateInvocations) {
+        const text = await captureRunCliMain(argv);
+        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print per-gate help`);
+        assert.ok(text.includes('gate task-events-summary'), `${argv.join(' ')} should include per-gate usage`);
+        assert.ok(text.includes('--task-id "<task-id>"'), `${argv.join(' ')} should include task-id syntax`);
     }
 });

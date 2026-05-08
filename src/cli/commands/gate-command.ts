@@ -46,6 +46,12 @@ import {
 import { handleValidateIsolation, handlePrepareIsolation } from './gate-isolation-handlers';
 
 export async function handleGate(commandArgv: string[]): Promise<void> {
+    if (commandArgv[0] === 'help') {
+        const requestedGateName = String(commandArgv[1] || '').trim();
+        console.log(requestedGateName ? buildGateHelpText(requestedGateName) : buildGateCommandOverviewText());
+        return;
+    }
+
     if (commandArgv.length === 0 || commandArgv[0] === '-h' || commandArgv[0] === '--help') {
         console.log(buildGateCommandOverviewText());
         console.log('');
