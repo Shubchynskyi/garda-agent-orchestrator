@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- colorized human task timeline output for `garda task "<task-id>" events` and `gate task-events-summary` while keeping JSON and output-path artifacts uncolored
 - added a read-only `garda task "<task-id>" stats|events` inspection namespace with command help and CLI reference coverage
 - added review attempt pass/fail/reuse/missing counts to task audit and final closeout reporting
 - made `garda stats "T-001"` a positional alias for task-specific stats and colorized human stats output while keeping JSON output uncolored
