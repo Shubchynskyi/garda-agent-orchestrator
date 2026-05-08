@@ -72,17 +72,22 @@ export function handleStats(commandArgv: string[], _packageJson: PackageJsonLike
         '--reviews-root': { key: 'reviewsRoot', type: 'string' },
         '--json': { key: 'json', type: 'boolean' }
     };
-    const { options: rawOptions } = parseOptions(commandArgv, statsDefinitions);
+    const { options: rawOptions, positionals } = parseOptions(commandArgv, statsDefinitions, { allowPositionals: true, maxPositionals: 1 });
     const options = rawOptions as ParsedOptionsRecord;
+    const positionalTaskId = positionals.length > 0 ? String(positionals[0] || '').trim() : '';
+    if (positionalTaskId && options.taskId) {
+        throw new Error('Use either positional task id or --task-id, not both.');
+    }
+    const taskId = options.taskId ? String(options.taskId) : positionalTaskId;
 
     const targetRoot = normalizePathValue(options.targetRoot || '.');
     ensureDirectoryExists(targetRoot, 'Target root');
     const eventsRoot = options.eventsRoot ? String(options.eventsRoot) : null;
     const reviewsRoot = options.reviewsRoot ? String(options.reviewsRoot) : null;
 
-    if (options.taskId) {
+    if (taskId) {
         const stats = buildTaskStats(
-            String(options.taskId),
+            taskId,
             targetRoot,
             eventsRoot,
             reviewsRoot

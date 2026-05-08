@@ -4,6 +4,7 @@ import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-eve
 import { coerceIntLike } from '../../gate-runtime/token-telemetry';
 import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult } from '../../gate-runtime/budget-preflight';
 import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
+import { bold, cyan, dim, green, red, yellow } from './cli-format-output';
 import {
     parseTimestamp,
     getOutputTelemetryFromPayload,
@@ -616,31 +617,39 @@ function formatWallClock(seconds: number | null): string {
     return `${hours}h ${remainMin}m ${remainder}s`;
 }
 
+function formatGateFailCount(count: number): string {
+    return count > 0 ? red(`${count} failed`) : dim(`${count} failed`);
+}
+
+function formatPercentNote(percent: number | null): string {
+    return percent != null ? yellow(`~${percent}%`) : '';
+}
+
 export function formatTaskStatsText(stats: TaskStatsResult): string {
     const lines: string[] = [];
-    lines.push(`Task: ${stats.task_id}`);
-    lines.push(`Events: ${stats.events_count}`);
-    if (stats.first_event_utc) lines.push(`Started: ${stats.first_event_utc}`);
-    if (stats.last_event_utc) lines.push(`Ended: ${stats.last_event_utc}`);
-    lines.push(`Duration: ${formatWallClock(stats.wall_clock_seconds)}`);
-    lines.push(`Gates: ${stats.gate_pass_count} passed, ${stats.gate_fail_count} failed`);
-    if (stats.path_mode) lines.push(`PathMode: ${stats.path_mode}`);
+    lines.push(`${bold('Task:')} ${cyan(stats.task_id)}`);
+    lines.push(`${bold('Events:')} ${stats.events_count}`);
+    if (stats.first_event_utc) lines.push(`${bold('Started:')} ${stats.first_event_utc}`);
+    if (stats.last_event_utc) lines.push(`${bold('Ended:')} ${stats.last_event_utc}`);
+    lines.push(`${bold('Duration:')} ${formatWallClock(stats.wall_clock_seconds)}`);
+    lines.push(`${bold('Gates:')} ${green(`${stats.gate_pass_count} passed`)}, ${formatGateFailCount(stats.gate_fail_count)}`);
+    if (stats.path_mode) lines.push(`${bold('PathMode:')} ${cyan(stats.path_mode)}`);
     if (stats.requested_depth != null && stats.effective_depth != null) {
         if (stats.depth_escalated) {
-            lines.push(`Depth: ${stats.requested_depth} -> ${stats.effective_depth} (escalated)`);
+            lines.push(`${bold('Depth:')} ${stats.requested_depth} -> ${yellow(String(stats.effective_depth))} ${yellow('(escalated)')}`);
         } else {
-            lines.push(`Depth: ${stats.effective_depth}`);
+            lines.push(`${bold('Depth:')} ${stats.effective_depth}`);
         }
     }
-    if (stats.required_reviews.length > 0) lines.push(`Reviews: ${stats.required_reviews.join(', ')}`);
-    lines.push(`ChangedFiles: ${stats.changed_files_count} (${stats.changed_lines_total} lines)`);
+    if (stats.required_reviews.length > 0) lines.push(`${bold('Reviews:')} ${stats.required_reviews.map((review) => cyan(review)).join(', ')}`);
+    lines.push(`${bold('ChangedFiles:')} ${stats.changed_files_count} (${stats.changed_lines_total} lines)`);
 
     if (stats.budget_forecast) {
         lines.push('');
-        lines.push('Budget Forecast:');
+        lines.push(bold('Budget Forecast:'));
         lines.push(`  Total forecast: ~${stats.budget_forecast.total_forecast_tokens} tokens`);
         if (stats.budget_forecast.token_economy_active_for_depth) {
-            lines.push(`  Effective forecast: ~${stats.budget_forecast.effective_forecast_tokens} tokens`);
+            lines.push(`  ${green(`Effective forecast: ~${stats.budget_forecast.effective_forecast_tokens} tokens`)}`);
         }
     }
 
@@ -650,9 +659,9 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
 
     if (stats.token_economy.total_estimated_saved_chars > 0 || stats.token_economy.total_estimated_saved_tokens > 0) {
         lines.push('');
-        lines.push('Token Economy:');
+        lines.push(bold('Token Economy:'));
         if (stats.token_economy.visible_summary_line) {
-            lines.push(`  ${stats.token_economy.visible_summary_line}`);
+            lines.push(`  ${green(stats.token_economy.visible_summary_line)}`);
         }
         for (const item of stats.token_economy.breakdown) {
             if (item.estimated_saved_chars > 0) {
@@ -660,17 +669,17 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
                     item.raw_char_count > 0 ? `raw ~${item.raw_char_count} chars` : null,
                     item.estimated_saved_tokens > 0 ? `token estimate ~${item.estimated_saved_tokens}` : null
                 ].filter((entry) => !!entry).join(', ');
-                lines.push(`  - ${item.label}: ~${item.estimated_saved_chars} chars suppressed${notes ? ` (${notes})` : ''}`);
+                lines.push(`  - ${cyan(item.label)}: ${green(`~${item.estimated_saved_chars} chars suppressed`)}${notes ? ` (${dim(notes)})` : ''}`);
             } else if (item.estimated_saved_tokens > 0) {
                 const notes = item.raw_token_count_estimate > 0
                     ? `raw ~${item.raw_token_count_estimate} tokens`
                     : '';
-                lines.push(`  - ${item.label}: token estimate ~${item.estimated_saved_tokens}${notes ? ` (${notes})` : ''}`);
+                lines.push(`  - ${cyan(item.label)}: ${green(`token estimate ~${item.estimated_saved_tokens}`)}${notes ? ` (${dim(notes)})` : ''}`);
             }
         }
     } else {
         lines.push('');
-        lines.push('Token Economy: no savings recorded');
+        lines.push(`${bold('Token Economy:')} ${dim('no savings recorded')}`);
     }
 
     return lines.join('\n');
@@ -678,11 +687,11 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
 
 export function formatAggregateStatsText(stats: AggregateStatsResult): string {
     const lines: string[] = [];
-    lines.push('GARDA_STATS');
-    lines.push(`Tasks analyzed: ${stats.tasks_analyzed}`);
-    lines.push(`Total events: ${stats.total_events}`);
-    lines.push(`Total duration: ${formatWallClock(stats.total_wall_clock_seconds)}`);
-    lines.push(`Total gates: ${stats.total_gate_pass} passed, ${stats.total_gate_fail} failed`);
+    lines.push(bold('GARDA_STATS'));
+    lines.push(`${bold('Tasks analyzed:')} ${stats.tasks_analyzed}`);
+    lines.push(`${bold('Total events:')} ${stats.total_events}`);
+    lines.push(`${bold('Total duration:')} ${formatWallClock(stats.total_wall_clock_seconds)}`);
+    lines.push(`${bold('Total gates:')} ${green(`${stats.total_gate_pass} passed`)}, ${formatGateFailCount(stats.total_gate_fail)}`);
 
     if (stats.total_estimated_saved_chars > 0 || stats.total_estimated_saved_tokens > 0) {
         const partialCharCoverage = stats.total_estimated_saved_chars > 0
@@ -690,33 +699,33 @@ export function formatAggregateStatsText(stats: AggregateStatsResult): string {
             && stats.aggregate_chars_savings_percent == null;
         if (stats.total_estimated_saved_chars > 0) {
             const pctNote = stats.aggregate_chars_savings_percent != null
-                ? ` (~${stats.aggregate_chars_savings_percent}%)`
+                ? ` (${formatPercentNote(stats.aggregate_chars_savings_percent)})`
                 : '';
             const label = partialCharCoverage
                 ? 'Total suppressed output (char-aware subset)'
                 : 'Total suppressed output';
-            lines.push(`${label}: ~${stats.total_estimated_saved_chars} chars${pctNote}`);
+            lines.push(`${bold(`${label}:`)} ${green(`~${stats.total_estimated_saved_chars} chars`)}${pctNote}`);
         } else if (stats.total_raw_char_count > 0) {
-            lines.push('Total suppressed output: 0 chars');
+            lines.push(`${bold('Total suppressed output:')} 0 chars`);
         } else if (stats.total_estimated_saved_tokens > 0) {
-            lines.push('Total suppressed output: unavailable (legacy token-only artifacts)');
+            lines.push(`${bold('Total suppressed output:')} ${yellow('unavailable')} ${dim('(legacy token-only artifacts)')}`);
         }
         if (stats.total_estimated_saved_tokens > 0) {
-            lines.push(`Total token estimate: ~${stats.total_estimated_saved_tokens}`);
+            lines.push(`${bold('Total token estimate:')} ${green(`~${stats.total_estimated_saved_tokens}`)}`);
         }
         if (stats.total_raw_char_count > 0) {
-            lines.push(`Total raw chars: ~${stats.total_raw_char_count}`);
+            lines.push(`${bold('Total raw chars:')} ~${stats.total_raw_char_count}`);
         }
         if (stats.total_raw_token_count_estimate > 0) {
-            lines.push(`Total raw tokens: ~${stats.total_raw_token_count_estimate}`);
+            lines.push(`${bold('Total raw tokens:')} ~${stats.total_raw_token_count_estimate}`);
         }
     } else {
-        lines.push('Total suppressed output: 0 chars');
+        lines.push(`${bold('Total suppressed output:')} 0 chars`);
     }
 
     if (stats.per_task.length > 0) {
         lines.push('');
-        lines.push('Per-task summary:');
+        lines.push(bold('Per-task summary:'));
         for (const task of stats.per_task) {
             const partialCharCoverage = task.token_economy.total_estimated_saved_chars > 0
                 && task.token_economy.total_estimated_saved_tokens > 0
@@ -729,7 +738,7 @@ export function formatAggregateStatsText(stats: AggregateStatsResult): string {
                     ? `, token estimate ~${task.token_economy.total_estimated_saved_tokens}`
                     : '';
             const durationNote = formatWallClock(task.wall_clock_seconds);
-            lines.push(`  ${task.task_id}: ${task.events_count} events, ${durationNote}${savedNote}`);
+            lines.push(`  ${cyan(task.task_id)}: ${task.events_count} events, ${durationNote}${savedNote}`);
         }
     }
 

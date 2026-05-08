@@ -155,9 +155,15 @@ Show token-overhead and runtime analytics for the workspace or a single task.
 ```text
 garda stats --target-root "."
 garda stats --target-root "." --json
+garda stats "T-137" --target-root "."
 garda stats --task-id "T-137" --target-root "."
+garda stats "T-137" --target-root "." --json
 garda stats --task-id "T-137" --target-root "." --json
 ```
+
+Notes:
+- A positional task id is equivalent to `--task-id` for task-specific stats.
+- Human-readable stats output uses color when the terminal supports it; `--json` remains uncolored.
 
 ### `garda bootstrap`
 

@@ -531,17 +531,19 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
     stats: Object.freeze({
         summary: 'Show token-overhead and runtime analytics per task or across all tasks.',
         usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} stats "<task-id>" [--target-root PATH] [--events-root PATH] [--reviews-root PATH] [--json]`,
             `${PRIMARY_CLI_NAME} stats [--task-id "<task-id>"] [--target-root PATH] [--events-root PATH] [--reviews-root PATH] [--json]`,
             `${PRIMARY_CLI_NAME} stats --json`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} stats`,
+            `${PRIMARY_CLI_NAME} stats "T-001"`,
             `${PRIMARY_CLI_NAME} stats --task-id "T-001"`,
             `${PRIMARY_CLI_NAME} stats --json`
         ]),
         hints: Object.freeze([
             'Default mode: stats with no task id prints aggregate task analytics.',
-            'Use --task-id for task-specific statistics. Positional task ids are intentionally not part of this command yet.'
+            'Use a positional task id or --task-id for task-specific statistics.'
         ])
     }),
     status: Object.freeze({
