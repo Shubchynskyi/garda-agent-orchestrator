@@ -218,6 +218,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
             handleStats(commandArgv, packageJson);
             return;
         }
+        case 'task': {
+            const { handleTask } = await import('./task-command');
+            await handleTask(commandArgv, packageJson);
+            return;
+        }
         case 'bootstrap': {
             const { handleBootstrap } = await import('./bootstrap');
             await handleBootstrap(commandArgv, packageJson, packageRoot);

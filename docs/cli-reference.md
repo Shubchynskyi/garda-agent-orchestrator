@@ -165,6 +165,22 @@ Notes:
 - A positional task id is equivalent to `--task-id` for task-specific stats.
 - Human-readable stats output uses color when the terminal supports it; `--json` remains uncolored.
 
+### `garda task`
+
+Read-only task inspection namespace. Start with a task id, then choose the view.
+
+```text
+garda task "T-137" stats --target-root "."
+garda task "T-137" events --repo-root "."
+garda task "T-137" events --repo-root "." --include-details
+garda task "T-137" events --repo-root "." --as-json
+```
+
+Notes:
+- `garda task "<task-id>" stats` routes to the same per-task analytics as `garda stats "<task-id>"`.
+- `garda task "<task-id>" events` prints the task event timeline without changing lifecycle state.
+- The task namespace is inspection-only. It does not alias, replace, or modify `next-step`, and the events wrapper does not expose `--output-path`; use the explicit gate command when intentionally materializing an artifact.
+
 ### `garda bootstrap`
 
 Deploy the bundle without running install.

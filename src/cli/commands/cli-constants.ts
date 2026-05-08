@@ -45,6 +45,7 @@ export const COMMAND_SUMMARY = Object.freeze<readonly CommandSummaryEntry[]>([
     ['doctor', 'Run verify + manifest validation'],
     ['debug env', 'Show environment triage snapshot'],
     ['stats', 'Token-overhead and runtime analytics'],
+    ['task', 'Inspect one task via stats or event timeline'],
     ['bootstrap', 'Deploy bundle only'],
     ['install', 'Deploy or refresh the bundle and run the Node install pipeline'],
     ['init', 'Re-materialize live/ from an existing deployed bundle'],

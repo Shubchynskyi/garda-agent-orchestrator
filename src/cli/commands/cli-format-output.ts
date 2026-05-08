@@ -403,6 +403,7 @@ export type GuardedCommandHelpName = 'agent-init' | 'skills' | 'review-capabilit
 export type CommandHelpName =
     | GuardedCommandHelpName
     | 'stats'
+    | 'task'
     | 'status'
     | 'doctor'
     | 'debug'
@@ -546,6 +547,24 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             'Use a positional task id or --task-id for task-specific statistics.'
         ])
     }),
+    task: Object.freeze({
+        summary: 'Inspect one task through read-only stats and event timeline views.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} task "<task-id>" stats [--target-root PATH] [--events-root PATH] [--reviews-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} task "<task-id>" events [--repo-root PATH] [--events-root PATH] [--reviews-root PATH] [--include-details] [--as-json]`,
+            `${PRIMARY_CLI_NAME} task help`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} task "T-001" stats`,
+            `${PRIMARY_CLI_NAME} task "T-001" events`,
+            `${PRIMARY_CLI_NAME} task "T-001" events --include-details`
+        ]),
+        hints: Object.freeze([
+            'This namespace is read-only and does not change task lifecycle state.',
+            'Use stats for task metrics and events for the task timeline.',
+            'The events action does not expose --output-path; use the gate command directly when you intentionally need an artifact.'
+        ])
+    }),
     status: Object.freeze({
         summary: 'Show current project status without changing files.',
         usage: Object.freeze([
@@ -646,10 +665,11 @@ function styleHelpToken(token: string): string {
         || normalized === 'node'
         || normalized.endsWith('garda.js')
         || [
-            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'bootstrap', 'install', 'init', 'reinit',
+            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'uninstall', 'cleanup', 'gc', 'clean', 'verify', 'check-update', 'skills',
             'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
-            'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset'
+            'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
+            'events'
         ].includes(normalized)
     ) {
         return cyan(trimmed);
@@ -760,6 +780,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  doctor        Run verify + manifest validation using existing init answers.',
             '  debug env     Show environment and runtime triage snapshot for bug reports.',
             '  stats         Show token-overhead and runtime analytics per task or across all tasks.',
+            '  task          Inspect one task via read-only stats and event timeline views.',
             '  bootstrap     Deploy the bundle only.',
             '  install       Deploy or refresh the bundle and run the Node install pipeline.',
             '  init          Re-materialize live/ from an existing deployed bundle.',

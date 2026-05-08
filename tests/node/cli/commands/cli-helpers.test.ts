@@ -801,6 +801,7 @@ test('buildHelpText includes all command descriptions', () => {
     assert.ok(text.includes('agent-init'));
     assert.ok(text.includes('bootstrap'));
     assert.ok(text.includes('doctor'));
+    assert.ok(text.includes('task'));
     assert.ok(text.includes('skills'));
     assert.ok(text.includes('review-capabilities'));
     assert.ok(text.includes('workflow'));
@@ -833,6 +834,7 @@ test('COMMAND_SUMMARY has expected commands', () => {
     assert.ok(names.includes('bootstrap'));
     assert.ok(names.includes('doctor'));
     assert.ok(names.includes('status'));
+    assert.ok(names.includes('task'));
     assert.ok(names.includes('rollback'));
     assert.ok(names.includes('skills'));
     assert.ok(names.includes('review-capabilities'));
@@ -1025,6 +1027,7 @@ async function captureRunCliMain(argv: string[]): Promise<string> {
 test('runCliMain prints command help for the user-facing invocation matrix', async () => {
     const commands: Array<{ command: string; expectedUsage: string }> = [
         { command: 'stats', expectedUsage: 'garda stats' },
+        { command: 'task', expectedUsage: 'garda task' },
         { command: 'status', expectedUsage: 'garda status' },
         { command: 'doctor', expectedUsage: 'garda doctor' },
         { command: 'cleanup', expectedUsage: 'garda cleanup' },
