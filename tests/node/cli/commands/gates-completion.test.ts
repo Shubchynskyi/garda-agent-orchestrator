@@ -331,6 +331,7 @@ function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPat
         scope_changed_files_count: workspaceSnapshot.changed_files_count,
         scope_changed_lines_total: workspaceSnapshot.changed_lines_total,
         scope_changed_files_sha256: workspaceSnapshot.changed_files_sha256,
+        scope_content_sha256: workspaceSnapshot.scope_content_sha256,
         scope_sha256: workspaceSnapshot.scope_sha256
     }, null, 2), 'utf8');
     appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', {

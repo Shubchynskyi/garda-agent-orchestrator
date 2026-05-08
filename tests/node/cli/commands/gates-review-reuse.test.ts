@@ -22,6 +22,7 @@ import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
 import { validateReviewSkillEvidence } from '../../../../src/gates/completion';
+import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import { buildScopedDiff } from '../../../../src/gates/build-scoped-diff';
 import {
@@ -388,13 +389,9 @@ function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPat
     const changedFiles = Array.isArray(preflight.changed_files)
         ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
         : [];
-    const changedLinesTotal = Number.parseInt(String((preflight.metrics as Record<string, unknown> | undefined)?.changed_lines_total || 0), 10) || 0;
     const detectionSource = String(preflight.detection_source || 'explicit_changed_files').trim() || 'explicit_changed_files';
     const includeUntracked = preflight.include_untracked !== false;
-    const changedFilesSha256 = crypto.createHash('sha256').update(changedFiles.join('\n')).digest('hex');
-    const scopeSha256 = crypto.createHash('sha256')
-        .update(`${detectionSource}|false|${includeUntracked}|${changedFiles.length}|${changedLinesTotal}|${changedFilesSha256}`)
-        .digest('hex');
+    const workspaceSnapshot = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, changedFiles);
     const preflightHashSha256 = crypto.createHash('sha256').update(preflightText).digest('hex');
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-compile-gate.json`), JSON.stringify({
         task_id: taskId,
@@ -405,11 +402,12 @@ function writeCompilePassEvidence(repoRoot: string, taskId: string, preflightPat
         preflight_hash_sha256: preflightHashSha256,
         scope_detection_source: detectionSource,
         scope_include_untracked: includeUntracked,
-        scope_changed_files: changedFiles,
-        scope_changed_files_count: changedFiles.length,
-        scope_changed_lines_total: changedLinesTotal,
-        scope_changed_files_sha256: changedFilesSha256,
-        scope_sha256: scopeSha256
+        scope_changed_files: workspaceSnapshot.changed_files,
+        scope_changed_files_count: workspaceSnapshot.changed_files_count,
+        scope_changed_lines_total: workspaceSnapshot.changed_lines_total,
+        scope_changed_files_sha256: workspaceSnapshot.changed_files_sha256,
+        scope_content_sha256: workspaceSnapshot.scope_content_sha256,
+        scope_sha256: workspaceSnapshot.scope_sha256
     }, null, 2), 'utf8');
     appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', {
         preflight_path: preflightPath.replace(/\\/g, '/'),
@@ -4331,6 +4329,10 @@ describe('cli/commands/gates – review-reuse suites', () => {
                 );
             }
         );
+
+        // Modify the scoped file after compile-gate to create genuine scope drift,
+        // so the review-check correctly detects the workspace changed.
+        fs.appendFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), '// post-compile modification\n', 'utf8');
 
         const reviewResult = runRequiredReviewsCheckCommand({
             repoRoot,
