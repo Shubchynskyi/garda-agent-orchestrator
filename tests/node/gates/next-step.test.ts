@@ -505,6 +505,7 @@ function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string
         scope_changed_files_count: snapshot.changed_files_count,
         scope_changed_lines_total: snapshot.changed_lines_total,
         scope_changed_files_sha256: snapshot.changed_files_sha256,
+        scope_content_sha256: snapshot.scope_content_sha256,
         scope_sha256: snapshot.scope_sha256
     });
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', 'PASS', {}, timestampUtc);
@@ -4441,6 +4442,58 @@ describe('gates/next-step', () => {
         assert.match(result.title, /before test review/);
         assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('reuses prior full-suite pass before test review when newer compile has unchanged scope binding', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED', '2099-01-01T00:00:02.000Z');
+        const compileArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`);
+        const compileArtifact = JSON.parse(fs.readFileSync(compileArtifactPath, 'utf8')) as Record<string, unknown>;
+        const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
+        const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
+        const scopeBinding = {
+            changed_files_sha256: compileArtifact.scope_changed_files_sha256,
+            scope_sha256: compileArtifact.scope_sha256,
+            scope_content_sha256: compileArtifact.scope_content_sha256
+        };
+        (fullSuiteArtifact.cycle_binding as Record<string, unknown>).scope_binding = scopeBinding;
+        writeJson(fullSuitePath, fullSuiteArtifact);
+        const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const updatedTimeline = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .map((line) => {
+                if (!line.trim()) return line;
+                const parsed = JSON.parse(line) as Record<string, unknown>;
+                if (parsed.event_type === 'FULL_SUITE_VALIDATION_PASSED') {
+                    ((parsed.details as Record<string, unknown>).cycle_binding as Record<string, unknown>).scope_binding = scopeBinding;
+                    return JSON.stringify(parsed);
+                }
+                return line;
+            })
+            .join('\n');
+        fs.writeFileSync(timelinePath, updatedTimeline, 'utf8');
+        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
     });
 
     it('reruns full-suite before test review when prior full-suite failure is stale after a newer compile', () => {

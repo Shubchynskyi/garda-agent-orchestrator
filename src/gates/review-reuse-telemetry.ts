@@ -233,6 +233,7 @@ export function validateHistoricalReviewRecordedTelemetryEventMatch(
     const expectedTaskId = String(input.taskId || '').trim();
     const eventTaskId = String(details.task_id ?? details.taskId ?? '').trim();
     const expectedReviewType = normalizeLowerString(input.reviewType);
+    const isTestReview = expectedReviewType === 'test';
     const expectedReceiptPath = normalizePath(input.receiptPath).toLowerCase();
     const expectedReceiptSha256 = normalizeLowerString(input.receiptSha256);
     const expectedReviewContextSha256 = normalizeLowerString(input.reviewContextSha256);
@@ -277,8 +278,10 @@ export function validateHistoricalReviewRecordedTelemetryEventMatch(
             && normalizeLowerString(details.review_tree_state_sha256 ?? details.reviewTreeStateSha256) !== expectedReviewTreeStateSha256)
         || (input.reviewScopeSha256 !== undefined
             && normalizeLowerString(details.review_scope_sha256 ?? details.reviewScopeSha256) !== expectedReviewScopeSha256)
-        || (input.codeScopeSha256 !== undefined
-            && normalizeLowerString(details.code_scope_sha256 ?? details.codeScopeSha256) !== expectedCodeScopeSha256)
+        || (isTestReview
+            ? !optionalTestReviewCodeScopeMatches(details.code_scope_sha256 ?? details.codeScopeSha256, expectedCodeScopeSha256)
+            : input.codeScopeSha256 !== undefined
+                && normalizeLowerString(details.code_scope_sha256 ?? details.codeScopeSha256) !== expectedCodeScopeSha256)
         || normalizeLowerString(details.review_artifact_sha256 ?? details.reviewArtifactSha256) !== expectedReviewArtifactSha256
         || (expectedReusedFromReceiptPath
             && normalizePath(details.reused_from_receipt_path ?? details.reusedFromReceiptPath ?? '').toLowerCase() !== expectedReusedFromReceiptPath)
@@ -292,8 +295,13 @@ export function validateHistoricalReviewRecordedTelemetryEventMatch(
             && normalizeLowerString(details.reused_from_review_tree_state_sha256 ?? details.reusedFromReviewTreeStateSha256) !== expectedReusedFromReviewTreeStateSha256)
         || (input.reusedFromReviewScopeSha256 !== undefined
             && normalizeLowerString(details.reused_from_review_scope_sha256 ?? details.reusedFromReviewScopeSha256) !== expectedReusedFromReviewScopeSha256)
-        || (input.reusedFromCodeScopeSha256 !== undefined
-            && normalizeLowerString(details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256) !== expectedReusedFromCodeScopeSha256)
+        || (isTestReview
+            ? !optionalTestReviewCodeScopeMatches(
+                details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256,
+                expectedReusedFromCodeScopeSha256
+            )
+            : input.reusedFromCodeScopeSha256 !== undefined
+                && normalizeLowerString(details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256) !== expectedReusedFromCodeScopeSha256)
         || (expectedExecutionMode && normalizeLowerString(details.reviewer_execution_mode ?? details.reviewerExecutionMode) !== expectedExecutionMode)
         || (expectedReviewerIdentity && eventReviewerIdentity !== expectedReviewerIdentity)
     ) {
@@ -355,8 +363,10 @@ export function validateReviewReuseRecordedEventMatch(
         return { ...base, matched: false, reason: 'before_min_event_sequence' };
     }
 
-    const actual = getReviewReuseTelemetryDetails(event.details);
+    const details = isPlainRecord(event.details) ? event.details : {};
+    const actual = getReviewReuseTelemetryDetails(details);
     const expectedReviewType = normalizeLowerString(input.reviewType);
+    const isTestReview = expectedReviewType === 'test';
     const expectedReceiptPath = normalizePath(input.receiptPath).toLowerCase();
     const expectedReceiptSha256 = normalizeLowerString(input.receiptSha256);
     const expectedReviewContextSha256 = normalizeLowerString(input.reviewContextSha256);
@@ -382,7 +392,9 @@ export function validateReviewReuseRecordedEventMatch(
         || (input.reviewContextReuseSha256 !== undefined && actual.reviewContextReuseSha256 !== expectedReviewContextReuseSha256)
         || (input.reviewTreeStateSha256 !== undefined && actual.reviewTreeStateSha256 !== expectedReviewTreeStateSha256)
         || (input.reviewScopeSha256 !== undefined && actual.reviewScopeSha256 !== expectedReviewScopeSha256)
-        || (input.codeScopeSha256 !== undefined && actual.codeScopeSha256 !== expectedCodeScopeSha256)
+        || (isTestReview
+            ? !optionalTestReviewCodeScopeMatches(details.code_scope_sha256 ?? details.codeScopeSha256, expectedCodeScopeSha256)
+            : input.codeScopeSha256 !== undefined && actual.codeScopeSha256 !== expectedCodeScopeSha256)
         || (expectedReviewArtifactSha256 && actual.reviewArtifactSha256 !== expectedReviewArtifactSha256)
         || (expectedReusedFromReceiptPath && actual.reusedFromReceiptPath !== expectedReusedFromReceiptPath)
         || (input.reusedFromReceiptSha256 !== undefined && actual.reusedFromReceiptSha256 !== expectedReusedFromReceiptSha256)
@@ -391,8 +403,13 @@ export function validateReviewReuseRecordedEventMatch(
         || (expectedReusedFromReviewTreeStateSha256 && actual.reusedFromReviewTreeStateSha256 !== expectedReusedFromReviewTreeStateSha256)
         || (input.reusedFromReviewScopeSha256 !== undefined
             && actual.reusedFromReviewScopeSha256 !== expectedReusedFromReviewScopeSha256)
-        || (input.reusedFromCodeScopeSha256 !== undefined
-            && actual.reusedFromCodeScopeSha256 !== expectedReusedFromCodeScopeSha256)
+        || (isTestReview
+            ? !optionalTestReviewCodeScopeMatches(
+                details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256,
+                expectedReusedFromCodeScopeSha256
+            )
+            : input.reusedFromCodeScopeSha256 !== undefined
+                && actual.reusedFromCodeScopeSha256 !== expectedReusedFromCodeScopeSha256)
     ) {
         return { ...base, matched: false, reason: 'details_mismatch' };
     }
@@ -512,11 +529,17 @@ function validateStrictReusedReviewInput(input: StrictReusedReviewEvidenceValida
     if (input.receiptSha256 !== undefined && input.receiptSha256 !== null && !isSha256(input.receiptSha256)) {
         return 'strict reused review evidence has invalid current receipt_sha256';
     }
-    if (input.codeScopeSha256 !== undefined && input.codeScopeSha256 !== null && !isSha256(input.codeScopeSha256)) {
+    if (
+        normalizeLowerString(input.reviewType) !== 'test'
+        && input.codeScopeSha256 !== undefined
+        && input.codeScopeSha256 !== null
+        && !isSha256(input.codeScopeSha256)
+    ) {
         return 'strict reused review evidence has invalid current code_scope_sha256';
     }
     if (
-        input.reusedFromCodeScopeSha256 !== undefined
+        normalizeLowerString(input.reviewType) !== 'test'
+        && input.reusedFromCodeScopeSha256 !== undefined
         && input.reusedFromCodeScopeSha256 !== null
         && !isSha256(input.reusedFromCodeScopeSha256)
     ) {
@@ -752,6 +775,7 @@ function strictHistoricalRecordedEventCanRepresentSource(
     input: StrictReusedReviewEvidenceValidationInput
 ): boolean {
     const receiptPath = normalizePath(details.receipt_path ?? details.receiptPath ?? '').toLowerCase();
+    const isTestReview = normalizeLowerString(input.reviewType) === 'test';
     if (
         String(details.task_id ?? details.taskId ?? '').trim() !== String(input.taskId || '').trim()
         || normalizeLowerString(details.review_type ?? details.reviewType) !== normalizeLowerString(input.reviewType)
@@ -774,8 +798,15 @@ function strictHistoricalRecordedEventCanRepresentSource(
                 === normalizeLowerString(input.reusedFromReviewTreeStateSha256)
             && normalizeLowerString(details.reused_from_review_scope_sha256 ?? details.reusedFromReviewScopeSha256)
                 === normalizeLowerString(input.reusedFromReviewScopeSha256)
-            && normalizeLowerString(details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256)
-                === normalizeLowerString(input.reusedFromCodeScopeSha256);
+            && (
+                isTestReview
+                    ? optionalTestReviewCodeScopeMatches(
+                        details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256,
+                        input.reusedFromCodeScopeSha256
+                    )
+                    : normalizeLowerString(details.reused_from_code_scope_sha256 ?? details.reusedFromCodeScopeSha256)
+                    === normalizeLowerString(input.reusedFromCodeScopeSha256)
+            );
     }
     return normalizeLowerString(details.review_context_sha256 ?? details.reviewContextSha256)
             === normalizeLowerString(input.reusedFromReviewContextSha256)
@@ -785,8 +816,15 @@ function strictHistoricalRecordedEventCanRepresentSource(
             === normalizeLowerString(input.reusedFromReviewTreeStateSha256)
         && normalizeLowerString(details.review_scope_sha256 ?? details.reviewScopeSha256)
             === normalizeLowerString(input.reusedFromReviewScopeSha256)
-        && normalizeLowerString(details.code_scope_sha256 ?? details.codeScopeSha256)
-            === normalizeLowerString(input.reusedFromCodeScopeSha256);
+        && (
+            isTestReview
+                ? optionalTestReviewCodeScopeMatches(
+                    details.code_scope_sha256 ?? details.codeScopeSha256,
+                    input.reusedFromCodeScopeSha256
+                )
+                : normalizeLowerString(details.code_scope_sha256 ?? details.codeScopeSha256)
+                === normalizeLowerString(input.reusedFromCodeScopeSha256)
+        );
 }
 
 function findStrictHistoricalReviewerInvocationEvent(input: StrictReusedReviewEvidenceValidationInput): StrictEventEvidence {
@@ -996,6 +1034,21 @@ function strictEventEvidenceFromMatch(match: ReviewReuseTelemetryMatchResult, re
 
 function isSha256(value: unknown): boolean {
     return /^[0-9a-f]{64}$/.test(normalizeLowerString(value));
+}
+
+function optionalTestReviewCodeScopeMatches(actualValue: unknown, expectedValue: unknown): boolean {
+    const actual = String(actualValue || '').trim().toLowerCase();
+    const expected = normalizeLowerString(expectedValue);
+    if (actual && !isSha256(actual)) {
+        return false;
+    }
+    if (expected && !isSha256(expected)) {
+        return false;
+    }
+    if (!actual || !expected) {
+        return true;
+    }
+    return actual === expected;
 }
 
 function getReviewPassVerdict(reviewType: string): string {

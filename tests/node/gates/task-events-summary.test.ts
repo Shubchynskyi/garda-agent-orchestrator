@@ -14,11 +14,34 @@ import {
     buildTaskEventsSummary,
     formatTaskEventsSummaryText,
     getOutputTelemetryFromPayload,
+    taskCycleScopeBindingsMatch,
     TaskEventsSummaryResult
 } from '../../../src/gates/task-events-summary';
 import { runTaskEventsSummaryCommand } from '../../../src/cli/commands/gate-flows/task-summary-flow';
 
 describe('gates/task-events-summary', () => {
+    describe('taskCycleScopeBindingsMatch', () => {
+        it('rejects same-scope evidence that is not bound to a prior compile timestamp', () => {
+            const scopeBinding = {
+                changed_files_sha256: '1'.repeat(64),
+                scope_sha256: '2'.repeat(64),
+                scope_content_sha256: '3'.repeat(64)
+            };
+
+            assert.equal(taskCycleScopeBindingsMatch({
+                preflight_path: 'preflight.json',
+                preflight_sha256: 'new-cycle',
+                compile_gate_timestamp: '2024-01-15T10:00:00Z',
+                scope_binding: scopeBinding
+            }, {
+                preflight_path: 'preflight.json',
+                preflight_sha256: 'old-cycle',
+                compile_gate_timestamp: null,
+                scope_binding: scopeBinding
+            }), false);
+        });
+    });
+
     describe('parseTimestamp', () => {
         it('parses ISO 8601 timestamp', () => {
             const date = parseTimestamp('2024-01-15T10:30:00Z');
@@ -877,6 +900,87 @@ describe('gates/task-events-summary', () => {
             assert.equal(summary.token_economy!.total_estimated_saved_chars, 0);
             assert.equal(summary.token_economy!.total_estimated_saved_tokens, 0);
             assert.equal(summary.token_economy!.breakdown.length, 0);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('keeps older full-suite telemetry after a no-scope-change compile recovery', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const preflightPath = path.join(reviewsDir, 'T-004C-preflight.json');
+            const changedFilesSha = '1'.repeat(64);
+            const scopeSha = '2'.repeat(64);
+            const scopeContentSha = '3'.repeat(64);
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(reviewsDir, 'T-004C-compile-gate.json'),
+                JSON.stringify({
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    preflight_path: preflightPath,
+                    preflight_hash_sha256: 'new-cycle',
+                    preflight_changed_files_sha256: changedFilesSha,
+                    preflight_scope_sha256: scopeSha,
+                    preflight_scope_content_sha256: scopeContentSha
+                }),
+                'utf8'
+            );
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T09:45:00Z',
+                    task_id: 'T-004C',
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Full suite passed before a no-change closeout recovery compile.',
+                    details: {
+                        cycle_binding: {
+                            preflight_path: preflightPath,
+                            preflight_sha256: 'old-cycle',
+                            compile_gate_timestamp: '2024-01-15T09:30:00Z',
+                            scope_binding: {
+                                changed_files_sha256: changedFilesSha,
+                                scope_sha256: scopeSha,
+                                scope_content_sha256: scopeContentSha
+                            }
+                        },
+                        output_telemetry: {
+                            raw_char_count: 600,
+                            filtered_char_count: 180,
+                            estimated_saved_chars: 420,
+                            raw_token_count_estimate: 150,
+                            filtered_token_count_estimate: 45,
+                            estimated_saved_tokens: 105
+                        }
+                    }
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-004C',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Compile recovery with unchanged tracked scope.',
+                    details: {
+                        preflight_path: preflightPath,
+                        preflight_hash_sha256: 'new-cycle',
+                        preflight_changed_files_sha256: changedFilesSha,
+                        preflight_scope_sha256: scopeSha,
+                        preflight_scope_content_sha256: scopeContentSha
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-004C.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({ taskId: 'T-004C', eventsRoot: eventsDir, repoRoot: tmpDir });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 420);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 105);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });

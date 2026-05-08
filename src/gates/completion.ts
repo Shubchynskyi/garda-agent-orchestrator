@@ -67,6 +67,11 @@ import {
     type FullSuiteValidationResult
 } from './full-suite-validation';
 import {
+    getCycleBindingSnapshotFromPayload,
+    resolveTaskCycleBindingSnapshot,
+    taskCycleScopeBindingsMatch
+} from './task-events-summary';
+import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
     getProjectMemoryImpactLifecycleEvidence,
     type ProjectMemoryImpactLifecycleEvidence
@@ -661,11 +666,27 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
                     preflight_sha256: String(validatedPreflight.preflight_hash || '').trim().toLowerCase(),
                     compile_gate_timestamp: latestCompileGatePassedTimestamp
                 };
+                const currentCycle = resolveTaskCycleBindingSnapshot(
+                    String(resolvedTaskId || '').trim(),
+                    orderedEvents as unknown as ReadonlyArray<Record<string, unknown>>,
+                    repoRoot,
+                    reviewsRoot
+                );
+                const candidateCycle = getCycleBindingSnapshotFromPayload({ cycle_binding: cycleBindingRecord }, repoRoot);
+                const sameScopeBinding = taskCycleScopeBindingsMatch(currentCycle, candidateCycle);
                 const cycleBindingValid =
                     cycleBinding.task_id === expectedCycleBinding.task_id
-                    && cycleBinding.preflight_path === expectedCycleBinding.preflight_path
-                    && cycleBinding.preflight_sha256 === expectedCycleBinding.preflight_sha256
-                    && cycleBinding.compile_gate_timestamp === expectedCycleBinding.compile_gate_timestamp;
+                    && (
+                        (
+                            cycleBinding.preflight_path === expectedCycleBinding.preflight_path
+                            && cycleBinding.preflight_sha256 === expectedCycleBinding.preflight_sha256
+                            && cycleBinding.compile_gate_timestamp === expectedCycleBinding.compile_gate_timestamp
+                        )
+                        || (
+                            sameScopeBinding
+                            && cycleBinding.preflight_path === expectedCycleBinding.preflight_path
+                        )
+                    );
                 fullSuiteValidationEvidence.cycle_binding_valid = cycleBindingValid;
                 if (!cycleBindingValid) {
                     const message =
@@ -680,6 +701,12 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
             if (artifactStatus !== 'PASSED' && artifactStatus !== 'WARNED') {
                 const message =
                     `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' must have status PASSED or WARNED when enabled, got '${artifactStatus || 'UNKNOWN'}'.`;
+                errors.push(message);
+                fullSuiteValidationEvidence.violations.push(message);
+            }
+            if (String(fullSuiteArtifact.command || '').trim() !== fullSuiteValidationConfig.command) {
+                const message =
+                    `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' command does not match current workflow config.`;
                 errors.push(message);
                 fullSuiteValidationEvidence.violations.push(message);
             }

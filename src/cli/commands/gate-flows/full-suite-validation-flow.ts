@@ -248,6 +248,43 @@ function readLatestCompileGatePassedTimestamp(repoRoot: string, taskId: string):
     return latestTimestamp;
 }
 
+function normalizeSha256Text(value: unknown): string | null {
+    const text = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(text) ? text : null;
+}
+
+function readFullSuiteScopeBinding(
+    repoRoot: string,
+    taskId: string,
+    preflight: Record<string, unknown>
+): NonNullable<FullSuiteValidationCycleBinding['scope_binding']> | null {
+    const compileGatePath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-compile-gate.json`)
+    );
+    const compileGate = fs.existsSync(compileGatePath) && fs.statSync(compileGatePath).isFile()
+        ? JSON.parse(fs.readFileSync(compileGatePath, 'utf8')) as Record<string, unknown>
+        : null;
+    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
+        ? preflight.metrics as Record<string, unknown>
+        : {};
+    const changedFilesSha256 = normalizeSha256Text(compileGate?.preflight_changed_files_sha256)
+        || normalizeSha256Text(compileGate?.scope_changed_files_sha256)
+        || normalizeSha256Text(metrics.changed_files_sha256);
+    const scopeSha256 = normalizeSha256Text(compileGate?.preflight_scope_sha256)
+        || normalizeSha256Text(metrics.scope_sha256);
+    const scopeContentSha256 = normalizeSha256Text(compileGate?.preflight_scope_content_sha256)
+        || normalizeSha256Text(metrics.scope_content_sha256);
+    if (!changedFilesSha256 && !scopeSha256 && !scopeContentSha256) {
+        return null;
+    }
+    return {
+        changed_files_sha256: changedFilesSha256,
+        scope_sha256: scopeSha256,
+        scope_content_sha256: scopeContentSha256
+    };
+}
+
 function readGeneratedLockOwnerPid(lockPath: string): number | null {
     const ownerPath = path.join(lockPath, 'owner.json');
     try {
@@ -365,7 +402,8 @@ export async function runFullSuiteValidationCommand(
         task_id: taskId,
         preflight_path: gateHelpers.normalizePath(preflightPath),
         preflight_sha256: gateHelpers.fileSha256(preflightPath) || '',
-        compile_gate_timestamp: readLatestCompileGatePassedTimestamp(repoRoot, taskId)
+        compile_gate_timestamp: readLatestCompileGatePassedTimestamp(repoRoot, taskId),
+        scope_binding: readFullSuiteScopeBinding(repoRoot, taskId, preflight)
     };
 
     if (!config.enabled) {

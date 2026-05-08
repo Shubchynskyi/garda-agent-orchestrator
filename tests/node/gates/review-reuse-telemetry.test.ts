@@ -24,24 +24,25 @@ function writeText(filePath: string, content: string): string {
     return sha256(content);
 }
 
-function buildStrictReuseFixture() {
+function buildStrictReuseFixture(reviewType = 'code') {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-strict-reuse-'));
     const taskId = 'T-368';
-    const reviewType = 'code';
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
     fs.mkdirSync(reviewsRoot, { recursive: true });
+    const reviewLabel = reviewType === 'test' ? 'Test Review' : 'Code Review';
+    const passVerdict = reviewType === 'test' ? 'TEST REVIEW PASSED' : 'REVIEW PASSED';
 
     const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
     const artifactText = [
-        '# Code Review',
+        `# ${reviewLabel}`,
         'Reviewed strict reused-review evidence bindings.',
         '## Findings by Severity',
         'none',
         '## Residual Risks',
         'none',
         '## Verdict',
-        'REVIEW PASSED',
+        passVerdict,
         ''
     ].join('\n');
     const artifactSha = writeText(artifactPath, artifactText);
@@ -232,7 +233,7 @@ describe('gates/review-reuse-telemetry', () => {
 
         const result = validateStrictReusedReviewEvidence(input);
 
-        assert.equal(result.valid, true);
+        assert.equal(result.valid, true, result.valid ? undefined : result.reason);
         assert.equal(result.reason, null);
         if (result.valid) {
             assert.equal(result.currentReuseEventTaskSequence, 11);
@@ -248,7 +249,7 @@ describe('gates/review-reuse-telemetry', () => {
 
         const result = validateStrictReusedReviewEvidence(inputWithoutReceiptSha);
 
-        assert.equal(result.valid, true);
+        assert.equal(result.valid, true, result.valid ? undefined : result.reason);
     });
 
     it('rejects strict reused review evidence when the current receipt is tampered after reuse telemetry', () => {
@@ -393,6 +394,40 @@ describe('gates/review-reuse-telemetry', () => {
 
         assert.equal(result.valid, false);
         assert.match((result as { valid: false; reason: string }).reason, /current code_scope_sha256/);
+    });
+
+    it('accepts strict reused test review evidence without code-scope hashes', () => {
+        const { input } = buildStrictReuseFixture('test');
+        const inputWithoutCodeScope = {
+            ...input,
+            codeScopeSha256: null,
+            reusedFromCodeScopeSha256: null
+        };
+
+        const result = validateStrictReusedReviewEvidence(inputWithoutCodeScope);
+
+        assert.equal(result.valid, true, result.valid ? undefined : result.reason);
+    });
+
+    it('rejects strict reused test review evidence when present code-scope hashes mismatch', () => {
+        const { input, currentReviewRecordedEvent } = buildStrictReuseFixture('test');
+        (currentReviewRecordedEvent.details as Record<string, unknown>).code_scope_sha256 = 'f'.repeat(64);
+
+        const result = validateStrictReusedReviewEvidence(input);
+
+        assert.equal(result.valid, false);
+        assert.match((result as { valid: false; reason: string }).reason, /details_mismatch/);
+    });
+
+    it('rejects strict reused test review evidence when present code-scope hashes are malformed', () => {
+        const { input, currentReviewRecordedEvent } = buildStrictReuseFixture('test');
+        const inputWithoutCodeScope = { ...input, codeScopeSha256: null, reusedFromCodeScopeSha256: null };
+        (currentReviewRecordedEvent.details as Record<string, unknown>).code_scope_sha256 = 'not-a-sha';
+
+        const result = validateStrictReusedReviewEvidence(inputWithoutCodeScope);
+
+        assert.equal(result.valid, false);
+        assert.match((result as { valid: false; reason: string }).reason, /details_mismatch/);
     });
 
     it('rejects strict reused review evidence when the historical source event is missing', () => {

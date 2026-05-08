@@ -3033,6 +3033,77 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.gates.find((gate) => gate.gate === 'full-suite-validation')?.status, 'PASS');
         });
 
+        it('keeps older full-suite gate evidence when closeout recovery has unchanged scope binding', () => {
+            writeWorkflowConfig(tmpDir, true);
+            const preflightPath = path.join(reviewsDir, `${TASK_ID}-preflight.json`);
+            const changedFilesSha = '1'.repeat(64);
+            const scopeSha = '2'.repeat(64);
+            const scopeContentSha = '3'.repeat(64);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: {
+                    changed_lines_total: 12,
+                    changed_files_sha256: changedFilesSha,
+                    scope_sha256: scopeSha,
+                    scope_content_sha256: scopeContentSha
+                },
+                required_reviews: {}
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-compile-gate.json', {
+                timestamp_utc: '2026-01-01T10:00:00.000Z',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'new-cycle',
+                preflight_changed_files_sha256: changedFilesSha,
+                preflight_scope_sha256: scopeSha,
+                preflight_scope_content_sha256: scopeContentSha
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T09:45:00.000Z',
+                task_id: TASK_ID,
+                event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Full-suite validation passed before no-change closeout recovery.',
+                details: {
+                    cycle_binding: {
+                        preflight_path: preflightPath.replace(/\\/g, '/'),
+                        preflight_sha256: 'old-cycle',
+                        compile_gate_timestamp: '2026-01-01T09:30:00.000Z',
+                        scope_binding: {
+                            changed_files_sha256: changedFilesSha,
+                            scope_sha256: scopeSha,
+                            scope_content_sha256: scopeContentSha
+                        }
+                    }
+                }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: '2026-01-01T10:00:00.000Z',
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed during closeout recovery.',
+                details: {
+                    preflight_path: preflightPath.replace(/\\/g, '/'),
+                    preflight_hash_sha256: 'new-cycle',
+                    preflight_changed_files_sha256: changedFilesSha,
+                    preflight_scope_sha256: scopeSha,
+                    preflight_scope_content_sha256: scopeContentSha
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.gates.find((gate) => gate.gate === 'compile-gate')?.status, 'PASS');
+            assert.equal(result.gates.find((gate) => gate.gate === 'full-suite-validation')?.status, 'PASS');
+        });
+
         it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {
             const now = new Date().toISOString();
             writeEvent(eventsDir, TASK_ID, {

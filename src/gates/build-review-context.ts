@@ -35,6 +35,13 @@ import {
 import { collectOrderedTimelineEvents } from './completion-evidence';
 import type { FullSuiteValidationResult } from './full-suite-validation';
 import {
+    getCycleBindingSnapshotFromPayload,
+    normalizeTaskCycleScopeBinding,
+    resolveTaskCycleBindingSnapshot,
+    taskCycleScopeBindingsMatch,
+    type TaskCycleBindingSnapshot
+} from './task-events-summary';
+import {
     buildReviewTreeState,
     getReviewTreeStateBlockingViolations,
     type ReviewTreeState
@@ -410,6 +417,7 @@ interface CurrentCompileGateEvidence {
     artifact_timestamp_utc: string | null;
     timeline_timestamp_utc: string | null;
     status: string | null;
+    cycle_binding: TaskCycleBindingSnapshot | null;
 }
 
 export interface BuildReviewContextOptions {
@@ -456,23 +464,32 @@ function readCurrentCompileGateEvidence(repoRoot: string, taskId: string | null)
             artifact_path: null,
             artifact_timestamp_utc: null,
             timeline_timestamp_utc: null,
-            status: null
+            status: null,
+            cycle_binding: null
         };
     }
     const compileGateArtifactPath = joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-compile-gate.json`));
     const normalizedArtifactPath = normalizePath(compileGateArtifactPath);
     const timelinePath = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const timelineErrors: string[] = [];
-    const latestCompileGatePassedTimestamp = collectOrderedTimelineEvents(timelinePath, timelineErrors)
+    const timelineEvents = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    const latestCompileGatePassedTimestamp = [...timelineEvents]
         .reverse()
         .find((entry) => entry.event_type === 'COMPILE_GATE_PASSED')
         ?.timestamp_utc || null;
+    const currentCycle = resolveTaskCycleBindingSnapshot(
+        taskId,
+        timelineEvents as unknown as ReadonlyArray<Record<string, unknown>>,
+        repoRoot,
+        path.dirname(compileGateArtifactPath)
+    );
     if (!fs.existsSync(compileGateArtifactPath) || !fs.statSync(compileGateArtifactPath).isFile()) {
         return {
             artifact_path: normalizedArtifactPath,
             artifact_timestamp_utc: null,
             timeline_timestamp_utc: latestCompileGatePassedTimestamp,
-            status: null
+            status: null,
+            cycle_binding: currentCycle
         };
     }
     try {
@@ -481,14 +498,21 @@ function readCurrentCompileGateEvidence(repoRoot: string, taskId: string | null)
             artifact_path: normalizedArtifactPath,
             artifact_timestamp_utc: String(raw.timestamp_utc || '').trim() || null,
             timeline_timestamp_utc: latestCompileGatePassedTimestamp,
-            status: String(raw.status || '').trim() || null
+            status: String(raw.status || '').trim() || null,
+            cycle_binding: currentCycle || {
+                preflight_path: normalizeNullablePath(raw.preflight_path),
+                preflight_sha256: typeof raw.preflight_hash_sha256 === 'string' ? raw.preflight_hash_sha256 : null,
+                compile_gate_timestamp: latestCompileGatePassedTimestamp,
+                scope_binding: normalizeTaskCycleScopeBinding(raw)
+            }
         };
     } catch {
         return {
             artifact_path: normalizedArtifactPath,
             artifact_timestamp_utc: null,
             timeline_timestamp_utc: latestCompileGatePassedTimestamp,
-            status: null
+            status: null,
+            cycle_binding: currentCycle
         };
     }
 }
@@ -581,22 +605,30 @@ function buildFullSuiteValidationEvidence(options: {
             const actualCompileGateTimestamp = cycleBinding.compile_gate_timestamp == null
                 ? null
                 : String(cycleBinding.compile_gate_timestamp || '').trim() || null;
+            const currentCycle = compileGateEvidence.cycle_binding;
+            const candidateCycle = getCycleBindingSnapshotFromPayload({ cycle_binding: cycleBinding }, options.repoRoot);
+            const sameScopeBinding = taskCycleScopeBindingsMatch(currentCycle, candidateCycle);
             matchesCurrentPreflight = actualPreflightPath === expectedPreflightPath
                 && !!actualPreflightSha256
                 && actualPreflightSha256 === String(options.preflightSha256 || '').trim().toLowerCase();
             matchesCurrentCompileGate = !!compileGateEvidence.timeline_timestamp_utc
                 && actualCompileGateTimestamp === compileGateEvidence.timeline_timestamp_utc;
             cycleBindingValid = actualTaskId === String(options.taskId || '').trim()
-                && matchesCurrentPreflight === true
-                && matchesCurrentCompileGate === true;
+                && (
+                    (matchesCurrentPreflight === true && matchesCurrentCompileGate === true)
+                    || (
+                        sameScopeBinding === true
+                        && actualPreflightPath === expectedPreflightPath
+                    )
+                );
             const mismatchReasons: string[] = [];
             if (actualTaskId !== String(options.taskId || '').trim()) {
                 mismatchReasons.push('task id');
             }
-            if (!matchesCurrentPreflight) {
+            if (!matchesCurrentPreflight && !cycleBindingValid) {
                 mismatchReasons.push('preflight artifact');
             }
-            if (!matchesCurrentCompileGate) {
+            if (!matchesCurrentCompileGate && !cycleBindingValid) {
                 mismatchReasons.push('compile gate cycle');
             }
             if (mismatchReasons.length > 0) {

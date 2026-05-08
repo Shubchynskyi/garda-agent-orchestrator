@@ -523,6 +523,13 @@ export interface TaskCycleBindingSnapshot {
     preflight_path: string | null;
     preflight_sha256: string | null;
     compile_gate_timestamp: string | null;
+    scope_binding?: TaskCycleScopeBinding | null;
+}
+
+export interface TaskCycleScopeBinding {
+    changed_files_sha256: string | null;
+    scope_sha256: string | null;
+    scope_content_sha256: string | null;
 }
 
 export function normalizeCycleBindingPath(pathValue: unknown, repoRoot: string | null): string | null {
@@ -561,8 +568,58 @@ export function getCycleBindingSnapshotFromPayload(
     return {
         preflight_path: preflightPath,
         preflight_sha256: preflightSha,
-        compile_gate_timestamp: compileGateTimestamp
+        compile_gate_timestamp: compileGateTimestamp,
+        scope_binding: normalizeTaskCycleScopeBinding(cycleBinding)
     };
+}
+
+export function normalizeTaskCycleScopeBinding(record: Record<string, unknown> | null | undefined): TaskCycleScopeBinding | null {
+    if (!record || typeof record !== 'object') {
+        return null;
+    }
+    const nested = record.scope_binding && typeof record.scope_binding === 'object' && !Array.isArray(record.scope_binding)
+        ? record.scope_binding as Record<string, unknown>
+        : record;
+    const changedFilesSha256 = normalizeSha256Like(
+        nested.changed_files_sha256
+            ?? nested.preflight_changed_files_sha256
+            ?? nested.scope_changed_files_sha256
+    );
+    const scopeSha256 = normalizeSha256Like(nested.scope_sha256 ?? nested.preflight_scope_sha256);
+    const scopeContentSha256 = normalizeSha256Like(nested.scope_content_sha256 ?? nested.preflight_scope_content_sha256);
+    if (!changedFilesSha256 && !scopeSha256 && !scopeContentSha256) {
+        return null;
+    }
+    return {
+        changed_files_sha256: changedFilesSha256,
+        scope_sha256: scopeSha256,
+        scope_content_sha256: scopeContentSha256
+    };
+}
+
+function normalizeSha256Like(value: unknown): string | null {
+    const text = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/.test(text) ? text : null;
+}
+
+export function taskCycleScopeBindingsMatch(
+    currentCycle: TaskCycleBindingSnapshot | null,
+    candidateCycle: TaskCycleBindingSnapshot | null
+): boolean {
+    if (!currentCycle?.compile_gate_timestamp || !candidateCycle?.compile_gate_timestamp) {
+        return false;
+    }
+    const current = currentCycle?.scope_binding;
+    const candidate = candidateCycle?.scope_binding;
+    if (!current || !candidate) {
+        return false;
+    }
+    return !!current.changed_files_sha256
+        && current.changed_files_sha256 === candidate.changed_files_sha256
+        && !!current.scope_sha256
+        && current.scope_sha256 === candidate.scope_sha256
+        && !!current.scope_content_sha256
+        && current.scope_content_sha256 === candidate.scope_content_sha256;
 }
 
 export function buildTaskCycleBindingKey(snapshot: TaskCycleBindingSnapshot | null): string | null {
@@ -607,7 +664,8 @@ export function readTaskCycleBindingSnapshot(
     return {
         preflight_path: preflightPath,
         preflight_sha256: preflightSha,
-        compile_gate_timestamp: compileGateTimestamp
+        compile_gate_timestamp: compileGateTimestamp,
+        scope_binding: normalizeTaskCycleScopeBinding(compileGateArtifact)
     };
 }
 
@@ -629,7 +687,8 @@ function getCompileGateSnapshotFromEvent(
     return {
         preflight_path: preflightPath,
         preflight_sha256: preflightSha,
-        compile_gate_timestamp: timestamp
+        compile_gate_timestamp: timestamp,
+        scope_binding: normalizeTaskCycleScopeBinding(details)
     };
 }
 
@@ -672,7 +731,8 @@ export function resolveTaskCycleBindingSnapshot(
     return {
         preflight_path: artifactSnapshot.preflight_path,
         preflight_sha256: artifactSnapshot.preflight_sha256,
-        compile_gate_timestamp: latestCompileSnapshot.compile_gate_timestamp
+        compile_gate_timestamp: latestCompileSnapshot.compile_gate_timestamp,
+        scope_binding: artifactSnapshot.scope_binding ?? latestCompileSnapshot.scope_binding ?? null
     };
 }
 
@@ -691,17 +751,28 @@ export function shouldIncludeFullSuiteTelemetryForCurrentCycle(
         return true;
     }
 
+    const candidateCycle = getCycleBindingSnapshotFromPayload(payload, repoRoot);
+    const sameScopeEvidence = taskCycleScopeBindingsMatch(currentCycle, candidateCycle);
+
+    if (
+        currentCycle.preflight_path
+        && candidateCycle?.preflight_path
+        && candidateCycle.preflight_path !== currentCycle.preflight_path
+    ) {
+        return false;
+    }
+
     const eventDate = parseTimestamp(eventTimestamp);
     const compileGateDate = parseTimestamp(currentCycle.compile_gate_timestamp);
     if (
         eventDate.getTime() > 0
         && compileGateDate.getTime() > 0
         && eventDate.getTime() < compileGateDate.getTime()
+        && !sameScopeEvidence
     ) {
         return false;
     }
 
-    const candidateCycle = getCycleBindingSnapshotFromPayload(payload, repoRoot);
     if (!candidateCycle) {
         return true;
     }
@@ -709,19 +780,14 @@ export function shouldIncludeFullSuiteTelemetryForCurrentCycle(
         currentCycle.preflight_sha256
         && candidateCycle.preflight_sha256
         && candidateCycle.preflight_sha256 !== currentCycle.preflight_sha256
+        && !sameScopeEvidence
     ) {
         return false;
     }
     if (
         candidateCycle.compile_gate_timestamp
         && candidateCycle.compile_gate_timestamp !== currentCycle.compile_gate_timestamp
-    ) {
-        return false;
-    }
-    if (
-        currentCycle.preflight_path
-        && candidateCycle.preflight_path
-        && candidateCycle.preflight_path !== currentCycle.preflight_path
+        && !sameScopeEvidence
     ) {
         return false;
     }
@@ -739,6 +805,17 @@ export function shouldIncludeTelemetryForCurrentCycle(
         return true;
     }
 
+    const normalizedEventType = String(eventType || '').trim().toUpperCase();
+    if (normalizedEventType.startsWith('FULL_SUITE_VALIDATION_')) {
+        return shouldIncludeFullSuiteTelemetryForCurrentCycle(
+            eventType,
+            eventTimestamp,
+            payload,
+            currentCycle,
+            repoRoot
+        );
+    }
+
     const eventDate = parseTimestamp(eventTimestamp);
     const compileGateDate = parseTimestamp(currentCycle.compile_gate_timestamp);
     if (
@@ -749,13 +826,7 @@ export function shouldIncludeTelemetryForCurrentCycle(
         return false;
     }
 
-    return shouldIncludeFullSuiteTelemetryForCurrentCycle(
-        eventType,
-        eventTimestamp,
-        payload,
-        currentCycle,
-        repoRoot
-    );
+    return true;
 }
 
 export function getCurrentCycleReviewContextPaths(

@@ -512,6 +512,185 @@ describe('gates/build-review-context', () => {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('keeps test review full-suite evidence valid after no-scope-change compile recovery', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-same-scope-full-suite-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            writeTaskModeArtifactFixture(repoRoot, 'T-922', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-922-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-922',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const changedFilesSha = '1'.repeat(64);
+            const scopeSha = '2'.repeat(64);
+            const scopeContentSha = '3'.repeat(64);
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'task-events', 'T-922.jsonl'), JSON.stringify({
+                event_type: 'COMPILE_GATE_PASSED',
+                timestamp_utc: '2026-05-05T00:05:00.000Z',
+                details: {
+                    preflight_path: preflightPath,
+                    preflight_hash_sha256: 'new-cycle',
+                    preflight_changed_files_sha256: changedFilesSha,
+                    preflight_scope_sha256: scopeSha,
+                    preflight_scope_content_sha256: scopeContentSha
+                }
+            }) + '\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-922-compile-gate.json'), JSON.stringify({
+                timestamp_utc: '2026-05-05T00:05:00.250Z',
+                status: 'PASSED',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'new-cycle',
+                preflight_changed_files_sha256: changedFilesSha,
+                preflight_scope_sha256: scopeSha,
+                preflight_scope_content_sha256: scopeContentSha
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-922-full-suite-validation.json'), JSON.stringify({
+                status: 'PASSED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: 0,
+                timed_out: false,
+                output_artifact_path: path.join(reviewsRoot, 'T-922-full-suite-output.log'),
+                compact_summary: ['# pass 91'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: [],
+                cycle_binding: {
+                    task_id: 'T-922',
+                    preflight_path: preflightPath,
+                    preflight_sha256: 'old-cycle',
+                    compile_gate_timestamp: '2026-05-05T00:00:00.000Z',
+                    scope_binding: {
+                        changed_files_sha256: changedFilesSha,
+                        scope_sha256: scopeSha,
+                        scope_content_sha256: scopeContentSha
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-922-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-922-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.full_suite_validation?.matches_current_preflight, false);
+            assert.equal(result.full_suite_validation?.matches_current_compile_gate, false);
+            assert.equal(result.full_suite_validation?.cycle_binding_valid, true);
+            assert.equal(result.full_suite_validation?.mismatch_reason, null);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('rejects same-scope full-suite reuse when a newer compile event disagrees with a stale compile artifact', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-stale-compile-artifact-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            writeTaskModeArtifactFixture(repoRoot, 'T-923', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: { enabled: true, command: 'npm test' }
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(reviewsRoot, 'T-923-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-923',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const oldChangedFilesSha = '1'.repeat(64);
+            const oldScopeSha = '2'.repeat(64);
+            const oldScopeContentSha = '3'.repeat(64);
+            const newChangedFilesSha = '4'.repeat(64);
+            const newScopeSha = '5'.repeat(64);
+            const newScopeContentSha = '6'.repeat(64);
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'task-events', 'T-923.jsonl'), JSON.stringify({
+                event_type: 'COMPILE_GATE_PASSED',
+                timestamp_utc: '2026-05-05T00:05:00.000Z',
+                details: {
+                    preflight_path: preflightPath,
+                    preflight_hash_sha256: 'new-cycle',
+                    preflight_changed_files_sha256: newChangedFilesSha,
+                    preflight_scope_sha256: newScopeSha,
+                    preflight_scope_content_sha256: newScopeContentSha
+                }
+            }) + '\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-923-compile-gate.json'), JSON.stringify({
+                timestamp_utc: '2026-05-05T00:00:00.250Z',
+                status: 'PASSED',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: 'old-cycle',
+                preflight_changed_files_sha256: oldChangedFilesSha,
+                preflight_scope_sha256: oldScopeSha,
+                preflight_scope_content_sha256: oldScopeContentSha
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-923-full-suite-validation.json'), JSON.stringify({
+                status: 'PASSED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: 0,
+                timed_out: false,
+                output_artifact_path: path.join(reviewsRoot, 'T-923-full-suite-output.log'),
+                compact_summary: ['# pass 91'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: [],
+                cycle_binding: {
+                    task_id: 'T-923',
+                    preflight_path: preflightPath,
+                    preflight_sha256: 'old-cycle',
+                    compile_gate_timestamp: '2026-05-05T00:00:00.000Z',
+                    scope_binding: {
+                        changed_files_sha256: oldChangedFilesSha,
+                        scope_sha256: oldScopeSha,
+                        scope_content_sha256: oldScopeContentSha
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-923-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-923-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.full_suite_validation?.matches_current_compile_gate, false);
+            assert.equal(result.full_suite_validation?.cycle_binding_valid, false);
+            assert.match(result.full_suite_validation?.mismatch_reason || '', /compile gate cycle/);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('keeps pinned explicit-provider task-mode identity resolved when no routed_to is present', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-explicit-provider-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

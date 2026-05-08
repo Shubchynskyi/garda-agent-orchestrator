@@ -26,6 +26,11 @@ export interface FullSuiteValidationCycleBinding {
     preflight_path: string;
     preflight_sha256: string;
     compile_gate_timestamp: string | null;
+    scope_binding?: {
+        changed_files_sha256: string | null;
+        scope_sha256: string | null;
+        scope_content_sha256: string | null;
+    } | null;
 }
 
 const DEFAULT_CONFIG: FullSuiteValidationConfig = Object.freeze({

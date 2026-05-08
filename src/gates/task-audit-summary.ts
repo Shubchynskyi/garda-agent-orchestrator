@@ -320,26 +320,26 @@ function isEventRelevantForLifecycleGate(
         return true;
     }
 
+    if (gateSpec.gate === 'full-suite-validation') {
+        const details = event.details && typeof event.details === 'object'
+            ? event.details as Record<string, unknown>
+            : null;
+        return shouldIncludeFullSuiteTelemetryForCurrentCycle(
+            eventType,
+            event.timestamp_utc,
+            details,
+            currentCycle,
+            repoRoot
+        );
+    }
+
     const eventTime = parseTimestamp(event.timestamp_utc).getTime();
     const compileTime = parseTimestamp(currentCycle.compile_gate_timestamp).getTime();
     if (eventTime > 0 && compileTime > 0 && eventTime < compileTime) {
         return false;
     }
 
-    if (gateSpec.gate !== 'full-suite-validation') {
-        return true;
-    }
-
-    const details = event.details && typeof event.details === 'object'
-        ? event.details as Record<string, unknown>
-        : null;
-    return shouldIncludeFullSuiteTelemetryForCurrentCycle(
-        eventType,
-        event.timestamp_utc,
-        details,
-        currentCycle,
-        repoRoot
-    );
+    return true;
 }
 
 function readTaskEventSequence(event: TaskAuditEvent): number | null {
