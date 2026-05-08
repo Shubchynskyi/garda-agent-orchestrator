@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added release-time embedded bundle parity validation for root source, dist, templates, package files, and runtime-referenced docs
 - added review attempt pass/fail/reuse/missing counts to task-specific stats while keeping aggregate stats stable
 - colorized human task audit summary output while keeping JSON and output-path artifacts uncolored
 - colorized human task timeline output for `garda task "<task-id>" events` and `gate task-events-summary` while keeping JSON and output-path artifacts uncolored

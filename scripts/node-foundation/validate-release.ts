@@ -1,10 +1,31 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
+import * as crypto from 'node:crypto';
 
 import { getRepoRoot } from './build';
 
 const CLEAN_WORKTREE_DIRTY_PATH_LIMIT = 40;
+
+export const EMBEDDED_BUNDLE_PARITY_ITEMS = Object.freeze([
+    '.gitattributes',
+    'bin',
+    'dist',
+    'package.json',
+    'src',
+    'template',
+    'README.md',
+    'HOW_TO.md',
+    'MANIFEST.md',
+    'AGENT_INIT_PROMPT.md',
+    'CHANGELOG.md',
+    'LICENSE',
+    'NOTICE',
+    'SECURITY.md',
+    'TRADEMARKS.md',
+    'docs/operator-consistency-runbook.md',
+    'VERSION'
+]);
 
 export interface ReleaseVersionParityState {
     repoRoot: string;
@@ -34,6 +55,25 @@ export interface CleanWorktreePreflightResult extends CleanWorktreePreflightStat
     remediation: string;
 }
 
+export interface EmbeddedBundleParityItemResult {
+    item: string;
+    rootExists: boolean;
+    bundleExists: boolean;
+    rootHash: string | null;
+    bundleHash: string | null;
+}
+
+export interface EmbeddedBundleParityResult {
+    repoRoot: string;
+    bundleRoot: string;
+    bundlePresent: boolean;
+    bundleIgnoredByGit: boolean;
+    checkedItems: string[];
+    passed: boolean;
+    violations: string[];
+    items: EmbeddedBundleParityItemResult[];
+}
+
 function readTextFileTrimmed(filePath: string): string {
     return fs.readFileSync(filePath, 'utf8').trim();
 }
@@ -42,12 +82,68 @@ function readJsonFile(filePath: string): unknown {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
+function normalizeRelativePath(value: string): string {
+    return value.split(path.sep).join('/');
+}
+
+function hashFile(filePath: string): string {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function listFiles(rootPath: string): string[] {
+    const stat = fs.lstatSync(rootPath);
+    if (!stat.isDirectory()) {
+        return [rootPath];
+    }
+
+    const files: string[] = [];
+    const entries = fs.readdirSync(rootPath, { withFileTypes: true });
+    for (const entry of entries) {
+        const entryPath = path.join(rootPath, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...listFiles(entryPath));
+            continue;
+        }
+        if (entry.isFile() || entry.isSymbolicLink()) {
+            files.push(entryPath);
+        }
+    }
+    return files.sort();
+}
+
+function hashSurfaceItem(itemPath: string): string {
+    const hash = crypto.createHash('sha256');
+    const stat = fs.lstatSync(itemPath);
+    if (!stat.isDirectory()) {
+        hash.update('.');
+        hash.update('\0');
+        hash.update(stat.isSymbolicLink() ? `symlink:${fs.readlinkSync(itemPath)}` : hashFile(itemPath));
+        hash.update('\n');
+        return hash.digest('hex');
+    }
+
+    for (const filePath of listFiles(itemPath)) {
+        const fileStat = fs.lstatSync(filePath);
+        const relativePath = normalizeRelativePath(path.relative(itemPath, filePath));
+        hash.update(relativePath);
+        hash.update('\0');
+        hash.update(fileStat.isSymbolicLink() ? `symlink:${fs.readlinkSync(filePath)}` : hashFile(filePath));
+        hash.update('\n');
+    }
+    return hash.digest('hex');
+}
+
 function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
     return childProcess.spawnSync('git', args, {
         cwd: repoRoot,
         encoding: 'utf8',
         windowsHide: true
     });
+}
+
+function isGitIgnored(repoRoot: string, relativePath: string): boolean {
+    const result = runGit(repoRoot, ['check-ignore', '-q', '--', relativePath]);
+    return result.status === 0;
 }
 
 function formatGitFailure(label: string, result: childProcess.SpawnSyncReturns<string>): string {
@@ -262,6 +358,68 @@ export function validateCleanWorktreePreflight(repoRoot: string): CleanWorktreeP
     };
 }
 
+export function validateEmbeddedBundleParity(
+    repoRoot: string,
+    items: readonly string[] = EMBEDDED_BUNDLE_PARITY_ITEMS
+): EmbeddedBundleParityResult {
+    const normalizedRoot = path.resolve(repoRoot);
+    const bundleRoot = path.join(normalizedRoot, 'garda-agent-orchestrator');
+    const bundlePresent = fs.existsSync(bundleRoot);
+    const bundleIgnoredByGit = bundlePresent && isGitIgnored(normalizedRoot, 'garda-agent-orchestrator');
+    const violations: string[] = [];
+    const itemResults: EmbeddedBundleParityItemResult[] = [];
+    const checkedItems = [...items];
+
+    if (!bundlePresent || bundleIgnoredByGit) {
+        return {
+            repoRoot: normalizedRoot,
+            bundleRoot,
+            bundlePresent,
+            bundleIgnoredByGit,
+            checkedItems,
+            passed: true,
+            violations,
+            items: itemResults
+        };
+    }
+
+    for (const item of checkedItems) {
+        const rootItemPath = path.join(normalizedRoot, item);
+        const bundleItemPath = path.join(bundleRoot, item);
+        const rootExists = fs.existsSync(rootItemPath);
+        const bundleExists = fs.existsSync(bundleItemPath);
+        const rootHash = rootExists ? hashSurfaceItem(rootItemPath) : null;
+        const bundleHash = bundleExists ? hashSurfaceItem(bundleItemPath) : null;
+
+        itemResults.push({
+            item,
+            rootExists,
+            bundleExists,
+            rootHash,
+            bundleHash
+        });
+
+        if (!rootExists || !bundleExists) {
+            violations.push(`${item}: missing root=${rootExists} bundle=${bundleExists}`);
+            continue;
+        }
+        if (rootHash !== bundleHash) {
+            violations.push(`${item}: hash mismatch`);
+        }
+    }
+
+    return {
+        repoRoot: normalizedRoot,
+        bundleRoot,
+        bundlePresent,
+        bundleIgnoredByGit,
+        checkedItems,
+        passed: violations.length === 0,
+        violations,
+        items: itemResults
+    };
+}
+
 export function formatCleanWorktreePreflightResult(result: CleanWorktreePreflightResult): string {
     const lines: string[] = [];
 
@@ -307,6 +465,33 @@ export function formatReleaseVersionParityResult(result: ReleaseVersionParityRes
     return lines.join('\n');
 }
 
+export function formatEmbeddedBundleParityResult(result: EmbeddedBundleParityResult): string {
+    const lines: string[] = [];
+
+    if (!result.passed) {
+        lines.push('RELEASE_EMBEDDED_BUNDLE_PARITY_FAILED');
+        lines.push(`RepoRoot: ${result.repoRoot}`);
+        lines.push(`BundleRoot: ${result.bundleRoot}`);
+        lines.push(`CheckedItems: ${result.checkedItems.length}`);
+        for (const violation of result.violations) {
+            lines.push(`- ${violation}`);
+        }
+        lines.push('Remediation: refresh the generated embedded bundle from the root source before release.');
+        return lines.join('\n');
+    }
+
+    lines.push('RELEASE_EMBEDDED_BUNDLE_PARITY_OK');
+    lines.push(`RepoRoot: ${result.repoRoot}`);
+    lines.push(`BundleRoot: ${result.bundleRoot}`);
+    if (result.bundleIgnoredByGit) {
+        lines.push('BundlePresent: yes (gitignored generated artifact omitted from release surface)');
+    } else {
+        lines.push(`BundlePresent: ${result.bundlePresent ? 'yes' : 'no (generated artifact omitted)'}`);
+    }
+    lines.push(`CheckedItems: ${result.bundlePresent && !result.bundleIgnoredByGit ? result.checkedItems.length : 0}`);
+    return lines.join('\n');
+}
+
 export function runReleaseVersionParityValidation(): ReleaseVersionParityResult {
     const result = validateReleaseVersionParity(getRepoRoot());
     console.log(formatReleaseVersionParityResult(result));
@@ -325,15 +510,26 @@ export function runCleanWorktreePreflight(): CleanWorktreePreflightResult {
     return result;
 }
 
+export function runEmbeddedBundleParityValidation(): EmbeddedBundleParityResult {
+    const result = validateEmbeddedBundleParity(getRepoRoot());
+    console.log(formatEmbeddedBundleParityResult(result));
+    if (!result.passed) {
+        process.exit(1);
+    }
+    return result;
+}
+
 if (require.main === module) {
     const command = String(process.argv[2] || 'version-parity').trim();
     if (command === 'version-parity') {
         runReleaseVersionParityValidation();
     } else if (command === 'clean-worktree') {
         runCleanWorktreePreflight();
+    } else if (command === 'embedded-bundle-parity') {
+        runEmbeddedBundleParityValidation();
     } else {
         console.error(`Unknown validate-release command: ${command}`);
-        console.error('Usage: validate-release.js [version-parity|clean-worktree]');
+        console.error('Usage: validate-release.js [version-parity|clean-worktree|embedded-bundle-parity]');
         process.exit(1);
     }
 }

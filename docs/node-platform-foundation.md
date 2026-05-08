@@ -65,11 +65,14 @@ Runs the explicit release proof path:
 1. `npm run validate:clean-worktree`
 2. `npm run validate:version-parity`
 3. `npm run build`
-4. `npm run quality`
-5. compiled `tests/node/packaging/pack-smoke.test.js`, which performs `npm pack -> npm install <tarball> -> CLI invoke`
-6. `npm run validate:clean-worktree`
+4. `npm run validate:embedded-bundle-parity`
+5. `npm run quality`
+6. compiled `tests/node/packaging/pack-smoke.test.js`, which performs `npm pack -> npm install <tarball> -> CLI invoke`
+7. `npm run validate:clean-worktree`
 
 `npm run validate:clean-worktree` fails closed when the repository cannot prove a Git `HEAD`, branch/status state, or clean tracked/untracked worktree. Clean detached `HEAD` states are allowed for reproducible CI/package checks, but dirty tracked files and untracked files block release handoff.
+
+`npm run validate:embedded-bundle-parity` treats the nested `garda-agent-orchestrator/` checkout bundle as a generated artifact. If it is omitted or gitignored, the release check records that state as valid because it is not part of the release surface; if it is present and not gitignored, the check compares root and bundle tree hashes for the release sync surface, including source, compiled `dist`, templates, package metadata, and runtime-referenced docs.
 
 `npm run quality` composes `typecheck`, `lint`, report-only `coverage`, and `audit:prod`. This keeps the release contract explicit: the shipped package must build, typecheck, lint, pass the full test suite under coverage collection, pass production dependency audit, pack from a clean tree, install, execute from the packaged runtime, and leave the release tree clean.
 

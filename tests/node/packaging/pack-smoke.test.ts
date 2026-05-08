@@ -282,6 +282,10 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
             fs.existsSync(path.join(installedPackageRoot, 'template', 'entrypoints', 'canonical-rule-index.md')),
             'neutral canonical rule-index template must exist in the installed package'
         );
+        assert.ok(
+            fs.existsSync(path.join(installedPackageRoot, 'docs', 'operator-consistency-runbook.md')),
+            'runtime-referenced operator consistency runbook must exist in the installed package'
+        );
         const installedLegacyTemplatePath = path.join(installedPackageRoot, 'template', 'CLAUDE.md');
         assert.ok(
             fs.existsSync(installedLegacyTemplatePath),
