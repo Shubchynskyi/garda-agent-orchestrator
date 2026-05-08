@@ -1,6 +1,6 @@
 import type { FinalCloseoutArtifact, TaskAuditSummaryResult } from './task-audit-summary';
 import { toPosix } from './helpers';
-import type { TaskQueueMetadata } from './task-audit-summary-collectors';
+import type { ReviewAttemptSummary, TaskQueueMetadata } from './task-audit-summary-collectors';
 import {
     buildAgentReportBlock,
     getAgentReportMessages
@@ -240,6 +240,11 @@ function buildLocalizedOptionalSkillsSummary(
     return summary.visible_summary_line;
 }
 
+function getReviewAttemptSummaryLine(summary: ReviewAttemptSummary | null | undefined): string | null {
+    const visibleSummaryLine = String(summary?.visible_summary_line || '').trim();
+    return visibleSummaryLine || null;
+}
+
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
     const depthParts: string[] = [];
@@ -283,6 +288,11 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
 
     if (shouldRenderReviewTrustSummary(closeout, reviewIntegrityAttestation) && closeout.review_trust?.policy_summary_line) {
         lines.push(closeout.review_trust.policy_summary_line);
+    }
+
+    const reviewAttemptSummaryLine = getReviewAttemptSummaryLine(closeout.review_attempt_summary);
+    if (reviewAttemptSummaryLine) {
+        lines.push(reviewAttemptSummaryLine);
     }
 
     if (closeout.workflow?.visible_summary_line) {
@@ -360,6 +370,12 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
 
     if (summary.scope_category) {
         lines.push(`ScopeCategory: ${summary.scope_category}`);
+    }
+
+    const reviewAttemptSummaryLine = getReviewAttemptSummaryLine(summary.review_attempt_summary);
+    if (reviewAttemptSummaryLine) {
+        lines.push('');
+        lines.push(reviewAttemptSummaryLine);
     }
 
     if (summary.profile_review_decisions) {
@@ -464,6 +480,9 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (shouldRenderReviewTrustSummary(summary.final_closeout, reviewIntegrityAttestation) && summary.final_closeout.review_trust?.policy_summary_line) {
         lines.push(`  ${summary.final_closeout.review_trust.policy_summary_line}`);
+    }
+    if (summary.final_closeout.review_attempt_summary?.visible_summary_line) {
+        lines.push(`  ${summary.final_closeout.review_attempt_summary.visible_summary_line}`);
     }
     lines.push(`  ${reviewIntegrityAttestation.visible_summary_line}`);
     if (reviewIntegrityAttestation.observed_issues.length > 0) {

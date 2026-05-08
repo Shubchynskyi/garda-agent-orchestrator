@@ -42,6 +42,7 @@ import {
     type FinalCloseoutImplementationSummary,
     type FinalCloseoutReviewIntegrityAttestation,
     type FinalCloseoutOptionalSkillsSummary,
+    type ReviewAttemptSummary,
     type FinalCloseoutReviewTrustSummary,
     type FinalReportContract,
     type GateOutcome,
@@ -52,6 +53,7 @@ import {
     readDocImpactSummary,
     readReviewTrustSummary,
     readReviewTrustSummaryFromReviewGate,
+    buildReviewAttemptSummary,
     readOptionalSkillsSummary,
     readReviewVerdicts,
     readTaskQueueMetadata,
@@ -89,6 +91,7 @@ export interface FinalCloseoutArtifact {
     implementation_summary: FinalCloseoutImplementationSummary;
     review_trust?: FinalCloseoutReviewTrustSummary | null;
     review_integrity_attestation?: FinalCloseoutReviewIntegrityAttestation;
+    review_attempt_summary?: ReviewAttemptSummary | null;
     optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
     workflow?: {
         mandatory_full_suite_enabled: boolean;
@@ -129,6 +132,7 @@ export interface TaskAuditSummaryResult {
     evidence: EvidenceArtifact[];
     blockers: BlockerEntry[];
     point_in_time_snapshot: PointInTimeSnapshot;
+    review_attempt_summary?: ReviewAttemptSummary | null;
     final_report_contract: FinalReportContract;
     final_closeout: FinalCloseoutArtifact;
 }
@@ -1340,9 +1344,15 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             repoRoot,
             timelineEvents: events
         });
+        const reviewAttemptSummary = buildReviewAttemptSummary({
+            reviewsRoot,
+            taskId: safeTaskId,
+            timelineEvents: events
+        });
         return {
             evidence,
             requiredReviewBlockers,
+            reviewAttemptSummary,
             reviewIntegrityAttestation,
             reviewTrustSummary,
             reviewVerdicts
@@ -1487,6 +1497,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const {
         reviewVerdicts,
         reviewTrustSummary,
+        reviewAttemptSummary,
         reviewIntegrityAttestation
     } = reviewSnapshot;
     const reviewIntegrityBlocker = hasCompletionPass && reviewIntegrityAttestation.completion_allowed === false
@@ -1597,6 +1608,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         },
         review_trust: reviewTrustSummary,
         review_integrity_attestation: reviewIntegrityAttestation,
+        review_attempt_summary: reviewAttemptSummary,
         optional_skills: optionalSkillsSummary,
         workflow: {
             mandatory_full_suite_enabled: fullSuiteValidationEnabled,
@@ -1639,6 +1651,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         evidence,
         blockers,
         point_in_time_snapshot: pointInTimeSnapshot,
+        review_attempt_summary: reviewAttemptSummary,
         final_report_contract: finalReportContract,
         final_closeout: finalCloseout
     };

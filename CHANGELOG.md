@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added review attempt pass/fail/reuse/missing counts to task audit and final closeout reporting
 - made `garda stats "T-001"` a positional alias for task-specific stats and colorized human stats output while keeping JSON output uncolored
 - added command-specific CLI help discovery for user-facing commands, including `garda help <command>`, `<command> help`, `--help`, `-h`, and gate-specific help aliases
 - wrote update sync backup metadata and the `.update-in-progress` sentinel before destructive bundle sync, preserving phased recovery evidence through failed apply/rollback paths
