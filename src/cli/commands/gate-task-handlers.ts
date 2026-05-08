@@ -32,6 +32,7 @@ import { runFullSuiteValidationCommand } from './gate-flows/full-suite-validatio
 import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task-summary-flow';
 import { runTaskResetCommand } from './gate-flows/task-reset-flow';
 import { buildTaskResetMissingTaskIdMessage } from './task-reset-alias';
+import { colorizeTaskAuditSummaryText } from './task-audit-human-format';
 import { colorizeTaskEventsSummaryText } from './task-events-human-format';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 
@@ -308,7 +309,9 @@ export async function handleTaskAuditSummary(gateArgv: string[]): Promise<void> 
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runTaskAuditSummaryCommand(options);
-    process.stdout.write(result.rendered);
+    const shouldColorHumanStdout = options.asJson !== true
+        && !options.outputPath;
+    process.stdout.write(shouldColorHumanStdout ? colorizeTaskAuditSummaryText(result.rendered) : result.rendered);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;
     }

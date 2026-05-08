@@ -538,6 +538,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Scoped diff | `garda gate build-scoped-diff --review-type "db"` |
 | Review context | `garda gate build-review-context --review-type "code" --depth 2` |
 | Task events | `garda gate task-events-summary --task-id "T-001"`; use `--compact-latest-cycle` for bounded machine-readable latest-cycle JSON |
+| Task audit | `garda gate task-audit-summary --task-id "T-001"`; human stdout may be colored, while `--as-json` and `--output-path` remain uncolored |
 | Next step | `garda next-step "T-001"` or `garda gate next-step "T-001"` |
 | Log event | `garda gate log-task-event --task-id "T-001" --event-type "..."` |
 | Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
