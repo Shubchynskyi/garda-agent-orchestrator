@@ -69,6 +69,50 @@ function recordCurrentProjectMemoryImpact(repoRoot: string, taskId: string, pref
     );
 }
 
+function writePassedReviewGate(repoRoot: string, taskId: string, preflightPath: string, reviewType = 'code'): void {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    const preflightHash = fileSha256(preflightPath);
+    writeJson(path.join(reviewsRoot, `${taskId}-review-gate.json`), {
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_hash_sha256: preflightHash,
+        required_reviews: { [reviewType]: true },
+        verdicts: { [reviewType]: 'REVIEW PASSED' },
+        review_checks: {
+            [reviewType]: {
+                required: true,
+                skipped_by_override: false,
+                verdict: 'REVIEW PASSED',
+                pass_token: 'REVIEW PASSED',
+                receipt_valid: true,
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: `agent:${reviewType}-reviewer`,
+                reviewer_fallback_reason: null,
+                trust_level: 'INDEPENDENT_AUDITED'
+            }
+        }
+    });
+    appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Review gate passed.', {
+        preflight_hash_sha256: preflightHash,
+        required_reviews: { [reviewType]: true }
+    });
+}
+
+function writeNoDocImpact(repoRoot: string, taskId: string, rationale: string): void {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    writeJson(path.join(reviewsRoot, `${taskId}-doc-impact.json`), {
+        task_id: taskId,
+        status: 'PASSED',
+        outcome: 'PASS',
+        decision: 'NO_DOC_UPDATES',
+        rationale
+    });
+    appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'DOC_IMPACT_ASSESSED', 'PASS', 'Doc impact assessed.', {
+        decision: 'NO_DOC_UPDATES'
+    });
+}
+
 describe('gates/completion review trust', () => {
     it('does not fall back to receipt-derived independent trust when current review gate is incomplete', () => {
         const repoRoot = createTempRepo();
@@ -254,6 +298,94 @@ describe('gates/completion review trust', () => {
             assert.equal(passed.status, 'PASSED', JSON.stringify(passed, null, 2));
             assert.equal(passed.project_memory_impact_evidence.evidence_status, 'CURRENT');
             assert.equal(passed.project_memory_impact_evidence.status, 'NO_UPDATE_NEEDED');
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks strict completion until deferred review findings have TASK.md follow-up rows', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904c-strict-deferred-followups';
+        const deferredFinding = 'Add integration coverage for completion-gate deferred follow-up enforcement. Justification: Proves runCompletionGate blocks strict closeout until accepted follow-up work is tracked.';
+
+        try {
+            seedTaskQueue(repoRoot, taskId, 'IN_PROGRESS');
+            seedInitAnswers(repoRoot, 'Codex');
+            writeProjectMemoryWorkflowConfig(repoRoot, false);
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                scope_category: 'code',
+                required_reviews: {
+                    code: true,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                },
+                profile_selection: {
+                    task_profile: 'strict',
+                    effective_profile: 'strict'
+                }
+            });
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Validate strict deferred follow-up completion gate',
+                provider: 'Codex',
+                routedTo: 'AGENTS.md'
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+            assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'IMPLEMENTATION_STARTED', 'INFO', 'Implementation started.', {
+                preflight_path: preflightPath.replace(/\\/g, '/')
+            });
+            writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED', [
+                '# Review',
+                '',
+                'Verified `src/gates/completion.ts` strict deferred follow-up handling through the completion gate path with a realistic review artifact, receipt-backed trust evidence, and lifecycle gate state.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Deferred Findings',
+                `- ${deferredFinding}`,
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ]);
+            writePassedReviewGate(repoRoot, taskId, preflightPath);
+            writeNoDocImpact(repoRoot, taskId, 'Focused strict deferred follow-up completion regression.');
+
+            const missing = runCompletionGate({ repoRoot, preflightPath, taskId });
+            assert.equal(missing.status, 'FAILED');
+            assert.equal(missing.deferred_followup_evidence.status, 'FAILED');
+            assert.equal(missing.deferred_followup_evidence.checked_count, 1);
+            assert.ok(missing.violations.some((violation: string) => violation.includes('must be materialized as a separate TASK.md follow-up')));
+
+            const taskPath = path.join(repoRoot, 'TASK.md');
+            fs.appendFileSync(
+                taskPath,
+                [
+                    '',
+                    `| T-904c-followup | TODO | P2 | tests | Add deferred follow-up regression | unassigned | 2026-03-28 | balanced | Deferred from ${taskId} code review artifact ${taskId}-code.md. Original finding: ${deferredFinding} |`
+                ].join('\n'),
+                'utf8'
+            );
+
+            const passed = runCompletionGate({ repoRoot, preflightPath, taskId });
+            assert.equal(passed.status, 'PASSED', JSON.stringify(passed, null, 2));
+            assert.equal(passed.deferred_followup_evidence.status, 'PASS');
+            assert.equal(passed.deferred_followup_evidence.matched_count, 1);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

@@ -71,6 +71,10 @@ import {
     getProjectMemoryImpactLifecycleEvidence,
     type ProjectMemoryImpactLifecycleEvidence
 } from './project-memory-impact';
+import {
+    validateStrictDeferredReviewFollowups,
+    type DeferredFollowupValidationResult
+} from './completion-deferred-followups';
 import { resolveReviewExecutionPolicyModeFromPreflight } from '../core/review-execution-policy';
 import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 
@@ -397,6 +401,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const requiredReviews = validatedPreflight.preflight && typeof validatedPreflight.preflight.required_reviews === 'object'
         ? validatedPreflight.preflight.required_reviews
         : {};
+    const profileSelection = preflight.profile_selection && typeof preflight.profile_selection === 'object' && !Array.isArray(preflight.profile_selection)
+        ? preflight.profile_selection as Record<string, unknown>
+        : {};
+    const activeProfile = String(profileSelection.effective_profile || profileSelection.task_profile || '').trim() || null;
     const reviewArtifacts: Record<string, {
         path: string;
         content: string;
@@ -576,6 +584,17 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         ?? (hasRequiredReviews
             ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
             : receiptReviewTrustSummary);
+    const deferredFollowupEvidence: DeferredFollowupValidationResult = validateStrictDeferredReviewFollowups({
+        repoRoot,
+        taskId: resolvedTaskId || '',
+        activeProfile,
+        reviewFindings: Object.entries(reviewArtifacts).map(([reviewType, artifact]) => ({
+            reviewType,
+            artifactPath: artifact.path,
+            findings: artifact.findings_evidence.deferred_findings
+        }))
+    });
+    errors.push(...deferredFollowupEvidence.violations);
 
     // Plan metadata from task-mode evidence (informational, never blocks)
     const planEvidence = {
@@ -743,6 +762,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         stage_sequence_evidence: stageSequence,
         reviewer_routing_enforcement: reviewerRoutingEnforcement,
         review_trust_summary: reviewTrustSummary,
+        deferred_followup_evidence: deferredFollowupEvidence,
         full_suite_validation_evidence: fullSuiteValidationEvidence,
         project_memory_impact_evidence: projectMemoryImpactEvidence,
         zero_diff_evidence: zeroDiffEvidence,

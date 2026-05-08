@@ -12,8 +12,121 @@ import {
     getFindingsBySeverity,
     isTrivialReview
 } from '../../../src/gates/completion';
+import { validateStrictDeferredReviewFollowups } from '../../../src/gates/completion-deferred-followups';
 import { buildReviewTrustSummary } from '../../../src/gates/review-trust-summary';
 describe('gates/completion — helpers and formatters', () => {
+    describe('validateStrictDeferredReviewFollowups', () => {
+        it('blocks strict deferred findings until a TASK.md follow-up preserves source review details', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    '| T-999 | 🟦 TODO | P2 | workflow | Existing unrelated follow-up | gpt-5.4 | 2026-05-08 | balanced | Mentions T-371 and code but not the source artifact or original finding. |'
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: ['Add a regression for deferred finding follow-up dedupe.']
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.checked_count, 1);
+                assert.match(result.violations[0], /must be materialized as a separate TASK\.md follow-up/);
+                assert.match(result.violations[0], /T-371-code\.md/);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('accepts strict deferred findings when a separate TASK.md row preserves parent, review type, artifact, and original finding text', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    '| T-999 | 🟦 TODO | P2 | workflow | Materialized deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact garda-agent-orchestrator/runtime/reviews/T-371-code.md. Original finding: Add a regression for deferred finding follow-up dedupe. |'
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: ['Add a regression for deferred finding follow-up dedupe.']
+                    }]
+                });
+
+                assert.equal(result.status, 'PASS');
+                assert.equal(result.checked_count, 1);
+                assert.equal(result.matched_count, 1);
+                assert.deepEqual(result.violations, []);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('matches deferred finding text containing escaped markdown table pipes', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    '| T-999 | 🟦 TODO | P2 | workflow | Pipe-safe follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 refactor review artifact T-371-refactor.md. Original finding: Preserve union text A \\| B in follow-up matching. |'
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'refactor',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-refactor.md'),
+                        findings: ['Preserve union text A | B in follow-up matching.']
+                    }]
+                });
+
+                assert.equal(result.status, 'PASS');
+                assert.equal(result.matched_count, 1);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('does not require follow-up materialization outside strict profile', () => {
+            const result = validateStrictDeferredReviewFollowups({
+                repoRoot: process.cwd(),
+                taskId: 'T-450',
+                activeProfile: 'balanced',
+                reviewFindings: [{
+                    reviewType: 'code',
+                    artifactPath: 'runtime/reviews/T-450-code.md',
+                    findings: ['Document a non-blocking balanced follow-up.']
+                }]
+            });
+
+            assert.equal(result.status, 'NOT_REQUIRED');
+            assert.equal(result.required, false);
+        });
+    });
+
     describe('collectOrderedTimelineEvents', () => {
         it('continues scanning valid events after an invalid JSON line', () => {
             const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-completion-timeline-'));
