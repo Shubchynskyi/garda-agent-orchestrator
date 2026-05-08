@@ -19,7 +19,9 @@ import {
 import { runUninstall } from '../../../src/lifecycle/uninstall';
 import {
     removePathRecursive,
-    getUpdateSentinelPath
+    getUpdateSentinelPath,
+    readSyncBackupMetadata,
+    readUpdateSentinel
 } from '../../../src/lifecycle/common';
 import { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } from '../../../src/materialization/content-builders';
 
@@ -430,9 +432,14 @@ describe('Check-update partial sync failure paths', () => {
                 versionBefore,
                 'VERSION must be restored after sync rollback'
             );
-            // Sentinel must be cleaned
-            assert.ok(!fs.existsSync(getUpdateSentinelPath(bundle)),
-                'Update sentinel must be removed after failure');
+            // Sentinel must remain with rollback metadata for interrupted-update recovery.
+            assert.ok(fs.existsSync(getUpdateSentinelPath(bundle)),
+                'Update sentinel must remain after failure for recovery diagnostics');
+            const sentinel = readUpdateSentinel(bundle) as Record<string, unknown>;
+            assert.equal(sentinel.phase, 'lifecycle');
+            assert.equal(typeof sentinel.syncBackupRoot, 'string');
+            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.equal(metadata.preexistingMap.VERSION, true);
         } finally {
             removePathRecursive(tmpDir);
         }

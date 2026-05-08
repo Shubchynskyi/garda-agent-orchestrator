@@ -16,6 +16,7 @@ import {
     BUNDLE_SYNC_ITEMS,
     removePathRecursive,
     getUpdateSentinelPath,
+    readSyncBackupMetadata,
     readUpdateSentinel,
     withLifecycleOperationLockAsync
 } from '../../../src/lifecycle/common';
@@ -1174,6 +1175,7 @@ describe('runCheckUpdate', () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             let sentinelExistsDuringLifecycle = false;
+            let sentinelDuringLifecycle: Record<string, unknown> | null = null;
             const sentinelPath = getUpdateSentinelPath(bundleRoot);
 
             const result = await runCheckUpdate({
@@ -1185,14 +1187,76 @@ describe('runCheckUpdate', () => {
                 trustOverride: true,
                 updateRunner: () => {
                     sentinelExistsDuringLifecycle = fs.existsSync(sentinelPath);
+                    sentinelDuringLifecycle = readUpdateSentinel(bundleRoot) as Record<string, unknown> | null;
                 }
             });
 
             assert.equal(result.checkUpdateResult, 'UPDATED');
             assert.ok(sentinelExistsDuringLifecycle,
                 'Sentinel must exist during lifecycle execution');
+            assert.ok(fs.existsSync(result.syncBackupMetadataPath),
+                'Sync backup metadata must be written before lifecycle execution');
+            assert.ok(sentinelDuringLifecycle, 'Sentinel must be readable during lifecycle execution');
+            const sentinel = sentinelDuringLifecycle as Record<string, unknown>;
+            assert.equal(sentinel.phase, 'lifecycle');
+            assert.equal(sentinel.syncBackupRoot, result.syncBackupRoot);
+            assert.equal(sentinel.syncBackupMetadataPath, result.syncBackupMetadataPath);
+            assert.deepEqual(sentinel.plannedSyncItems, BUNDLE_SYNC_ITEMS.filter((item) => item !== 'VERSION'));
             assert.ok(!fs.existsSync(sentinelPath),
                 'Sentinel must be removed after successful update');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves sentinel and backup metadata when sync fails after the first item', async () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            const firstPlannedItem = BUNDLE_SYNC_ITEMS.find((item) => item !== 'VERSION' &&
+                fs.existsSync(path.join(repoRoot, item)));
+            assert.ok(firstPlannedItem, 'Test fixture must have at least one sync item');
+            const firstBundleItemPath = path.join(bundleRoot, firstPlannedItem);
+            const originalFirstItemContent = 'original first item content\n';
+            fs.mkdirSync(path.dirname(firstBundleItemPath), { recursive: true });
+            fs.writeFileSync(firstBundleItemPath, originalFirstItemContent, 'utf8');
+            let checkedBeforeFirstSync = false;
+
+            await assert.rejects(
+                runCheckUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    sourcePath: repoRoot,
+                    noPrompt: true,
+                    apply: true,
+                    trustOverride: true,
+                    _testHooks: {
+                        beforeSyncItemFaultInjector: (_item, index) => {
+                            if (index === 0) {
+                                checkedBeforeFirstSync = true;
+                                const preSyncSentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
+                                assert.equal(preSyncSentinel.phase, 'syncing');
+                                assert.equal(typeof preSyncSentinel.syncBackupRoot, 'string');
+                                assert.ok(fs.existsSync(preSyncSentinel.syncBackupMetadataPath as string));
+                                assert.equal(fs.readFileSync(firstBundleItemPath, 'utf8'), originalFirstItemContent);
+                                throw new Error('Simulated sync interruption');
+                            }
+                        }
+                    }
+                }),
+                /sync rollback completed.*Simulated sync interruption/
+            );
+
+            assert.ok(checkedBeforeFirstSync, 'Test must assert sentinel state before the first destructive sync');
+            assert.equal(fs.readFileSync(firstBundleItemPath, 'utf8'), originalFirstItemContent);
+            const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
+            assert.equal(sentinel.phase, 'syncing');
+            assert.equal(typeof sentinel.syncBackupRoot, 'string');
+            assert.equal(typeof sentinel.syncBackupMetadataPath, 'string');
+            assert.ok(fs.existsSync(sentinel.syncBackupMetadataPath as string));
+            assert.deepEqual(sentinel.plannedSyncItems, BUNDLE_SYNC_ITEMS.filter((item) => item !== 'VERSION'));
+            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.equal(metadata.preexistingMap[firstPlannedItem], true);
+            assert.deepEqual(metadata.plannedSyncItems, BUNDLE_SYNC_ITEMS.filter((item) => item !== 'VERSION'));
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -1311,7 +1375,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('removes sentinel on lifecycle failure', async () => {
+    it('preserves sentinel on lifecycle failure', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             const sentinelPath = getUpdateSentinelPath(bundleRoot);
@@ -1331,8 +1395,15 @@ describe('runCheckUpdate', () => {
                 /Simulated failure/
             );
 
-            assert.ok(!fs.existsSync(sentinelPath),
-                'Sentinel must be cleaned up even on failure');
+            assert.ok(fs.existsSync(sentinelPath),
+                'Sentinel must remain after failure for recovery diagnostics');
+            const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
+            assert.equal(sentinel.phase, 'lifecycle');
+            assert.equal(typeof sentinel.syncBackupRoot, 'string');
+            assert.equal(typeof sentinel.syncBackupMetadataPath, 'string');
+            assert.ok(fs.existsSync(sentinel.syncBackupMetadataPath as string));
+            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.equal(metadata.preexistingMap.VERSION, true);
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -1482,6 +1553,95 @@ describe('runCheckUpdate', () => {
                 'VERSION must be restored to its previous value (T-092)'
             );
         } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('restores previous VERSION when apply fails after deferred VERSION sync', async () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            const liveVersionPath = path.join(bundleRoot, 'live', 'version.json');
+            fs.mkdirSync(path.dirname(liveVersionPath), { recursive: true });
+            fs.writeFileSync(liveVersionPath, JSON.stringify({
+                Version: '0.0.1',
+                UpdatedAt: 'before-update'
+            }, null, 2) + '\n', 'utf8');
+            let lifecycleStartedAt: unknown = null;
+            let versionDeferredStartedAt: unknown = null;
+
+            await assert.rejects(
+                runCheckUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    sourcePath: repoRoot,
+                    noPrompt: true,
+                    apply: true,
+                    trustOverride: true,
+                    updateRunner: () => {
+                        lifecycleStartedAt = (readUpdateSentinel(bundleRoot) as Record<string, unknown>).startedAt;
+                    },
+                    _testHooks: {
+                        afterDeferredVersionSync: () => {
+                            versionDeferredStartedAt = (readUpdateSentinel(bundleRoot) as Record<string, unknown>).startedAt;
+                            throw new Error('Simulated post-version failure');
+                        }
+                    }
+                }),
+                /sync rollback completed.*Simulated post-version failure/
+            );
+
+            assert.equal(
+                fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(),
+                '0.0.1',
+                'VERSION must roll back when a later apply step fails after deferred sync'
+            );
+            assert.equal(
+                JSON.parse(fs.readFileSync(liveVersionPath, 'utf8')).Version,
+                '0.0.1',
+                'live/version.json must roll back with VERSION after a later apply failure'
+            );
+            const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
+            assert.equal(sentinel.phase, 'version_deferred');
+            assert.equal(lifecycleStartedAt, versionDeferredStartedAt,
+                'Sentinel startedAt must remain stable across phase updates');
+            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.equal(metadata.preexistingMap.VERSION, true);
+            assert.equal(metadata.preexistingMap['live/version.json'], true);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('restores previous VERSION for VERSION-only sources when a later apply step fails', async () => {
+        const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-version-only-source-'));
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            fs.writeFileSync(path.join(sourceRoot, 'VERSION'), '9.9.9\n', 'utf8');
+
+            await assert.rejects(
+                runCheckUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    sourcePath: sourceRoot,
+                    noPrompt: true,
+                    apply: true,
+                    trustOverride: true,
+                    _testHooks: {
+                        afterDeferredVersionSync: () => {
+                            throw new Error('Simulated version-only post-sync failure');
+                        }
+                    }
+                }),
+                /sync rollback completed.*Simulated version-only post-sync failure/
+            );
+
+            assert.equal(
+                fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim(),
+                '0.0.1',
+                'VERSION-only apply failures must restore the previous VERSION'
+            );
+        } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });

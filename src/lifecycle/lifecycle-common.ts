@@ -25,6 +25,10 @@ export interface UpdateSentinelMetadata extends JsonObject {
     startedAt?: string;
     fromVersion?: string;
     toVersion?: string;
+    phase?: string;
+    syncBackupRoot?: string;
+    syncBackupMetadataPath?: string;
+    plannedSyncItems?: string[];
 }
 
 export interface UninstallSentinelMetadata extends JsonObject {

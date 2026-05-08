@@ -19,6 +19,7 @@ import {
     removeUpdateSentinel,
     readdirRecursiveFiles,
     restoreSyncedItemsFromBackup,
+    type UpdateSentinelMetadata,
     writeSyncBackupMetadata,
     writeUpdateSentinel,
     validateTargetRoot,
@@ -170,6 +171,12 @@ export interface CheckUpdateRunnerOptions {
     lifecycleLockAlreadyHeld?: boolean;
 }
 
+interface CheckUpdateTestHooks {
+    beforeSyncItemFaultInjector?: ((item: string, index: number) => void) | null;
+    syncItemFaultInjector?: ((item: string, index: number) => void) | null;
+    afterDeferredVersionSync?: (() => void) | null;
+}
+
 interface CheckUpdateOptions {
     targetRoot: string;
     bundleRoot: string;
@@ -195,6 +202,7 @@ interface CheckUpdateOptions {
         options?: ResolveInstalledPackageRootOptions
     ) => { packageName: string; packageRoot: string }) | null;
     updateRunner?: ((options: CheckUpdateRunnerOptions) => void) | null;
+    _testHooks?: CheckUpdateTestHooks | null;
 }
 
 interface CheckUpdateResult {
@@ -238,6 +246,19 @@ interface UpdateAvailabilitySnapshot {
     driftedSyncItems: string[];
     updateAvailable: boolean;
     checkUpdateResult: string;
+}
+
+const DEFERRED_VERSION_ITEM = 'VERSION';
+const DEFERRED_LIVE_VERSION_PAYLOAD_ITEM = 'live/version.json';
+
+type UpdateSentinelPhase = 'syncing' | 'lifecycle' | 'version_deferred' | 'complete';
+
+interface PlannedBundleSyncItem {
+    item: string;
+    sourcePath: string;
+    destinationPath: string;
+    sourceIsDirectory: boolean;
+    isNodeRuntimeDir: boolean;
 }
 
 function syncDeferredLiveVersionPayload(bundleRoot: string, version: string): void {
@@ -368,6 +389,101 @@ function syncDeferredVersionFile(versionSourcePath: string, versionDestPath: str
         }
         throw versionSyncError;
     }
+}
+
+function collectExistingSourceSyncItems(sourceRoot: string): string[] {
+    return BUNDLE_SYNC_ITEMS.filter((item) => fs.existsSync(path.join(sourceRoot, item)));
+}
+
+function collectRollbackSyncItems(sourceSyncItems: string[], deployedBundleRoot: string): string[] {
+    const rollbackItems = [...sourceSyncItems];
+    if (fs.existsSync(path.join(deployedBundleRoot, DEFERRED_LIVE_VERSION_PAYLOAD_ITEM)) &&
+        !rollbackItems.includes(DEFERRED_LIVE_VERSION_PAYLOAD_ITEM)) {
+        rollbackItems.push(DEFERRED_LIVE_VERSION_PAYLOAD_ITEM);
+    }
+    return rollbackItems;
+}
+
+function planBundleSyncItems(
+    sourceRoot: string,
+    deployedBundleRoot: string,
+    sourceSyncItems: string[]
+): PlannedBundleSyncItem[] {
+    return sourceSyncItems
+        .filter((item) => item !== DEFERRED_VERSION_ITEM)
+        .map((item) => {
+            const sourcePath = path.join(sourceRoot, item);
+            const destinationPath = path.join(deployedBundleRoot, item);
+            const sourceIsDirectory = fs.lstatSync(sourcePath).isDirectory();
+
+            return {
+                item,
+                sourcePath,
+                destinationPath,
+                sourceIsDirectory,
+                isNodeRuntimeDir: item.toLowerCase() === 'src'
+            };
+        });
+}
+
+function buildUpdateSentinelMetadata(
+    source: AcquiredUpdateSource,
+    currentVersion: string,
+    latestVersion: string,
+    syncBackupRoot: string,
+    syncBackupMetadataPath: string,
+    plannedSyncItems: string[]
+): UpdateSentinelMetadata {
+    return {
+        startedAt: new Date().toISOString(),
+        fromVersion: currentVersion,
+        toVersion: latestVersion,
+        sourceType: source.sourceType,
+        sourceReference: source.sourceReference,
+        packageSpec: source.packageSpec,
+        requestedPackageSpec: source.requestedPackageSpec,
+        exactPackageSpec: source.exactPackageSpec,
+        resolvedPackageVersion: source.resolvedPackageVersion,
+        resolvedPackageIntegrity: source.resolvedPackageIntegrity,
+        syncBackupRoot,
+        syncBackupMetadataPath,
+        plannedSyncItems
+    };
+}
+
+function writeUpdateSentinelPhase(
+    deployedBundleRoot: string,
+    metadata: UpdateSentinelMetadata,
+    phase: UpdateSentinelPhase
+): void {
+    writeUpdateSentinel(
+        deployedBundleRoot,
+        {
+            ...metadata,
+            phase
+        }
+    );
+}
+
+function syncPlannedBundleItem(plan: PlannedBundleSyncItem, runningScriptPath: string | null): void {
+    if (plan.sourceIsDirectory) {
+        if (plan.isNodeRuntimeDir) {
+            if (!fs.existsSync(plan.destinationPath) || !fs.lstatSync(plan.destinationPath).isDirectory()) {
+                removePathRecursive(plan.destinationPath);
+                fs.mkdirSync(plan.destinationPath, { recursive: true });
+            }
+            const skipPaths = runningScriptPath ? [path.resolve(runningScriptPath)] : [];
+            copyDirectoryContentMerge(plan.sourcePath, plan.destinationPath, skipPaths);
+        } else {
+            removePathRecursive(plan.destinationPath);
+            copyPathRecursive(plan.sourcePath, plan.destinationPath);
+        }
+        return;
+    }
+
+    removePathRecursive(plan.destinationPath);
+    fs.mkdirSync(path.dirname(plan.destinationPath), { recursive: true });
+    fs.copyFileSync(plan.sourcePath, plan.destinationPath);
 }
 
 function detectSyncSurfaceDrift(sourceRoot: string, deployedBundleRoot: string): string[] {
@@ -979,7 +1095,8 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         npmViewRunner = null,
         npmInstallRunner = null,
         installedPackageRootResolver = null,
-        updateRunner = null
+        updateRunner = null,
+        _testHooks = null
     } = options;
 
     const normalizedTarget = validateTargetRoot(targetRoot, bundleRoot);
@@ -1070,34 +1187,28 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                 assertNoRuntimeLocksBeforeUpdateApply(deployedBundleRoot);
             }
 
-            const syncPreexistingMap: Record<string, boolean> = {};
-            const DEFERRED_VERSION_ITEM = 'VERSION';
+            const sourceSyncItems = collectExistingSourceSyncItems(source.sourceRoot);
+            const plannedSyncItems = planBundleSyncItems(source.sourceRoot, deployedBundleRoot, sourceSyncItems);
+            const plannedSyncItemNames = plannedSyncItems.map((plan) => plan.item);
+            const rollbackSyncItemNames = collectRollbackSyncItems(sourceSyncItems, deployedBundleRoot);
+            const syncPreexistingMap = Object.fromEntries(
+                rollbackSyncItemNames.map((item) => [item, fs.existsSync(path.join(deployedBundleRoot, item))])
+            ) as Record<string, boolean>;
+            let syncPreparationCompleted = false;
+            let destructiveSyncStarted = false;
 
             try {
-                for (const item of BUNDLE_SYNC_ITEMS) {
-                    const sourceItemPath = path.join(source.sourceRoot, item);
-                    if (!fs.existsSync(sourceItemPath)) continue;
+                result.syncItemsDetected += sourceSyncItems.length;
 
-                    result.syncItemsDetected++;
-                    const destinationPath = path.join(deployedBundleRoot, item);
-                    const destinationExists = fs.existsSync(destinationPath);
-
-                    if (dryRun) {
-                        result.syncedItems.push(item);
-                        continue;
-                    }
-
-                    // Defer VERSION until after lifecycle to prevent the workspace
-                    // from appearing updated before lifecycle has completed.
-                    if (item === DEFERRED_VERSION_ITEM) {
-                        continue;
-                    }
-
-                    if (!(item in syncPreexistingMap)) {
-                        syncPreexistingMap[item] = destinationExists;
-                    }
-
-                    if (destinationExists) {
+                if (dryRun) {
+                    result.syncedItems.push(...sourceSyncItems);
+                    result.checkUpdateResult = 'DRY_RUN_UPDATE_AVAILABLE';
+                } else {
+                    for (const item of rollbackSyncItemNames) {
+                        if (!syncPreexistingMap[item]) {
+                            continue;
+                        }
+                        const destinationPath = path.join(deployedBundleRoot, item);
                         const backupPath = path.join(syncBackupRoot, item);
                         fs.mkdirSync(path.dirname(backupPath), { recursive: true });
                         copyPathRecursive(destinationPath, backupPath);
@@ -1105,32 +1216,6 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                         result.syncBackupRoot = syncBackupRoot;
                     }
 
-                    const sourceIsDirectory = fs.lstatSync(sourceItemPath).isDirectory();
-                    const isNodeRuntimeDir = item.toLowerCase() === 'src';
-
-                    if (sourceIsDirectory) {
-                        if (isNodeRuntimeDir) {
-                            if (!fs.existsSync(destinationPath) || !fs.lstatSync(destinationPath).isDirectory()) {
-                                removePathRecursive(destinationPath);
-                                fs.mkdirSync(destinationPath, { recursive: true });
-                            }
-                            const skipPaths = runningScriptPath ? [path.resolve(runningScriptPath)] : [];
-                            copyDirectoryContentMerge(sourceItemPath, destinationPath, skipPaths);
-                        } else {
-                            removePathRecursive(destinationPath);
-                            copyPathRecursive(sourceItemPath, destinationPath);
-                        }
-                    } else {
-                        removePathRecursive(destinationPath);
-                        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-                        fs.copyFileSync(sourceItemPath, destinationPath);
-                    }
-
-                    result.syncItemsUpdated++;
-                    result.syncedItems.push(item);
-                }
-
-                if (!dryRun && Object.keys(syncPreexistingMap).length > 0) {
                     const syncMetadataPath = writeSyncBackupMetadata(syncBackupRoot, {
                         createdAt: new Date().toISOString(),
                         sourceType: source.sourceType,
@@ -1140,26 +1225,42 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                         exactPackageSpec: source.exactPackageSpec,
                         resolvedPackageVersion: source.resolvedPackageVersion,
                         resolvedPackageIntegrity: source.resolvedPackageIntegrity,
+                        plannedSyncItems: plannedSyncItemNames,
                         preexistingMap: syncPreexistingMap
                     });
                     result.syncBackupRoot = syncBackupRoot;
                     result.syncBackupMetadataPath = syncMetadataPath;
-                }
+                    const updateSentinelMetadata = buildUpdateSentinelMetadata(
+                        source,
+                        currentVersion,
+                        latestVersion,
+                        syncBackupRoot,
+                        syncMetadataPath,
+                        plannedSyncItemNames
+                    );
 
-                if (!dryRun) {
-                    // Write sentinel before lifecycle to allow detection of interrupted updates
-                    writeUpdateSentinel(deployedBundleRoot, {
-                        startedAt: new Date().toISOString(),
-                        fromVersion: currentVersion,
-                        toVersion: latestVersion,
-                        sourceType: source.sourceType,
-                        sourceReference: source.sourceReference,
-                        packageSpec: source.packageSpec,
-                        requestedPackageSpec: source.requestedPackageSpec,
-                        exactPackageSpec: source.exactPackageSpec,
-                        resolvedPackageVersion: source.resolvedPackageVersion,
-                        resolvedPackageIntegrity: source.resolvedPackageIntegrity
-                    });
+                    writeUpdateSentinelPhase(
+                        deployedBundleRoot,
+                        updateSentinelMetadata,
+                        'syncing'
+                    );
+
+                    syncPreparationCompleted = true;
+                    destructiveSyncStarted = plannedSyncItems.length > 0;
+                    for (let index = 0; index < plannedSyncItems.length; index++) {
+                        const plan = plannedSyncItems[index];
+                        _testHooks?.beforeSyncItemFaultInjector?.(plan.item, index);
+                        syncPlannedBundleItem(plan, runningScriptPath);
+                        result.syncItemsUpdated++;
+                        result.syncedItems.push(plan.item);
+                        _testHooks?.syncItemFaultInjector?.(plan.item, index);
+                    }
+
+                    writeUpdateSentinelPhase(
+                        deployedBundleRoot,
+                        updateSentinelMetadata,
+                        'lifecycle'
+                    );
 
                     if (updateRunner) {
                         updateRunner({
@@ -1181,18 +1282,31 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                         });
                     }
 
+                    writeUpdateSentinelPhase(
+                        deployedBundleRoot,
+                        updateSentinelMetadata,
+                        'version_deferred'
+                    );
+
                     // Sync deferred VERSION only after lifecycle has completed successfully.
                     // This ensures the workspace version does not advance until the full
                     // lifecycle (materialization, verify, etc.) is finished.
                     const versionSourcePath = path.join(source.sourceRoot, DEFERRED_VERSION_ITEM);
                     if (fs.existsSync(versionSourcePath)) {
                         const versionDestPath = path.join(deployedBundleRoot, DEFERRED_VERSION_ITEM);
+                        destructiveSyncStarted = true;
                         syncDeferredVersionFile(versionSourcePath, versionDestPath);
                         result.syncItemsUpdated++;
                         result.syncedItems.push(DEFERRED_VERSION_ITEM);
                         syncDeferredLiveVersionPayload(deployedBundleRoot, readTextFile(versionDestPath).trim());
+                        _testHooks?.afterDeferredVersionSync?.();
                     }
 
+                    writeUpdateSentinelPhase(
+                        deployedBundleRoot,
+                        updateSentinelMetadata,
+                        'complete'
+                    );
                     removeUpdateSentinel(deployedBundleRoot);
 
                     result.updateApplied = true;
@@ -1200,13 +1314,11 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                     if (Object.keys(syncPreexistingMap).length > 0 && result.syncRollbackStatus === 'NOT_NEEDED') {
                         result.syncRollbackStatus = 'NOT_TRIGGERED';
                     }
-                } else {
-                    result.checkUpdateResult = 'DRY_RUN_UPDATE_AVAILABLE';
                 }
             } catch (applyError) {
                 const originalError = getErrorMessage(applyError);
-                removeUpdateSentinel(deployedBundleRoot);
-                if (!dryRun && Object.keys(syncPreexistingMap).length > 0) {
+                if (!dryRun && syncPreparationCompleted && destructiveSyncStarted &&
+                    Object.keys(syncPreexistingMap).length > 0) {
                     result.syncRollbackStatus = 'ATTEMPTED';
                     try {
                         restoreSyncedItemsFromBackup(deployedBundleRoot, syncBackupRoot, syncPreexistingMap, runningScriptPath);
