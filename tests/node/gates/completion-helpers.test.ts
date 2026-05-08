@@ -22,6 +22,7 @@ describe('gates/completion — helpers and formatters', () => {
                 fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
                     '# TASK.md',
                     '',
+                    '## Active Queue',
                     '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
                     '|---|---|---|---|---|---|---|---|---|',
                     '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
@@ -54,6 +55,7 @@ describe('gates/completion — helpers and formatters', () => {
                 fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
                     '# TASK.md',
                     '',
+                    '## Active Queue',
                     '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
                     '|---|---|---|---|---|---|---|---|---|',
                     '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
@@ -80,12 +82,304 @@ describe('gates/completion — helpers and formatters', () => {
             }
         });
 
+        it('rejects exact deferred finding matches outside the active queue', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    '',
+                    '## Historical Notes',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    `| T-999 | 🟦 TODO | P2 | workflow | Archived deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: [findingText]
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.matched_count, 0);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('rejects parent task rows even when notes preserve deferred finding details', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    `| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: [findingText]
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.matched_count, 0);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('fails closed when TASK.md has no active queue heading', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    `| T-999 | 🟦 TODO | P2 | workflow | Deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: [findingText]
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.matched_count, 0);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('fails closed when the active queue table is malformed', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    `| T-999 | 🟦 TODO | P2 | workflow | Deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: [findingText]
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.matched_count, 0);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('rejects deferred finding matches hidden in noncanonical extra columns', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    `| T-999 | 🟦 TODO | P2 | workflow | Deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: [findingText]
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.matched_count, 0);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('rejects deferred finding matches outside the canonical notes column', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    `| T-999 | 🟦 TODO | P2 | workflow | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} | gpt-5.4 | 2026-05-08 | balanced | Notes intentionally omit deferred review evidence. |`
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: [findingText]
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.matched_count, 0);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('rejects terminal task rows as strict deferred finding follow-ups', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    `| T-999 | 🟩 DONE | P2 | workflow | Completed deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: [findingText]
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.equal(result.matched_count, 0);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('rejects blocked, split-required, and decomposed task rows as strict deferred finding follow-ups', () => {
+            for (const status of ['🟥 BLOCKED', '🟫 SPLIT_REQUIRED', '⬜ DECOMPOSED']) {
+                const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+                const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+                try {
+                    fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                        '# TASK.md',
+                        '',
+                        '## Active Queue',
+                        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                        '|---|---|---|---|---|---|---|---|---|',
+                        '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                        `| T-999 | ${status} | P2 | workflow | Stopped deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                    ].join('\n') + '\n', 'utf8');
+
+                    const result = validateStrictDeferredReviewFollowups({
+                        repoRoot: tempDir,
+                        taskId: 'T-371',
+                        activeProfile: 'strict',
+                        reviewFindings: [{
+                            reviewType: 'code',
+                            artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                            findings: [findingText]
+                        }]
+                    });
+
+                    assert.equal(result.status, 'FAILED', status);
+                    assert.equal(result.matched_count, 0, status);
+                } finally {
+                    fs.rmSync(tempDir, { recursive: true, force: true });
+                }
+            }
+        });
+
+        it('rejects non-canonical active-looking task statuses', () => {
+            for (const status of ['NOT TODO', 'TODO_ARCHIVED']) {
+                const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+                const findingText = 'Add a regression for deferred finding follow-up dedupe.';
+                try {
+                    fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                        '# TASK.md',
+                        '',
+                        '## Active Queue',
+                        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                        '|---|---|---|---|---|---|---|---|---|',
+                        '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                        `| T-999 | ${status} | P2 | workflow | Noncanonical deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact T-371-code.md. Original finding: ${findingText} |`
+                    ].join('\n') + '\n', 'utf8');
+
+                    const result = validateStrictDeferredReviewFollowups({
+                        repoRoot: tempDir,
+                        taskId: 'T-371',
+                        activeProfile: 'strict',
+                        reviewFindings: [{
+                            reviewType: 'code',
+                            artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                            findings: [findingText]
+                        }]
+                    });
+
+                    assert.equal(result.status, 'FAILED', status);
+                    assert.equal(result.matched_count, 0, status);
+                } finally {
+                    fs.rmSync(tempDir, { recursive: true, force: true });
+                }
+            }
+        });
+
         it('matches deferred finding text containing escaped markdown table pipes', () => {
             const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
             try {
                 fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
                     '# TASK.md',
                     '',
+                    '## Active Queue',
                     '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
                     '|---|---|---|---|---|---|---|---|---|',
                     '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',

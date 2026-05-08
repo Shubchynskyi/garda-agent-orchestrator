@@ -377,6 +377,9 @@ describe('gates/completion review trust', () => {
                 taskPath,
                 [
                     '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
                     `| T-904c-followup | TODO | P2 | tests | Add deferred follow-up regression | unassigned | 2026-03-28 | balanced | Deferred from ${taskId} code review artifact ${taskId}-code.md. Original finding: ${deferredFinding} |`
                 ].join('\n'),
                 'utf8'

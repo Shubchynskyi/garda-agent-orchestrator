@@ -18,9 +18,13 @@ export interface DeferredFollowupValidationResult {
 
 interface TaskQueueRow {
     taskId: string;
+    status: string;
     cells: string[];
-    searchableText: string;
+    searchableNotes: string;
 }
+
+const ACTIVE_FOLLOWUP_STATUSES = new Set(['todo', 'in_progress', 'in review', 'in_review']);
+const TASK_QUEUE_HEADER_CELLS = ['id', 'status', 'priority', 'area', 'title', 'owner', 'updated', 'profile', 'notes'];
 
 function normalizeSearchText(value: string): string {
     return String(value || '')
@@ -61,24 +65,70 @@ function parseMarkdownTableCells(row: string): string[] {
     return cells;
 }
 
+function isTaskQueueHeader(cells: string[]): boolean {
+    if (cells.length !== TASK_QUEUE_HEADER_CELLS.length) {
+        return false;
+    }
+    return TASK_QUEUE_HEADER_CELLS.every((expected, index) => normalizeSearchText(cells[index] || '') === expected);
+}
+
+function isTaskQueueSeparator(cells: string[]): boolean {
+    return cells.length === TASK_QUEUE_HEADER_CELLS.length
+        && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
 function parseTaskQueueRows(taskMdContent: string): TaskQueueRow[] {
     const rows: TaskQueueRow[] = [];
-    for (const rawLine of String(taskMdContent || '').split('\n')) {
+    const lines = String(taskMdContent || '').split('\n');
+    let inActiveQueue = false;
+    let seenActiveQueueHeader = false;
+    let seenActiveQueueSeparator = false;
+    for (const rawLine of lines) {
         const trimmed = rawLine.trim();
+        if (/^##\s+/.test(trimmed)) {
+            inActiveQueue = /^##\s+Active Queue\s*$/i.test(trimmed);
+            seenActiveQueueHeader = false;
+            seenActiveQueueSeparator = false;
+            continue;
+        }
+        if (!inActiveQueue) {
+            continue;
+        }
         if (!trimmed.startsWith('|')) {
             continue;
         }
         const cells = parseMarkdownTableCells(trimmed);
-        if (cells.length < 9 || cells[0].toLowerCase() === 'id' || cells[0].startsWith('-')) {
+        if (!seenActiveQueueHeader) {
+            if (isTaskQueueHeader(cells)) {
+                seenActiveQueueHeader = true;
+            }
+            continue;
+        }
+        if (!seenActiveQueueSeparator) {
+            if (isTaskQueueSeparator(cells)) {
+                seenActiveQueueSeparator = true;
+            } else if (!isTaskQueueHeader(cells)) {
+                seenActiveQueueHeader = false;
+            }
+            continue;
+        }
+        if (cells.length !== TASK_QUEUE_HEADER_CELLS.length || isTaskQueueHeader(cells) || isTaskQueueSeparator(cells)) {
             continue;
         }
         rows.push({
             taskId: cells[0],
+            status: cells[1],
             cells,
-            searchableText: normalizeSearchText(cells.join(' '))
+            searchableNotes: normalizeSearchText(cells[8])
         });
     }
     return rows;
+}
+
+function isActiveFollowupStatus(status: string): boolean {
+    const normalized = normalizeSearchText(status);
+    const canonicalStatus = normalized.replace(/^[^a-z0-9_]+/i, '').trim();
+    return ACTIVE_FOLLOWUP_STATUSES.has(canonicalStatus);
 }
 
 function hasMatchingFollowup(row: TaskQueueRow, input: {
@@ -90,6 +140,9 @@ function hasMatchingFollowup(row: TaskQueueRow, input: {
     if (row.taskId === input.parentTaskId) {
         return false;
     }
+    if (!isActiveFollowupStatus(row.status)) {
+        return false;
+    }
     const artifactPath = normalizeSearchText(input.artifactPath);
     const artifactName = normalizeSearchText(path.basename(input.artifactPath));
     const requiredTokens = [
@@ -97,11 +150,11 @@ function hasMatchingFollowup(row: TaskQueueRow, input: {
         normalizeSearchText(input.reviewType),
         normalizeSearchText(input.findingText)
     ];
-    if (!requiredTokens.every((token) => token && row.searchableText.includes(token))) {
+    if (!requiredTokens.every((token) => token && row.searchableNotes.includes(token))) {
         return false;
     }
-    return (!!artifactPath && row.searchableText.includes(artifactPath))
-        || (!!artifactName && row.searchableText.includes(artifactName));
+    return (!!artifactPath && row.searchableNotes.includes(artifactPath))
+        || (!!artifactName && row.searchableNotes.includes(artifactName));
 }
 
 export function validateStrictDeferredReviewFollowups(options: {
