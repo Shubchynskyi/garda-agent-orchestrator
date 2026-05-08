@@ -31,6 +31,7 @@ import {
     validatePathSourceTrust
 } from './update-trust';
 import { classifyNpmDiagnostic, createLifecycleDiagnosticError } from './update-diagnostics';
+import { assertNoRuntimeLocksBeforeUpdateApply } from './runtime-lock-preflight';
 
 export const DEFAULT_PACKAGE_NAME = PRIMARY_PACKAGE_NAME;
 export const DEFAULT_UPDATE_TEMP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1063,6 +1064,10 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
 
             if (!result.updateAvailable) {
                 return;
+            }
+
+            if (!dryRun) {
+                assertNoRuntimeLocksBeforeUpdateApply(deployedBundleRoot);
             }
 
             const syncPreexistingMap: Record<string, boolean> = {};

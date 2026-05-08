@@ -24,6 +24,7 @@ import {
 } from './update-execution';
 import { collectUpdateAnnouncements } from './update-announcements';
 import { writeUpdateReport, buildUpdateResult } from './update-reporting';
+import { assertNoRuntimeLocksBeforeUpdateApply } from './runtime-lock-preflight';
 
 interface RollbackRecord {
     relativePath: string;
@@ -164,6 +165,10 @@ function runValidatedUpdate(
         resolvedPackageVersion: null,
         resolvedPackageIntegrity: null
     };
+
+    if (!dryRun) {
+        assertNoRuntimeLocksBeforeUpdateApply(bundleRoot);
+    }
 
     if (!dryRun) {
         fs.mkdirSync(path.dirname(rollbackSnapshotPath), { recursive: true });

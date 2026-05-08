@@ -17,7 +17,6 @@ import {
     PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
     readProjectMemoryMaintenanceRolloutSummaryFromBundle
 } from '../core/project-memory-rollout';
-import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';
 import { restoreRollbackSnapshot } from './common';
 import { getLiveVersionPayload, type ResolvedUpdateSources } from './update-source';
 
@@ -379,15 +378,6 @@ export function executeUpdatePipelineStages(options: {
                 SourceOfTruth: sources.sourceOfTruth,
                 ActiveAgentFiles: activeEntryFiles
             });
-
-            try {
-                cleanupStaleTaskEventLocks(
-                    path.join(normalizedTarget, resolveBundleName()),
-                    { dryRun: false }
-                );
-            } catch (lockError: unknown) {
-                contractMigrationFiles.push(`Warning: Lock cleanup failed: ${getErrorMessage(lockError)}`);
-            }
 
             writeAgentInitState(normalizedTarget, buildRefreshAgentInitState({
                 previousState: previousAgentInitState,

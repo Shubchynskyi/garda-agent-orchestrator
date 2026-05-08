@@ -347,6 +347,19 @@ function setupCheckUpdateWorkspace(
     return { projectRoot: tmpDir, bundleRoot: bundle };
 }
 
+function seedActiveReviewIndexLock(bundleRoot: string) {
+    const lockPath = path.join(bundleRoot, 'runtime', '.reviews-index.lock');
+    const now = new Date().toISOString();
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid: process.pid,
+        hostname: os.hostname(),
+        created_at_utc: now,
+        heartbeat_at_utc: now,
+        command: 'reviews-index'
+    }), 'utf8');
+}
+
 describe('npm update source resolution', () => {
     it('resolves floating registry specs to exact package specs with integrity', () => {
         const result = resolveNpmUpdateSourceSpec('garda-agent-orchestrator@latest', {
@@ -781,6 +794,42 @@ describe('runCheckUpdate', () => {
             assert.equal(result.trustOverrideUsed, true);
             assert.equal(result.trustOverrideSource, 'cli-flag');
         } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks check-update apply when a review index runtime lock exists before bundle sync', async () => {
+        const sourceRoot = createSourcePathFixture(repoRoot);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            const originalDistContent = 'original dist sentinel';
+            fs.mkdirSync(path.join(bundleRoot, 'dist'), { recursive: true });
+            fs.writeFileSync(path.join(bundleRoot, 'dist', 'sentinel.txt'), originalDistContent, 'utf8');
+            fs.mkdirSync(path.join(sourceRoot, 'dist'), { recursive: true });
+            fs.writeFileSync(path.join(sourceRoot, 'dist', 'sentinel.txt'), 'updated dist sentinel', 'utf8');
+            seedActiveReviewIndexLock(bundleRoot);
+
+            let updateRunnerCalled = false;
+            await assert.rejects(
+                () => runCheckUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    sourcePath: sourceRoot,
+                    noPrompt: true,
+                    apply: true,
+                    trustOverride: true,
+                    updateRunner: () => {
+                        updateRunnerCalled = true;
+                    }
+                }),
+                /Runtime update preflight blocked apply.*review-artifact:\.reviews-index\.lock/
+            );
+
+            assert.equal(updateRunnerCalled, false, 'updateRunner must not execute while review locks exist');
+            assert.equal(fs.readFileSync(path.join(bundleRoot, 'dist', 'sentinel.txt'), 'utf8'), originalDistContent);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'apply must stop before bundle sync starts');
+        } finally {
+            removePathRecursive(sourceRoot);
             removePathRecursive(projectRoot);
         }
     });

@@ -78,6 +78,18 @@ function seedStaleTaskEventLock(bundleRoot: string, lockName: string) {
     fs.utimesSync(lockPath, oldDate, oldDate);
 }
 
+function seedActiveTaskEventLock(bundleRoot: string, lockName: string) {
+    const lockPath = path.join(bundleRoot, 'runtime', 'task-events', lockName);
+    const now = new Date().toISOString();
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        pid: process.pid,
+        hostname: os.hostname(),
+        created_at_utc: now,
+        heartbeat_at_utc: now
+    }), 'utf8');
+}
+
 function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: string = os.hostname()) {
     const lockPath = getLifecycleOperationLockPath(projectRoot);
     fs.mkdirSync(lockPath, { recursive: true });
@@ -362,6 +374,56 @@ describe('runUpdate', () => {
                 }),
                 /Another lifecycle operation is already running/
             );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks update apply when a task-event runtime lock exists before rollback or install', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            let installRunnerCalled = false;
+            seedActiveTaskEventLock(bundleRoot, '.T-ACTIVE.lock');
+
+            assert.throws(
+                () => runUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    initAnswersPath: answersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true,
+                    installRunner: () => {
+                        installRunnerCalled = true;
+                    }
+                }),
+                /Runtime update preflight blocked apply.*task-event:\.T-ACTIVE\.lock/
+            );
+
+            assert.equal(installRunnerCalled, false, 'installRunner must not execute while runtime locks exist');
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'update-rollbacks')), 'update must stop before rollback snapshot creation');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks update apply when a stale task-event runtime lock exists', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            seedStaleTaskEventLock(bundleRoot, '.T-STALE.lock');
+
+            assert.throws(
+                () => runUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    initAnswersPath: answersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true
+                }),
+                /Runtime update preflight blocked apply.*task-event:\.T-STALE\.lock.*status=STALE/
+            );
+
+            assert.ok(fs.existsSync(path.join(bundleRoot, 'runtime', 'task-events', '.T-STALE.lock')));
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'update-rollbacks')), 'stale runtime locks must block before rollback snapshot creation');
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -1302,7 +1364,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('preserves ready checkpoints across update, stamps bundle version, and cleans stale task-event locks', () => {
+    it('preserves ready checkpoints across update and stamps bundle version', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const bundleVersion = fs.readFileSync(path.join(bundleRoot, 'VERSION'), 'utf8').trim();
@@ -1320,7 +1382,6 @@ describe('runUpdate', () => {
                 ManifestValidationPassed: true,
                 ActiveAgentFiles: ['CLAUDE.md']
             }, null, 2), 'utf8');
-            seedStaleTaskEventLock(bundleRoot, '.T-STALE.lock');
 
             runUpdate({
                 targetRoot: projectRoot,
@@ -1340,7 +1401,6 @@ describe('runUpdate', () => {
             assert.equal(persistedState.SkillsPromptCompleted, true);
             assert.equal(persistedState.VerificationPassed, true);
             assert.equal(persistedState.ManifestValidationPassed, true);
-            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'task-events', '.T-STALE.lock')));
         } finally {
             removePathRecursive(projectRoot);
         }
