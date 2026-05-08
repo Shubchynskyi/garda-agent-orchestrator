@@ -4,6 +4,12 @@ import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-eve
 import { coerceIntLike } from '../../gate-runtime/token-telemetry';
 import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult } from '../../gate-runtime/budget-preflight';
 import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
+import {
+    buildReviewAttemptSummary,
+    type ReviewAttemptSummary,
+    type ReviewAttemptTypeSummary
+} from '../../gates/task-audit-summary-collectors';
+import type { ReviewReuseTelemetryEventLike } from '../../gates/review-reuse-telemetry';
 import { bold, cyan, dim, green, red, yellow } from './cli-format-output';
 import {
     parseTimestamp,
@@ -39,6 +45,7 @@ export interface TaskStatsResult {
     requested_depth: number | null;
     effective_depth: number | null;
     depth_escalated: boolean;
+    review_attempt_summary?: ReviewAttemptSummary | null;
     budget_forecast: BudgetForecast | null;
     budget_comparison: BudgetComparisonResult | null;
     token_economy: TokenEconomySummary;
@@ -208,7 +215,8 @@ export function buildTaskStats(
     taskId: string,
     repoRoot: string,
     eventsRoot?: string | null,
-    reviewsRoot?: string | null
+    reviewsRoot?: string | null,
+    options: { includeReviewAttemptSummary?: boolean } = {}
 ): TaskStatsResult {
     const resolvedRepoRoot = path.resolve(repoRoot);
     const safeTaskId = assertValidTaskId(taskId);
@@ -322,6 +330,13 @@ export function buildTaskStats(
     }
 
     const tokenEconomy = buildTokenEconomy(events, resolvedRepoRoot, resolvedReviewsRoot, safeTaskId);
+    const reviewAttemptSummary = options.includeReviewAttemptSummary === false
+        ? null
+        : buildReviewAttemptSummary({
+            reviewsRoot: resolvedReviewsRoot,
+            taskId: safeTaskId,
+            timelineEvents: events as ReviewReuseTelemetryEventLike[]
+        });
 
     const budgetComparison = buildBudgetComparison(
         safeTaskId,
@@ -345,6 +360,7 @@ export function buildTaskStats(
         requested_depth: requestedDepth,
         effective_depth: effectiveDepth,
         depth_escalated: depthEscalated,
+        review_attempt_summary: reviewAttemptSummary,
         budget_forecast: budgetForecast,
         budget_comparison: budgetComparison,
         token_economy: tokenEconomy
@@ -564,7 +580,9 @@ export function buildAggregateStats(
 
     const perTask: TaskStatsResult[] = [];
     for (const tid of taskIds) {
-        perTask.push(buildTaskStats(tid, resolvedRepoRoot, eventsRoot, reviewsRoot));
+        perTask.push(buildTaskStats(tid, resolvedRepoRoot, eventsRoot, reviewsRoot, {
+            includeReviewAttemptSummary: false
+        }));
     }
 
     const totalEvents = perTask.reduce((sum, t) => sum + t.events_count, 0);
@@ -625,6 +643,20 @@ function formatPercentNote(percent: number | null): string {
     return percent != null ? yellow(`~${percent}%`) : '';
 }
 
+function formatReviewAttemptCount(value: number, colorize: (text: string) => string): string {
+    return value > 0 ? colorize(String(value)) : dim(String(value));
+}
+
+function formatReviewAttemptTypeSummary(entry: ReviewAttemptTypeSummary): string {
+    return [
+        `${cyan(entry.review_type)}:`,
+        `${formatReviewAttemptCount(entry.pass_count, green)} pass`,
+        `${formatReviewAttemptCount(entry.fail_count, red)} fail`,
+        `${formatReviewAttemptCount(entry.reused_count, yellow)} reused`,
+        `${formatReviewAttemptCount(entry.missing_or_invalid_count, yellow)} missing/invalid`
+    ].join(' ');
+}
+
 export function formatTaskStatsText(stats: TaskStatsResult): string {
     const lines: string[] = [];
     lines.push(`${bold('Task:')} ${cyan(stats.task_id)}`);
@@ -643,6 +675,15 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
     }
     if (stats.required_reviews.length > 0) lines.push(`${bold('Reviews:')} ${stats.required_reviews.map((review) => cyan(review)).join(', ')}`);
     lines.push(`${bold('ChangedFiles:')} ${stats.changed_files_count} (${stats.changed_lines_total} lines)`);
+
+    if (stats.review_attempt_summary && stats.review_attempt_summary.review_types.length > 0) {
+        lines.push('');
+        lines.push(bold('Review Attempts:'));
+        lines.push(`  Total: ${stats.review_attempt_summary.total_attempts}`);
+        for (const entry of stats.review_attempt_summary.review_types) {
+            lines.push(`  - ${formatReviewAttemptTypeSummary(entry)}`);
+        }
+    }
 
     if (stats.budget_forecast) {
         lines.push('');
@@ -750,5 +791,12 @@ export function formatTaskStatsJson(stats: TaskStatsResult): string {
 }
 
 export function formatAggregateStatsJson(stats: AggregateStatsResult): string {
-    return JSON.stringify(stats, null, 2);
+    const stableAggregateStats = {
+        ...stats,
+        per_task: stats.per_task.map((taskStats) => {
+            const { review_attempt_summary: _reviewAttemptSummary, ...aggregateTaskStats } = taskStats;
+            return aggregateTaskStats;
+        })
+    };
+    return JSON.stringify(stableAggregateStats, null, 2);
 }

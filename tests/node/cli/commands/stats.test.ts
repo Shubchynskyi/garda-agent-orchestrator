@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -34,6 +35,50 @@ function scaffold(tmpDir: string): { eventsRoot: string; reviewsRoot: string } {
 function writeEvent(eventsRoot: string, taskId: string, event: Record<string, unknown>): void {
     const filePath = path.join(eventsRoot, `${taskId}.jsonl`);
     fs.appendFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
+}
+
+function sha256(text: string): string {
+    return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function writeReviewAttemptSnapshot(
+    reviewsRoot: string,
+    taskId: string,
+    reviewType: string,
+    verdictToken: string,
+    reusedExistingReview = false
+): Record<string, unknown> {
+    const reviewContent = `# ${reviewType} Review\n\n## Verdict\n${verdictToken}\n`;
+    const reviewArtifactSha256 = sha256(reviewContent);
+    const liveReviewPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
+    fs.writeFileSync(liveReviewPath, reviewContent, 'utf8');
+    const receiptContent = JSON.stringify({
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: `agent:${reviewType}`,
+        review_artifact_sha256: reviewArtifactSha256,
+        reused_existing_review: reusedExistingReview
+    }, null, 2);
+    const receiptSha256 = sha256(receiptContent);
+    const liveReceiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+    fs.writeFileSync(liveReceiptPath, receiptContent, 'utf8');
+    const reviewArtifactSnapshotPath = path.join(reviewsRoot, `${taskId}-${reviewType}-artifact-${reviewArtifactSha256}.md`);
+    const receiptSnapshotPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt-${receiptSha256}.json`);
+    fs.copyFileSync(liveReviewPath, reviewArtifactSnapshotPath);
+    fs.copyFileSync(liveReceiptPath, receiptSnapshotPath);
+    return {
+        task_id: taskId,
+        review_type: reviewType,
+        reused_existing_review: reusedExistingReview,
+        receipt_path: liveReceiptPath,
+        receipt_sha256: receiptSha256,
+        review_artifact_sha256: reviewArtifactSha256,
+        receipt_snapshot_path: receiptSnapshotPath,
+        receipt_snapshot_sha256: receiptSha256,
+        review_artifact_snapshot_path: reviewArtifactSnapshotPath,
+        review_artifact_snapshot_sha256: reviewArtifactSha256
+    };
 }
 
 function stripAnsi(value: string): string {
@@ -103,6 +148,7 @@ function makeStats(overrides: Partial<TaskStatsResult> = {}): TaskStatsResult {
         requested_depth: 1,
         effective_depth: 2,
         depth_escalated: true,
+        review_attempt_summary: null,
         budget_forecast: null,
         budget_comparison: null,
         token_economy: {
@@ -255,6 +301,103 @@ test('stats JSON formatters remain uncolored in color mode', () => {
     const aggregateJson = withColorEnv({ NO_COLOR: undefined, FORCE_COLOR: '1' }, () => formatAggregateStatsJson(aggregate));
     assert.equal(hasAnsi(aggregateJson), false);
     assert.equal(JSON.parse(aggregateJson).per_task[0].task_id, 'T-123');
+});
+
+test('buildTaskStats includes review attempt counts from existing review evidence', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        writeEvent(eventsRoot, 'T-454', {
+            event_type: 'REVIEW_RECORDED',
+            outcome: 'FAIL',
+            timestamp_utc: '2026-04-05T10:00:00Z',
+            details: writeReviewAttemptSnapshot(reviewsRoot, 'T-454', 'code', 'REVIEW FAILED')
+        });
+        writeEvent(eventsRoot, 'T-454', {
+            event_type: 'REVIEW_RECORDED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:01:00Z',
+            details: writeReviewAttemptSnapshot(reviewsRoot, 'T-454', 'code', 'REVIEW PASSED')
+        });
+        writeEvent(eventsRoot, 'T-454', {
+            event_type: 'REVIEW_RECORDED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:02:00Z',
+            details: writeReviewAttemptSnapshot(reviewsRoot, 'T-454', 'test', 'TEST REVIEW PASSED', true)
+        });
+
+        const stats = buildTaskStats('T-454', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(stats.review_attempt_summary?.total_attempts, 3);
+        assert.deepEqual(stats.review_attempt_summary?.review_types, [
+            { review_type: 'code', total_attempts: 2, pass_count: 1, fail_count: 1, reused_count: 0, missing_or_invalid_count: 0 },
+            { review_type: 'test', total_attempts: 1, pass_count: 1, fail_count: 0, reused_count: 1, missing_or_invalid_count: 0 }
+        ]);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatTaskStatsText shows review attempt counts while aggregate text remains unchanged', () => {
+    const reviewAttemptSummary = {
+        total_attempts: 3,
+        source_mode: 'task_events' as const,
+        visible_summary_line: 'Review attempts: total=3; code(pass=1, fail=1, reused=0, missing/invalid=0); test(pass=1, fail=0, reused=1, missing/invalid=0)',
+        review_types: [
+            { review_type: 'code', total_attempts: 2, pass_count: 1, fail_count: 1, reused_count: 0, missing_or_invalid_count: 0 },
+            { review_type: 'test', total_attempts: 1, pass_count: 1, fail_count: 0, reused_count: 1, missing_or_invalid_count: 0 }
+        ]
+    };
+    const stats = makeStats({ task_id: 'T-454', review_attempt_summary: reviewAttemptSummary });
+    const text = withColorEnv({ NO_COLOR: undefined, FORCE_COLOR: '1' }, () => formatTaskStatsText(stats));
+    const plainText = stripAnsi(text);
+    assert.ok(plainText.includes('Review Attempts:'));
+    assert.ok(plainText.includes('Total: 3'));
+    assert.ok(plainText.includes('code: 1 pass 1 fail 0 reused 0 missing/invalid'));
+    assert.ok(plainText.includes('test: 1 pass 0 fail 1 reused 0 missing/invalid'));
+
+    const json = withColorEnv({ NO_COLOR: undefined, FORCE_COLOR: '1' }, () => formatTaskStatsJson(stats));
+    assert.equal(hasAnsi(json), false);
+    assert.equal(JSON.parse(json).review_attempt_summary.review_types[0].review_type, 'code');
+
+    const aggregateText = formatAggregateStatsText({
+        tasks_analyzed: 1,
+        total_events: 2,
+        total_wall_clock_seconds: 60,
+        total_gate_pass: 1,
+        total_gate_fail: 1,
+        total_estimated_saved_chars: 1600,
+        total_raw_char_count: 2000,
+        aggregate_chars_savings_percent: 80,
+        total_estimated_saved_tokens: 400,
+        total_raw_token_count_estimate: 500,
+        aggregate_savings_percent: 80,
+        per_task: [stats]
+    });
+    assert.equal(stripAnsi(aggregateText).includes('Review Attempts:'), false);
+});
+
+test('buildAggregateStats keeps aggregate per-task JSON stable without review attempt summaries', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const { eventsRoot, reviewsRoot } = scaffold(tmpDir);
+        writeEvent(eventsRoot, 'T-454', {
+            event_type: 'REVIEW_RECORDED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-05T10:00:00Z',
+            details: writeReviewAttemptSnapshot(reviewsRoot, 'T-454', 'code', 'REVIEW PASSED')
+        });
+
+        const taskStats = buildTaskStats('T-454', tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(taskStats.review_attempt_summary?.total_attempts, 1);
+
+        const aggregate = buildAggregateStats(tmpDir, eventsRoot, reviewsRoot);
+        assert.equal(aggregate.per_task[0].task_id, 'T-454');
+        assert.equal(aggregate.per_task[0].review_attempt_summary, null);
+        const aggregateJson = formatAggregateStatsJson(aggregate);
+        assert.equal(Object.hasOwn(JSON.parse(aggregateJson).per_task[0], 'review_attempt_summary'), false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 test('buildTaskStats computes wall clock and gate counts from events', () => {
