@@ -10,8 +10,10 @@ import { writeReviewArtifactJson } from '../../../gate-runtime/review-artifacts'
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
 import { selectRulePackFiles } from '../../../gates/build-review-context';
 import { getClassificationConfig } from '../../../gates/classify-change';
+import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../gates/build-scoped-diff';
 import { collectOrderedTimelineEvents, findLatestTimelineEvent } from '../../../gates/completion-evidence';
 import { getPreflightContext, getWorkspaceSnapshot } from '../../../gates/compile-gate';
+import { buildReviewContextPreflightDiffExpectations } from '../../../gates/review-context-contract';
 import {
     getLatestPrePreflightCycleAnchor,
     isTaskEntryRulePackLoadedEvent
@@ -144,6 +146,27 @@ interface ReviewRemediationFixClassification {
     blocked_before_reuse: boolean;
     invalidated_review_types: string[];
     preserved_review_types: string[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getPreflightReuseBlockReason(preflightPayload?: unknown): string | null {
+    if (!isRecord(preflightPayload) || !isRecord(preflightPayload.triggers)) {
+        return null;
+    }
+    const changedProtectedFiles = Array.isArray(preflightPayload.triggers.changed_protected_files)
+        ? preflightPayload.triggers.changed_protected_files
+            .map((entry) => String(entry || '').trim())
+            .filter(Boolean)
+        : [];
+    if (preflightPayload.triggers.protected_control_plane_changed === true || changedProtectedFiles.length > 0) {
+        return changedProtectedFiles.length > 0
+            ? `refreshed preflight includes protected-control-plane changes: ${changedProtectedFiles.join(', ')}`
+            : 'refreshed preflight includes protected-control-plane changes';
+    }
+    return null;
 }
 
 const REMEDIATION_IMPACT_ANALYSIS_MIN_CHARS = 120;
@@ -481,7 +504,8 @@ function classifyReviewRemediationFix(
     scopeBoundary: ReviewRemediationScopeBoundary,
     requiredReviewTypes: readonly string[] = [],
     impactAnalysis?: ReviewRemediationImpactAnalysis,
-    testTriggerRegexes: readonly string[] = []
+    testTriggerRegexes: readonly string[] = [],
+    preflightPayload?: unknown
 ): ReviewRemediationFixClassification {
     const normalizedRequiredReviewTypes = [...new Set(
         requiredReviewTypes.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
@@ -494,19 +518,24 @@ function classifyReviewRemediationFix(
             : 'previous_scope_only';
     const semantic = getReviewRemediationSemanticSignals(scopeBoundary, impactAnalysis);
     const affectedFileGroups = groupReviewRemediationFiles(scopeBoundary.currentChangedFiles, testTriggerRegexes);
-    const failClosed = semantic.category === 'unknown'
+    const preflightReuseBlockReason = getPreflightReuseBlockReason(preflightPayload);
+    const failClosed = !!preflightReuseBlockReason
+        || semantic.category === 'unknown'
         || semantic.category === 'security_sensitive'
         || semantic.category === 'api_surface'
         || semantic.category === 'runtime_behavior'
         || scopeBoundary.status === 'BLOCKED';
+    const classificationReason = preflightReuseBlockReason
+        ? `${semantic.rationale}; ${preflightReuseBlockReason}; fail closed before reuse`
+        : semantic.rationale;
     const impactAnalysisSource: ReviewRemediationFixClassification['evidence']['impact_analysis_source'] =
         impactAnalysis?.source || 'missing';
     const base = {
         status: 'CLASSIFIED' as const,
         category: semantic.category,
         scope_category: scopeCategory,
-        rationale: semantic.rationale,
-        reason: semantic.rationale,
+        rationale: classificationReason,
+        reason: classificationReason,
         affected_file_groups: affectedFileGroups,
         evidence: {
             scope_boundary_status: scopeBoundary.status,
@@ -537,6 +566,28 @@ function classifyReviewRemediationFix(
                 ? ['test', ...(failClosed ? nonTestReviewTypes : [])].sort()
                 : failClosed ? nonTestReviewTypes : [],
             preserved_review_types: failClosed ? [] : nonTestReviewTypes
+        };
+    }
+    if (semantic.category === 'test_hook_isolation' && !failClosed) {
+        const invalidatedReviewTypes = normalizedRequiredReviewTypes.includes('code') ? ['code'] : [];
+        return {
+            ...base,
+            non_test_review_reuse_candidate: true,
+            test_review_reuse_candidate: true,
+            blocked_before_reuse: false,
+            invalidated_review_types: invalidatedReviewTypes,
+            preserved_review_types: normalizedRequiredReviewTypes.filter((entry) => !invalidatedReviewTypes.includes(entry))
+        };
+    }
+    if (semantic.category === 'refactor_structure' && !failClosed) {
+        const invalidatedReviewTypes = normalizedRequiredReviewTypes.includes('refactor') ? ['refactor'] : [];
+        return {
+            ...base,
+            non_test_review_reuse_candidate: true,
+            test_review_reuse_candidate: true,
+            blocked_before_reuse: false,
+            invalidated_review_types: invalidatedReviewTypes,
+            preserved_review_types: normalizedRequiredReviewTypes.filter((entry) => !invalidatedReviewTypes.includes(entry))
         };
     }
     return {
@@ -1159,7 +1210,8 @@ export async function runRestartReviewCycleCommand(
             scopeBoundary,
             requiredReviewTypes,
             remediationImpactAnalysis,
-            classificationConfig.test_trigger_regexes
+            classificationConfig.test_trigger_regexes,
+            refreshedPreflight.preflight
         );
         const sharedTokenEconomyConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
         const sharedTokenEconomyConfigData: TokenEconomyConfig | null = (
@@ -1194,6 +1246,27 @@ export async function runRestartReviewCycleCommand(
                     const reviewReuseBlockedReason = invalidatedReviewTypes.has(reviewType)
                         ? `review reuse blocked by remediation classification '${remediationFixClassification.category}' for invalidated review type '${reviewType}'`
                         : '';
+                    const remediationPreservedScopeMismatchReason = reviewReuseBlockedReason
+                        ? ''
+                        : `remediation classification '${remediationFixClassification.category}' preserved review type '${reviewType}'`;
+                    const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(
+                        refreshedPreflight.preflight,
+                        reviewType
+                    ).expectedScopedDiff;
+                    const scopedDiffMetadataPath = scopedDiffExpected
+                        ? resolveScopedDiffMetadataPath('', refreshedPreflightPath, reviewType, repoRoot)
+                        : '';
+                    if (scopedDiffExpected) {
+                        buildScopedDiff({
+                            reviewType,
+                            preflightPath: refreshedPreflightPath,
+                            pathsConfigPath: resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'paths.json')),
+                            outputPath: resolveScopedDiffOutputPath('', refreshedPreflightPath, reviewType, repoRoot),
+                            metadataPath: scopedDiffMetadataPath,
+                            repoRoot,
+                            useStaged: replayScope.useStaged
+                        });
+                    }
                     const prepared = await runBuildReviewContextCommand({
                         repoRoot,
                         reviewType,
@@ -1205,8 +1278,10 @@ export async function runRestartReviewCycleCommand(
                         runtimeReviewerIdentity: sharedRuntimeReviewerIdentity,
                         tokenEconomyConfigPath: sharedTokenEconomyConfigPath,
                         tokenEconomyConfigData: sharedTokenEconomyConfigData,
+                        scopedDiffMetadataPath,
                         timelineEventsSummary: batchTimelineSummary,
                         reviewReuseBlockedReason,
+                        remediationPreservedScopeMismatchReason,
                         ruleContextSectionsCache: sharedRuleContextSectionsCache,
                         ruleFileContentCache: sharedRuleFileContentCache
                     });

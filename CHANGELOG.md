@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added remediation-aware review reuse so classified narrow failed-review fixes can preserve unaffected review evidence only after receipt, provenance, tree-state, and scope-fingerprint validation, while protected control-plane and fail-closed categories relaunch required review lanes
 - added current-cycle review dependency diagnostics with explicit blocker taxonomy for missing upstream PASS evidence, missing receipts, missing review context, stale freshness, and independent no-edge reviews
 - added release-time embedded bundle parity validation for root source, dist, templates, package files, and runtime-referenced docs
 - added review attempt pass/fail/reuse/missing counts to task-specific stats while keeping aggregate stats stable

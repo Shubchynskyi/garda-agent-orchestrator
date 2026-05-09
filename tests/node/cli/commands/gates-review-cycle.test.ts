@@ -19,6 +19,8 @@ import { formatCompletionGateResult, runCompletionGate } from '../../../../src/g
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
 import { serializeTaskPlan, validateTaskPlan } from '../../../../src/schemas/task-plan';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
+import { buildScopedDiff } from '../../../../src/gates/build-scoped-diff';
+import { buildReviewContextPreflightDiffExpectations } from '../../../../src/gates/review-context-contract';
 import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
 import {
     applyReviewerRoutingMetadata,
@@ -252,6 +254,62 @@ function writeReviewCapabilitiesConfig(
         ...overrides
     }, null, 2) + '\n', 'utf8');
     return configPath;
+}
+
+function writeProfilesConfig(repoRoot: string): string {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    const configPath = path.join(configDir, 'profiles.json');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'paths.json'), JSON.stringify({
+        triggers: {
+            db: ['(^|/)db/'],
+            security: ['.*'],
+            refactor: ['.*'],
+            api: ['(^|/)api/'],
+            test: ['(^|/)tests?/'],
+            performance: ['(^|/)perf/'],
+            infra: ['(^|/)scripts/'],
+            dependency: ['(^|/)package(-lock)?\\.json$']
+        }
+    }, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(configPath, JSON.stringify({
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {
+                depth: 2,
+                review_policy: { code: true, db: 'auto', security: 'auto', refactor: 'auto' },
+                token_economy: { enabled: true, strip_examples: true, strip_code_blocks: true, scoped_diffs: true, compact_reviewer_output: true },
+                skills: { auto_suggest: true }
+            },
+            strict: {
+                depth: 3,
+                review_policy: { code: true, db: true, security: true, refactor: true },
+                token_economy: { enabled: true, strip_examples: false, strip_code_blocks: false, scoped_diffs: true, compact_reviewer_output: false },
+                skills: { auto_suggest: true }
+            }
+        },
+        user_profiles: {}
+    }, null, 2) + '\n', 'utf8');
+    return configPath;
+}
+
+function prepareScopedDiffFixture(repoRoot: string, preflightPath: string, reviewType: string): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(preflight, reviewType).expectedScopedDiff;
+    if (!scopedDiffExpected) {
+        return;
+    }
+    prepareReviewDiffFixture(repoRoot, preflightPath);
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    buildScopedDiff({
+        reviewType,
+        preflightPath,
+        pathsConfigPath: path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json'),
+        outputPath: path.join(reviewsRoot, `${preflight.task_id}-${reviewType}-scoped.diff`),
+        metadataPath: path.join(reviewsRoot, `${preflight.task_id}-${reviewType}-scoped.json`),
+        repoRoot
+    });
 }
 
 function writeWorkflowConfig(
@@ -748,6 +806,7 @@ function seedReusableReviewEvidence(
         verdict
     ].join('\n');
     prepareReviewDiffFixture(repoRoot, preflightPath);
+    prepareScopedDiffFixture(repoRoot, preflightPath, reviewKey);
     buildReviewContext({
         reviewType: reviewKey,
         depth: 2,
@@ -867,11 +926,11 @@ function seedReusableReviewEvidence(
     return reviewContextPath;
 }
 
-function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
+function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO', profile = 'default'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | default | fixture |`
+        `| ${taskId} | ${status} | P1 | test | Update app flow | unassigned | 2026-03-28 | ${profile} | fixture |`
     ].join('\n'), 'utf8');
 }
 
@@ -1027,6 +1086,7 @@ function loadPostPreflightRulePack(
         loadedRuleFiles: [
             '00-core.md',
             '15-project-memory.md',
+            '30-code-style.md',
             '35-strict-coding-rules.md',
             '40-commands.md',
             '50-structure-and-docs.md',
@@ -2526,7 +2586,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restart-review-cycle materializes downstream test review after current-cycle code review is refreshed via reuse', { concurrency: false }, async () => {
+    it('restart-review-cycle reuses unaffected security and refactor evidence after test hook remediation invalidates code', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-reuse';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -2537,9 +2597,10 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
         initializeGitRepo(repoRoot);
-        seedTaskQueue(repoRoot, taskId);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
@@ -2594,6 +2655,26 @@ describe('cli/commands/gates – review-cycle suites', () => {
             codeReviewContextPath,
             'agent:code-reviewer'
         );
+        const securityReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-security-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'security',
+            'SECURITY REVIEW PASSED',
+            preflightPath,
+            securityReviewContextPath,
+            'agent:security-reviewer'
+        );
+        const refactorReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-refactor-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'refactor',
+            'REFACTOR REVIEW PASSED',
+            preflightPath,
+            refactorReviewContextPath,
+            'agent:refactor-reviewer'
+        );
 
         const restartResult = await runRestartReviewCycleCommand({
             repoRoot,
@@ -2608,7 +2689,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
                 'API/runtime/artifact/test impact: test hook isolation only; no product contract or privileged handling impact is intended.',
                 'Possible side effects: review reuse must fail closed if unrelated behavior changes appear.',
                 'Required targeted checks: compile gate and downstream test review context assertions cover the fix.',
-                'Scope or review-type changes: test hook isolation keeps existing code review evidence reusable for this fixture.',
+                'Scope or review-type changes: test hook isolation invalidates code review while preserving security and refactor evidence.',
                 'Related blockers/follow-up: no separate follow-up is needed for this isolated hook fix.'
             ].join(' '),
             emitMetrics: false
@@ -2617,18 +2698,19 @@ describe('cli/commands/gates – review-cycle suites', () => {
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /REVIEW_CYCLE_RESTARTED/);
-        assert.match(output, /PreparedReviewTypes: code, test/);
-        assert.match(output, /LaunchRequiredReviewTypes: test/);
-        assert.match(output, /ReusedReviewTypes: code/);
-        assert.doesNotMatch(output, /PendingReviewTypes:/);
-        assert.doesNotMatch(output, /PendingReason:/);
+        assert.match(output, /RemediationFixClassification: test_hook_isolation; invalidated_review_types=code; preserved_review_types=refactor, security, test/);
+        assert.match(output, /PreparedReviewTypes: code, security, refactor/);
+        assert.match(output, /LaunchRequiredReviewTypes: code/);
+        assert.match(output, /ReusedReviewTypes: security, refactor/);
+        assert.match(output, /PendingReviewTypes: test/);
+        assert.match(output, /PendingReason:/);
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`)),
             true
         );
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
-            true
+            false
         );
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
@@ -2650,10 +2732,6 @@ describe('cli/commands/gates – review-cycle suites', () => {
             event.event_type === 'REVIEW_PHASE_STARTED'
             && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
         ));
-        const lastTestReviewPhaseIndex = findLastTimelineEventIndex(events, (event) => (
-            event.event_type === 'REVIEW_PHASE_STARTED'
-            && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'test'
-        ));
         const lastHandshakeIndex = handshakeIndexes.at(-1) ?? -1;
         const lastShellSmokeIndex = shellSmokeIndexes.at(-1) ?? -1;
         assert.ok(lastCompileIndex >= 0);
@@ -2664,7 +2742,6 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.ok(lastShellSmokeIndex > lastHandshakeIndex);
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
         assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
-        assert.ok(lastTestReviewPhaseIndex > lastCodeReviewPhaseIndex);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2680,9 +2757,10 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
         initializeGitRepo(repoRoot);
-        seedTaskQueue(repoRoot, taskId);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
+        writeProfilesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
         const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-fail-closed-reuse.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -2696,7 +2774,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         runEnterTaskMode({
             repoRoot,
             taskId,
-            taskSummary: 'Restart the review cycle without reusing fail-closed API remediation evidence',
+            taskSummary: 'Restart the review cycle without reusing fail-closed runtime remediation evidence',
             plannedChangedFiles: [
                 'commands-restart-review-cycle-fail-closed-reuse.md',
                 'garda-agent-orchestrator/live/config/review-capabilities.json',
@@ -2709,7 +2787,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         const preflightPath = runExplicitPreflight(
             repoRoot,
             taskId,
-            'Restart the review cycle without reusing fail-closed API remediation evidence',
+            'Restart the review cycle without reusing fail-closed runtime remediation evidence',
             ['src/app.ts']
         );
         loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
@@ -2734,6 +2812,26 @@ describe('cli/commands/gates – review-cycle suites', () => {
             codeReviewContextPath,
             'agent:code-reviewer'
         );
+        const securityReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-security-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'security',
+            'SECURITY REVIEW PASSED',
+            preflightPath,
+            securityReviewContextPath,
+            'agent:security-reviewer'
+        );
+        const refactorReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-refactor-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'refactor',
+            'REFACTOR REVIEW PASSED',
+            preflightPath,
+            refactorReviewContextPath,
+            'agent:refactor-reviewer'
+        );
 
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
         const restartResult = await runRestartReviewCycleCommand({
@@ -2743,11 +2841,11 @@ describe('cli/commands/gates – review-cycle suites', () => {
             commandsPath,
             outputFiltersPath,
             impactAnalysis: [
-                'Reviewer finding: failed review blocker changes the public API surface in src/app.ts.',
-                'Intended fix: update the exported API contract in src/app.ts and refresh review evidence.',
-                'Affected files/contracts: src/app.ts is the affected file and its public API contract changes.',
-                'API/runtime/artifact/test impact: public API surface changes require fail-closed review handling.',
-                'Possible side effects: downstream callers may rely on the previous exported contract.',
+                'Reviewer finding: failed review blocker changes runtime deletion behavior and trust handling in src/app.ts.',
+                'Intended fix: update the runtime deletion execution path in src/app.ts and refresh review evidence.',
+                'Affected files/contracts: src/app.ts is the affected file and its trust-sensitive runtime behavior changes.',
+                'API/runtime/artifact/test impact: runtime behavior and trust changes require fail-closed review handling.',
+                'Possible side effects: stale security evidence could miss a trust-boundary regression.',
                 'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
                 'Scope or review-type changes: all affected review types must be reconsidered before reuse.',
                 'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
@@ -2757,9 +2855,10 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
 
         const output = restartResult.outputLines.join('\n');
-        assert.match(output, /RemediationFixClassification: api_surface/);
-        assert.match(output, /LaunchRequiredReviewTypes: code/);
+        assert.match(output, /RemediationFixClassification: unknown; invalidated_review_types=code, refactor, security; preserved_review_types=none/);
+        assert.match(output, /LaunchRequiredReviewTypes: code, security, refactor/);
         assert.doesNotMatch(output, /ReusedReviewTypes: code/);
+        assert.doesNotMatch(output, /ReusedReviewTypes: security/);
 
         const remediationArtifact = JSON.parse(fs.readFileSync(
             path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
@@ -2767,7 +2866,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         )) as Record<string, unknown>;
         const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
         assert.deepEqual(reviewReuse.reused_review_types, []);
-        assert.deepEqual(reviewReuse.launch_required_review_types, ['code']);
+        assert.deepEqual(reviewReuse.launch_required_review_types, ['code', 'security', 'refactor']);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -3437,9 +3536,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle emits semantic remediation classifications before reuse decisions', { concurrency: false }, async () => {
         const cases: Array<{
             suffix: string;
+            changedFile?: string;
             impactAnalysis: string;
             expectedCategory: string;
             expectedReuseCandidate: boolean;
+            expectedInvalidatedReviewTypes: string[];
+            expectedPreservedReviewTypes: string[];
         }> = [
             {
                 suffix: 'test-hooks',
@@ -3454,7 +3556,27 @@ describe('cli/commands/gates – review-cycle suites', () => {
                     'Related blockers/follow-up: no separate follow-up is needed for this isolated hook fix.'
                 ].join(' '),
                 expectedCategory: 'test_hook_isolation',
-                expectedReuseCandidate: true
+                expectedReuseCandidate: true,
+                expectedInvalidatedReviewTypes: ['code'],
+                expectedPreservedReviewTypes: ['refactor', 'security']
+            },
+            {
+                suffix: 'protected-test-hooks',
+                changedFile: 'garda-agent-orchestrator/src/cli/app.ts',
+                impactAnalysis: [
+                    'Reviewer finding: failed review blocker requires isolating the _testHooks helper in garda-agent-orchestrator/src/cli/app.ts.',
+                    'Intended fix: constrain _testHooks exposure in the protected CLI control-plane file without changing production behavior.',
+                    'Affected files/contracts: garda-agent-orchestrator/src/cli/app.ts is the affected file; public contracts stay unchanged.',
+                    'API/runtime/artifact/test impact: test hook isolation only is intended, but protected-control-plane scope must still fail closed.',
+                    'Possible side effects: stale security or refactor evidence could miss a protected control-plane regression.',
+                    'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                    'Scope or review-type changes: protected control-plane scope invalidates all required review evidence before reuse.',
+                    'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+                ].join(' '),
+                expectedCategory: 'test_hook_isolation',
+                expectedReuseCandidate: false,
+                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedPreservedReviewTypes: []
             },
             {
                 suffix: 'api-surface',
@@ -3469,7 +3591,9 @@ describe('cli/commands/gates – review-cycle suites', () => {
                     'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
                 ].join(' '),
                 expectedCategory: 'api_surface',
-                expectedReuseCandidate: false
+                expectedReuseCandidate: false,
+                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedPreservedReviewTypes: []
             },
             {
                 suffix: 'security',
@@ -3484,7 +3608,9 @@ describe('cli/commands/gates – review-cycle suites', () => {
                     'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
                 ].join(' '),
                 expectedCategory: 'security_sensitive',
-                expectedReuseCandidate: false
+                expectedReuseCandidate: false,
+                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedPreservedReviewTypes: []
             },
             {
                 suffix: 'runtime-behavior',
@@ -3499,7 +3625,9 @@ describe('cli/commands/gates – review-cycle suites', () => {
                     'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
                 ].join(' '),
                 expectedCategory: 'runtime_behavior',
-                expectedReuseCandidate: false
+                expectedReuseCandidate: false,
+                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedPreservedReviewTypes: []
             },
             {
                 suffix: 'structure-only',
@@ -3514,7 +3642,9 @@ describe('cli/commands/gates – review-cycle suites', () => {
                     'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
                 ].join(' '),
                 expectedCategory: 'refactor_structure',
-                expectedReuseCandidate: true
+                expectedReuseCandidate: true,
+                expectedInvalidatedReviewTypes: ['refactor'],
+                expectedPreservedReviewTypes: ['code', 'security']
             },
             {
                 suffix: 'ambiguous',
@@ -3529,13 +3659,16 @@ describe('cli/commands/gates – review-cycle suites', () => {
                     'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
                 ].join(' '),
                 expectedCategory: 'unknown',
-                expectedReuseCandidate: false
+                expectedReuseCandidate: false,
+                expectedInvalidatedReviewTypes: ['code', 'refactor', 'security'],
+                expectedPreservedReviewTypes: []
             }
         ];
 
         for (const scenario of cases) {
             const repoRoot = createTempRepo();
             const taskId = `T-903b-remediation-classification-${scenario.suffix}`;
+            const changedFile = scenario.changedFile || 'src/app.ts';
             fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
@@ -3544,6 +3677,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
             fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
             writeReviewCapabilitiesConfig(repoRoot);
+            writeProfilesConfig(repoRoot);
             const commandsPath = path.join(repoRoot, `commands-${scenario.suffix}.md`);
             fs.writeFileSync(commandsPath, [
                 '### Compile Gate (Mandatory)',
@@ -3552,7 +3686,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
                 '```'
             ].join('\n'), 'utf8');
             initializeGitRepo(repoRoot);
-            seedTaskQueue(repoRoot, taskId);
+            seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
             seedInitAnswers(repoRoot, 'Codex');
             const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
@@ -3560,18 +3694,20 @@ describe('cli/commands/gates – review-cycle suites', () => {
                 repoRoot,
                 taskId,
                 taskSummary: `Restart review cycle classifies ${scenario.suffix} remediation`,
-                plannedChangedFiles: ['src/app.ts']
+                orchestratorWork: !!scenario.changedFile,
+                plannedChangedFiles: [changedFile]
             });
             loadTaskEntryRulePack(repoRoot, taskId);
             runHandshakeForTask(repoRoot, taskId);
             runShellSmokeForTask(repoRoot, taskId);
 
-            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            fs.mkdirSync(path.dirname(path.join(repoRoot, changedFile)), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 1;\n', 'utf8');
             const preflightPath = runExplicitPreflight(
                 repoRoot,
                 taskId,
                 `Restart review cycle classifies ${scenario.suffix} remediation`,
-                ['src/app.ts']
+                [changedFile]
             );
             loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
             const compileResult = await runCompileGateCommand({
@@ -3584,7 +3720,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
             });
             assert.equal(compileResult.exitCode, 0);
 
-            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 2;\n', 'utf8');
             const restartResult = await runRestartReviewCycleCommand({
                 repoRoot,
                 taskId,
@@ -3604,6 +3740,8 @@ describe('cli/commands/gates – review-cycle suites', () => {
             assert.equal(classification.category, scenario.expectedCategory);
             assert.equal(classification.scope_category, 'previous_scope_only');
             assert.equal(classification.non_test_review_reuse_candidate, scenario.expectedReuseCandidate);
+            assert.deepEqual(classification.invalidated_review_types, scenario.expectedInvalidatedReviewTypes);
+            assert.deepEqual(classification.preserved_review_types, scenario.expectedPreservedReviewTypes);
             assert.ok((classification.affected_file_groups as Record<string, unknown>).source);
 
             fs.rmSync(repoRoot, { recursive: true, force: true });

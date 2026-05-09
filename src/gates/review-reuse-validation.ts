@@ -47,6 +47,8 @@ export interface AcceptedReviewReuseCandidateEvidence {
     contextHashMatches: boolean;
     contextReuseHashMatches: boolean;
     testOnlyDeltaContextMismatch: boolean;
+    remediationPreservedScopeMismatch: boolean;
+    remediationPreservedScopeMismatchReason: string | null;
 }
 
 export function normalizeReceiptSha256(value: unknown): string | null {
@@ -279,6 +281,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
     currentReviewContextSha256: string | null;
     currentContextReuseSha256: string | null;
     allowTestOnlyDeltaContextMismatch?: boolean;
+    remediationPreservedScopeMismatchReason?: string | null;
 }): { accepted: true; evidence: AcceptedReviewReuseCandidateEvidence } | { accepted: false; reason: string } {
     const sourceEventResolution = options.candidate.sourceKind === 'latest_receipt'
         ? findHistoricalReviewRecordedEventForLatestReceiptCandidate({
@@ -359,6 +362,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
     const expectedCodeScopeSha256 = receipt.reused_existing_review === true
         ? normalizeReceiptSha256(receipt.reused_from_code_scope_sha256) || sourceReceiptCodeScopeSha256
         : sourceReceiptCodeScopeSha256;
+    const remediationPreservedScopeMismatchReason = String(options.remediationPreservedScopeMismatchReason || '').trim() || null;
 
     if (receipt.task_id !== options.taskId || receipt.review_type !== options.reviewType) {
         return { accepted: false, reason: 'prior review receipt task id or review type does not match current request' };
@@ -522,8 +526,14 @@ export function validateHistoricalReviewReuseCandidate(options: {
         && options.hasCurrentCodeScope
         && codeScopeStillMatches
         && reviewScopeChangedAfterPriorReview;
+    const remediationPreservedScopeMismatch = !contextHashMatches
+        && !contextReuseHashMatches
+        && !!remediationPreservedScopeMismatchReason
+        && options.nonTestReviewScope
+        && options.hasCurrentCodeScope
+        && codeScopeStillMatches;
     if (!contextHashMatches && !contextReuseHashMatches) {
-        if (testOnlyDeltaContextMismatch) {
+        if (testOnlyDeltaContextMismatch || remediationPreservedScopeMismatch) {
             return {
                 accepted: true,
                 evidence: {
@@ -544,7 +554,9 @@ export function validateHistoricalReviewReuseCandidate(options: {
                     artifactText,
                     contextHashMatches,
                     contextReuseHashMatches,
-                    testOnlyDeltaContextMismatch
+                    testOnlyDeltaContextMismatch,
+                    remediationPreservedScopeMismatch,
+                    remediationPreservedScopeMismatchReason
                 }
             };
         }
@@ -576,7 +588,9 @@ export function validateHistoricalReviewReuseCandidate(options: {
             artifactText,
             contextHashMatches,
             contextReuseHashMatches,
-            testOnlyDeltaContextMismatch
+            testOnlyDeltaContextMismatch,
+            remediationPreservedScopeMismatch,
+            remediationPreservedScopeMismatchReason
         }
     };
 }

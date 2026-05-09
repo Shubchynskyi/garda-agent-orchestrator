@@ -818,6 +818,7 @@ async function tryReuseReviewEvidence(options: {
     reviewContextPath: string;
     previousReviewContextReuseSha256?: string | null;
     timelineEventsSummary?: TimelineEventsSummaryResult | null;
+    remediationPreservedScopeMismatchReason?: string | null;
 }): Promise<ReviewReuseResult> {
     const reject = (reason: string): ReviewReuseResult => ({
         reused: false,
@@ -946,7 +947,8 @@ async function tryReuseReviewEvidence(options: {
             currentCodeScopeSha256,
             currentReviewContextSha256,
             currentContextReuseSha256,
-            allowTestOnlyDeltaContextMismatch: testOnlyDeltaReuseEligibility.allowed
+            allowTestOnlyDeltaContextMismatch: testOnlyDeltaReuseEligibility.allowed,
+            remediationPreservedScopeMismatchReason: options.remediationPreservedScopeMismatchReason || null
         });
         if (!validation.accepted) {
             candidateRejections.push(`${candidate.sourceDescription}: ${validation.reason}`);
@@ -1000,7 +1002,9 @@ async function tryReuseReviewEvidence(options: {
             reason: (
                 evidence.testOnlyDeltaContextMismatch
                     ? `accepted: non-test review reused because ${testOnlyDeltaReuseEligibility.reason}; full-diff fallback context changed, but non-test code scope matches prior independent PASS review`
-                : evidence.contextHashMatches
+                    : evidence.remediationPreservedScopeMismatch
+                    ? `accepted: non-test review reused because ${evidence.remediationPreservedScopeMismatchReason}; classified remediation preserved this review type despite context/scope hash changes`
+                    : evidence.contextHashMatches
                     ? 'accepted: exact review context hash and scope evidence match prior independent PASS review'
                     : 'accepted: review context reuse hash and scope evidence match prior independent PASS review'
             ) + `; matched ${candidate.sourceDescription} from ${gateHelpers.normalizePath(evidence.verifiedReceiptPath || candidate.sourceReceiptPath)}` + (
@@ -1049,6 +1053,7 @@ export interface BuildReviewContextCommandOptions {
     outputPath?: unknown;
     repoRoot?: unknown;
     reviewReuseBlockedReason?: unknown;
+    remediationPreservedScopeMismatchReason?: unknown;
     ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
     ruleFileContentCache?: Map<string, string> | null;
 }
@@ -1265,7 +1270,8 @@ export async function runBuildReviewContextCommand(
                     preflightPayload,
                     reviewContextPath: outputPath,
                     previousReviewContextReuseSha256,
-                    timelineEventsSummary: timelineSummary
+                    timelineEventsSummary: timelineSummary,
+                    remediationPreservedScopeMismatchReason: String(options.remediationPreservedScopeMismatchReason || '').trim() || null
                 });
         }
     } catch {
