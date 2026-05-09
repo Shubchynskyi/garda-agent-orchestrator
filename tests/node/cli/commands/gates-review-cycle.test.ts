@@ -1738,6 +1738,16 @@ describe('cli/commands/gates – review-cycle suites', () => {
             preflightPath,
             commandsPath,
             outputFiltersPath,
+            impactAnalysis: [
+                'Reviewer finding: failed review blocker requires a same-task remediation pass for src/app.ts and tests/app.test.ts.',
+                'Intended fix: refresh the changed implementation and test files without changing product behavior.',
+                'Affected files/contracts: src/app.ts and tests/app.test.ts are the affected files; existing contracts stay unchanged.',
+                'API/runtime/artifact/test impact: implementation and test evidence must be refreshed for this cycle.',
+                'Possible side effects: review reuse must fail closed if unrelated behavior changes appear.',
+                'Required targeted checks: compile gate and upstream code review context assertions cover the fix.',
+                'Scope or review-type changes: test review stays blocked until code review passes for this cycle.',
+                'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+            ].join(' '),
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
@@ -1857,6 +1867,16 @@ describe('cli/commands/gates – review-cycle suites', () => {
             preflightPath,
             commandsPath,
             outputFiltersPath,
+            impactAnalysis: [
+                'Reviewer finding: failed review blocker changes the public API surface in src/routes/app.ts.',
+                'Intended fix: update the exported route API contract in src/routes/app.ts and refresh review evidence.',
+                'Affected files/contracts: src/routes/app.ts is the affected file and its public API contract changes.',
+                'API/runtime/artifact/test impact: public API surface changes require code review before API review.',
+                'Possible side effects: downstream route callers may rely on the previous exported contract.',
+                'Required targeted checks: compile gate and review-cycle dependency assertions cover the fix.',
+                'Scope or review-type changes: API review remains blocked until code review passes in this policy.',
+                'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+            ].join(' '),
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
@@ -2581,6 +2601,16 @@ describe('cli/commands/gates – review-cycle suites', () => {
             preflightPath,
             commandsPath,
             outputFiltersPath,
+            impactAnalysis: [
+                'Reviewer finding: failed review blocker requires isolating the _testHooks helper in src/app.ts.',
+                'Intended fix: constrain _testHooks exposure in src/app.ts without changing production behavior.',
+                'Affected files/contracts: src/app.ts and tests/app.test.ts are the affected files; external contracts stay unchanged.',
+                'API/runtime/artifact/test impact: test hook isolation only; no product contract or privileged handling impact is intended.',
+                'Possible side effects: review reuse must fail closed if unrelated behavior changes appear.',
+                'Required targeted checks: compile gate and downstream test review context assertions cover the fix.',
+                'Scope or review-type changes: test hook isolation keeps existing code review evidence reusable for this fixture.',
+                'Related blockers/follow-up: no separate follow-up is needed for this isolated hook fix.'
+            ].join(' '),
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
@@ -2635,6 +2665,109 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.ok(lastCompileIndex > lastShellSmokeIndex);
         assert.ok(lastCodeReviewPhaseIndex > lastCompileIndex);
         assert.ok(lastTestReviewPhaseIndex > lastCodeReviewPhaseIndex);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle blocks review reuse for fail-closed remediation classifications', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-fail-closed-reuse';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        writeReviewCapabilitiesConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-fail-closed-reuse.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart the review cycle without reusing fail-closed API remediation evidence',
+            plannedChangedFiles: [
+                'commands-restart-review-cycle-fail-closed-reuse.md',
+                'garda-agent-orchestrator/live/config/review-capabilities.json',
+                'src/app.ts'
+            ]
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart the review cycle without reusing fail-closed API remediation evidence',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const codeReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            preflightPath,
+            codeReviewContextPath,
+            'agent:code-reviewer'
+        );
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            impactAnalysis: [
+                'Reviewer finding: failed review blocker changes the public API surface in src/app.ts.',
+                'Intended fix: update the exported API contract in src/app.ts and refresh review evidence.',
+                'Affected files/contracts: src/app.ts is the affected file and its public API contract changes.',
+                'API/runtime/artifact/test impact: public API surface changes require fail-closed review handling.',
+                'Possible side effects: downstream callers may rely on the previous exported contract.',
+                'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                'Scope or review-type changes: all affected review types must be reconsidered before reuse.',
+                'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const output = restartResult.outputLines.join('\n');
+        assert.match(output, /RemediationFixClassification: api_surface/);
+        assert.match(output, /LaunchRequiredReviewTypes: code/);
+        assert.doesNotMatch(output, /ReusedReviewTypes: code/);
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const reviewReuse = remediationArtifact.review_reuse as Record<string, unknown>;
+        assert.deepEqual(reviewReuse.reused_review_types, []);
+        assert.deepEqual(reviewReuse.launch_required_review_types, ['code']);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2910,6 +3043,18 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.equal(blockedImpactArtifact.status, 'BLOCKED');
         assert.equal(blockedImpactArtifact.reason, 'missing_or_incomplete_remediation_impact_analysis');
         assert.equal((blockedImpactArtifact.impact_analysis as Record<string, unknown>).status, 'BLOCKED');
+        assert.equal(
+            (blockedImpactArtifact.remediation_fix_classification as Record<string, unknown>).category,
+            'unknown'
+        );
+        assert.equal(
+            (blockedImpactArtifact.remediation_fix_classification as Record<string, unknown>).scope_category,
+            'test_only_expansion'
+        );
+        assert.deepEqual(
+            (blockedImpactArtifact.remediation_fix_classification as Record<string, unknown>).invalidated_review_types,
+            []
+        );
 
         const boilerplateImpactResult = await runRestartReviewCycleCommandRaw({
             repoRoot,
@@ -3026,6 +3171,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /DetectionSource: git_auto_current_workspace/);
         assert.match(output, /ReviewRemediationCycleArtifact:/);
+        assert.match(output, /RemediationFixClassification: test_coverage_only; invalidated_review_types=test; preserved_review_types=code/);
         assert.match(output, /ScopeBoundary: OK; previous=1; current=2; expanded_non_test=none/);
         assert.match(output, /RefreshPoints: preflight=refreshed; post_preflight_rule_pack=reloaded; compile=rerun/);
         assert.match(output, /ReuseBoundaries: non_test_changes_must_stay_within_previous_preflight_scope/);
@@ -3041,6 +3187,22 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.equal(remediationArtifact.status, 'PASSED');
         assert.equal((remediationArtifact.impact_analysis as Record<string, unknown>).status, 'RECORDED');
         assert.equal((remediationArtifact.impact_analysis as Record<string, unknown>).source, 'inline');
+        assert.equal(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).category,
+            'test_coverage_only'
+        );
+        assert.equal(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).scope_category,
+            'test_only_expansion'
+        );
+        assert.deepEqual(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).invalidated_review_types,
+            ['test']
+        );
+        assert.deepEqual(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).preserved_review_types,
+            ['code']
+        );
         assert.deepEqual(
             (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
             ['tests/app.test.ts']
@@ -3151,6 +3313,18 @@ describe('cli/commands/gates – review-cycle suites', () => {
         )) as Record<string, unknown>;
         assert.equal(remediationArtifact.status, 'BLOCKED');
         assert.equal(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).category,
+            'unknown'
+        );
+        assert.equal(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).scope_category,
+            'expanded_non_test_blocked'
+        );
+        assert.equal(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).blocked_before_reuse,
+            true
+        );
+        assert.equal(
             (remediationArtifact.remediation_scope as Record<string, unknown>).status,
             'BLOCKED'
         );
@@ -3244,8 +3418,196 @@ describe('cli/commands/gates – review-cycle suites', () => {
             (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
             ['tests/app.test.ts']
         );
+        assert.equal(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).category,
+            'test_coverage_only'
+        );
+        assert.equal(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).scope_category,
+            'test_only_expansion'
+        );
+        assert.deepEqual(
+            (remediationArtifact.remediation_fix_classification as Record<string, unknown>).invalidated_review_types,
+            ['test']
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle emits semantic remediation classifications before reuse decisions', { concurrency: false }, async () => {
+        const cases: Array<{
+            suffix: string;
+            impactAnalysis: string;
+            expectedCategory: string;
+            expectedReuseCandidate: boolean;
+        }> = [
+            {
+                suffix: 'test-hooks',
+                impactAnalysis: [
+                    'Reviewer finding: failed review blocker requires isolating the _testHooks helper in src/app.ts.',
+                    'Intended fix: constrain _testHooks exposure in src/app.ts without changing production behavior.',
+                    'Affected files/contracts: src/app.ts is the affected file; public contracts stay unchanged.',
+                    'API/runtime/artifact/test impact: test hook isolation only; no public contract or security impact is intended.',
+                    'Possible side effects: review reuse must fail closed if unrelated behavior changes appear.',
+                    'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                    'Scope or review-type changes: code review may be invalidated, but security and refactor remain candidates.',
+                    'Related blockers/follow-up: no separate follow-up is needed for this isolated hook fix.'
+                ].join(' '),
+                expectedCategory: 'test_hook_isolation',
+                expectedReuseCandidate: true
+            },
+            {
+                suffix: 'api-surface',
+                impactAnalysis: [
+                    'Reviewer finding: failed review blocker changes the public API surface in src/app.ts.',
+                    'Intended fix: update the exported API contract in src/app.ts and refresh review evidence.',
+                    'Affected files/contracts: src/app.ts is the affected file and its public API contract changes.',
+                    'API/runtime/artifact/test impact: public API surface changes require fail-closed review handling.',
+                    'Possible side effects: downstream callers may rely on the previous exported contract.',
+                    'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                    'Scope or review-type changes: all affected review types must be reconsidered before reuse.',
+                    'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+                ].join(' '),
+                expectedCategory: 'api_surface',
+                expectedReuseCandidate: false
+            },
+            {
+                suffix: 'security',
+                impactAnalysis: [
+                    'Reviewer finding: failed review blocker touches credential redaction in src/app.ts.',
+                    'Intended fix: update security-sensitive token handling in src/app.ts.',
+                    'Affected files/contracts: src/app.ts is the affected file and security-sensitive handling changes.',
+                    'API/runtime/artifact/test impact: secret redaction evidence must be refreshed.',
+                    'Possible side effects: leaked credentials would be a security regression.',
+                    'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                    'Scope or review-type changes: security review must be fresh before any reuse decision.',
+                    'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+                ].join(' '),
+                expectedCategory: 'security_sensitive',
+                expectedReuseCandidate: false
+            },
+            {
+                suffix: 'runtime-behavior',
+                impactAnalysis: [
+                    'Reviewer finding: failed review blocker changes observable runtime behavior in src/app.ts.',
+                    'Intended fix: update the execution path in src/app.ts and require fresh review evidence.',
+                    'Affected files/contracts: src/app.ts is the affected file and runtime behavior changes.',
+                    'API/runtime/artifact/test impact: behavior change at runtime requires fail-closed review handling.',
+                    'Possible side effects: existing callers may observe different runtime behavior.',
+                    'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                    'Scope or review-type changes: all affected review types must be reconsidered before reuse.',
+                    'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+                ].join(' '),
+                expectedCategory: 'runtime_behavior',
+                expectedReuseCandidate: false
+            },
+            {
+                suffix: 'structure-only',
+                impactAnalysis: [
+                    'Reviewer finding: failed review blocker requires refactor structure cleanup in src/app.ts.',
+                    'Intended fix: extract internal helper structure in src/app.ts without changing behavior.',
+                    'Affected files/contracts: src/app.ts is the affected file; public contracts stay unchanged.',
+                    'Artifact/test impact: refactor structure only; no public contract or privileged handling impact is intended.',
+                    'Possible side effects: structural decomposition should preserve existing outputs.',
+                    'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                    'Scope or review-type changes: refactor review may be invalidated, but unrelated reviews remain candidates.',
+                    'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+                ].join(' '),
+                expectedCategory: 'refactor_structure',
+                expectedReuseCandidate: true
+            },
+            {
+                suffix: 'ambiguous',
+                impactAnalysis: [
+                    'Reviewer finding: failed review blocker mixes public API surface and refactor structure in src/app.ts.',
+                    'Intended fix: update the public API surface while also changing internal decomposition.',
+                    'Affected files/contracts: src/app.ts is the affected file and multiple contracts may shift.',
+                    'API/runtime/artifact/test impact: public API surface and refactor structure evidence both matter.',
+                    'Possible side effects: mixed semantic scope makes reuse unsafe.',
+                    'Required targeted checks: compile gate and review-cycle classification assertions cover the fix.',
+                    'Scope or review-type changes: fail closed because multiple review classes are implicated.',
+                    'Related blockers/follow-up: no separate follow-up is needed for this same blocker fix.'
+                ].join(' '),
+                expectedCategory: 'unknown',
+                expectedReuseCandidate: false
+            }
+        ];
+
+        for (const scenario of cases) {
+            const repoRoot = createTempRepo();
+            const taskId = `T-903b-remediation-classification-${scenario.suffix}`;
+            fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+            fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+            writeReviewCapabilitiesConfig(repoRoot);
+            const commandsPath = path.join(repoRoot, `commands-${scenario.suffix}.md`);
+            fs.writeFileSync(commandsPath, [
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                'node -e "console.log(\'build ok\')"',
+                '```'
+            ].join('\n'), 'utf8');
+            initializeGitRepo(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot, 'Codex');
+            const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: `Restart review cycle classifies ${scenario.suffix} remediation`,
+                plannedChangedFiles: ['src/app.ts']
+            });
+            loadTaskEntryRulePack(repoRoot, taskId);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            const preflightPath = runExplicitPreflight(
+                repoRoot,
+                taskId,
+                `Restart review cycle classifies ${scenario.suffix} remediation`,
+                ['src/app.ts']
+            );
+            loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+            const compileResult = await runCompileGateCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                commandsPath,
+                outputFiltersPath,
+                emitMetrics: false
+            });
+            assert.equal(compileResult.exitCode, 0);
+
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            const restartResult = await runRestartReviewCycleCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                commandsPath,
+                outputFiltersPath,
+                impactAnalysis: scenario.impactAnalysis,
+                emitMetrics: false
+            });
+            assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+            const remediationArtifact = JSON.parse(fs.readFileSync(
+                path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+                'utf8'
+            )) as Record<string, unknown>;
+            const classification = remediationArtifact.remediation_fix_classification as Record<string, unknown>;
+            assert.equal(classification.category, scenario.expectedCategory);
+            assert.equal(classification.scope_category, 'previous_scope_only');
+            assert.equal(classification.non_test_review_reuse_candidate, scenario.expectedReuseCandidate);
+            assert.ok((classification.affected_file_groups as Record<string, unknown>).source);
+
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('restart-review-cycle preserves previous source scope when explicit refresh lists only test remediation', { concurrency: false }, async () => {

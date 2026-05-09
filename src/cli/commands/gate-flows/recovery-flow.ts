@@ -112,6 +112,40 @@ interface ReviewRemediationImpactAnalysis {
     affected_files: string[];
 }
 
+type ReviewRemediationSemanticCategory =
+    | 'test_coverage_only'
+    | 'test_hook_isolation'
+    | 'api_surface'
+    | 'runtime_behavior'
+    | 'security_sensitive'
+    | 'refactor_structure'
+    | 'unknown';
+
+type ReviewRemediationScopeCategory =
+    | 'previous_scope_only'
+    | 'test_only_expansion'
+    | 'expanded_non_test_blocked';
+
+interface ReviewRemediationFixClassification {
+    status: 'CLASSIFIED';
+    category: ReviewRemediationSemanticCategory;
+    scope_category: ReviewRemediationScopeCategory;
+    rationale: string;
+    reason: string;
+    affected_file_groups: Record<string, string[]>;
+    evidence: {
+        scope_boundary_status: ReviewRemediationScopeBoundary['status'];
+        impact_analysis_source: ReviewRemediationImpactAnalysis['source'] | 'missing';
+        matched_signals: string[];
+    };
+    review_reuse_decision_order: 'classification_before_reuse';
+    non_test_review_reuse_candidate: boolean;
+    test_review_reuse_candidate: boolean;
+    blocked_before_reuse: boolean;
+    invalidated_review_types: string[];
+    preserved_review_types: string[];
+}
+
 const REMEDIATION_IMPACT_ANALYSIS_MIN_CHARS = 120;
 const REMEDIATION_IMPACT_ANALYSIS_TOPICS = Object.freeze([
     'reviewer finding',
@@ -338,6 +372,180 @@ function assessReviewRemediationScopeBoundary(
         expandedFiles,
         expandedNonTestFiles,
         allowedTestOnlyExpansionFiles
+    };
+}
+
+function groupReviewRemediationFiles(
+    files: readonly string[],
+    testTriggerRegexes: readonly string[]
+): Record<string, string[]> {
+    const groups: Record<string, string[]> = {
+        source: [],
+        test: [],
+        docs: [],
+        config: [],
+        runtime_artifact: [],
+        other: []
+    };
+    for (const file of normalizeChangedFiles(files)) {
+        if (isTestLikeRemediationPath(file, testTriggerRegexes)) {
+            groups.test.push(file);
+        } else if (/^(docs|docs_local)\//iu.test(file) || /\.(md|mdx)$/iu.test(file)) {
+            groups.docs.push(file);
+        } else if (/^(package(-lock)?\.json|tsconfig[^/]*\.json|\.github\/|live\/config\/|garda-agent-orchestrator\/live\/config\/)/iu.test(file)) {
+            groups.config.push(file);
+        } else if (/^(garda-agent-orchestrator\/runtime\/|runtime\/)/iu.test(file)) {
+            groups.runtime_artifact.push(file);
+        } else if (/^(src|bin|template|live)\//iu.test(file) || /^garda-agent-orchestrator\/(src|bin|template|live)\//iu.test(file)) {
+            groups.source.push(file);
+        } else {
+            groups.other.push(file);
+        }
+    }
+    return Object.fromEntries(Object.entries(groups).filter(([, entries]) => entries.length > 0));
+}
+
+function getReviewRemediationSemanticSignals(
+    scopeBoundary: ReviewRemediationScopeBoundary,
+    impactAnalysis?: ReviewRemediationImpactAnalysis
+): { category: ReviewRemediationSemanticCategory; matchedSignals: string[]; rationale: string } {
+    const summary = impactAnalysis?.summary.toLocaleLowerCase() || '';
+    const files = scopeBoundary.currentChangedFiles.join('\n').toLocaleLowerCase();
+    const text = `${summary}\n${files}`;
+    const matches: Array<{ category: ReviewRemediationSemanticCategory; signal: string; pattern: RegExp }> = [
+        {
+            category: 'security_sensitive',
+            signal: 'security-sensitive surface',
+            pattern: /\b(security[-\s]?sensitive|auth(?:entication|orization)?|token|secret|credential|crypto|signature|provenance|trust|redaction)\b/iu
+        },
+        {
+            category: 'api_surface',
+            signal: 'public API surface',
+            pattern: /\b(public\s+(?:api|surface)|api\s+surface|exported\s+(?:api|contract|symbol)|breaking\s+change)\b/iu
+        },
+        {
+            category: 'runtime_behavior',
+            signal: 'runtime behavior change',
+            pattern: /\b(runtime\s+(?:behavior|deletion|change)|behavior\s+change|observable\s+behavior|execution\s+path)\b/iu
+        },
+        {
+            category: 'test_hook_isolation',
+            signal: 'test hook isolation',
+            pattern: /(?:_testhooks?|test[-\s_]?hooks?|test[-\s]?only\s+hook|hook\s+isolation)/iu
+        },
+        {
+            category: 'refactor_structure',
+            signal: 'refactor structure',
+            pattern: /\b(refactor(?:ing)?\s+structure|structural\s+refactor|decomposition|extraction|rename|move)\b/iu
+        }
+    ];
+    const matched = matches.filter((entry) => entry.pattern.test(text));
+    const matchedCategories = [...new Set(matched.map((entry) => entry.category))];
+    if (matchedCategories.length === 1) {
+        const category = matchedCategories[0] as ReviewRemediationSemanticCategory;
+        return {
+            category,
+            matchedSignals: matched.map((entry) => entry.signal),
+            rationale: `remediation impact analysis and file scope matched ${category}`
+        };
+    }
+    if (matchedCategories.length > 1) {
+        return {
+            category: 'unknown',
+            matchedSignals: matched.map((entry) => entry.signal),
+            rationale: 'remediation matched multiple semantic classes; fail closed before reuse'
+        };
+    }
+    if (
+        impactAnalysis
+        && scopeBoundary.status === 'OK'
+        && scopeBoundary.allowedTestOnlyExpansionFiles.length > 0
+        && scopeBoundary.expandedNonTestFiles.length === 0
+    ) {
+        return {
+            category: 'test_coverage_only',
+            matchedSignals: ['test-only expansion'],
+            rationale: 'remediation only added classifier-recognized test coverage outside the previous failed-review scope'
+        };
+    }
+    return {
+        category: 'unknown',
+        matchedSignals: impactAnalysis ? [] : ['missing remediation impact analysis'],
+        rationale: impactAnalysis
+            ? 'remediation impact analysis did not identify a single supported semantic class'
+            : 'remediation impact analysis is missing; fail closed before reuse'
+    };
+}
+
+function classifyReviewRemediationFix(
+    scopeBoundary: ReviewRemediationScopeBoundary,
+    requiredReviewTypes: readonly string[] = [],
+    impactAnalysis?: ReviewRemediationImpactAnalysis,
+    testTriggerRegexes: readonly string[] = []
+): ReviewRemediationFixClassification {
+    const normalizedRequiredReviewTypes = [...new Set(
+        requiredReviewTypes.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
+    )].sort();
+    const nonTestReviewTypes = normalizedRequiredReviewTypes.filter((entry) => entry !== 'test');
+    const scopeCategory: ReviewRemediationScopeCategory = scopeBoundary.status === 'BLOCKED'
+        ? 'expanded_non_test_blocked'
+        : scopeBoundary.allowedTestOnlyExpansionFiles.length > 0
+            ? 'test_only_expansion'
+            : 'previous_scope_only';
+    const semantic = getReviewRemediationSemanticSignals(scopeBoundary, impactAnalysis);
+    const affectedFileGroups = groupReviewRemediationFiles(scopeBoundary.currentChangedFiles, testTriggerRegexes);
+    const failClosed = semantic.category === 'unknown'
+        || semantic.category === 'security_sensitive'
+        || semantic.category === 'api_surface'
+        || semantic.category === 'runtime_behavior'
+        || scopeBoundary.status === 'BLOCKED';
+    const impactAnalysisSource: ReviewRemediationFixClassification['evidence']['impact_analysis_source'] =
+        impactAnalysis?.source || 'missing';
+    const base = {
+        status: 'CLASSIFIED' as const,
+        category: semantic.category,
+        scope_category: scopeCategory,
+        rationale: semantic.rationale,
+        reason: semantic.rationale,
+        affected_file_groups: affectedFileGroups,
+        evidence: {
+            scope_boundary_status: scopeBoundary.status,
+            impact_analysis_source: impactAnalysisSource,
+            matched_signals: semantic.matchedSignals
+        },
+        review_reuse_decision_order: 'classification_before_reuse' as const
+    };
+    if (scopeBoundary.status === 'BLOCKED') {
+        return {
+            ...base,
+            rationale: `${semantic.rationale}; remediation changed non-test files outside the failed-review scope`,
+            reason: `${semantic.rationale}; remediation changed non-test files outside the failed-review scope`,
+            non_test_review_reuse_candidate: false,
+            test_review_reuse_candidate: false,
+            blocked_before_reuse: true,
+            invalidated_review_types: normalizedRequiredReviewTypes,
+            preserved_review_types: []
+        };
+    }
+    if (scopeBoundary.allowedTestOnlyExpansionFiles.length > 0) {
+        return {
+            ...base,
+            non_test_review_reuse_candidate: !failClosed,
+            test_review_reuse_candidate: false,
+            blocked_before_reuse: false,
+            invalidated_review_types: normalizedRequiredReviewTypes.includes('test')
+                ? ['test', ...(failClosed ? nonTestReviewTypes : [])].sort()
+                : failClosed ? nonTestReviewTypes : [],
+            preserved_review_types: failClosed ? [] : nonTestReviewTypes
+        };
+    }
+    return {
+        ...base,
+        non_test_review_reuse_candidate: !failClosed,
+        test_review_reuse_candidate: !failClosed,
+        blocked_before_reuse: false,
+        invalidated_review_types: failClosed ? normalizedRequiredReviewTypes : [],
+        preserved_review_types: failClosed ? [] : normalizedRequiredReviewTypes
     };
 }
 
@@ -774,6 +982,12 @@ export async function runRestartReviewCycleCommand(
         allowedBoundaryFiles,
         classificationConfig.test_trigger_regexes
     );
+    let remediationFixClassification = classifyReviewRemediationFix(
+        scopeBoundary,
+        [],
+        undefined,
+        classificationConfig.test_trigger_regexes
+    );
     let remediationImpactAnalysis: ReviewRemediationImpactAnalysis;
     const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
     if (!taskSummary) {
@@ -788,6 +1002,12 @@ export async function runRestartReviewCycleCommand(
                 repoRoot,
                 options,
                 scopeBoundary.currentChangedFiles
+            );
+            remediationFixClassification = classifyReviewRemediationFix(
+                scopeBoundary,
+                [],
+                remediationImpactAnalysis,
+                classificationConfig.test_trigger_regexes
             );
         } catch (error: unknown) {
             const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
@@ -806,6 +1026,7 @@ export async function runRestartReviewCycleCommand(
                     required_topics: [...REMEDIATION_IMPACT_ANALYSIS_TOPICS],
                     affected_files: scopeBoundary.currentChangedFiles
                 },
+                remediation_fix_classification: remediationFixClassification,
                 remediation_scope: {
                     status: scopeBoundary.status,
                     previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -844,6 +1065,7 @@ export async function runRestartReviewCycleCommand(
                     : null,
                 detection_source: replayScope.detectionSource,
                 impact_analysis: remediationImpactAnalysis,
+                remediation_fix_classification: remediationFixClassification,
                 remediation_scope: {
                     status: scopeBoundary.status,
                     previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -933,6 +1155,12 @@ export async function runRestartReviewCycleCommand(
             reviewExecutionPolicyMode
         );
         const requiredReviewTypes = requiredReviewBatches.flat();
+        remediationFixClassification = classifyReviewRemediationFix(
+            scopeBoundary,
+            requiredReviewTypes,
+            remediationImpactAnalysis,
+            classificationConfig.test_trigger_regexes
+        );
         const sharedTokenEconomyConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'token-economy.json'));
         const sharedTokenEconomyConfigData: TokenEconomyConfig | null = (
             fs.existsSync(sharedTokenEconomyConfigPath)
@@ -954,6 +1182,7 @@ export async function runRestartReviewCycleCommand(
         const launchRequiredReviewTypes: string[] = [];
         let pendingReviewTypes: string[] = [];
         let pendingReason: string | null = null;
+        const invalidatedReviewTypes = new Set(remediationFixClassification.invalidated_review_types);
 
         for (let batchIndex = 0; batchIndex < requiredReviewBatches.length; batchIndex += 1) {
             const reviewBatch = requiredReviewBatches[batchIndex];
@@ -962,6 +1191,9 @@ export async function runRestartReviewCycleCommand(
             );
             const batchResults = await Promise.all(reviewBatch.map(async (reviewType) => {
                 try {
+                    const reviewReuseBlockedReason = invalidatedReviewTypes.has(reviewType)
+                        ? `review reuse blocked by remediation classification '${remediationFixClassification.category}' for invalidated review type '${reviewType}'`
+                        : '';
                     const prepared = await runBuildReviewContextCommand({
                         repoRoot,
                         reviewType,
@@ -974,6 +1206,7 @@ export async function runRestartReviewCycleCommand(
                         tokenEconomyConfigPath: sharedTokenEconomyConfigPath,
                         tokenEconomyConfigData: sharedTokenEconomyConfigData,
                         timelineEventsSummary: batchTimelineSummary,
+                        reviewReuseBlockedReason,
                         ruleContextSectionsCache: sharedRuleContextSectionsCache,
                         ruleFileContentCache: sharedRuleFileContentCache
                     });
@@ -1037,6 +1270,7 @@ export async function runRestartReviewCycleCommand(
                 : null,
             detection_source: replayScope.detectionSource,
             impact_analysis: remediationImpactAnalysis,
+            remediation_fix_classification: remediationFixClassification,
             remediation_scope: {
                 status: scopeBoundary.status,
                 previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -1074,6 +1308,7 @@ export async function runRestartReviewCycleCommand(
                 `ReviewRemediationCycleArtifact: ${gateHelpers.normalizePath(remediationArtifactPath)}`,
                 `DetectionSource: ${replayScope.detectionSource}`,
                 `ImpactAnalysis: recorded; affected_files=${scopeBoundary.currentChangedFiles.length}; source=${remediationImpactAnalysis.source}`,
+                `RemediationFixClassification: ${remediationFixClassification.category}; invalidated_review_types=${formatReviewTypeList(remediationFixClassification.invalidated_review_types)}; preserved_review_types=${formatReviewTypeList(remediationFixClassification.preserved_review_types)}`,
                 `ScopeBoundary: ${scopeBoundary.status}; previous=${scopeBoundary.previousChangedFiles.length}; current=${scopeBoundary.currentChangedFiles.length}; expanded_non_test=${formatReviewTypeList(scopeBoundary.expandedNonTestFiles)}`,
                 `RefreshPoints: preflight=refreshed; post_preflight_rule_pack=reloaded; compile=rerun; review_contexts=${pendingReviewTypes.length > 0 ? 'partially_prepared_dependency_blocked' : 'prepared_or_reused'}`,
                 `ReuseBoundaries: non_test_changes_must_stay_within_previous_preflight_scope; test_only_expansion_allowed; expanded_non_test_files_block_reuse`,

@@ -1048,6 +1048,7 @@ export interface BuildReviewContextCommandOptions {
     scopedDiffMetadataPath?: unknown;
     outputPath?: unknown;
     repoRoot?: unknown;
+    reviewReuseBlockedReason?: unknown;
     ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
     ruleFileContentCache?: Map<string, string> | null;
 }
@@ -1136,6 +1137,7 @@ export async function runBuildReviewContextCommand(
         reviewType,
         repoRoot
     );
+    const reviewReuseBlockedReason = String(options.reviewReuseBlockedReason || '').trim();
     let previousReviewContextReuseSha256: string | null = null;
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()) {
         try {
@@ -1146,7 +1148,7 @@ export async function runBuildReviewContextCommand(
             previousReviewContextReuseSha256 = null;
         }
     }
-    const currentPassReviewEvidence = taskId
+    const currentPassReviewEvidence = taskId && !reviewReuseBlockedReason
         ? tryAcceptCurrentPassReviewEvidence({
             repoRoot,
             taskId,
@@ -1247,16 +1249,24 @@ export async function runBuildReviewContextCommand(
                 skillId,
                 'review_context_artifact'
             );
-            reviewReuseResult = await tryReuseReviewEvidence({
-                repoRoot,
-                taskId,
-                reviewType,
-                preflightPath,
-                preflightPayload,
-                reviewContextPath: outputPath,
-                previousReviewContextReuseSha256,
-                timelineEventsSummary: timelineSummary
-            });
+            reviewReuseResult = reviewReuseBlockedReason
+                ? {
+                    reused: false,
+                    receiptPath: null,
+                    reviewerExecutionMode: null,
+                    reviewerIdentity: null,
+                    reason: reviewReuseBlockedReason
+                }
+                : await tryReuseReviewEvidence({
+                    repoRoot,
+                    taskId,
+                    reviewType,
+                    preflightPath,
+                    preflightPayload,
+                    reviewContextPath: outputPath,
+                    previousReviewContextReuseSha256,
+                    timelineEventsSummary: timelineSummary
+                });
         }
     } catch {
         // Keep build-review-context resilient even when telemetry cannot be emitted.
@@ -1270,7 +1280,7 @@ export async function runBuildReviewContextCommand(
         reviewReuseDecision: reviewReuseResult.reused ? 'accepted' : 'rejected',
         reviewReuseReason: reviewReuseResult.reason,
         currentPassReviewEvidence: currentPassReviewEvidence?.accepted === true ? true : 'rejected',
-        currentPassReviewEvidenceReason: currentPassReviewEvidence?.reason || 'current PASS reuse check not run'
+        currentPassReviewEvidenceReason: reviewReuseBlockedReason || currentPassReviewEvidence?.reason || 'current PASS reuse check not run'
     };
     const orderedKeys = [
         'outputPath',
