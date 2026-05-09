@@ -1,5 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+    buildGateChainLaunchDecision,
+    formatGateChainLaunchDecision
+} from '../core/dependent-validation-chains';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { selectRulePackFiles } from './build-review-context';
 import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo, stringSha256 } from './helpers';
@@ -541,9 +545,17 @@ function getPreflightClassificationBinding(
         return entry.event_type === 'PREFLIGHT_CLASSIFIED';
     });
     if (!latestPreflight) {
+        const decision = buildGateChainLaunchDecision({
+            edgeId: 'preflight-to-post-preflight-rules',
+            status: 'block',
+            reason: 'PREFLIGHT_CLASSIFIED is missing before POST_PREFLIGHT rule-pack loading',
+            context: { taskId, preflightPath },
+            evidencePaths: [timelinePath]
+        });
         violations.push(
             `Task timeline '${normalizePath(timelinePath)}' is missing PREFLIGHT_CLASSIFIED for '${normalizedPreflightPath}'. ` +
-            'Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT or compile-gate.'
+            'Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT or compile-gate. ' +
+            formatGateChainLaunchDecision(decision)
         );
         return {
             timeline_path: normalizePath(timelinePath),
@@ -631,9 +643,17 @@ export function getPostPreflightSequenceEvidence(
     });
 
     if (!latestPostPreflightRulePack) {
+        const decision = buildGateChainLaunchDecision({
+            edgeId: 'post-preflight-rules-to-compile',
+            status: 'block',
+            reason: 'POST_PREFLIGHT RULE_PACK_LOADED is missing before compile-gate',
+            context: { taskId, preflightPath },
+            evidencePaths: [result.timeline_path]
+        });
         result.violations.push(
             `Task timeline '${result.timeline_path}' is missing POST_PREFLIGHT RULE_PACK_LOADED evidence for '${normalizedPreflightPath}'. ` +
-            'Run load-rule-pack --stage POST_PREFLIGHT after classify-change completes. These same-task transitions are not safe to parallelize.'
+            'Run load-rule-pack --stage POST_PREFLIGHT after classify-change completes. These same-task transitions are not safe to parallelize. ' +
+            formatGateChainLaunchDecision(decision)
         );
         return result;
     }
@@ -662,11 +682,19 @@ export function getPostPreflightSequenceEvidence(
         && latestPostPreflightRulePack.sequence <= binding.latest_preflight_sequence
         && !result.binding_equivalent_to_current_preflight
     ) {
+        const decision = buildGateChainLaunchDecision({
+            edgeId: 'post-preflight-rules-to-compile',
+            status: 'block',
+            reason: 'POST_PREFLIGHT RULE_PACK_LOADED is not newer than the latest PREFLIGHT_CLASSIFIED',
+            context: { taskId, preflightPath },
+            evidencePaths: [result.timeline_path]
+        });
         result.violations.push(
             `Unsafe same-task overlap detected in '${result.timeline_path}': POST_PREFLIGHT RULE_PACK_LOADED (seq ${latestPostPreflightRulePack.sequence}) ` +
             `does not occur after the latest PREFLIGHT_CLASSIFIED (seq ${binding.latest_preflight_sequence}) for '${normalizedPreflightPath}'. ` +
             'Re-run load-rule-pack --stage POST_PREFLIGHT after classify-change completes, then rerun compile-gate. ' +
-            'Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate for the same task cycle.'
+            'Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate for the same task cycle. ' +
+            formatGateChainLaunchDecision(decision)
         );
     }
     if (

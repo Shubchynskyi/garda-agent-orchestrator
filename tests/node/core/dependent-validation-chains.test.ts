@@ -6,8 +6,11 @@ import * as path from 'node:path';
 
 import {
     GATE_CHAIN_MANIFEST,
+    buildGateChainLaunchDecision,
     buildGateChainRemediationCommand,
     evaluateDependentValidationChain,
+    formatGateChainLaunchDecision,
+    getGateChainEdgeById,
     getGateChainEdgesForConsumer,
     getGateChainEdgesForProducer
 } from '../../../src/core/dependent-validation-chains';
@@ -222,6 +225,8 @@ test('getGateChainEdgesForConsumer and getGateChainEdgesForProducer resolve decl
 
     const missingEdges = getGateChainEdgesForConsumer('unknown-gate');
     assert.deepEqual(missingEdges, []);
+    assert.equal(getGateChainEdgeById('missing-edge'), null);
+    assert.equal(getGateChainEdgeById('handshake-to-shell-smoke')?.consumer_gate, 'shell-smoke-preflight');
 });
 
 test('buildGateChainRemediationCommand renders task and review placeholders', () => {
@@ -245,5 +250,43 @@ test('buildGateChainRemediationCommand renders task and review placeholders', ()
             depth: 2
         }),
         'node bin/garda.js gate build-review-context --review-type "security" --depth "2" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-334-preflight.json" --repo-root "."'
+    );
+});
+
+test('buildGateChainLaunchDecision formats block decisions from the manifest', () => {
+    const decision = buildGateChainLaunchDecision({
+        edgeId: 'preflight-to-post-preflight-rules',
+        status: 'block',
+        reason: 'PREFLIGHT_CLASSIFIED is missing before POST_PREFLIGHT rule-pack loading',
+        context: {
+            taskId: 'T-333',
+            preflightPath: 'garda-agent-orchestrator/runtime/reviews/T-333-preflight.json'
+        },
+        evidencePaths: ['garda-agent-orchestrator/runtime/task-events/T-333.jsonl']
+    });
+
+    assert.equal(decision.status, 'block');
+    assert.equal(decision.edge_id, 'preflight-to-post-preflight-rules');
+    assert.equal(
+        decision.next_command,
+        'node bin/garda.js gate classify-change --task-id "T-333" --task-intent "<task summary>" --output-path "garda-agent-orchestrator/runtime/reviews/T-333-preflight.json" --repo-root "."'
+    );
+    const rendered = formatGateChainLaunchDecision(decision);
+    assert.match(rendered, /GateChain preflight-to-post-preflight-rules block/);
+    assert.match(rendered, /NextCommand: node bin\/garda\.js gate classify-change/);
+});
+
+test('buildGateChainLaunchDecision can route stale consumers to the consumer gate', () => {
+    const decision = buildGateChainLaunchDecision({
+        edgeId: 'handshake-to-shell-smoke',
+        status: 'block',
+        reason: 'latest handshake is newer than latest shell smoke',
+        context: { taskId: 'T-333' },
+        remediationKind: 'stale_consumer'
+    });
+
+    assert.equal(
+        decision.next_command,
+        'node bin/garda.js gate shell-smoke-preflight --task-id "T-333" --repo-root "."'
     );
 });

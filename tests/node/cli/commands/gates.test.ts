@@ -2104,6 +2104,8 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
         assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
+        assert.ok(result.outputLines.some((line) => line.includes('GateChain post-preflight-rules-to-compile block')));
+        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate load-rule-pack --task-id')));
         assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2330,6 +2332,8 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
         assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
+        assert.ok(result.outputLines.some((line) => line.includes('GateChain post-preflight-rules-to-compile block')));
+        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate load-rule-pack --task-id')));
         assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2380,6 +2384,8 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
         assert.ok(result.outputLines.some((line) => line.includes('shell-smoke-preflight -> classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate')));
+        assert.ok(result.outputLines.some((line) => line.includes('GateChain handshake-to-shell-smoke block')));
+        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate shell-smoke-preflight --task-id')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

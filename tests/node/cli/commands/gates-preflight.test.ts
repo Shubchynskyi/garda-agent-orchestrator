@@ -1589,6 +1589,8 @@ describe('cli/commands/gates — preflight', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT')));
+        assert.ok(result.outputLines.some((line) => line.includes('GateChain preflight-to-post-preflight-rules block')));
+        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate classify-change --task-id')));
         assert.equal(artifact.stages.post_preflight.status, 'FAILED');
         assert.equal(artifact.stages.post_preflight.preflight_event_sequence, null);
 
@@ -2218,6 +2220,53 @@ describe('cli/commands/gates — preflight', () => {
             /Unsafe same-task overlap detected/
         );
         assert.equal(fs.existsSync(canonicalPreflightPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('fails compile gate with gate-chain remediation when POST_PREFLIGHT rule-pack evidence is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-post-preflight-missing-artifact';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-post-preflight-missing.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Surface compile remediation when POST_PREFLIGHT rule-pack is missing'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Surface compile remediation when POST_PREFLIGHT rule-pack is missing',
+            ['src/app.ts']
+        );
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('missing POST_PREFLIGHT RULE_PACK_LOADED evidence')));
+        assert.ok(result.outputLines.some((line) => line.includes('GateChain post-preflight-rules-to-compile block')));
+        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate load-rule-pack --task-id')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

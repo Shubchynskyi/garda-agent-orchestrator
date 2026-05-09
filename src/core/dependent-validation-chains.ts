@@ -47,6 +47,7 @@ export interface GateChainEdge {
     artifact: GateChainArtifactKind;
     artifact_suffix: string | null;
     missing_remediation_command: string;
+    stale_consumer_remediation_command?: string;
 }
 
 export interface GateChainCommandContext {
@@ -57,6 +58,14 @@ export interface GateChainCommandContext {
     cliPrefix?: string | null;
     repoRoot?: string | null;
     depth?: string | number | null;
+}
+
+export interface GateChainLaunchDecision {
+    status: 'pass' | 'block' | 'advisory';
+    edge_id: string;
+    reason: string;
+    next_command: string | null;
+    evidence_paths: string[];
 }
 
 const DEFAULT_GATE_CLI_PREFIX = 'node bin/garda.js';
@@ -107,7 +116,9 @@ export const GATE_CHAIN_MANIFEST: readonly GateChainEdge[] = defineGateChainMani
         artifact: 'timeline_event',
         artifact_suffix: '-handshake.json',
         missing_remediation_command:
-            '{cli} gate handshake-diagnostics --task-id "{taskId}" --repo-root "{repoRoot}"'
+            '{cli} gate handshake-diagnostics --task-id "{taskId}" --repo-root "{repoRoot}"',
+        stale_consumer_remediation_command:
+            '{cli} gate shell-smoke-preflight --task-id "{taskId}" --repo-root "{repoRoot}"'
     },
     {
         id: 'shell-smoke-to-preflight',
@@ -283,7 +294,13 @@ export function getGateChainEdgesForProducer(producerGate: string): GateChainEdg
         .map((edge) => ({ ...edge }));
 }
 
-export function buildGateChainRemediationCommand(edge: GateChainEdge, context: GateChainCommandContext): string {
+export function getGateChainEdgeById(edgeId: string): GateChainEdge | null {
+    const normalizedEdgeId = edgeId.trim().toLowerCase();
+    const edge = GATE_CHAIN_MANIFEST.find((candidate) => candidate.id.toLowerCase() === normalizedEdgeId);
+    return edge ? { ...edge } : null;
+}
+
+function renderGateChainCommand(template: string, context: GateChainCommandContext): string {
     const values: Record<string, string> = {
         cli: String(context.cliPrefix || DEFAULT_GATE_CLI_PREFIX),
         taskId: context.taskId,
@@ -296,7 +313,45 @@ export function buildGateChainRemediationCommand(edge: GateChainEdge, context: G
         repoRoot: String(context.repoRoot || DEFAULT_REPO_ROOT_ARGUMENT),
         depth: String(context.depth || '2')
     };
-    return edge.missing_remediation_command.replace(/\{([A-Za-z]+)\}/g, (match, key: string) => values[key] ?? match);
+    return template.replace(/\{([A-Za-z]+)\}/g, (match, key: string) => values[key] ?? match);
+}
+
+export function buildGateChainRemediationCommand(edge: GateChainEdge, context: GateChainCommandContext): string {
+    return renderGateChainCommand(edge.missing_remediation_command, context);
+}
+
+export function buildGateChainLaunchDecision(options: {
+    edgeId: string;
+    status: GateChainLaunchDecision['status'];
+    reason: string;
+    context: GateChainCommandContext;
+    evidencePaths?: readonly string[];
+    remediationKind?: 'missing_producer' | 'stale_consumer';
+}): GateChainLaunchDecision {
+    const edge = getGateChainEdgeById(options.edgeId);
+    const evidencePaths = [...(options.evidencePaths || [])].map((entry) => String(entry || '').trim()).filter(Boolean);
+    const remediationTemplate = options.remediationKind === 'stale_consumer'
+        ? edge?.stale_consumer_remediation_command
+        : edge?.missing_remediation_command;
+    return {
+        status: options.status,
+        edge_id: edge?.id || options.edgeId,
+        reason: options.reason,
+        next_command: edge && remediationTemplate && options.status === 'block'
+            ? renderGateChainCommand(remediationTemplate, options.context)
+            : null,
+        evidence_paths: evidencePaths
+    };
+}
+
+export function formatGateChainLaunchDecision(decision: GateChainLaunchDecision): string {
+    const evidenceText = decision.evidence_paths.length > 0
+        ? ` Evidence: ${decision.evidence_paths.join(', ')}.`
+        : '';
+    const nextCommandText = decision.next_command
+        ? ` NextCommand: ${decision.next_command}.`
+        : '';
+    return `GateChain ${decision.edge_id} ${decision.status}: ${decision.reason}.${evidenceText}${nextCommandText}`;
 }
 
 interface ValidationChainRule {

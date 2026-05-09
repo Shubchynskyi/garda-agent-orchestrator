@@ -2,6 +2,10 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { CLI_ENTRYPOINT_CANDIDATES } from '../core/constants';
+import {
+    buildGateChainLaunchDecision,
+    formatGateChainLaunchDecision
+} from '../core/dependent-validation-chains';
 
 import { redactPath } from '../core/redaction';
 import { assertValidTaskId } from '../gate-runtime/task-events';
@@ -450,12 +454,21 @@ function verifyShellSmokeTimelineBinding(
     }
 
     if (latestShellSmoke.sequence < latestHandshake.sequence) {
+        const decision = buildGateChainLaunchDecision({
+            edgeId: 'handshake-to-shell-smoke',
+            status: 'block',
+            reason: 'latest HANDSHAKE_DIAGNOSTICS_RECORDED is newer than latest SHELL_SMOKE_PREFLIGHT_RECORDED',
+            context: { taskId },
+            evidencePaths: [resolvedTimeline],
+            remediationKind: 'stale_consumer'
+        });
         return [
             `Unsafe same-task overlap detected in '${normalizePath(resolvedTimeline)}': latest HANDSHAKE_DIAGNOSTICS_RECORDED ` +
             `(seq ${latestHandshake.sequence}) is newer than latest SHELL_SMOKE_PREFLIGHT_RECORDED (seq ${latestShellSmoke.sequence}). ` +
             'Re-run shell-smoke-preflight after the latest handshake-diagnostics, then continue sequentially ' +
             '(shell-smoke-preflight -> classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate). ' +
-            'Do not parallelize handshake-diagnostics, shell-smoke-preflight, and classify-change for the same task cycle.'
+            'Do not parallelize handshake-diagnostics, shell-smoke-preflight, and classify-change for the same task cycle. ' +
+            formatGateChainLaunchDecision(decision)
         ];
     }
 
