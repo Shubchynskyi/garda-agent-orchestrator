@@ -25,6 +25,25 @@ export interface ReviewDependencyStatus {
     reviewType: string;
     ready: boolean;
     reason: string;
+    blockerCode: ReviewDependencyBlockerCode | null;
+    dependencyEdge: boolean;
+}
+
+export const REVIEW_DEPENDENCY_BLOCKER_CODES = Object.freeze([
+    'no_dependency_edge',
+    'missing_upstream_pass',
+    'missing_receipt',
+    'missing_context',
+    'stale_freshness'
+] as const);
+
+export type ReviewDependencyBlockerCode = typeof REVIEW_DEPENDENCY_BLOCKER_CODES[number];
+
+export interface ReviewDependencyDiagnostics {
+    reviewType: string;
+    reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
+    requiredUpstreamReviews: string[];
+    statuses: ReviewDependencyStatus[];
 }
 
 export function normalizeRequiredReviewRecord(value: unknown): Record<string, boolean> {
@@ -131,6 +150,40 @@ function resolveRepoRootFromPreflightPath(preflightPath: string): string {
     return path.resolve(path.dirname(preflightPath), '..', '..', '..');
 }
 
+function readyDependencyStatus(reviewType: string, reason = 'pass'): ReviewDependencyStatus {
+    return {
+        reviewType,
+        ready: true,
+        reason,
+        blockerCode: null,
+        dependencyEdge: true
+    };
+}
+
+function noDependencyEdgeStatus(reviewType: string): ReviewDependencyStatus {
+    return {
+        reviewType,
+        ready: true,
+        reason: 'no dependency edge for this review type under the current review execution policy',
+        blockerCode: 'no_dependency_edge',
+        dependencyEdge: false
+    };
+}
+
+function blockedDependencyStatus(
+    reviewType: string,
+    blockerCode: Exclude<ReviewDependencyBlockerCode, 'no_dependency_edge'>,
+    reason: string
+): ReviewDependencyStatus {
+    return {
+        reviewType,
+        ready: false,
+        reason,
+        blockerCode,
+        dependencyEdge: true
+    };
+}
+
 export function assessUpstreamReviewDependencyStatus(options: {
     taskId: string;
     preflightPath: string;
@@ -144,11 +197,11 @@ export function assessUpstreamReviewDependencyStatus(options: {
 }): ReviewDependencyStatus {
     const recordedEvent = options.latestRecordedReviewByType.get(options.upstreamReviewType) ?? null;
     if (!recordedEvent) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: 'no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_upstream_pass',
+            'no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'
+        );
     }
 
     const reviewsRoot = path.dirname(options.preflightPath);
@@ -157,56 +210,56 @@ export function assessUpstreamReviewDependencyStatus(options: {
     try {
         artifactBuffer = fs.readFileSync(artifactPath);
     } catch {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: `missing or unreadable review artifact at ${gateHelpers.normalizePath(artifactPath)}`
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_upstream_pass',
+            `missing or unreadable review artifact at ${gateHelpers.normalizePath(artifactPath)}`
+        );
     }
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
     let receipt: ReviewReceipt;
     try {
         receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as ReviewReceipt;
     } catch {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: `missing or invalid review receipt JSON at ${gateHelpers.normalizePath(receiptPath)}`
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_receipt',
+            `missing or invalid review receipt JSON at ${gateHelpers.normalizePath(receiptPath)}`
+        );
     }
     if (receipt.task_id !== options.taskId) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: `review receipt belongs to task '${receipt.task_id || 'unknown'}'`
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'stale_freshness',
+            `review receipt belongs to task '${receipt.task_id || 'unknown'}'`
+        );
     }
     if (receipt.review_type !== options.upstreamReviewType) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: `review receipt type is '${receipt.review_type || 'unknown'}'`
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'stale_freshness',
+            `review receipt type is '${receipt.review_type || 'unknown'}'`
+        );
     }
     if (
         String(receipt.preflight_sha256 || '').trim().toLowerCase()
         !== String(options.preflightHashSha256 || '').trim().toLowerCase()
     ) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: 'review receipt is not bound to the current preflight artifact'
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'stale_freshness',
+            'review receipt is not bound to the current preflight artifact'
+        );
     }
 
     const artifactContent = artifactBuffer.toString('utf8');
     const artifactHash = createHash('sha256').update(artifactBuffer).digest('hex').trim().toLowerCase();
     if (String(receipt.review_artifact_sha256 || '').trim().toLowerCase() !== artifactHash) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: 'review artifact hash no longer matches its receipt'
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'stale_freshness',
+            'review artifact hash no longer matches its receipt'
+        );
     }
 
     const passToken = REVIEW_CONTRACTS.find(([candidate]) => candidate === options.upstreamReviewType)?.[1] || null;
@@ -218,20 +271,19 @@ export function assessUpstreamReviewDependencyStatus(options: {
         options.upstreamReviewType
     );
     if (failToken && reviewVerdict === failToken) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason:
-                `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
-                `'${options.upstreamReviewType}' review before launching dependent reviews`
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_upstream_pass',
+            `upstream review failed with '${failToken}'; fix implementation and rerun compile plus ` +
+            `'${options.upstreamReviewType}' review before launching dependent reviews`
+        );
     }
     if (!passToken || reviewVerdict !== passToken) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: `review artifact verdict is '${reviewVerdict || 'missing'}' instead of '${passToken || 'unknown'}'`
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_upstream_pass',
+            `review artifact verdict is '${reviewVerdict || 'missing'}' instead of '${passToken || 'unknown'}'`
+        );
     }
 
     const reviewContextPath = resolveReviewContextPath(
@@ -243,11 +295,11 @@ export function assessUpstreamReviewDependencyStatus(options: {
     try {
         reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     } catch {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: `missing or invalid review-context artifact at ${gateHelpers.normalizePath(reviewContextPath)}`
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_context',
+            `missing or invalid review-context artifact at ${gateHelpers.normalizePath(reviewContextPath)}`
+        );
     }
 
     const repoRoot = resolveRepoRootFromPreflightPath(options.preflightPath);
@@ -282,21 +334,17 @@ export function assessUpstreamReviewDependencyStatus(options: {
         repoRoot
     });
     if (validation.violations.length > 0) {
-        return {
-            reviewType: options.upstreamReviewType,
-            ready: false,
-            reason: validation.violations.join('; ')
-        };
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'stale_freshness',
+            validation.violations.join('; ')
+        );
     }
 
-    return {
-        reviewType: options.upstreamReviewType,
-        ready: true,
-        reason: 'pass'
-    };
+    return readyDependencyStatus(options.upstreamReviewType);
 }
 
-export function assertRequiredUpstreamReviewDependencies(options: {
+export function buildReviewDependencyDiagnostics(options: {
     taskId: string;
     preflightPath: string;
     preflightPayload: Record<string, unknown>;
@@ -304,7 +352,7 @@ export function assertRequiredUpstreamReviewDependencies(options: {
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
     taskModePath?: string | null;
     runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
-}): void {
+}): ReviewDependencyDiagnostics {
     const reviewExecutionPolicyMode = resolveReviewExecutionPolicyModeFromPreflight(options.preflightPayload);
     const upstreamReviewTypes = getRequiredUpstreamReviews(
         options.reviewType,
@@ -312,7 +360,12 @@ export function assertRequiredUpstreamReviewDependencies(options: {
         reviewExecutionPolicyMode
     );
     if (upstreamReviewTypes.length === 0) {
-        return;
+        return {
+            reviewType: options.reviewType,
+            reviewExecutionPolicyMode,
+            requiredUpstreamReviews: [],
+            statuses: [noDependencyEdgeStatus(options.reviewType)]
+        };
     }
     const latestCompilePassSequence = findLatestTimelineSequence(
         options.timelineEvents,
@@ -331,17 +384,40 @@ export function assertRequiredUpstreamReviewDependencies(options: {
         taskModePath: String(options.taskModePath || '').trim(),
         runtimeReviewerIdentity: options.runtimeReviewerIdentity || null
     }));
+    return {
+        reviewType: options.reviewType,
+        reviewExecutionPolicyMode,
+        requiredUpstreamReviews: upstreamReviewTypes,
+        statuses: dependencyStatuses
+    };
+}
+
+export function assertRequiredUpstreamReviewDependencies(options: {
+    taskId: string;
+    preflightPath: string;
+    preflightPayload: Record<string, unknown>;
+    reviewType: string;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
+    taskModePath?: string | null;
+    runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
+}): void {
+    const dependencyDiagnostics = buildReviewDependencyDiagnostics(options);
+    const dependencyStatuses = dependencyDiagnostics.statuses.filter((status) => status.dependencyEdge);
     const blockedDependencies = dependencyStatuses.filter((status) => !status.ready);
     if (blockedDependencies.length === 0) {
         return;
     }
 
     const dependencyList = blockedDependencies.map((status) => status.reviewType).join(', ');
+    const taxonomyList = blockedDependencies
+        .map((status) => `${status.blockerCode || 'unknown'}=${status.reviewType}`)
+        .join(', ');
     const detailList = blockedDependencies
-        .map((status) => `${status.reviewType}: ${status.reason}`)
+        .map((status) => `${status.reviewType}: [${status.blockerCode || 'unknown'}] ${status.reason}`)
         .join('; ');
     throw new Error(
         `ReviewType '${options.reviewType}' is blocked until upstream reviews pass for the current cycle: ${dependencyList}. ` +
-        `Run and record those reviews first. Details: ${detailList}.`
+        `Run and record those reviews first. DependencyPolicy: ${dependencyDiagnostics.reviewExecutionPolicyMode}. ` +
+        `BlockerTaxonomy: ${taxonomyList}. Details: ${detailList}.`
     );
 }

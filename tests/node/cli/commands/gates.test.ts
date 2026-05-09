@@ -9794,7 +9794,11 @@ describe('cli/commands/gates', () => {
             blockedErrorOutput
         );
         assert.ok(
-            blockedErrorOutput.includes('code: no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
+            blockedErrorOutput.includes('BlockerTaxonomy: missing_upstream_pass=code'),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('code: [missing_upstream_pass] no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
             blockedErrorOutput
         );
         assert.equal(fs.existsSync(blockedTestReviewContextPath), false);
@@ -9976,7 +9980,11 @@ describe('cli/commands/gates', () => {
             blockedErrorOutput
         );
         assert.ok(
-            blockedErrorOutput.includes('no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
+            blockedErrorOutput.includes('BlockerTaxonomy: missing_upstream_pass=code'),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('[missing_upstream_pass] no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
             blockedErrorOutput
         );
         assert.equal(fs.existsSync(blockedTestReviewContextPath), false);
@@ -10102,7 +10110,11 @@ describe('cli/commands/gates', () => {
             blockedErrorOutput
         );
         assert.ok(
-            blockedErrorOutput.includes('code: no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
+            blockedErrorOutput.includes('BlockerTaxonomy: missing_upstream_pass=code'),
+            blockedErrorOutput
+        );
+        assert.ok(
+            blockedErrorOutput.includes('code: [missing_upstream_pass] no REVIEW_RECORDED evidence after the latest COMPILE_GATE_PASSED'),
             blockedErrorOutput
         );
         assert.equal(fs.existsSync(testReviewArtifactPath), false);

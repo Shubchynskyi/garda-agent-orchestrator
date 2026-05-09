@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added current-cycle review dependency diagnostics with explicit blocker taxonomy for missing upstream PASS evidence, missing receipts, missing review context, stale freshness, and independent no-edge reviews
 - added release-time embedded bundle parity validation for root source, dist, templates, package files, and runtime-referenced docs
 - added review attempt pass/fail/reuse/missing counts to task-specific stats while keeping aggregate stats stable
 - colorized human task audit summary output while keeping JSON and output-path artifacts uncolored
