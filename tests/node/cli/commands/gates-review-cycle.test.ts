@@ -12,7 +12,7 @@ import {
     runEnterTaskModeCommand,
     runLoadRulePackCommand,
     runRestartCoherentCycleCommand,
-    runRestartReviewCycleCommand,
+    runRestartReviewCycleCommand as runRestartReviewCycleCommandRaw,
     runRequiredReviewsCheckCommand
 } from '../../../../src/cli/commands/gates';
 import { formatCompletionGateResult, runCompletionGate } from '../../../../src/gates/completion';
@@ -44,6 +44,53 @@ import * as childProcess from 'node:child_process';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function readPreflightChangedFiles(preflightPath: unknown): string[] {
+    const resolvedPath = String(preflightPath || '').trim();
+    if (!resolvedPath || !fs.existsSync(resolvedPath)) {
+        return [];
+    }
+    try {
+        const preflight = JSON.parse(fs.readFileSync(resolvedPath, 'utf8')) as Record<string, unknown>;
+        return Array.isArray(preflight.changed_files)
+            ? preflight.changed_files.map((entry) => String(entry).replace(/\\/g, '/')).filter(Boolean)
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function buildDefaultRemediationImpactAnalysis(changedFiles: unknown, preflightPath: unknown): string {
+    const normalizedChangedFiles = Array.isArray(changedFiles)
+        ? changedFiles.map((entry) => String(entry).replace(/\\/g, '/')).filter(Boolean)
+        : [];
+    const knownFiles = [...new Set([...normalizedChangedFiles, ...readPreflightChangedFiles(preflightPath)])];
+    const affectedFiles = knownFiles.length > 0
+        ? knownFiles.join(', ')
+        : 'src/app.ts, tests/app.test.ts';
+    return [
+        `Reviewer finding: failed review blocker requires a same-task remediation pass for ${affectedFiles}.`,
+        `Intended fix: apply only the blocker fix in ${affectedFiles} and preserve the existing remediation scope boundary.`,
+        `Affected files/contracts: ${affectedFiles} are the affected files; public contracts stay unchanged unless refreshed preflight proves otherwise.`,
+        `API/runtime/artifact/test impact: ${affectedFiles} require refreshed preflight, rule-pack, compile evidence, review contexts, and test evidence.`,
+        'Possible side effects: review reuse must fail closed if the remediation expands outside the failed review boundary.',
+        'Required targeted checks: compile gate and the relevant review-cycle regression assertions must run after the fix.',
+        'Scope or review-type changes: changed review requirements must come only from refreshed preflight evidence.',
+        'Related blockers/follow-up: fix in scope only when covered by the same failed-review blocker, otherwise queue a separate follow-up.'
+    ].join(' ');
+}
+
+function runRestartReviewCycleCommand(
+    options: Parameters<typeof runRestartReviewCycleCommandRaw>[0]
+): ReturnType<typeof runRestartReviewCycleCommandRaw> {
+    return runRestartReviewCycleCommandRaw({
+        impactAnalysis: buildDefaultRemediationImpactAnalysis(
+            (options as Record<string, unknown>).changedFiles,
+            (options as Record<string, unknown>).preflightPath
+        ),
+        ...options
+    });
 }
 
 function createReviewerRoutingFixture(
@@ -2787,7 +2834,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restart-review-cycle defaults to the current workspace diff instead of silently reusing the old explicit preflight scope', { concurrency: false }, async () => {
+    it('restart-review-cycle defaults to the current workspace diff instead of silently reusing the old explicit preflight scope', { concurrency: false }, async (t) => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-current-diff';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -2846,6 +2893,126 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
 
+        const missingImpactResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(missingImpactResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(missingImpactResult.outputLines.join('\n'), /requires main-agent remediation impact analysis/);
+        const blockedImpactArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(blockedImpactArtifact.status, 'BLOCKED');
+        assert.equal(blockedImpactArtifact.reason, 'missing_or_incomplete_remediation_impact_analysis');
+        assert.equal((blockedImpactArtifact.impact_analysis as Record<string, unknown>).status, 'BLOCKED');
+
+        const boilerplateImpactResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            impactAnalysis: [
+                'Reviewer finding: reviewer finding.',
+                'Intended fix: intended fix.',
+                'Affected files/contracts: affected files and contracts.',
+                'API/runtime/artifact/test impact: api runtime artifact test impact.',
+                'Possible side effects: possible side effects.',
+                'Required targeted checks: required targeted checks.',
+                'Scope or review impact: scope or review impact.',
+                'Related blockers/follow-up: related blocker or follow-up decision.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(boilerplateImpactResult.exitCode, EXIT_GATE_FAILURE);
+        const boilerplateOutput = boilerplateImpactResult.outputLines.join('\n');
+        assert.match(boilerplateOutput, /needs task-specific detail|must mention at least one affected file/);
+
+        const validImpactAnalysis = buildDefaultRemediationImpactAnalysis(
+            ['src/app.ts', 'tests/app.test.ts'],
+            preflightPath
+        );
+        const outsideImpactPath = path.join(os.tmpdir(), `${taskId}-outside-impact-analysis.md`);
+        fs.writeFileSync(outsideImpactPath, validImpactAnalysis, 'utf8');
+        const outsideImpactResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            impactAnalysisPath: outsideImpactPath,
+            emitMetrics: false
+        });
+        assert.equal(outsideImpactResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(outsideImpactResult.outputLines.join('\n'), /must stay inside the repository root/);
+        fs.rmSync(outsideImpactPath, { force: true });
+
+        const outsideLargeImpactPath = path.join(os.tmpdir(), `${taskId}-outside-large-impact-analysis.md`);
+        fs.writeFileSync(outsideLargeImpactPath, `${validImpactAnalysis}\n${'x'.repeat(70 * 1024)}`, 'utf8');
+        const outsideLargeImpactResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            impactAnalysisPath: outsideLargeImpactPath,
+            emitMetrics: false
+        });
+        assert.equal(outsideLargeImpactResult.exitCode, EXIT_GATE_FAILURE);
+        const outsideLargeOutput = outsideLargeImpactResult.outputLines.join('\n');
+        assert.match(outsideLargeOutput, /must stay inside the repository root/);
+        assert.doesNotMatch(outsideLargeOutput, /must be <= 65536 bytes/);
+        fs.rmSync(outsideLargeImpactPath, { force: true });
+
+        const outsideSymlinkTarget = path.join(os.tmpdir(), `${taskId}-outside-symlink-impact-analysis.md`);
+        const symlinkImpactPath = path.join(repoRoot, 'symlink-impact-analysis.md');
+        await t.test('restart-review-cycle rejects repo-local symlinked impact analysis paths outside repo', async (symlinkTest) => {
+            try {
+                fs.writeFileSync(outsideSymlinkTarget, validImpactAnalysis, 'utf8');
+                fs.symlinkSync(outsideSymlinkTarget, symlinkImpactPath, 'file');
+                const symlinkImpactResult = await runRestartReviewCycleCommandRaw({
+                    repoRoot,
+                    taskId,
+                    preflightPath,
+                    commandsPath,
+                    outputFiltersPath,
+                    impactAnalysisPath: 'symlink-impact-analysis.md',
+                    emitMetrics: false
+                });
+                assert.equal(symlinkImpactResult.exitCode, EXIT_GATE_FAILURE);
+                assert.match(symlinkImpactResult.outputLines.join('\n'), /must stay inside the repository root/);
+            } catch (error: unknown) {
+                const code = (error as { code?: string }).code;
+                if (code !== 'EPERM' && code !== 'EACCES') {
+                    throw error;
+                }
+                symlinkTest.skip('file symlink creation is not permitted in this environment');
+            } finally {
+                fs.rmSync(symlinkImpactPath, { force: true });
+                fs.rmSync(outsideSymlinkTarget, { force: true });
+            }
+        });
+
+        const largeImpactPath = path.join(repoRoot, 'large-impact-analysis.md');
+        fs.writeFileSync(largeImpactPath, `${validImpactAnalysis}\n${'x'.repeat(70 * 1024)}`, 'utf8');
+        const largeImpactResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            impactAnalysisPath: 'large-impact-analysis.md',
+            emitMetrics: false
+        });
+        assert.equal(largeImpactResult.exitCode, EXIT_GATE_FAILURE);
+        assert.match(largeImpactResult.outputLines.join('\n'), /must be <= 65536 bytes/);
+        fs.rmSync(largeImpactPath, { force: true });
+
         const restartResult = await runRestartReviewCycleCommand({
             repoRoot,
             taskId,
@@ -2872,6 +3039,8 @@ describe('cli/commands/gates – review-cycle suites', () => {
             'utf8'
         )) as Record<string, unknown>;
         assert.equal(remediationArtifact.status, 'PASSED');
+        assert.equal((remediationArtifact.impact_analysis as Record<string, unknown>).status, 'RECORDED');
+        assert.equal((remediationArtifact.impact_analysis as Record<string, unknown>).source, 'inline');
         assert.deepEqual(
             (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
             ['tests/app.test.ts']
@@ -2880,6 +3049,27 @@ describe('cli/commands/gates – review-cycle suites', () => {
             (remediationArtifact.remediation_scope as Record<string, unknown>).expanded_non_test_files,
             []
         );
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 3;\nconst b = 4;\nconsole.log(a + b);\n', 'utf8');
+        const fileImpactAnalysisPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'impact-analysis.md');
+        fs.writeFileSync(fileImpactAnalysisPath, validImpactAnalysis, 'utf8');
+        const fileImpactRestartResult = await runRestartReviewCycleCommandRaw({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            impactAnalysisPath: 'garda-agent-orchestrator/runtime/impact-analysis.md',
+            emitMetrics: false
+        });
+        assert.equal(fileImpactRestartResult.exitCode, 0, fileImpactRestartResult.outputLines.join('\n'));
+        const fileImpactArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(fileImpactArtifact.status, 'PASSED');
+        assert.equal((fileImpactArtifact.impact_analysis as Record<string, unknown>).status, 'RECORDED');
+        assert.equal((fileImpactArtifact.impact_analysis as Record<string, unknown>).source, 'file');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

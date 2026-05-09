@@ -525,7 +525,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 |---|---|
 | Enter task mode | `garda gate enter-task-mode --task-id "T-001" --task-summary "..."` (`--orchestrator-work` for tasks that modify protected control-plane paths — see [orchestrator-work-and-isolation](orchestrator-work-and-isolation.md)) |
 | Restart coherent cycle | `garda gate restart-coherent-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
-| Restart review cycle | `garda gate restart-review-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
+| Restart review cycle | `garda gate restart-review-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json" --impact-analysis "<replace with main-agent remediation impact analysis>"` |
 | Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
 | Bind rule pack to preflight | `garda gate bind-rule-pack-to-preflight --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Classify change | `garda gate classify-change --use-staged --task-id "T-001" --task-intent "..."` |

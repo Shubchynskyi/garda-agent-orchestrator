@@ -6672,6 +6672,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                             `${cliPrefix} gate restart-review-cycle`,
                             `--task-id "${taskId}"`,
                             `--task-intent ${quoteCommandValue(taskIntent)}`,
+                            `--impact-analysis ${quoteCommandValue('<replace with main-agent remediation impact analysis>')}`,
                             ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
                             '--repo-root "."'
                         ].join(' ')

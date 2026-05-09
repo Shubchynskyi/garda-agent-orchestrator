@@ -4607,6 +4607,9 @@ describe('gates/next-step', () => {
             assert.match(result.reason, /Preserve the failed review artifact and receipt/);
             assert.match(result.reason, /do not make fake implementation changes/);
             assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+            assert.ok(result.commands[0].command.includes('--impact-analysis'));
+            assert.ok(result.commands[0].command.includes('<replace with main-agent remediation impact analysis>'));
+            assert.ok(!result.commands[0].command.includes('reviewer finding; intended fix; affected files/contracts'));
             assert.ok(!result.commands[0].command.includes('record-review-result'));
             assert.ok(!result.commands[0].command.includes('compile-gate'));
         }

@@ -79,6 +79,8 @@ export interface RestartReviewCycleCommandOptions {
     includeUntracked?: unknown;
     useStaged?: boolean;
     taskIntent?: unknown;
+    impactAnalysis?: unknown;
+    impactAnalysisPath?: string;
     commandsPath?: string;
     outputFiltersPath?: string;
     failTailLines?: unknown;
@@ -102,8 +104,195 @@ interface ReviewRemediationScopeBoundary {
     allowedTestOnlyExpansionFiles: string[];
 }
 
+interface ReviewRemediationImpactAnalysis {
+    status: 'RECORDED';
+    source: 'inline' | 'file';
+    summary: string;
+    required_topics: string[];
+    affected_files: string[];
+}
+
+const REMEDIATION_IMPACT_ANALYSIS_MIN_CHARS = 120;
+const REMEDIATION_IMPACT_ANALYSIS_TOPICS = Object.freeze([
+    'reviewer finding',
+    'intended fix',
+    'affected files and contracts',
+    'api/runtime/artifact/test impact',
+    'possible side effects',
+    'required targeted checks',
+    'scope or review-type changes',
+    'related blocker or follow-up decision'
+]);
+const REMEDIATION_IMPACT_ANALYSIS_PLACEHOLDERS = Object.freeze([
+    '<replace with main-agent remediation impact analysis>',
+    '<analysis>',
+    '<reviewer finding; intended fix',
+    'reviewer finding; intended fix; affected files/contracts'
+]);
+const REMEDIATION_IMPACT_ANALYSIS_TOPIC_CHECKS = Object.freeze([
+    { topic: 'reviewer finding', pattern: /\b(reviewer\s+finding|finding|reviewer)\b/iu },
+    { topic: 'intended fix', pattern: /\b(intended\s+fix|fix)\b/iu },
+    { topic: 'affected files and contracts', pattern: /\b(affected\s+files?|affected\s+contracts?|contracts?)\b/iu },
+    { topic: 'api/runtime/artifact/test impact', pattern: /\b(api|runtime|artifact|test)\s+impact\b|\bimpact\b/iu },
+    { topic: 'possible side effects', pattern: /\b(possible\s+side\s+effects?|side\s+effects?|risk)\b/iu },
+    { topic: 'required targeted checks', pattern: /\b(required\s+targeted\s+checks?|targeted\s+checks?|checks?|validation)\b/iu },
+    { topic: 'scope or review-type changes', pattern: /\b(scope|review[-\s]?type|review\s+impact)\b/iu },
+    { topic: 'related blocker or follow-up decision', pattern: /\b(related\s+blocker|follow[-\s]?up|separate\s+task|in[-\s]?scope)\b/iu }
+]);
+const REMEDIATION_IMPACT_ANALYSIS_DETAIL_MIN_CHARS = 8;
+const REMEDIATION_IMPACT_ANALYSIS_FILE_MAX_BYTES = 64 * 1024;
+
 function normalizeChangedFiles(values: readonly unknown[]): string[] {
     return [...new Set(values.map((entry) => gateHelpers.normalizePath(String(entry || '').trim())).filter(Boolean))].sort();
+}
+
+function normalizeImpactAnalysisText(value: unknown): string {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const record = value as Record<string, unknown>;
+        return Object.entries(record)
+            .filter(([, entryValue]) => entryValue !== null && entryValue !== undefined && String(entryValue).trim())
+            .map(([key, entryValue]) => `${key}: ${Array.isArray(entryValue) ? entryValue.join(', ') : String(entryValue).trim()}`)
+            .join('; ');
+    }
+    return String(value || '').trim();
+}
+
+function isPathInsideDirectory(candidatePath: string, rootPath: string): boolean {
+    const relativePath = path.relative(rootPath, candidatePath);
+    return relativePath === '' || Boolean(relativePath) && !relativePath.startsWith('..') && !path.isAbsolute(relativePath);
+}
+
+function readImpactAnalysisPath(
+    repoRoot: string,
+    impactAnalysisPath: string
+): { summary: string; source: 'file' } {
+    const resolvedRepoRoot = fs.realpathSync.native(path.resolve(repoRoot));
+    const candidatePath = path.isAbsolute(impactAnalysisPath)
+        ? path.resolve(impactAnalysisPath)
+        : path.resolve(resolvedRepoRoot, impactAnalysisPath);
+    if (!isPathInsideDirectory(candidatePath, resolvedRepoRoot)) {
+        throw new Error(
+            'Remediation impact analysis file must stay inside the repository root: '
+            + gateHelpers.normalizePath(candidatePath)
+        );
+    }
+    const resolvedPath = candidatePath;
+    if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`Remediation impact analysis file does not exist: ${gateHelpers.normalizePath(resolvedPath)}`);
+    }
+    const realImpactPath = fs.realpathSync.native(resolvedPath);
+    if (!isPathInsideDirectory(realImpactPath, resolvedRepoRoot)) {
+        throw new Error(
+            'Remediation impact analysis file must stay inside the repository root: '
+            + gateHelpers.normalizePath(realImpactPath)
+        );
+    }
+    const stat = fs.statSync(realImpactPath);
+    if (!stat.isFile()) {
+        throw new Error(`Remediation impact analysis file does not exist: ${gateHelpers.normalizePath(resolvedPath)}`);
+    }
+    if (stat.size > REMEDIATION_IMPACT_ANALYSIS_FILE_MAX_BYTES) {
+        throw new Error(
+            `Remediation impact analysis file must be <= ${REMEDIATION_IMPACT_ANALYSIS_FILE_MAX_BYTES} bytes: `
+            + gateHelpers.normalizePath(realImpactPath)
+        );
+    }
+    const rawContent = fs.readFileSync(realImpactPath, 'utf8').trim();
+    if (!rawContent) {
+        return { summary: '', source: 'file' };
+    }
+    try {
+        return {
+            summary: normalizeImpactAnalysisText(JSON.parse(rawContent) as unknown),
+            source: 'file'
+        };
+    } catch {
+        return {
+            summary: rawContent,
+            source: 'file'
+        };
+    }
+}
+
+function getImpactAnalysisClauses(summary: string): string[] {
+    return summary
+        .split(/[\n;]+/u)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+}
+
+function stripTopicLikeText(value: string, topic: string): string {
+    return value
+        .replace(new RegExp(topic.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'giu'), '')
+        .replace(/\b(reviewer\s+finding|finding|reviewer|intended\s+fix|fix|affected\s+files?|affected\s+contracts?|contracts?|api|runtime|artifact|test|impact|possible\s+side\s+effects?|side\s+effects?|risk|required\s+targeted\s+checks?|targeted\s+checks?|checks?|validation|scope|review[-\s]?type|review\s+impact|related\s+blocker|follow[-\s]?up|separate\s+task|in[-\s]?scope|decision)\b/giu, '')
+        .replace(/[:\-()[\]{}<>"'`.,/\\|_]+/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim();
+}
+
+function validateReviewRemediationImpactAnalysis(
+    summary: string,
+    affectedFiles: readonly string[]
+): string[] {
+    const lowerSummary = summary.toLocaleLowerCase();
+    const violations: string[] = [];
+    if (summary.length < REMEDIATION_IMPACT_ANALYSIS_MIN_CHARS) {
+        violations.push(`analysis must be at least ${REMEDIATION_IMPACT_ANALYSIS_MIN_CHARS} characters`);
+    }
+    if (REMEDIATION_IMPACT_ANALYSIS_PLACEHOLDERS.some((placeholder) => lowerSummary.includes(placeholder))) {
+        violations.push('analysis must replace help/command placeholders with task-specific text');
+    }
+
+    const clauses = getImpactAnalysisClauses(summary);
+    for (const check of REMEDIATION_IMPACT_ANALYSIS_TOPIC_CHECKS) {
+        const matchedClause = clauses.find((clause) => check.pattern.test(clause));
+        if (!matchedClause) {
+            violations.push(`analysis is missing topic: ${check.topic}`);
+            continue;
+        }
+        const detail = stripTopicLikeText(matchedClause, check.topic);
+        if (detail.length < REMEDIATION_IMPACT_ANALYSIS_DETAIL_MIN_CHARS) {
+            violations.push(`analysis topic '${check.topic}' needs task-specific detail`);
+        }
+    }
+
+    const normalizedAffectedFiles = normalizeChangedFiles(affectedFiles);
+    if (
+        normalizedAffectedFiles.length > 0
+        && !normalizedAffectedFiles.some((entry) => lowerSummary.includes(entry.toLocaleLowerCase()))
+    ) {
+        violations.push(`analysis must mention at least one affected file: ${normalizedAffectedFiles.join(', ')}`);
+    }
+
+    return violations;
+}
+
+function resolveReviewRemediationImpactAnalysis(
+    repoRoot: string,
+    options: RestartReviewCycleCommandOptions,
+    affectedFiles: readonly string[]
+): ReviewRemediationImpactAnalysis {
+    const pathValue = String(options.impactAnalysisPath || '').trim();
+    const source = pathValue ? readImpactAnalysisPath(repoRoot, pathValue) : {
+        summary: normalizeImpactAnalysisText(options.impactAnalysis),
+        source: 'inline' as const
+    };
+    const summary = source.summary.trim();
+    const violations = validateReviewRemediationImpactAnalysis(summary, affectedFiles);
+    if (violations.length > 0) {
+        throw new Error(
+            'restart-review-cycle requires main-agent remediation impact analysis before failed-review remediation. ' +
+            `Provide --impact-analysis covering: ${REMEDIATION_IMPACT_ANALYSIS_TOPICS.join('; ')}. ` +
+            `Violations: ${violations.join('; ')}.`
+        );
+    }
+    return {
+        status: 'RECORDED',
+        source: source.source,
+        summary,
+        required_topics: [...REMEDIATION_IMPACT_ANALYSIS_TOPICS],
+        affected_files: normalizeChangedFiles(affectedFiles)
+    };
 }
 
 function isTestLikeRemediationPath(relativePath: string, testTriggerRegexes: readonly string[]): boolean {
@@ -585,6 +774,7 @@ export async function runRestartReviewCycleCommand(
         allowedBoundaryFiles,
         classificationConfig.test_trigger_regexes
     );
+    let remediationImpactAnalysis: ReviewRemediationImpactAnalysis;
     const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
     if (!taskSummary) {
         throw new Error('Task intent could not be resolved for review-cycle restart.');
@@ -593,6 +783,55 @@ export async function runRestartReviewCycleCommand(
     try {
         const refreshedPreflightPath = String(options.preflightOutputPath || resolvedPreflightPath).trim() || resolvedPreflightPath;
         const prePreflightRefreshPlan = getReviewCyclePrePreflightRefreshPlan(repoRoot, resolvedTaskId);
+        try {
+            remediationImpactAnalysis = resolveReviewRemediationImpactAnalysis(
+                repoRoot,
+                options,
+                scopeBoundary.currentChangedFiles
+            );
+        } catch (error: unknown) {
+            const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
+                schema_version: 1,
+                task_id: resolvedTaskId,
+                status: 'BLOCKED',
+                reason: 'missing_or_incomplete_remediation_impact_analysis',
+                previous_preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                previous_preflight_sha256: fs.existsSync(resolvedPreflightPath)
+                    ? gateHelpers.fileSha256(resolvedPreflightPath)
+                    : null,
+                detection_source: replayScope.detectionSource,
+                impact_analysis: {
+                    status: 'BLOCKED',
+                    reason: error instanceof Error ? error.message : String(error),
+                    required_topics: [...REMEDIATION_IMPACT_ANALYSIS_TOPICS],
+                    affected_files: scopeBoundary.currentChangedFiles
+                },
+                remediation_scope: {
+                    status: scopeBoundary.status,
+                    previous_changed_files: scopeBoundary.previousChangedFiles,
+                    current_changed_files: scopeBoundary.currentChangedFiles,
+                    expanded_files: scopeBoundary.expandedFiles,
+                    expanded_non_test_files: scopeBoundary.expandedNonTestFiles,
+                    allowed_test_only_expansion_files: scopeBoundary.allowedTestOnlyExpansionFiles
+                },
+                refresh_points: {
+                    preflight: 'not_run_impact_analysis_blocked',
+                    post_preflight_rule_pack: 'not_run_impact_analysis_blocked',
+                    compile: 'not_run_impact_analysis_blocked',
+                    review_contexts: 'not_run_impact_analysis_blocked'
+                },
+                reuse_boundaries: {
+                    non_test_changes_must_stay_within_previous_preflight_scope: true,
+                    test_only_expansion_allowed: true,
+                    expanded_non_test_files_block_reuse: true
+                }
+            });
+            throw new Error(
+                `${error instanceof Error ? error.message : String(error)} ` +
+                `Artifact: ${gateHelpers.normalizePath(artifactPath)}.`
+            );
+        }
+
         if (scopeBoundary.status === 'BLOCKED') {
             const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
                 schema_version: 1,
@@ -604,6 +843,7 @@ export async function runRestartReviewCycleCommand(
                     ? gateHelpers.fileSha256(resolvedPreflightPath)
                     : null,
                 detection_source: replayScope.detectionSource,
+                impact_analysis: remediationImpactAnalysis,
                 remediation_scope: {
                     status: scopeBoundary.status,
                     previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -796,6 +1036,7 @@ export async function runRestartReviewCycleCommand(
                 ? gateHelpers.fileSha256(refreshedPreflightPath)
                 : null,
             detection_source: replayScope.detectionSource,
+            impact_analysis: remediationImpactAnalysis,
             remediation_scope: {
                 status: scopeBoundary.status,
                 previous_changed_files: scopeBoundary.previousChangedFiles,
@@ -832,6 +1073,7 @@ export async function runRestartReviewCycleCommand(
                 `PreflightPath: ${gateHelpers.normalizePath(refreshedPreflightPath)}`,
                 `ReviewRemediationCycleArtifact: ${gateHelpers.normalizePath(remediationArtifactPath)}`,
                 `DetectionSource: ${replayScope.detectionSource}`,
+                `ImpactAnalysis: recorded; affected_files=${scopeBoundary.currentChangedFiles.length}; source=${remediationImpactAnalysis.source}`,
                 `ScopeBoundary: ${scopeBoundary.status}; previous=${scopeBoundary.previousChangedFiles.length}; current=${scopeBoundary.currentChangedFiles.length}; expanded_non_test=${formatReviewTypeList(scopeBoundary.expandedNonTestFiles)}`,
                 `RefreshPoints: preflight=refreshed; post_preflight_rule_pack=reloaded; compile=rerun; review_contexts=${pendingReviewTypes.length > 0 ? 'partially_prepared_dependency_blocked' : 'prepared_or_reused'}`,
                 `ReuseBoundaries: non_test_changes_must_stay_within_previous_preflight_scope; test_only_expansion_allowed; expanded_non_test_files_block_reuse`,

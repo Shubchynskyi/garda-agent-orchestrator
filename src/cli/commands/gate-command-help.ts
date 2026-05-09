@@ -224,8 +224,8 @@ function buildPreflightGateHelpEntries(
         },
         'restart-review-cycle': {
             ...createSingleUsageEntry(
-                'Refresh failed-review remediation evidence for the current task after a small blocker fix, preserving review reuse boundaries.',
-                `${cliPrefix} gate restart-review-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --repo-root "."`,
+                'Refresh failed-review remediation evidence after a small blocker fix, requiring main-agent impact analysis and preserving review reuse boundaries.',
+                `${cliPrefix} gate restart-review-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --impact-analysis "<replace with main-agent remediation impact analysis>" --repo-root "."`,
                 true
             )
         },

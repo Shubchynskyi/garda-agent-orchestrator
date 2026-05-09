@@ -51,7 +51,8 @@ export function buildReviewCycleRestartCommand(
         `${cliPrefix} gate restart-review-cycle`,
         `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
         `--task-id ${quotePowerShellCliValue(taskId)}`,
-        `--preflight-path ${quotePowerShellCliValue(preflightPath)}`
+        `--preflight-path ${quotePowerShellCliValue(preflightPath)}`,
+        `--impact-analysis ${quotePowerShellCliValue('<replace with main-agent remediation impact analysis>')}`
     ];
     if (taskModePath) {
         parts.push(`--task-mode-path ${quotePowerShellCliValue(taskModePath)}`);
