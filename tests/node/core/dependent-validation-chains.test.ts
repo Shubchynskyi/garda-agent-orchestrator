@@ -5,7 +5,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
-    evaluateDependentValidationChain
+    GATE_CHAIN_MANIFEST,
+    buildGateChainRemediationCommand,
+    evaluateDependentValidationChain,
+    getGateChainEdgesForConsumer,
+    getGateChainEdgesForProducer
 } from '../../../src/core/dependent-validation-chains';
 
 function writeFile(filePath: string, content: string): void {
@@ -177,4 +181,69 @@ test('evaluateDependentValidationChain returns READY when manifest is fresh and 
     } finally {
         fixture.cleanup();
     }
+});
+
+test('GATE_CHAIN_MANIFEST declares same-task startup and preflight compile chains', () => {
+    assert.ok(GATE_CHAIN_MANIFEST.some((edge) => edge.id === 'task-entry-rules-to-handshake'));
+    assert.ok(GATE_CHAIN_MANIFEST.some((edge) => edge.id === 'handshake-to-shell-smoke'));
+    assert.ok(GATE_CHAIN_MANIFEST.some((edge) => edge.id === 'preflight-to-post-preflight-rules'));
+    assert.ok(GATE_CHAIN_MANIFEST.some((edge) => edge.id === 'post-preflight-rules-to-compile'));
+    assert.equal(Object.isFrozen(GATE_CHAIN_MANIFEST), true);
+
+    for (const edge of GATE_CHAIN_MANIFEST) {
+        assert.equal(Object.isFrozen(edge), true);
+        assert.equal(edge.same_task, true);
+        assert.equal(edge.same_cycle, true);
+        assert.ok(edge.producer_gate);
+        assert.ok(edge.producer_event);
+        assert.ok(edge.consumer_gate);
+        assert.ok(edge.consumer_event);
+        assert.ok(edge.missing_remediation_command.startsWith('{cli} gate '));
+    }
+});
+
+test('GATE_CHAIN_MANIFEST keeps review lifecycle edges scoped to review-type lanes', () => {
+    const reviewEdges = GATE_CHAIN_MANIFEST.filter((edge) => edge.consumer_gate.includes('review') || edge.producer_gate.includes('review'));
+    assert.ok(reviewEdges.some((edge) => edge.id === 'review-context-to-routing'));
+    assert.ok(reviewEdges.some((edge) => edge.id === 'review-result-to-receipt'));
+    assert.ok(reviewEdges.every((edge) => edge.lane_scope === 'review_type'));
+
+    const taskEdges = GATE_CHAIN_MANIFEST.filter((edge) => edge.lane_scope === 'task');
+    assert.ok(taskEdges.every((edge) => !edge.consumer_gate.startsWith('record-review')));
+});
+
+test('getGateChainEdgesForConsumer and getGateChainEdgesForProducer resolve declarative edges', () => {
+    const compileEdges = getGateChainEdgesForConsumer('compile-gate');
+    assert.deepEqual(compileEdges.map((edge) => edge.id), ['post-preflight-rules-to-compile']);
+    assert.notEqual(compileEdges[0], GATE_CHAIN_MANIFEST.find((edge) => edge.id === 'post-preflight-rules-to-compile'));
+
+    const preflightProducerEdges = getGateChainEdgesForProducer('classify-change');
+    assert.deepEqual(preflightProducerEdges.map((edge) => edge.id), ['preflight-to-post-preflight-rules']);
+
+    const missingEdges = getGateChainEdgesForConsumer('unknown-gate');
+    assert.deepEqual(missingEdges, []);
+});
+
+test('buildGateChainRemediationCommand renders task and review placeholders', () => {
+    const compileEdge = getGateChainEdgesForConsumer('compile-gate')[0];
+    assert.equal(
+        buildGateChainRemediationCommand(compileEdge, {
+            taskId: 'T-332',
+            preflightPath: 'garda-agent-orchestrator/runtime/reviews/T-332-preflight.json',
+            cliPrefix: 'node bin/garda.js',
+            repoRoot: '.'
+        }),
+        'node bin/garda.js gate load-rule-pack --task-id "T-332" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-332-preflight.json" --repo-root "."'
+    );
+
+    const routingEdge = getGateChainEdgesForConsumer('record-review-routing')[0];
+    assert.equal(
+        buildGateChainRemediationCommand(routingEdge, {
+            taskId: 'T-334',
+            reviewType: 'security',
+            preflightPath: 'garda-agent-orchestrator/runtime/reviews/T-334-preflight.json',
+            depth: 2
+        }),
+        'node bin/garda.js gate build-review-context --review-type "security" --depth "2" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-334-preflight.json" --repo-root "."'
+    );
 });

@@ -22,6 +22,283 @@ export interface DependentValidationChainCheckResult {
     message: string | null;
 }
 
+export type GateChainScope = 'task' | 'review_type';
+export type GateChainArtifactKind =
+    | 'timeline_event'
+    | 'task_mode'
+    | 'rule_pack'
+    | 'preflight'
+    | 'compile_gate'
+    | 'review_context'
+    | 'review_launch'
+    | 'review_invocation'
+    | 'review_result'
+    | 'review_receipt';
+
+export interface GateChainEdge {
+    id: string;
+    producer_gate: string;
+    producer_event: string;
+    consumer_gate: string;
+    consumer_event: string;
+    same_task: boolean;
+    same_cycle: boolean;
+    lane_scope: GateChainScope;
+    artifact: GateChainArtifactKind;
+    artifact_suffix: string | null;
+    missing_remediation_command: string;
+}
+
+export interface GateChainCommandContext {
+    taskId: string;
+    reviewType?: string | null;
+    preflightPath?: string | null;
+    reviewContextPath?: string | null;
+    cliPrefix?: string | null;
+    repoRoot?: string | null;
+    depth?: string | number | null;
+}
+
+const DEFAULT_GATE_CLI_PREFIX = 'node bin/garda.js';
+const DEFAULT_REPO_ROOT_ARGUMENT = '.';
+
+function defineGateChainManifest(edges: readonly GateChainEdge[]): readonly GateChainEdge[] {
+    return Object.freeze(edges.map((edge) => Object.freeze({ ...edge })));
+}
+
+export const GATE_CHAIN_MANIFEST: readonly GateChainEdge[] = defineGateChainManifest([
+    {
+        id: 'task-mode-to-task-entry-rules',
+        producer_gate: 'enter-task-mode',
+        producer_event: 'TASK_MODE_ENTERED',
+        consumer_gate: 'load-rule-pack:TASK_ENTRY',
+        consumer_event: 'RULE_PACK_LOADED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'task',
+        artifact: 'task_mode',
+        artifact_suffix: '-task-mode.json',
+        missing_remediation_command:
+            '{cli} gate enter-task-mode --task-id "{taskId}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "{depth}" --task-summary "<task summary>" --start-banner "<banner>" --provider "<provider>" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'task-entry-rules-to-handshake',
+        producer_gate: 'load-rule-pack:TASK_ENTRY',
+        producer_event: 'RULE_PACK_LOADED',
+        consumer_gate: 'handshake-diagnostics',
+        consumer_event: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'task',
+        artifact: 'rule_pack',
+        artifact_suffix: '-rule-pack.json',
+        missing_remediation_command:
+            '{cli} gate load-rule-pack --task-id "{taskId}" --stage "TASK_ENTRY" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'handshake-to-shell-smoke',
+        producer_gate: 'handshake-diagnostics',
+        producer_event: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        consumer_gate: 'shell-smoke-preflight',
+        consumer_event: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'task',
+        artifact: 'timeline_event',
+        artifact_suffix: '-handshake.json',
+        missing_remediation_command:
+            '{cli} gate handshake-diagnostics --task-id "{taskId}" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'shell-smoke-to-preflight',
+        producer_gate: 'shell-smoke-preflight',
+        producer_event: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+        consumer_gate: 'classify-change',
+        consumer_event: 'PREFLIGHT_CLASSIFIED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'task',
+        artifact: 'timeline_event',
+        artifact_suffix: '-shell-smoke.json',
+        missing_remediation_command:
+            '{cli} gate shell-smoke-preflight --task-id "{taskId}" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'preflight-to-post-preflight-rules',
+        producer_gate: 'classify-change',
+        producer_event: 'PREFLIGHT_CLASSIFIED',
+        consumer_gate: 'load-rule-pack:POST_PREFLIGHT',
+        consumer_event: 'RULE_PACK_LOADED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'task',
+        artifact: 'preflight',
+        artifact_suffix: '-preflight.json',
+        missing_remediation_command:
+            '{cli} gate classify-change --task-id "{taskId}" --task-intent "<task summary>" --output-path "{preflightPath}" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'post-preflight-rules-to-compile',
+        producer_gate: 'load-rule-pack:POST_PREFLIGHT',
+        producer_event: 'RULE_PACK_LOADED',
+        consumer_gate: 'compile-gate',
+        consumer_event: 'COMPILE_GATE_PASSED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'task',
+        artifact: 'rule_pack',
+        artifact_suffix: '-rule-pack.json',
+        missing_remediation_command:
+            '{cli} gate load-rule-pack --task-id "{taskId}" --stage "POST_PREFLIGHT" --preflight-path "{preflightPath}" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'compile-to-review-context',
+        producer_gate: 'compile-gate',
+        producer_event: 'COMPILE_GATE_PASSED',
+        consumer_gate: 'build-review-context',
+        consumer_event: 'REVIEW_PHASE_STARTED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'compile_gate',
+        artifact_suffix: '-compile-gate.json',
+        missing_remediation_command:
+            '{cli} gate compile-gate --task-id "{taskId}" --preflight-path "{preflightPath}" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'review-context-to-routing',
+        producer_gate: 'build-review-context',
+        producer_event: 'REVIEW_PHASE_STARTED',
+        consumer_gate: 'record-review-routing',
+        consumer_event: 'REVIEWER_DELEGATION_ROUTED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'review_context',
+        artifact_suffix: '-{reviewType}-review-context.json',
+        missing_remediation_command:
+            '{cli} gate build-review-context --review-type "{reviewType}" --depth "{depth}" --preflight-path "{preflightPath}" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'review-routing-to-launch-prepared',
+        producer_gate: 'record-review-routing',
+        producer_event: 'REVIEWER_DELEGATION_ROUTED',
+        consumer_gate: 'prepare-reviewer-launch',
+        consumer_event: 'REVIEWER_LAUNCH_PREPARED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'review_context',
+        artifact_suffix: '-{reviewType}-review-context.json',
+        missing_remediation_command:
+            '{cli} gate record-review-routing --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'review-launch-prepared-to-launch-completed',
+        producer_gate: 'prepare-reviewer-launch',
+        producer_event: 'REVIEWER_LAUNCH_PREPARED',
+        consumer_gate: 'complete-reviewer-launch',
+        consumer_event: 'REVIEWER_LAUNCH_COMPLETED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'review_launch',
+        artifact_suffix: '-{reviewType}-reviewer-launch.json',
+        missing_remediation_command:
+            '{cli} gate prepare-reviewer-launch --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --reviewer-launch-artifact-path "<reviewer-launch.json>" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'review-launch-completed-to-invocation',
+        producer_gate: 'complete-reviewer-launch',
+        producer_event: 'REVIEWER_LAUNCH_COMPLETED',
+        consumer_gate: 'record-review-invocation',
+        consumer_event: 'REVIEWER_INVOCATION_ATTESTED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'review_launch',
+        artifact_suffix: '-{reviewType}-reviewer-launch.json',
+        missing_remediation_command:
+            '{cli} gate complete-reviewer-launch --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --reviewer-launch-artifact-path "<reviewer-launch.json>" --provider-invocation-id "<actual-invocation-id>" --launched-at-utc "<ISO-8601>" --attestation-source "<provider-source>" --fork-context false --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'review-invocation-to-result',
+        producer_gate: 'record-review-invocation',
+        producer_event: 'REVIEWER_INVOCATION_ATTESTED',
+        consumer_gate: 'record-review-result',
+        consumer_event: 'REVIEW_RECORDED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'review_invocation',
+        artifact_suffix: '-{reviewType}-reviewer-launch.json',
+        missing_remediation_command:
+            '{cli} gate record-review-invocation --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --reviewer-launch-artifact-path "<reviewer-launch.json>" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'review-result-to-receipt',
+        producer_gate: 'record-review-result',
+        producer_event: 'REVIEW_RECORDED',
+        consumer_gate: 'record-review-receipt',
+        consumer_event: 'REVIEW_RECEIPT_RECORDED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'review_result',
+        artifact_suffix: '-{reviewType}.md',
+        missing_remediation_command:
+            '{cli} gate record-review-result --task-id "{taskId}" --review-type "{reviewType}" --preflight-path "{preflightPath}" --review-output-path "<review-output.md>" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --repo-root "{repoRoot}"'
+    },
+    {
+        id: 'review-receipt-to-review-gate',
+        producer_gate: 'record-review-receipt',
+        producer_event: 'REVIEW_RECEIPT_RECORDED',
+        consumer_gate: 'required-reviews-check',
+        consumer_event: 'REVIEW_GATE_PASSED',
+        same_task: true,
+        same_cycle: true,
+        lane_scope: 'review_type',
+        artifact: 'review_receipt',
+        artifact_suffix: '-{reviewType}-receipt.json',
+        missing_remediation_command:
+            '{cli} gate record-review-receipt --task-id "{taskId}" --review-type "{reviewType}" --preflight-path "{preflightPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --repo-root "{repoRoot}"'
+    }
+]);
+
+function normalizeGateName(gateName: string): string {
+    return gateName.trim().toLowerCase();
+}
+
+export function getGateChainEdgesForConsumer(consumerGate: string): GateChainEdge[] {
+    const normalizedConsumerGate = normalizeGateName(consumerGate);
+    return GATE_CHAIN_MANIFEST
+        .filter((edge) => normalizeGateName(edge.consumer_gate) === normalizedConsumerGate)
+        .map((edge) => ({ ...edge }));
+}
+
+export function getGateChainEdgesForProducer(producerGate: string): GateChainEdge[] {
+    const normalizedProducerGate = normalizeGateName(producerGate);
+    return GATE_CHAIN_MANIFEST
+        .filter((edge) => normalizeGateName(edge.producer_gate) === normalizedProducerGate)
+        .map((edge) => ({ ...edge }));
+}
+
+export function buildGateChainRemediationCommand(edge: GateChainEdge, context: GateChainCommandContext): string {
+    const values: Record<string, string> = {
+        cli: String(context.cliPrefix || DEFAULT_GATE_CLI_PREFIX),
+        taskId: context.taskId,
+        reviewType: String(context.reviewType || '<review-type>'),
+        preflightPath: String(context.preflightPath || `garda-agent-orchestrator/runtime/reviews/${context.taskId}-preflight.json`),
+        reviewContextPath: String(
+            context.reviewContextPath
+            || `garda-agent-orchestrator/runtime/reviews/${context.taskId}-${context.reviewType || '<review-type>'}-review-context.json`
+        ),
+        repoRoot: String(context.repoRoot || DEFAULT_REPO_ROOT_ARGUMENT),
+        depth: String(context.depth || '2')
+    };
+    return edge.missing_remediation_command.replace(/\{([A-Za-z]+)\}/g, (match, key: string) => values[key] ?? match);
+}
+
 interface ValidationChainRule {
     id: string;
     artifactRootRelative: string;
