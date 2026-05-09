@@ -739,5 +739,28 @@ describe('gates/completion — helpers and formatters', () => {
             assert.equal(summary?.independent_review_attested, false);
             assert.match(summary?.visible_summary_line || '', /incomplete or invalid/i);
         });
+
+        it('accepts valid artifact-only delegated reviewer trust receipts without requiring downstream test evidence', () => {
+            const summary = buildReviewTrustSummary([
+                {
+                    review_type: 'security',
+                    trust_level: 'LOCAL_AUDITED',
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_identity: 'agent:security-reviewer',
+                    reviewer_provenance: {
+                        schema_version: 1,
+                        attestation_type: 'controller_event_integrity',
+                        controller_event_type: 'REVIEWER_DELEGATION_ROUTED',
+                        task_sequence: 5,
+                        prev_event_sha256: 'b'.repeat(64),
+                        event_sha256: 'c'.repeat(64)
+                    }
+                }
+            ], 'security', 1);
+
+            assert.notEqual(summary?.status, 'UNAVAILABLE');
+            assert.equal(summary?.independent_review_attested, false);
+            assert.match(summary?.visible_summary_line || '', /LOCAL_AUDITED/);
+        });
     });
 });
