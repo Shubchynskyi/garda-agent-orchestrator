@@ -6,6 +6,19 @@ import * as crypto from 'node:crypto';
 import { getRepoRoot } from './build';
 
 const CLEAN_WORKTREE_DIRTY_PATH_LIMIT = 40;
+const SECURITY_RELEASE_DOC_ITEMS = Object.freeze([
+    'SECURITY.md',
+    'docs/threat-model.md',
+    'docs/sbom.md'
+]);
+export const RELEASE_VALIDATION_COMMANDS = Object.freeze([
+    'version-parity',
+    'clean-worktree',
+    'embedded-bundle-parity',
+    'release-readiness'
+] as const);
+
+export type ReleaseValidationCommand = typeof RELEASE_VALIDATION_COMMANDS[number];
 
 export const EMBEDDED_BUNDLE_PARITY_ITEMS = Object.freeze([
     '.gitattributes',
@@ -22,6 +35,8 @@ export const EMBEDDED_BUNDLE_PARITY_ITEMS = Object.freeze([
     'LICENSE',
     'NOTICE',
     'SECURITY.md',
+    'docs/threat-model.md',
+    'docs/sbom.md',
     'TRADEMARKS.md',
     'docs/operator-consistency-runbook.md',
     'VERSION'
@@ -72,6 +87,56 @@ export interface EmbeddedBundleParityResult {
     passed: boolean;
     violations: string[];
     items: EmbeddedBundleParityItemResult[];
+}
+
+export interface ReleaseReadinessCheck {
+    area: string;
+    label: string;
+    passed: boolean;
+    details: string[];
+}
+
+export interface ReleaseReadinessResult {
+    repoRoot: string;
+    version: string | null;
+    passed: boolean;
+    violations: string[];
+    checks: ReleaseReadinessCheck[];
+    blockerTaskIds: string[];
+    openBlockerTaskIds: string[];
+    releaseNotesInput: string[];
+}
+
+export function resolveReleaseValidationCommand(value: string | undefined): ReleaseValidationCommand | null {
+    const command = String(value || 'version-parity').trim();
+    for (const allowedCommand of RELEASE_VALIDATION_COMMANDS) {
+        if (command === allowedCommand) {
+            return allowedCommand;
+        }
+    }
+    return null;
+}
+
+export const RELEASE_VALIDATION_COMMAND_HANDLERS: Readonly<Record<ReleaseValidationCommand, () => void>> = Object.freeze({
+    'version-parity': () => { runReleaseVersionParityValidation(); },
+    'clean-worktree': () => { runCleanWorktreePreflight(); },
+    'embedded-bundle-parity': () => { runEmbeddedBundleParityValidation(); },
+    'release-readiness': () => { runReleaseReadinessValidation(); }
+});
+
+export function runReleaseValidationCli(rawCommand: string | undefined): void {
+    const command = resolveReleaseValidationCommand(rawCommand);
+    if (command === null) {
+        console.error(`Unknown validate-release command: ${String(rawCommand || '').trim()}`);
+        console.error(`Usage: validate-release.js [${RELEASE_VALIDATION_COMMANDS.join('|')}]`);
+        process.exit(1);
+    }
+
+    RELEASE_VALIDATION_COMMAND_HANDLERS[command]();
+}
+
+if (require.main === module) {
+    runReleaseValidationCli(process.argv[2]);
 }
 
 function readTextFileTrimmed(filePath: string): string {
@@ -190,6 +255,291 @@ function getObjectStringValue(record: Record<string, unknown>, key: string): str
 
     const trimmed = value.trim();
     return trimmed ? trimmed : null;
+}
+
+function readTextFileIfExists(filePath: string): string | null {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        return null;
+    }
+    return fs.readFileSync(filePath, 'utf8');
+}
+
+function readPackageJsonObject(repoRoot: string, violations: string[]): Record<string, unknown> | null {
+    const packageJsonPath = path.join(repoRoot, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) {
+        violations.push(`Missing package.json: ${packageJsonPath}`);
+        return null;
+    }
+
+    const payload = readJsonFile(packageJsonPath);
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        violations.push(`package.json must contain an object: ${packageJsonPath}`);
+        return null;
+    }
+
+    return payload as Record<string, unknown>;
+}
+
+function getStringRecord(value: unknown): Record<string, string> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return {};
+    }
+
+    const output: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof entry === 'string') {
+            output[key] = entry;
+        }
+    }
+    return output;
+}
+
+function getStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
+function countOccurrences(value: string, needle: string): number {
+    if (!needle) {
+        return 0;
+    }
+    return value.split(needle).length - 1;
+}
+
+function pushCheck(
+    checks: ReleaseReadinessCheck[],
+    violations: string[],
+    area: string,
+    label: string,
+    passed: boolean,
+    details: string[]
+): void {
+    checks.push({ area, label, passed, details });
+    if (!passed) {
+        violations.push(`${area}: ${label}`);
+    }
+}
+
+function extractRelease110TaskIds(taskMarkdown: string): string[] {
+    const taskIds: string[] = [];
+    let inRelease110Section = false;
+
+    for (const line of taskMarkdown.split(/\r?\n/u)) {
+        if (/^###\s+Релиз 1\.1\.0\b/u.test(line)) {
+            inRelease110Section = true;
+            continue;
+        }
+        if (inRelease110Section && /^###\s+Релиз\s+/u.test(line)) {
+            break;
+        }
+        if (!inRelease110Section) {
+            continue;
+        }
+
+        const match = line.match(/^-\s+`(T-\d+)`/u);
+        if (!match) {
+            continue;
+        }
+        const taskId = match[1];
+        if (taskId === 'T-244') {
+            break;
+        }
+        taskIds.push(taskId);
+    }
+
+    return taskIds;
+}
+
+function parseTaskStatuses(taskMarkdown: string): Map<string, string> {
+    const statuses = new Map<string, string>();
+    for (const line of taskMarkdown.split(/\r?\n/u)) {
+        const match = line.match(/^\|\s*(T-\d+)\s*\|\s*([^|]+?)\s*\|/u);
+        if (match) {
+            statuses.set(match[1], match[2].trim());
+        }
+    }
+    return statuses;
+}
+
+function validateReleaseBlockers(repoRoot: string): {
+    blockerTaskIds: string[];
+    openBlockerTaskIds: string[];
+    details: string[];
+} {
+    const taskPath = path.join(repoRoot, 'TASK.md');
+    const taskMarkdown = readTextFileIfExists(taskPath);
+    if (taskMarkdown === null) {
+        return {
+            blockerTaskIds: [],
+            openBlockerTaskIds: [],
+            details: [`Missing TASK.md: ${taskPath}`]
+        };
+    }
+
+    const blockerTaskIds = extractRelease110TaskIds(taskMarkdown);
+    const statuses = parseTaskStatuses(taskMarkdown);
+    const openBlockerTaskIds = blockerTaskIds.filter((taskId) => !(statuses.get(taskId) || '').includes('DONE'));
+    const details = [
+        `Release 1.1.0 blockers before T-244: ${blockerTaskIds.length}`,
+        `Open blockers: ${openBlockerTaskIds.length === 0 ? 'none' : openBlockerTaskIds.join(', ')}`
+    ];
+
+    if (blockerTaskIds.length === 0) {
+        details.push('No blocker task ids were found in the Release 1.1.0 section.');
+    }
+
+    return { blockerTaskIds, openBlockerTaskIds, details };
+}
+
+function fileExists(repoRoot: string, relativePath: string): boolean {
+    const resolvedPath = path.join(repoRoot, ...relativePath.split('/'));
+    return fs.existsSync(resolvedPath);
+}
+
+function manifestListsEvery(manifestText: string, relativePaths: readonly string[]): boolean {
+    return relativePaths.every((relativePath) => manifestText.includes(relativePath));
+}
+
+function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessResult {
+    const normalizedRoot = path.resolve(repoRoot);
+    const violations: string[] = [];
+    const checks: ReleaseReadinessCheck[] = [];
+    const packageJson = readPackageJsonObject(normalizedRoot, violations);
+    const scripts = getStringRecord(packageJson?.scripts);
+    const packageFiles = getStringArray(packageJson?.files);
+    const version = typeof packageJson?.version === 'string' ? packageJson.version : null;
+
+    const validateRelease = scripts['validate:release'] || '';
+    const validateReadiness = scripts['validate:release-readiness'] || '';
+    const releasePreflight = scripts['release:preflight'] || '';
+    const quality = scripts.quality || '';
+    const prepack = scripts.prepack || '';
+    const manifestText = readTextFileIfExists(path.join(normalizedRoot, 'MANIFEST.md')) || '';
+
+    pushCheck(
+        checks,
+        violations,
+        'package',
+        'validate:release composes clean worktree, version parity, build, embedded parity, quality, pack smoke, and final clean worktree',
+        Boolean(validateRelease) &&
+            validateRelease.includes('npm run validate:version-parity') &&
+            validateRelease.includes('npm run build') &&
+            validateRelease.includes('npm run validate:embedded-bundle-parity') &&
+            validateRelease.includes('npm run quality') &&
+            validateRelease.includes('node --test .node-build/tests/node/packaging/pack-smoke.test.js') &&
+            countOccurrences(validateRelease, 'npm run validate:clean-worktree') >= 2,
+        [validateRelease || 'missing validate:release']
+    );
+
+    pushCheck(
+        checks,
+        violations,
+        'release-gate',
+        'release:preflight runs release readiness before the expensive release validation path',
+        validateReadiness === 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness' &&
+            releasePreflight === 'npm run validate:release-readiness && npm run validate:release',
+        [
+            `validate:release-readiness=${validateReadiness || 'missing'}`,
+            `release:preflight=${releasePreflight || 'missing'}`
+        ]
+    );
+
+    pushCheck(
+        checks,
+        violations,
+        'security',
+        'quality keeps production audit in the release chain and security document surface is package/manifest aligned',
+        quality.includes('npm run audit:prod') &&
+            scripts['audit:prod'] === 'npm audit --omit=dev' &&
+            SECURITY_RELEASE_DOC_ITEMS.every((entry) => fileExists(normalizedRoot, entry)) &&
+            SECURITY_RELEASE_DOC_ITEMS.every((entry) => packageFiles.includes(entry)) &&
+            manifestListsEvery(manifestText, SECURITY_RELEASE_DOC_ITEMS),
+        [
+            quality || 'missing quality',
+            `audit:prod=${scripts['audit:prod'] || 'missing'}`,
+            `security_docs=${SECURITY_RELEASE_DOC_ITEMS.join(', ')}`
+        ]
+    );
+
+    pushCheck(
+        checks,
+        violations,
+        'packaging',
+        'prepack and package files preserve clean-package and runtime-surface contracts',
+        prepack.includes('npm run validate:clean-worktree') &&
+            prepack.includes('npm run build:publish-runtime') &&
+            prepack.includes('node scripts/package-legacy-entrypoint-compat.cjs create') &&
+            ['bin', 'dist', 'template', 'package.json', 'MANIFEST.md', 'docs/operator-consistency-runbook.md', 'VERSION']
+                .concat(SECURITY_RELEASE_DOC_ITEMS)
+                .every((entry) => packageFiles.includes(entry)),
+        [prepack || 'missing prepack', `files=${packageFiles.join(', ') || 'missing'}`]
+    );
+
+    const ciWorkflow = readTextFileIfExists(path.join(normalizedRoot, '.github', 'workflows', 'ci.yml')) || '';
+    pushCheck(
+        checks,
+        violations,
+        'ci',
+        'CI keeps release validation on Linux and Windows and lifecycle update smoke on all supported OS families',
+        /validate-release:\s+name: Release Validation/u.test(ciWorkflow) &&
+            /ubuntu-latest/u.test(ciWorkflow) &&
+            /windows-latest/u.test(ciWorkflow) &&
+            /macos-latest/u.test(ciWorkflow) &&
+            /run: npm run validate:release/u.test(ciWorkflow) &&
+            /\$CLI setup/u.test(ciWorkflow) &&
+            /\$CLI update git/u.test(ciWorkflow) &&
+            /\$CLI doctor/u.test(ciWorkflow) &&
+            /\$CLI uninstall/u.test(ciWorkflow),
+        ['.github/workflows/ci.yml release validation and lifecycle smoke markers']
+    );
+
+    const cliReference = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'cli-reference.md')) || '';
+    const runMethods = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'run-methods.md')) || '';
+    const platformDocs = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'node-platform-foundation.md')) || '';
+    pushCheck(
+        checks,
+        violations,
+        'runtime-state',
+        'operator docs keep doctor, manifest validation, task-event timelines, and derived-index recovery visible',
+        cliReference.includes('garda doctor') &&
+            cliReference.includes('garda gate validate-manifest') &&
+            cliReference.includes('runtime/task-events/<task-id>.jsonl') &&
+            runMethods.includes('gate validate-manifest') &&
+            platformDocs.includes('cross-platform lifecycle smoke'),
+        ['docs/cli-reference.md, docs/run-methods.md, docs/node-platform-foundation.md']
+    );
+
+    const blockers = validateReleaseBlockers(normalizedRoot);
+    pushCheck(
+        checks,
+        violations,
+        'release-blockers',
+        'all required Release 1.1.0 blocker tasks before T-244 are closed',
+        blockers.blockerTaskIds.length > 0 && blockers.openBlockerTaskIds.length === 0,
+        blockers.details
+    );
+
+    const releaseNotesInput = [
+        `Version: ${version || 'unknown'}`,
+        'Validation command: npm run release:preflight',
+        'Package proof: validate:release covers clean worktree, version parity, build, embedded bundle parity, quality, pack smoke, and final clean worktree.',
+        'Readiness alignment: validate:release-readiness checks package, CI, runtime-state docs, security-document surface, and Release 1.1.0 blocker wiring before the full proof path.',
+        'Update/runtime alignment: CI workflow is configured for setup, update git, doctor, and uninstall smoke across Linux, Windows, and macOS.',
+        'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.'
+    ];
+
+    return {
+        repoRoot: normalizedRoot,
+        version,
+        passed: violations.length === 0,
+        violations,
+        checks,
+        blockerTaskIds: blockers.blockerTaskIds,
+        openBlockerTaskIds: blockers.openBlockerTaskIds,
+        releaseNotesInput
+    };
 }
 
 export function validateReleaseVersionParity(repoRoot: string): ReleaseVersionParityResult {
@@ -492,6 +842,43 @@ export function formatEmbeddedBundleParityResult(result: EmbeddedBundleParityRes
     return lines.join('\n');
 }
 
+export function validateReleaseReadiness(repoRoot: string): ReleaseReadinessResult {
+    return validateReleaseReadinessContracts(repoRoot);
+}
+
+export function formatReleaseReadinessResult(result: ReleaseReadinessResult): string {
+    const lines: string[] = [];
+
+    lines.push(result.passed ? 'RELEASE_READINESS_OK' : 'RELEASE_READINESS_FAILED');
+    lines.push(`RepoRoot: ${result.repoRoot}`);
+    lines.push(`Version: ${result.version || 'unknown'}`);
+    lines.push(`BlockerTasks: ${result.blockerTaskIds.length}`);
+    lines.push(`OpenBlockers: ${result.openBlockerTaskIds.length === 0 ? 'none' : result.openBlockerTaskIds.join(', ')}`);
+    lines.push('Checklist:');
+    for (const check of result.checks) {
+        lines.push(`  [${check.passed ? 'x' : ' '}] ${check.area}: ${check.label}`);
+        if (!check.passed) {
+            for (const detail of check.details) {
+                lines.push(`      - ${detail}`);
+            }
+        }
+    }
+
+    if (!result.passed) {
+        lines.push('Violations:');
+        for (const violation of result.violations) {
+            lines.push(`- ${violation}`);
+        }
+    }
+
+    lines.push('ReleaseNotesInput:');
+    for (const entry of result.releaseNotesInput) {
+        lines.push(`- ${entry}`);
+    }
+
+    return lines.join('\n');
+}
+
 export function runReleaseVersionParityValidation(): ReleaseVersionParityResult {
     const result = validateReleaseVersionParity(getRepoRoot());
     console.log(formatReleaseVersionParityResult(result));
@@ -519,17 +906,11 @@ export function runEmbeddedBundleParityValidation(): EmbeddedBundleParityResult 
     return result;
 }
 
-if (require.main === module) {
-    const command = String(process.argv[2] || 'version-parity').trim();
-    if (command === 'version-parity') {
-        runReleaseVersionParityValidation();
-    } else if (command === 'clean-worktree') {
-        runCleanWorktreePreflight();
-    } else if (command === 'embedded-bundle-parity') {
-        runEmbeddedBundleParityValidation();
-    } else {
-        console.error(`Unknown validate-release command: ${command}`);
-        console.error('Usage: validate-release.js [version-parity|clean-worktree|embedded-bundle-parity]');
+export function runReleaseReadinessValidation(): ReleaseReadinessResult {
+    const result = validateReleaseReadiness(getRepoRoot());
+    console.log(formatReleaseReadinessResult(result));
+    if (!result.passed) {
         process.exit(1);
     }
+    return result;
 }

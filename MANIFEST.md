@@ -97,6 +97,9 @@ Kept inside bundle:
 - CHANGELOG.md
 - HOW_TO.md
 - LICENSE
+- SECURITY.md
+- docs/sbom.md
+- docs/threat-model.md
 - AGENT_INIT_PROMPT.md
 - MANIFEST.md
 - VERSION
