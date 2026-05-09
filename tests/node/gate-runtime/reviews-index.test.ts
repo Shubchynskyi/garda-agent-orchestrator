@@ -123,6 +123,22 @@ describe('reviews-index', () => {
             assert.ok(taskModeEntry.sizeBytes > 0);
         });
 
+        it('indexes review-remediation-cycle artifacts for multi-segment task ids', () => {
+            writeArtifact(
+                reviewsDir,
+                'T-903b-restart-review-cycle-expanded-source-review-remediation-cycle.json',
+                '{"task_id":"T-903b-restart-review-cycle-expanded-source","status":"BLOCKED"}'
+            );
+
+            const index = rebuildIndex(reviewsDir);
+            const entry = index.entries.find((candidate) => (
+                candidate.fileName === 'T-903b-restart-review-cycle-expanded-source-review-remediation-cycle.json'
+            ));
+            assert.ok(entry);
+            assert.equal(entry.taskId, 'T-903b-restart-review-cycle-expanded-source');
+            assert.equal(entry.artifactType, 'review-remediation-cycle.json');
+        });
+
         it('skips non-artifact files', () => {
             writeArtifact(reviewsDir, 'T-001-task-mode.json');
             writeArtifact(reviewsDir, 'some-random-file.json');

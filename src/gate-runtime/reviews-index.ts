@@ -18,6 +18,7 @@ const inProcessReviewTransactionSnapshots = new Map<string, { depth: number; ind
 // Known artifact type suffixes used to split task-id from artifact-type.
 // Ordered longest-first so greedy suffix matching selects the right boundary.
 export const KNOWN_SUFFIXES: readonly string[] = Object.freeze([
+    '-review-remediation-cycle.json',
     '-dependency-review-context.json',
     '-performance-review-context.json',
     '-security-review-context.json',

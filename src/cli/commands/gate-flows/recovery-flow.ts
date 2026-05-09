@@ -5,10 +5,13 @@ import {
     getReviewExecutionPreparationBatches,
     resolveReviewExecutionPolicyModeFromPreflight
 } from '../../../core/review-execution-policy';
+import { matchAnyRegex } from '../../../gate-runtime/text-utils';
+import { writeReviewArtifactJson } from '../../../gate-runtime/review-artifacts';
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
 import { selectRulePackFiles } from '../../../gates/build-review-context';
+import { getClassificationConfig } from '../../../gates/classify-change';
 import { collectOrderedTimelineEvents, findLatestTimelineEvent } from '../../../gates/completion-evidence';
-import { getPreflightContext } from '../../../gates/compile-gate';
+import { getPreflightContext, getWorkspaceSnapshot } from '../../../gates/compile-gate';
 import {
     getLatestPrePreflightCycleAnchor,
     isTaskEntryRulePackLoadedEvent
@@ -90,8 +93,90 @@ interface ResolvedReplayScope {
     detectionSource: string;
 }
 
+interface ReviewRemediationScopeBoundary {
+    status: 'OK' | 'BLOCKED';
+    previousChangedFiles: string[];
+    currentChangedFiles: string[];
+    expandedFiles: string[];
+    expandedNonTestFiles: string[];
+    allowedTestOnlyExpansionFiles: string[];
+}
+
 function normalizeChangedFiles(values: readonly unknown[]): string[] {
-    return [...new Set(values.map((entry) => String(entry || '').trim()).filter(Boolean))].sort();
+    return [...new Set(values.map((entry) => gateHelpers.normalizePath(String(entry || '').trim())).filter(Boolean))].sort();
+}
+
+function isTestLikeRemediationPath(relativePath: string, testTriggerRegexes: readonly string[]): boolean {
+    return matchAnyRegex(gateHelpers.normalizePath(relativePath), [...testTriggerRegexes], {
+        skipInvalidRegex: true,
+        caseInsensitive: true
+    });
+}
+
+function resolveCurrentRemediationChangedFiles(
+    repoRoot: string,
+    replayScope: ResolvedReplayScope
+): string[] {
+    const detectionSource = replayScope.useStaged
+        ? (replayScope.includeUntracked ? 'git_staged_plus_untracked' : 'git_staged_only')
+        : 'git_auto';
+    const includeUntracked = replayScope.includeUntracked ?? !replayScope.useStaged;
+    const snapshot = getWorkspaceSnapshot(repoRoot, detectionSource, includeUntracked, []);
+    return normalizeChangedFiles([
+        ...(replayScope.changedFiles ?? []),
+        ...(snapshot.changed_files as string[])
+    ]);
+}
+
+function assessReviewRemediationScopeBoundary(
+    previousChangedFiles: readonly string[],
+    currentChangedFiles: readonly string[],
+    allowedBoundaryFiles: readonly string[] = [],
+    testTriggerRegexes: readonly string[] = []
+): ReviewRemediationScopeBoundary {
+    const previous = normalizeChangedFiles(previousChangedFiles);
+    const current = normalizeChangedFiles(currentChangedFiles);
+    const previousSet = new Set(previous);
+    const allowedSet = new Set(normalizeChangedFiles([...previous, ...allowedBoundaryFiles]));
+    const expandedFiles = current.filter((entry) => !previousSet.has(entry));
+    const unplannedExpandedFiles = current.filter((entry) => !allowedSet.has(entry));
+    const expandedNonTestFiles = unplannedExpandedFiles.filter((entry) => !isTestLikeRemediationPath(entry, testTriggerRegexes));
+    const allowedTestOnlyExpansionFiles = unplannedExpandedFiles.filter((entry) => isTestLikeRemediationPath(entry, testTriggerRegexes));
+    return {
+        status: expandedNonTestFiles.length > 0 ? 'BLOCKED' : 'OK',
+        previousChangedFiles: previous,
+        currentChangedFiles: current,
+        expandedFiles,
+        expandedNonTestFiles,
+        allowedTestOnlyExpansionFiles
+    };
+}
+
+function writeReviewRemediationCycleArtifact(
+    repoRoot: string,
+    taskId: string,
+    artifact: Record<string, unknown>
+): string {
+    const artifactPath = gateHelpers.joinOrchestratorPath(
+        repoRoot,
+        path.join('runtime', 'reviews', `${taskId}-review-remediation-cycle.json`)
+    );
+    writeReviewArtifactJson(artifactPath, artifact);
+    return artifactPath;
+}
+
+function resolveReviewRemediationClassifyChangedFiles(
+    replayScope: ResolvedReplayScope,
+    scopeBoundary: ReviewRemediationScopeBoundary
+): string[] | undefined {
+    if (replayScope.changedFiles === undefined) {
+        return undefined;
+    }
+    return normalizeChangedFiles([
+        ...scopeBoundary.previousChangedFiles,
+        ...replayScope.changedFiles,
+        ...scopeBoundary.allowedTestOnlyExpansionFiles
+    ]);
 }
 
 function normalizeRuleFileList(requiredReviews: Record<string, boolean>, effectiveDepth: number): string[] {
@@ -480,6 +565,26 @@ export async function runRestartReviewCycleCommand(
     ));
     const previousPreflight = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
     const replayScope = resolveReviewCycleReplayScope(options, previousPreflight, previousTaskMode);
+    const previousChangedFiles = normalizeChangedFiles(previousPreflight.changed_files as unknown[]);
+    const currentRemediationChangedFiles = resolveCurrentRemediationChangedFiles(repoRoot, replayScope);
+    const taskModeArtifactRelativePath = resolvedTaskModePath
+        ? gateHelpers.normalizePath(path.relative(repoRoot, path.resolve(resolvedTaskModePath)))
+        : '';
+    const taskModeIndexRelativePath = taskModeArtifactRelativePath
+        ? gateHelpers.normalizePath(path.join(path.dirname(taskModeArtifactRelativePath), 'reviews-index.json'))
+        : '';
+    const allowedBoundaryFiles = [
+        ...(previousTaskMode.dirty_workspace_baseline?.changed_files || []),
+        taskModeArtifactRelativePath,
+        taskModeIndexRelativePath
+    ].filter(Boolean);
+    const classificationConfig = getClassificationConfig(repoRoot);
+    const scopeBoundary = assessReviewRemediationScopeBoundary(
+        previousChangedFiles,
+        currentRemediationChangedFiles,
+        allowedBoundaryFiles,
+        classificationConfig.test_trigger_regexes
+    );
     const taskSummary = String(options.taskIntent || previousTaskMode.task_summary || '').trim();
     if (!taskSummary) {
         throw new Error('Task intent could not be resolved for review-cycle restart.');
@@ -488,6 +593,44 @@ export async function runRestartReviewCycleCommand(
     try {
         const refreshedPreflightPath = String(options.preflightOutputPath || resolvedPreflightPath).trim() || resolvedPreflightPath;
         const prePreflightRefreshPlan = getReviewCyclePrePreflightRefreshPlan(repoRoot, resolvedTaskId);
+        if (scopeBoundary.status === 'BLOCKED') {
+            const artifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
+                schema_version: 1,
+                task_id: resolvedTaskId,
+                status: 'BLOCKED',
+                reason: 'failed_review_remediation_scope_expanded',
+                previous_preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+                previous_preflight_sha256: fs.existsSync(resolvedPreflightPath)
+                    ? gateHelpers.fileSha256(resolvedPreflightPath)
+                    : null,
+                detection_source: replayScope.detectionSource,
+                remediation_scope: {
+                    status: scopeBoundary.status,
+                    previous_changed_files: scopeBoundary.previousChangedFiles,
+                    current_changed_files: scopeBoundary.currentChangedFiles,
+                    expanded_files: scopeBoundary.expandedFiles,
+                    expanded_non_test_files: scopeBoundary.expandedNonTestFiles,
+                    allowed_test_only_expansion_files: scopeBoundary.allowedTestOnlyExpansionFiles
+                },
+                refresh_points: {
+                    preflight: 'not_run_scope_blocked',
+                    post_preflight_rule_pack: 'not_run_scope_blocked',
+                    compile: 'not_run_scope_blocked',
+                    review_contexts: 'not_run_scope_blocked'
+                },
+                reuse_boundaries: {
+                    non_test_changes_must_stay_within_previous_preflight_scope: true,
+                    test_only_expansion_allowed: true,
+                    expanded_non_test_files_block_reuse: true
+                }
+            });
+            throw new Error(
+                `restart-review-cycle blocked failed-review remediation because non-test files outside the failed review scope changed: ` +
+                `${scopeBoundary.expandedNonTestFiles.join(', ')}. ` +
+                `Artifact: ${gateHelpers.normalizePath(artifactPath)}. ` +
+                'Refresh the normal preflight/classification path or split the expanded work into a separate task.'
+            );
+        }
 
         if (prePreflightRefreshPlan.rerunHandshakeDiagnostics) {
             ensureStepPassed('handshake-diagnostics', runHandshakeDiagnosticsCommand({
@@ -513,7 +656,7 @@ export async function runRestartReviewCycleCommand(
             taskModePath: resolvedTaskModePath || undefined,
             outputPath: refreshedPreflightPath,
             taskIntent: taskSummary,
-            changedFiles: replayScope.changedFiles,
+            changedFiles: resolveReviewRemediationClassifyChangedFiles(replayScope, scopeBoundary),
             useStaged: replayScope.useStaged,
             includeUntracked: replayScope.includeUntracked,
             emitMetrics: options.emitMetrics
@@ -640,13 +783,58 @@ export async function runRestartReviewCycleCommand(
             : launchRequiredReviewTypes.length > 0
                 ? 'Launch and record the prepared review types in dependency-safe order, then rerun required-reviews-check, doc-impact-gate, and completion-gate.'
                 : 'All required review evidence is already current-cycle. Rerun required-reviews-check, doc-impact-gate, and completion-gate.';
+        const remediationArtifactPath = writeReviewRemediationCycleArtifact(repoRoot, resolvedTaskId, {
+            schema_version: 1,
+            task_id: resolvedTaskId,
+            status: 'PASSED',
+            previous_preflight_path: gateHelpers.normalizePath(resolvedPreflightPath),
+            previous_preflight_sha256: fs.existsSync(resolvedPreflightPath)
+                ? gateHelpers.fileSha256(resolvedPreflightPath)
+                : null,
+            refreshed_preflight_path: gateHelpers.normalizePath(refreshedPreflightPath),
+            refreshed_preflight_sha256: fs.existsSync(refreshedPreflightPath)
+                ? gateHelpers.fileSha256(refreshedPreflightPath)
+                : null,
+            detection_source: replayScope.detectionSource,
+            remediation_scope: {
+                status: scopeBoundary.status,
+                previous_changed_files: scopeBoundary.previousChangedFiles,
+                current_changed_files: scopeBoundary.currentChangedFiles,
+                expanded_files: scopeBoundary.expandedFiles,
+                expanded_non_test_files: scopeBoundary.expandedNonTestFiles,
+                allowed_test_only_expansion_files: scopeBoundary.allowedTestOnlyExpansionFiles
+            },
+            refresh_points: {
+                preflight: 'refreshed',
+                post_preflight_rule_pack: 'reloaded',
+                compile: 'rerun',
+                review_contexts: pendingReviewTypes.length > 0 ? 'partially_prepared_dependency_blocked' : 'prepared_or_reused'
+            },
+            review_reuse: {
+                review_execution_policy: reviewExecutionPolicyMode,
+                prepared_review_types: preparedResults.map((result) => result.reviewType),
+                launch_required_review_types: launchRequiredReviewTypes,
+                reused_review_types: reusedReviewTypes,
+                pending_review_types: pendingReviewTypes,
+                pending_reason: pendingReason
+            },
+            reuse_boundaries: {
+                non_test_changes_must_stay_within_previous_preflight_scope: true,
+                test_only_expansion_allowed: true,
+                expanded_non_test_files_block_reuse: true
+            }
+        });
 
         return {
             outputLines: [
                 'REVIEW_CYCLE_RESTARTED',
                 `TaskId: ${resolvedTaskId}`,
                 `PreflightPath: ${gateHelpers.normalizePath(refreshedPreflightPath)}`,
+                `ReviewRemediationCycleArtifact: ${gateHelpers.normalizePath(remediationArtifactPath)}`,
                 `DetectionSource: ${replayScope.detectionSource}`,
+                `ScopeBoundary: ${scopeBoundary.status}; previous=${scopeBoundary.previousChangedFiles.length}; current=${scopeBoundary.currentChangedFiles.length}; expanded_non_test=${formatReviewTypeList(scopeBoundary.expandedNonTestFiles)}`,
+                `RefreshPoints: preflight=refreshed; post_preflight_rule_pack=reloaded; compile=rerun; review_contexts=${pendingReviewTypes.length > 0 ? 'partially_prepared_dependency_blocked' : 'prepared_or_reused'}`,
+                `ReuseBoundaries: non_test_changes_must_stay_within_previous_preflight_scope; test_only_expansion_allowed; expanded_non_test_files_block_reuse`,
                 `EffectiveDepth: ${effectiveDepth}`,
                 `ReviewExecutionPolicy: ${reviewExecutionPolicyMode}`,
                 `PreparedReviewTypes: ${formatReviewTypeList(preparedResults.map((result) => result.reviewType))}`,

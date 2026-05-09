@@ -224,7 +224,7 @@ function buildPreflightGateHelpEntries(
         },
         'restart-review-cycle': {
             ...createSingleUsageEntry(
-                'Refresh preflight and downstream review evidence for the current task after review-era drift.',
+                'Refresh failed-review remediation evidence for the current task after a small blocker fix, preserving review reuse boundaries.',
                 `${cliPrefix} gate restart-review-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --repo-root "."`,
                 true
             )

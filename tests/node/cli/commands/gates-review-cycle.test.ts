@@ -1340,19 +1340,19 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
-        initializeGitRepo(repoRoot);
-        seedTaskQueue(repoRoot, taskId);
-        seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
-        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
         const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-legacy-coherent-floor.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
             'node -e "console.log(\'build ok\')"',
             '```'
         ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         fs.mkdirSync(getReviewsRoot(repoRoot), { recursive: true });
         const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
@@ -2858,11 +2858,596 @@ describe('cli/commands/gates – review-cycle suites', () => {
 
         const output = restartResult.outputLines.join('\n');
         assert.match(output, /DetectionSource: git_auto_current_workspace/);
+        assert.match(output, /ReviewRemediationCycleArtifact:/);
+        assert.match(output, /ScopeBoundary: OK; previous=1; current=2; expanded_non_test=none/);
+        assert.match(output, /RefreshPoints: preflight=refreshed; post_preflight_rule_pack=reloaded; compile=rerun/);
+        assert.match(output, /ReuseBoundaries: non_test_changes_must_stay_within_previous_preflight_scope/);
         assert.match(output, /PendingReviewTypes: test/);
 
         const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
         assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts', 'tests/app.test.ts']);
         assert.equal((refreshedPreflight.required_reviews as Record<string, boolean>).test, true);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(remediationArtifact.status, 'PASSED');
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
+            ['tests/app.test.ts']
+        );
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).expanded_non_test_files,
+            []
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle blocks non-test remediation files outside the failed review scope', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-expanded-source';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeReviewCapabilitiesConfig(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-expanded-source.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle refuses expanded source remediation',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle refuses expanded source remediation',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra.ts'), 'export const extra = true;\n', 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts'],
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
+        const output = restartResult.outputLines.join('\n');
+        assert.match(output, /REVIEW_CYCLE_RESTART_FAILED/);
+        assert.match(output, /non-test files outside the failed review scope changed: src\/extra.ts/);
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const reviewsIndex = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), 'reviews-index.json'),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.equal(remediationArtifact.status, 'BLOCKED');
+        assert.equal(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).status,
+            'BLOCKED'
+        );
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).expanded_non_test_files,
+            ['src/extra.ts']
+        );
+        assert.ok((reviewsIndex.entries as Array<Record<string, unknown>>).some((entry) => (
+            entry.fileName === `${taskId}-review-remediation-cycle.json`
+            && entry.taskId === taskId
+            && entry.artifactType === 'review-remediation-cycle.json'
+        )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle includes allowed test-only expansion in explicit refresh scope', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-explicit-test-expansion';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeReviewCapabilitiesConfig(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-explicit-test-expansion.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle preserves explicit test-only remediation scope',
+            plannedChangedFiles: ['src/app.ts', 'tests/app.test.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle preserves explicit test-only remediation scope',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts'],
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts', 'tests/app.test.ts']);
+        assert.equal((refreshedPreflight.required_reviews as Record<string, boolean>).test, true);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
+            ['tests/app.test.ts']
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle preserves previous source scope when explicit refresh lists only test remediation', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-explicit-subset';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeReviewCapabilitiesConfig(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-explicit-subset.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle preserves prior source scope when explicit remediation scope is narrow',
+            plannedChangedFiles: ['src/app.ts', 'tests/app.test.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle preserves prior source scope when explicit remediation scope is narrow',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['tests/app.test.ts'],
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts', 'tests/app.test.ts']);
+        assert.equal((refreshedPreflight.required_reviews as Record<string, boolean>).code, true);
+        assert.equal((refreshedPreflight.required_reviews as Record<string, boolean>).test, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle normalizes Windows separators in explicit remediation scope', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-windows-separators';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeReviewCapabilitiesConfig(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-windows-separators.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle normalizes explicit Windows separator paths',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle normalizes explicit Windows separator paths',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src\\app.ts'],
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).expanded_non_test_files,
+            []
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle allows __tests__ files as test-only remediation expansion', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-dunder-tests';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeReviewCapabilitiesConfig(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-dunder-tests.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle treats __tests__ as test remediation scope',
+            plannedChangedFiles: ['src/app.ts', 'src/__tests__/app-helper.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle treats __tests__ as test remediation scope',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        fs.mkdirSync(path.join(repoRoot, 'src', '__tests__'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', '__tests__', 'app-helper.ts'), 'export const ok = true;\n', 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts'],
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/__tests__/app-helper.ts', 'src/app.ts']);
+        assert.equal((refreshedPreflight.required_reviews as Record<string, boolean>).test, true);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
+            ['src/__tests__/app-helper.ts']
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle uses classifier test regexes for non-JavaScript test expansion', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-classifier-test-regex';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeReviewCapabilitiesConfig(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-classifier-test-regex.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle uses classifier test regexes for remediation scope',
+            plannedChangedFiles: ['src/app.ts', 'src/app.test.py']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle uses classifier test regexes for remediation scope',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.test.py'), 'def test_app():\n    assert True\n', 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts'],
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.test.py', 'src/app.ts']);
+        assert.equal((refreshedPreflight.required_reviews as Record<string, boolean>).test, true);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
+            ['src/app.test.py']
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle excludes dirty workspace baseline tests from explicit refresh expansion', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-baseline-test-exclusion';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeReviewCapabilitiesConfig(repoRoot);
+        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-baseline-test-exclusion.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+
+        fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'baseline.test.ts'), 'it("unrelated", () => {});\n', 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle does not absorb dirty baseline test files',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle does not absorb dirty baseline test files',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: ['src/app.ts'],
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(refreshedPreflight.changed_files, ['src/app.ts']);
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).allowed_test_only_expansion_files,
+            []
+        );
+        assert.deepEqual(
+            (remediationArtifact.remediation_scope as Record<string, unknown>).expanded_files,
+            ['tests/baseline.test.ts']
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
