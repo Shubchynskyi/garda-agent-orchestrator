@@ -3582,6 +3582,7 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-265-launch-scope-drift';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# baseline\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
         initializeGitRepo(repoRoot);
 

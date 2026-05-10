@@ -50,6 +50,7 @@ export function createTempRepo(): string {
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'), { recursive: true });
     fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
+    
     seedRuleFiles(root);
     const workflowConfig = buildDefaultWorkflowConfig();
     workflowConfig.full_suite_validation.enabled = false;
@@ -159,4 +160,9 @@ export function initializeGitRepo(repoRoot: string): void {
 export function ageFixturePath(filePath: string, ageMs: number): void {
     const agedDate = new Date(Date.now() - ageMs);
     fs.utimesSync(filePath, agedDate, agedDate);
+}
+
+export function backdateFileMtime(filePath: string, secondsAgo = 5): void {
+    const older = new Date(Date.now() - (secondsAgo * 1000));
+    fs.utimesSync(filePath, older, older);
 }

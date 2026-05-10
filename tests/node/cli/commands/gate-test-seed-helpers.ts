@@ -40,6 +40,10 @@ import {
 } from './gate-test-repo-bootstrap';
 
 
+export {
+    runClassifyChangeCommand
+};
+
 export const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
     Claude: 'CLAUDE.md',
     Codex: 'AGENTS.md',
@@ -150,15 +154,8 @@ export function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void
         ClaudeOrchestratorFullAccess: 'false',
         TokenEconomyEnabled: 'true',
         CollectedVia: 'AGENT_INIT_PROMPT.md',
-        ActiveAgentFiles: 'AGENTS.md'
+        ActiveAgentFiles: ''
     }, null, 2), 'utf8');
-    if (routedTo) {
-        const routedFilePath = path.join(repoRoot, routedTo);
-        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
-        if (!fs.existsSync(routedFilePath)) {
-            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
-        }
-    }
 }
 
 
@@ -862,7 +859,7 @@ export function writeHandshakeArtifact(repoRoot: string, taskId: string, provide
             // Keep the lightweight test fixture tolerant of malformed init answers.
         }
     }
-    const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || 'AGENTS.md';
+    const canonicalEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[canonicalSourceOfTruth] || null;
     const providerBridgeCandidate = PROVIDER_BRIDGE_BY_SOURCE[provider] || null;
     const providerBridgePath = providerBridgeCandidate && fs.existsSync(path.join(repoRoot, providerBridgeCandidate))
         ? providerBridgeCandidate
@@ -870,13 +867,7 @@ export function writeHandshakeArtifact(repoRoot: string, taskId: string, provide
     const providerEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
     const routedTo = providerBridgePath || providerEntrypoint || null;
     const executionProviderSource = providerBridgePath ? 'provider_bridge' : 'provider_entrypoint';
-    if (routedTo) {
-        const routedFilePath = path.join(repoRoot, routedTo);
-        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
-        if (!fs.existsSync(routedFilePath)) {
-            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
-        }
-    }
+    
     fs.mkdirSync(reviewsRoot, { recursive: true });
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
         schema_version: 1,
@@ -889,16 +880,16 @@ export function writeHandshakeArtifact(repoRoot: string, taskId: string, provide
         execution_provider: provider,
         canonical_source_of_truth: canonicalSourceOfTruth,
         canonical_entrypoint: canonicalEntrypoint,
-        canonical_entrypoint_exists: true,
+        canonical_entrypoint_exists: canonicalEntrypoint !== null && fs.existsSync(path.join(repoRoot, canonicalEntrypoint)),
         provider_bridge: providerBridgePath,
-        provider_bridge_exists: providerBridgePath !== null,
+        provider_bridge_exists: providerBridgePath !== null && fs.existsSync(path.join(repoRoot, providerBridgePath)),
         routed_to: routedTo,
         execution_provider_source: executionProviderSource,
         runtime_identity_status: 'resolved',
         reviewer_subagent_launch_status: 'launchable',
         reviewer_subagent_launch_route: routedTo,
         start_task_router_path: '.agents/workflows/start-task.md',
-        start_task_router_exists: true,
+        start_task_router_exists: fs.existsSync(path.join(repoRoot, '.agents/workflows/start-task.md')),
         execution_context: 'materialized-bundle',
         cli_path: 'node garda-agent-orchestrator/bin/garda.js',
         effective_cwd: repoRoot.replace(/\\/g, '/'),

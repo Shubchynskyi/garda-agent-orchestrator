@@ -20,10 +20,12 @@ export {
     writeNodeFoundationManifest,
     runGit,
     initializeGitRepo,
-    ageFixturePath
+    ageFixturePath,
+    backdateFileMtime
 } from './gate-test-repo-bootstrap';
 
 export {
+    runClassifyChangeCommand,
     PROVIDER_ENTRYPOINT_BY_SOURCE,
     PROVIDER_BRIDGE_BY_SOURCE,
     writeReviewCapabilitiesConfig,
