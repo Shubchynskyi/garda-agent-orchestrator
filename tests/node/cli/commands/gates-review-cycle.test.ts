@@ -1163,6 +1163,31 @@ function runShellSmokeForTask(repoRoot: string, taskId: string, provider = 'Code
     );
 }
 
+function seedRemediationRepoBase(repoRoot: string): void {
+    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+    fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+    fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+}
+
+function writeSimpleCompileCommandsFile(
+    repoRoot: string,
+    suffix: string
+): { commandsPath: string; outputFiltersPath: string } {
+    const commandsPath = path.join(repoRoot, `commands-${suffix}.md`);
+    const outputFiltersPath = path.resolve('live/config/output-filters.json');
+    fs.writeFileSync(commandsPath, [
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        'node -e "console.log(\'build ok\')"',
+        '```'
+    ].join('\n'), 'utf8');
+    return { commandsPath, outputFiltersPath };
+}
+
 describe('cli/commands/gates – review-cycle suites', () => {
     it('restarts the latest coherent cycle on a dirty tree while reusing the previous explicit preflight scope', async () => {
         const repoRoot = createTempRepo();
@@ -1440,26 +1465,13 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle reuses the latest coherent restart floor for legacy task-mode artifacts after an older review pass', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-legacy-coherent-floor';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-legacy-coherent-floor.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-legacy-coherent-floor');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         fs.mkdirSync(getReviewsRoot(repoRoot), { recursive: true });
         const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
@@ -1737,13 +1749,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle refreshes the current diff and prepares only upstream reviews when downstream test review is still blocked', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-code-only';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Qwen');
@@ -1751,14 +1757,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 2;\nconsole.log(a + b);\nconsole.log(\'done\');\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-code-only.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-code-only');
 
         runEnterTaskMode({
             repoRoot,
@@ -1868,13 +1867,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle blocks API review behind code under an explicit code_first_optional policy', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-api-after-code';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeWorkflowConfig(repoRoot, 'code_first_optional');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
@@ -1882,14 +1875,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         writeReviewCapabilitiesConfig(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'src', 'routes'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'routes', 'app.ts'), 'export function handleAppRoute() { return "ok"; }\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-api-after-code.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-api-after-code');
 
         runEnterTaskMode({
             repoRoot,
@@ -1963,13 +1949,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle keeps legacy compatibility when review_execution_policy is still omitted', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-legacy-compat';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
         fs.writeFileSync(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
@@ -1993,14 +1973,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'routes', 'app.ts'), 'export function handleAppRoute() { return "ok"; }\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-legacy-compat.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-legacy-compat');
 
         runEnterTaskMode({
             repoRoot,
@@ -2069,13 +2042,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle prepares code, API, and test together under parallel_all policy', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-parallel-all';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeWorkflowConfig(repoRoot, 'parallel_all');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
@@ -2085,14 +2052,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'routes', 'app.ts'), 'export function handleAppRoute() { return "ok"; }\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-parallel-all.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-parallel-all');
 
         runEnterTaskMode({
             repoRoot,
@@ -2160,13 +2120,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle includes performance review preparation when parallel_all scope crosses the heuristic threshold', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-parallel-all-performance';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeWorkflowConfig(repoRoot, 'parallel_all');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
@@ -2180,14 +2134,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
             'utf8'
         );
         fs.writeFileSync(path.join(repoRoot, 'tests', 'heavy.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-parallel-all-performance.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-parallel-all-performance');
 
         runEnterTaskMode({
             repoRoot,
@@ -2245,13 +2192,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle keeps test downstream of code while leaving API independent under test_after_code policy', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-test-after-code';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeWorkflowConfig(repoRoot, 'test_after_code');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
@@ -2261,14 +2202,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'routes', 'app.ts'), 'export function handleAppRoute() { return "ok"; }\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-test-after-code.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-test-after-code');
 
         runEnterTaskMode({
             repoRoot,
@@ -2337,13 +2271,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle serializes downstream review preparation under strict_sequential policy', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-strict-sequential';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeWorkflowConfig(repoRoot, 'strict_sequential');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
@@ -2353,14 +2281,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'routes', 'app.ts'), 'export function handleAppRoute() { return "ok"; }\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-strict-sequential.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-strict-sequential');
 
         runEnterTaskMode({
             repoRoot,
@@ -2509,13 +2430,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-custom-task-mode';
         const customTaskModePath = path.join(repoRoot, 'custom-artifacts', `${taskId}-task-mode.json`);
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
@@ -2523,14 +2438,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-custom-task-mode.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-custom-task-mode');
 
         runEnterTaskMode({
             repoRoot,
@@ -2589,13 +2497,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle reuses unaffected security and refactor evidence after test hook remediation invalidates code', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-reuse';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
         seedInitAnswers(repoRoot, 'Codex');
@@ -2604,14 +2506,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-reuse.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-reuse');
 
         runEnterTaskMode({
             repoRoot,
@@ -2749,27 +2644,14 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle blocks review reuse for fail-closed remediation classifications', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-fail-closed-reuse';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
         writeProfilesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-fail-closed-reuse.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-fail-closed-reuse');
 
         runEnterTaskMode({
             repoRoot,
@@ -2874,32 +2756,19 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('runBuildReviewContextCommand reuses supplied task-mode evidence and runtime identity without rereading the artifact', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-task-mode-cache';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-task-mode-cache.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-task-mode-cache');
         const taskModeArtifactPath = path.join(
             getOrchestratorRoot(repoRoot),
             'runtime',
             'reviews',
             `${taskId}-task-mode.json`
         );
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
 
         runEnterTaskMode({
             repoRoot,
@@ -2956,26 +2825,13 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle escalates to restart-coherent-cycle after a prior review gate closed the latest cycle', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-after-review-gate';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 4;\nconsole.log(a + b);\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-after-review-gate.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-after-review-gate');
 
         runEnterTaskMode({
             repoRoot,
@@ -3069,25 +2925,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle defaults to the current workspace diff instead of silently reusing the old explicit preflight scope', { concurrency: false }, async (t) => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-current-diff';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-current-diff.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-current-diff');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         runEnterTaskMode({
             repoRoot,
@@ -3338,25 +3181,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle blocks non-test remediation files outside the failed review scope', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-expanded-source';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-expanded-source.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-expanded-source');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         runEnterTaskMode({
             repoRoot,
@@ -3443,25 +3273,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle includes allowed test-only expansion in explicit refresh scope', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-explicit-test-expansion';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-explicit-test-expansion.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-explicit-test-expansion');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         runEnterTaskMode({
             repoRoot,
@@ -3669,26 +3486,13 @@ describe('cli/commands/gates – review-cycle suites', () => {
             const repoRoot = createTempRepo();
             const taskId = `T-903b-remediation-classification-${scenario.suffix}`;
             const changedFile = scenario.changedFile || 'src/app.ts';
-            fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-            fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-            fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-            fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-            fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-            fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-            fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+            seedRemediationRepoBase(repoRoot);
             writeReviewCapabilitiesConfig(repoRoot);
             writeProfilesConfig(repoRoot);
-            const commandsPath = path.join(repoRoot, `commands-${scenario.suffix}.md`);
-            fs.writeFileSync(commandsPath, [
-                '### Compile Gate (Mandatory)',
-                '```bash',
-                'node -e "console.log(\'build ok\')"',
-                '```'
-            ].join('\n'), 'utf8');
+            const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, scenario.suffix);
             initializeGitRepo(repoRoot);
             seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
             seedInitAnswers(repoRoot, 'Codex');
-            const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
             runEnterTaskMode({
                 repoRoot,
@@ -3751,25 +3555,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle preserves previous source scope when explicit refresh lists only test remediation', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-explicit-subset';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-explicit-subset.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-explicit-subset');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         runEnterTaskMode({
             repoRoot,
@@ -3825,25 +3616,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle normalizes Windows separators in explicit remediation scope', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-windows-separators';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-windows-separators.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-windows-separators');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         runEnterTaskMode({
             repoRoot,
@@ -3902,25 +3680,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle allows __tests__ files as test-only remediation expansion', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-dunder-tests';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-dunder-tests.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-dunder-tests');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         runEnterTaskMode({
             repoRoot,
@@ -3982,25 +3747,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle uses classifier test regexes for non-JavaScript test expansion', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-classifier-test-regex';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-classifier-test-regex.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-classifier-test-regex');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         runEnterTaskMode({
             repoRoot,
@@ -4061,25 +3813,12 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle excludes dirty workspace baseline tests from explicit refresh expansion', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-baseline-test-exclusion';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-baseline-test-exclusion.md');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-baseline-test-exclusion');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
 
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'baseline.test.ts'), 'it("unrelated", () => {});\n', 'utf8');
@@ -4145,26 +3884,13 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle refuses to rebuild from a fresh task-mode cycle that never restored TASK_ENTRY rule-pack evidence', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-restart-review-cycle-missing-task-entry';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 5;\nconsole.log(a + b);\n', 'utf8');
-        const commandsPath = path.join(repoRoot, 'commands-restart-review-cycle-missing-task-entry.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-missing-task-entry');
 
         runEnterTaskMode({
             repoRoot,
@@ -4229,26 +3955,13 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('runBuildReviewContextCommand preserves the public key-value output contract', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-build-review-context-output-contract';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
 
-        const commandsPath = path.join(repoRoot, 'commands-build-review-context-output-contract.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'build-review-context-output-contract');
 
         runEnterTaskMode({
             repoRoot,
@@ -4290,27 +4003,14 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('runBuildReviewContextCommand reuses the supplied timeline summary for code-review reuse without rereading task events', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-build-review-context-reuse-timeline-cache';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         writeReviewCapabilitiesConfig(repoRoot);
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
 
-        const commandsPath = path.join(repoRoot, 'commands-build-review-context-reuse-timeline-cache.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'build-review-context-reuse-timeline-cache');
 
         runEnterTaskMode({
             repoRoot,
@@ -4634,26 +4334,13 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('completion diagnostics surface restart-review-cycle when review evidence is incomplete without a stage-sequence failure', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-review-recovery-command';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
         fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
 
-        const commandsPath = path.join(repoRoot, 'commands-review-recovery-command.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'review-recovery-command');
 
         runEnterTaskMode({
             repoRoot,
@@ -4711,13 +4398,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle remains usable after COMPLETION_GATE_FAILED when completion diagnostics advertise that narrow recovery path', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-review-recovery-command-after-completion-fail';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
@@ -4726,14 +4407,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it(\"works\", () => {});\n', 'utf8');
 
-        const commandsPath = path.join(repoRoot, 'commands-review-recovery-command-after-completion-fail.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'review-recovery-command-after-completion-fail');
 
         runEnterTaskMode({
             repoRoot,
@@ -4798,13 +4472,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle fails after a fresh TASK_MODE_ENTERED when TASK_ENTRY was not restored for that new cycle', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-review-recovery-missing-task-entry';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
@@ -4813,14 +4481,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
 
-        const commandsPath = path.join(repoRoot, 'commands-review-recovery-missing-task-entry.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'review-recovery-missing-task-entry');
 
         runEnterTaskMode({
             repoRoot,
@@ -4891,13 +4552,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
     it('restart-review-cycle remains usable after a fresh TASK_MODE_ENTERED when TASK_ENTRY is restored for that new cycle', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b-review-recovery-restored-task-entry';
-        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
-        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
-        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
-        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
-        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        seedRemediationRepoBase(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
@@ -4906,14 +4561,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'tests'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'tests', 'app.test.ts'), 'it("works", () => {});\n', 'utf8');
 
-        const commandsPath = path.join(repoRoot, 'commands-review-recovery-restored-task-entry.md');
-        const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        fs.writeFileSync(commandsPath, [
-            '### Compile Gate (Mandatory)',
-            '```bash',
-            'node -e "console.log(\'build ok\')"',
-            '```'
-        ].join('\n'), 'utf8');
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'review-recovery-restored-task-entry');
 
         runEnterTaskMode({
             repoRoot,
