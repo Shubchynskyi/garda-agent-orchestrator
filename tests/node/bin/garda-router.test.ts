@@ -26,6 +26,24 @@ function createGardaPackageRoot(rootPath: string, version = '2.4.0'): void {
     writeFile(path.join(rootPath, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
 }
 
+function withBundleName<T>(bundleName: string | undefined, action: () => T): T {
+    const previousBundleName = process.env.GARDA_BUNDLE_NAME;
+    if (bundleName === undefined) {
+        delete process.env.GARDA_BUNDLE_NAME;
+    } else {
+        process.env.GARDA_BUNDLE_NAME = bundleName;
+    }
+    try {
+        return action();
+    } finally {
+        if (previousBundleName === undefined) {
+            delete process.env.GARDA_BUNDLE_NAME;
+        } else {
+            process.env.GARDA_BUNDLE_NAME = previousBundleName;
+        }
+    }
+}
+
 test('global launcher delegates to source checkout in current workspace', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-source-'));
     try {
@@ -110,12 +128,12 @@ test('global launcher delegates to custom-named deployed bundle without explicit
         };
 
         try {
-            const delegatedCli = resolveDelegatedLauncherTarget(
+            const delegatedCli = withBundleName(undefined, () => resolveDelegatedLauncherTarget(
                 ['status'],
                 workspaceRoot,
                 path.join(globalPackageRoot, 'bin', 'garda.js'),
                 globalPackageRoot
-            );
+            ));
 
             assert.equal(delegatedCli, path.join(bundleRoot, 'bin', 'garda.js'));
         } finally {
@@ -142,12 +160,12 @@ test('global launcher fails closed when multiple fallback deployed bundle candid
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
         assert.throws(
-            () => resolveDelegatedLauncherTarget(
+            () => withBundleName(undefined, () => resolveDelegatedLauncherTarget(
                 ['status'],
                 workspaceRoot,
                 path.join(globalPackageRoot, 'bin', 'garda.js'),
                 globalPackageRoot
-            ),
+            )),
             (error: unknown) => {
                 assert.ok(error instanceof Error);
                 assert.match(error.message, /Multiple Garda Agent Orchestrator deployed bundle candidates found/);

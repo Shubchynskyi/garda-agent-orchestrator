@@ -35,6 +35,7 @@ export {
     withDefaultTaskModeRouting,
     runEnterTaskMode,
     createReviewerRoutingFixture,
+    resolveReviewerExecutionFixture,
     writePreflight,
     prepareReviewDiffFixture,
     appendPreflightClassifiedEvent,

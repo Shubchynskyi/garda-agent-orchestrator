@@ -78,6 +78,12 @@ function getTypescriptCliPath(repoRoot: string): string {
     return path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
 }
 
+function buildEnvWithoutBundleName(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    delete env.GARDA_BUNDLE_NAME;
+    return env;
+}
+
 function syncGeneratedCliEntrypoint(repoRoot: string): void {
     const compiledCliPath = path.join(repoRoot, 'dist', 'src', 'bin', 'garda.js');
     if (!fs.existsSync(compiledCliPath)) {
@@ -124,7 +130,8 @@ test('published runtime works when the package is executed from node_modules', (
             [path.join(packageRoot, 'bin', 'garda.js'), 'status', '--target-root', workspaceRoot],
             {
                 cwd: workspaceRoot,
-                encoding: 'utf8'
+                encoding: 'utf8',
+                env: buildEnvWithoutBundleName()
             }
         );
 
@@ -181,7 +188,8 @@ test('published runtime setup stays in agent handoff state and uninstall restore
             ],
             {
                 cwd: workspaceRoot,
-                encoding: 'utf8'
+                encoding: 'utf8',
+                env: buildEnvWithoutBundleName()
             }
         );
 
@@ -204,7 +212,8 @@ test('published runtime setup stays in agent handoff state and uninstall restore
             [path.join(packageRoot, 'bin', 'garda.js'), 'uninstall', '--target-root', workspaceRoot],
             {
                 cwd: workspaceRoot,
-                encoding: 'utf8'
+                encoding: 'utf8',
+                env: buildEnvWithoutBundleName()
             }
         );
 

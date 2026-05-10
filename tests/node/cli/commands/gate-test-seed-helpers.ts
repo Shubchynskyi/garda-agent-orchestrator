@@ -20,10 +20,14 @@ import {
 } from '../../../../src/cli/commands/gates';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
+import { buildScopedDiff } from '../../../../src/gates/build-scoped-diff';
+import { buildReviewContextPreflightDiffExpectations } from '../../../../src/gates/review-context-contract';
 import {
     computeCodeReviewScopeFingerprint,
+    computeReviewRelevantScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../../../src/gates/review-reuse';
+import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
 import {
     resolveReviewerRoutingPolicy
 } from '../../../../src/gates/reviewer-routing';
@@ -245,6 +249,32 @@ export function createReviewerRoutingFixture(
     };
 }
 
+export function resolveReviewerExecutionFixture(
+    _taskId: string,
+    sourceOfTruth = 'Codex',
+    delegatedIdentity = 'agent:test-reviewer'
+): {
+    reviewerExecutionMode: ReturnType<typeof resolveReviewerRoutingPolicy>['expected_execution_mode'];
+    reviewerIdentity: string;
+    reviewerFallbackReason: null;
+    trustLevel: 'INDEPENDENT_AUDITED';
+} {
+    const normalizedSourceOfTruth = String(sourceOfTruth).trim() || 'Codex';
+    const attestedRoute = resolveAttestedTaskModeRoute(normalizedSourceOfTruth);
+    const executionProviderSource = (
+        attestedRoute
+        && PROVIDER_BRIDGE_BY_SOURCE[normalizedSourceOfTruth] === attestedRoute
+    )
+        ? 'provider_bridge'
+        : 'provider_entrypoint';
+    return {
+        reviewerExecutionMode: resolveReviewerRoutingPolicy(normalizedSourceOfTruth, executionProviderSource).expected_execution_mode,
+        reviewerIdentity: delegatedIdentity,
+        reviewerFallbackReason: null,
+        trustLevel: 'INDEPENDENT_AUDITED'
+    };
+}
+
 
 export function writePreflight(
     repoRoot: string,
@@ -342,9 +372,33 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
     }
 }
 
-function buildManualReviewContextTaskScopeFixture(repoRoot: string, taskId: string): Record<string, unknown> {
+function readReviewPreflightFixture(repoRoot: string, taskId: string): {
+    preflightPath: string;
+    preflightSha256: string | null;
+    preflight: Record<string, unknown>;
+} {
     const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    const changedFiles = readChangedFilesFromPreflight(preflightPath);
+    if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
+        return {
+            preflightPath,
+            preflightSha256: null,
+            preflight: {}
+        };
+    }
+    const preflightText = fs.readFileSync(preflightPath, 'utf8');
+    return {
+        preflightPath,
+        preflightSha256: createHash('sha256').update(preflightText).digest('hex'),
+        preflight: JSON.parse(preflightText) as Record<string, unknown>
+    };
+}
+
+function buildManualReviewContextTaskScopeFixture(preflight: Record<string, unknown>): Record<string, unknown> {
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files
+            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+            .filter(Boolean)
+        : [];
     return {
         changed_files: changedFiles,
         changed_file_count: changedFiles.length,
@@ -401,19 +455,52 @@ function buildReceiptBackedReviewContextFixture(
         );
     }
 
-    const preflightSha256 = fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()
-        ? createHash('sha256').update(fs.readFileSync(preflightPath)).digest('hex')
-        : null;
+    const preflightFixture = readReviewPreflightFixture(repoRoot, taskId);
+    if (preflightFixture.preflightSha256) {
+        prepareReviewDiffFixture(repoRoot, preflightFixture.preflightPath);
+    }
+    const promptArtifactPath = reviewContextPath.replace(/\.json$/, '.md');
+    const promptArtifactText = [
+        `# ${reviewKey} review fixture`,
+        '',
+        `Fixture prompt artifact for ${taskId}/${reviewKey}.`
+    ].join('\n');
+    fs.writeFileSync(promptArtifactPath, promptArtifactText, 'utf8');
+    const promptArtifactSha256 = createHash('sha256').update(promptArtifactText).digest('hex');
+    const changedFiles = Array.isArray(preflightFixture.preflight.changed_files)
+        ? preflightFixture.preflight.changed_files
+            .map((entry) => String(entry || '').replace(/\\/g, '/').trim())
+            .filter(Boolean)
+        : [];
+    const metrics = preflightFixture.preflight.metrics
+        && typeof preflightFixture.preflight.metrics === 'object'
+        && !Array.isArray(preflightFixture.preflight.metrics)
+        ? preflightFixture.preflight.metrics as Record<string, unknown>
+        : {};
+    const reviewTreeState = buildReviewTreeState({
+        repoRoot,
+        detectionSource: preflightFixture.preflight.detection_source || 'explicit_changed_files',
+        includeUntracked: preflightFixture.preflight.include_untracked !== false,
+        changedFiles,
+        metrics
+    });
     const reviewContext = {
         task_id: taskId,
         review_type: reviewKey,
         preflight_path: preflightPath.replace(/\\/g, '/'),
-        preflight_sha256: preflightSha256,
-        task_scope: buildManualReviewContextTaskScopeFixture(repoRoot, taskId),
+        preflight_sha256: preflightFixture.preflightSha256,
+        task_scope: buildManualReviewContextTaskScopeFixture(preflightFixture.preflight),
         scoped_diff: {
             expected: false,
-            metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`),
+            metadata_path: path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`).replace(/\\/g, '/'),
             metadata: null
+        },
+        tree_state: reviewTreeState,
+        rule_context: {
+            artifact_path: promptArtifactPath.replace(/\\/g, '/'),
+            preferred_prompt_artifact: promptArtifactPath.replace(/\\/g, '/'),
+            artifact_sha256: promptArtifactSha256,
+            token_economy_active: false
         },
         reviewer_routing: createReviewerRoutingFixture(reviewerEvidence.sourceOfTruth, {
             ...reviewerEvidence.routingOverrides
@@ -507,6 +594,28 @@ export function writeCompilePassEvidence(repoRoot: string, taskId: string, prefl
     appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'COMPILE_GATE_PASSED', 'PASS', 'Compile gate passed.', {
         preflight_path: preflightPath.replace(/\\/g, '/'),
         preflight_hash_sha256: preflightHashSha256
+    });
+}
+
+function prepareScopedDiffFixture(repoRoot: string, preflightPath: string, reviewType: string): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const scopedDiffExpected = buildReviewContextPreflightDiffExpectations(preflight, reviewType).expectedScopedDiff;
+    if (!scopedDiffExpected) {
+        return;
+    }
+    const pathsConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+    if (!fs.existsSync(pathsConfigPath) || !fs.statSync(pathsConfigPath).isFile()) {
+        return;
+    }
+    prepareReviewDiffFixture(repoRoot, preflightPath);
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    buildScopedDiff({
+        reviewType,
+        preflightPath,
+        pathsConfigPath,
+        outputPath: path.join(reviewsRoot, `${preflight.task_id}-${reviewType}-scoped.diff`),
+        metadataPath: path.join(reviewsRoot, `${preflight.task_id}-${reviewType}-scoped.json`),
+        repoRoot
     });
 }
 
@@ -615,6 +724,7 @@ export function writeReceiptBackedReviewArtifact(
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     let preflightSha256: string | null = null;
     let scopeSha256: string | null = null;
+    let reviewScopeSha256: string | null = null;
     let codeScopeSha256: string | null = null;
     let reviewContextReuseSha256: string | null = null;
     if (fs.existsSync(preflightPath) && fs.statSync(preflightPath).isFile()) {
@@ -622,7 +732,8 @@ export function writeReceiptBackedReviewArtifact(
         const preflight = JSON.parse(preflightText) as Record<string, unknown>;
         preflightSha256 = crypto.createHash('sha256').update(preflightText).digest('hex');
         scopeSha256 = String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null;
-        codeScopeSha256 = reviewKey === 'code'
+        reviewScopeSha256 = computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256;
+        codeScopeSha256 = reviewKey !== 'test'
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null;
         reviewContextReuseSha256 = computeReviewContextReuseHash(reviewContext);
@@ -657,6 +768,7 @@ export function writeReceiptBackedReviewArtifact(
         reviewType: reviewKey,
         preflightSha256,
         scopeSha256,
+        reviewScopeSha256,
         codeScopeSha256,
         reviewContextSha256: reviewContextHash,
         reviewTreeStateSha256,
@@ -679,14 +791,14 @@ export function writeReceiptBackedReviewArtifact(
 
     appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'recorded', {
         ...receipt,
-        receipt_path: receiptPath.replace(/\\/g, '/'),
+        receipt_path: path.normalize(receiptPath).replace(/\\/g, '/'),
         receipt_sha256: receiptPayloadSha256,
-        receipt_snapshot_path: receiptSnapshotPath.replace(/\\/g, '/'),
+        receipt_snapshot_path: path.normalize(receiptSnapshotPath).replace(/\\/g, '/'),
         receipt_snapshot_sha256: receiptPayloadSha256,
-        review_artifact_path: artifactPath.replace(/\\/g, '/'),
-        review_artifact_snapshot_path: artifactSnapshotPath.replace(/\\/g, '/'),
+        review_artifact_path: path.normalize(artifactPath).replace(/\\/g, '/'),
+        review_artifact_snapshot_path: path.normalize(artifactSnapshotPath).replace(/\\/g, '/'),
         review_artifact_snapshot_sha256: artifactHash,
-        review_context_path: reviewContextPath.replace(/\\/g, '/')
+        review_context_path: path.normalize(reviewContextPath).replace(/\\/g, '/')
     });
 }
 
@@ -706,11 +818,14 @@ export function seedReusableReviewEvidence(
         legacyReviewContextIdentity?: boolean;
         legacyReviewContextSourceOfTruth?: string;
         taskModePath?: string | null;
+        omitInvocationTreeState?: boolean;
     } = {}
 ): string {
     const crypto = require('node:crypto');
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
+    const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
+    const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth, reviewerIdentity);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-scoped.json`);
     const artifactText = [
@@ -728,6 +843,7 @@ export function seedReusableReviewEvidence(
         verdict
     ].join('\n');
     prepareReviewDiffFixture(repoRoot, preflightPath);
+    prepareScopedDiffFixture(repoRoot, preflightPath, reviewKey);
     buildReviewContext({
         reviewType: reviewKey,
         depth: 2,
@@ -738,9 +854,9 @@ export function seedReusableReviewEvidence(
         outputPath: reviewContextPath,
         repoRoot
     });
-    const executionMode = 'delegated_subagent';
-    const resolvedReviewerIdentity = reviewerIdentity;
-    const reviewerFallbackReason = null;
+    const executionMode = execution.reviewerExecutionMode;
+    const resolvedReviewerIdentity = execution.reviewerIdentity;
+    const reviewerFallbackReason = execution.reviewerFallbackReason;
     applyReviewerRoutingMetadata(reviewContextPath, {
         actualExecutionMode: executionMode,
         reviewerSessionId: resolvedReviewerIdentity,
@@ -773,6 +889,12 @@ export function seedReusableReviewEvidence(
     const preflight = JSON.parse(preflightText) as Record<string, unknown>;
     const preflightHash = crypto.createHash('sha256').update(preflightText).digest('hex');
     const orchestratorRoot = getOrchestratorRoot(repoRoot);
+    appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'historical review started', {
+        review_type: reviewKey
+    });
+    const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
     const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'reusable review routing recorded', {
         review_type: reviewKey,
         reviewer_execution_mode: executionMode,
@@ -780,16 +902,18 @@ export function seedReusableReviewEvidence(
         reviewer_fallback_reason: reviewerFallbackReason,
         delegation_used: true
     }, { passThru: true });
-    const invocationDetails = {
+    const invocationDetails: Record<string, unknown> = {
         task_id: taskId,
         review_type: reviewKey,
         reviewer_execution_mode: executionMode,
         reviewer_session_id: resolvedReviewerIdentity,
         reviewer_identity: resolvedReviewerIdentity,
         review_context_sha256: reviewContextHash,
-        review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256
     };
+    if (!options.omitInvocationTreeState) {
+        invocationDetails.review_tree_state_sha256 = reviewTreeStateSha256;
+    }
     const invocationEvent = appendTaskEvent(
         orchestratorRoot,
         taskId,
@@ -809,7 +933,8 @@ export function seedReusableReviewEvidence(
         reviewType: reviewKey,
         preflightSha256: preflightHash,
         scopeSha256: String((preflight.metrics as Record<string, unknown> | undefined)?.changed_files_sha256 || '').trim() || null,
-        codeScopeSha256: reviewKey === 'code'
+        reviewScopeSha256: computeReviewRelevantScopeFingerprint(preflight, repoRoot).review_scope_sha256,
+        codeScopeSha256: reviewKey !== 'test'
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
         reviewContextSha256: reviewContextHash,
@@ -820,7 +945,7 @@ export function seedReusableReviewEvidence(
         reviewerIdentity: resolvedReviewerIdentity,
         reviewerFallbackReason,
         reviewerProvenance,
-        trustLevel: 'INDEPENDENT_AUDITED'
+        trustLevel: execution.trustLevel
     });
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
     const receiptPayload = `${JSON.stringify(receipt, null, 2)}\n`;
@@ -832,14 +957,14 @@ export function seedReusableReviewEvidence(
     fs.writeFileSync(artifactSnapshotPath, artifactText, 'utf8');
     appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_RECORDED', 'PASS', 'reusable review recorded', {
         ...receipt,
-        receipt_path: receiptPath.replace(/\\/g, '/'),
+        receipt_path: path.normalize(receiptPath).replace(/\\/g, '/'),
         receipt_sha256: receiptPayloadSha256,
-        receipt_snapshot_path: receiptSnapshotPath.replace(/\\/g, '/'),
+        receipt_snapshot_path: path.normalize(receiptSnapshotPath).replace(/\\/g, '/'),
         receipt_snapshot_sha256: receiptPayloadSha256,
-        review_artifact_path: artifactPath.replace(/\\/g, '/'),
-        review_artifact_snapshot_path: artifactSnapshotPath.replace(/\\/g, '/'),
+        review_artifact_path: path.normalize(artifactPath).replace(/\\/g, '/'),
+        review_artifact_snapshot_path: path.normalize(artifactSnapshotPath).replace(/\\/g, '/'),
         review_artifact_snapshot_sha256: artifactHash,
-        review_context_path: reviewContextPath.replace(/\\/g, '/')
+        review_context_path: path.normalize(reviewContextPath).replace(/\\/g, '/')
     });
     return reviewContextPath;
 }
@@ -957,6 +1082,7 @@ export function loadPostPreflightRulePack(
         loadedRuleFiles: [
             '00-core.md',
             '15-project-memory.md',
+            '30-code-style.md',
             '35-strict-coding-rules.md',
             '40-commands.md',
             '50-structure-and-docs.md',

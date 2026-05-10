@@ -95,6 +95,12 @@ function quoteWindowsArgument(argument: string): string {
     return escaped;
 }
 
+function buildEnvWithoutBundleName(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    delete env.GARDA_BUNDLE_NAME;
+    return env;
+}
+
 function spawnNpm(args: string[], cwd: string): childProcess.SpawnSyncReturns<string> {
     if (process.platform === 'win32') {
         const commandLine = ['npm.cmd', ...args].map(quoteWindowsArgument).join(' ');
@@ -237,6 +243,7 @@ function runCli(cliScriptPath: string, args: string[], cwd: string): childProces
         {
             cwd,
             encoding: 'utf8',
+            env: buildEnvWithoutBundleName(),
             timeout: 30_000
         }
     );
