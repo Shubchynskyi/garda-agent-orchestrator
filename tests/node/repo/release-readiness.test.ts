@@ -221,6 +221,60 @@ test('release readiness fails when shipped security docs are missing from MANIFE
     }
 });
 
+test('release readiness fails when SECURITY.md is missing from filesystem', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, 'SECURITY.md'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.includes('security:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when docs/threat-model.md is missing from filesystem', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, 'docs', 'threat-model.md'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.includes('security:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when docs/sbom.md is missing from filesystem', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, 'docs', 'sbom.md'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.includes('security:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when SECURITY.md is missing from package.json files', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+        pkg.files = pkg.files.filter((f: string) => f !== 'SECURITY.md');
+        writeFile(path.join(repoRoot, 'package.json'), JSON.stringify(pkg, null, 2));
+
+        const result = validateReleaseReadiness(repoRoot);
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.includes('security:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('release validation command dispatch accepts only the fixed command allow-list', () => {
     assert.deepEqual(
         [...RELEASE_VALIDATION_COMMANDS],
