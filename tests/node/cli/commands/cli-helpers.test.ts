@@ -46,6 +46,10 @@ import {
     tryParseBooleanText
 } from '../../../../src/cli/commands/cli-helpers';
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
 test('parseOptions parses string flags', () => {
     const defs = {
         '--target-root': { key: 'targetRoot', type: 'string' },
@@ -819,7 +823,7 @@ test('buildHelpText includes all command descriptions', () => {
 });
 
 test('buildCommandHelpText renders command-specific stats help', () => {
-    const text = buildCommandHelpText('stats');
+    const text = stripAnsi(buildCommandHelpText('stats'));
     assert.ok(text.includes('GARDA_COMMAND_HELP'));
     assert.ok(text.includes('stats'));
     assert.ok(text.includes('--task-id "<task-id>"'));

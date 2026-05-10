@@ -96,7 +96,7 @@ function captureConsoleLog(action: () => void): string {
     } finally {
         console.log = originalLog;
     }
-    return captured.join('\n');
+    return stripAnsi(captured.join('\n'));
 }
 
 function withColorEnv<T>(env: { NO_COLOR?: string | undefined; FORCE_COLOR?: string | undefined }, action: () => T): T {
@@ -1044,7 +1044,7 @@ test('formatTaskStatsText produces readable output', () => {
         }
     };
 
-    const text = formatTaskStatsText(stats);
+    const text = stripAnsi(formatTaskStatsText(stats));
     assert.ok(text.includes('Task: T-042'));
     assert.ok(text.includes('Events: 12'));
     assert.ok(text.includes('10m 0s'));
@@ -1165,7 +1165,7 @@ test('formatAggregateStatsText includes header and per-task lines', () => {
         ]
     };
 
-    const text = formatAggregateStatsText(agg);
+    const text = stripAnsi(formatAggregateStatsText(agg));
     assert.ok(text.includes('GARDA_STATS'));
     assert.ok(text.includes('Tasks analyzed: 2'));
     assert.ok(text.includes('Total suppressed output: ~4000 chars (~25%)'));
@@ -1220,7 +1220,7 @@ test('formatAggregateStatsText keeps token-only per-task notes visible', () => {
         ]
     };
 
-    const text = formatAggregateStatsText(agg);
+    const text = stripAnsi(formatAggregateStatsText(agg));
     assert.ok(text.includes('Total suppressed output: unavailable (legacy token-only artifacts)'));
     assert.ok(text.includes('Total token estimate: ~33'));
     assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, token estimate ~33'));
@@ -1301,7 +1301,7 @@ test('formatAggregateStatsText marks partial char coverage for mixed aggregate h
         ]
     };
 
-    const text = formatAggregateStatsText(agg);
+    const text = stripAnsi(formatAggregateStatsText(agg));
     assert.ok(text.includes('Total suppressed output (char-aware subset): ~2000 chars'));
     assert.ok(text.includes('T-MIXED: 5 events, 2m 0s, ~2000 chars suppressed (char-aware subset; token estimate ~500)'));
     assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, token estimate ~33'));
@@ -1390,7 +1390,7 @@ test('formatTaskStatsText handles null wall_clock_seconds', () => {
             visible_summary_line: null
         }
     };
-    const text = formatTaskStatsText(stats);
+    const text = stripAnsi(formatTaskStatsText(stats));
     assert.ok(text.includes('Duration: (unknown)'));
     assert.ok(text.includes('no savings recorded'));
 });
@@ -1425,7 +1425,7 @@ test('formatTaskStatsText formats hours correctly', () => {
             visible_summary_line: null
         }
     };
-    const text = formatTaskStatsText(stats);
+    const text = stripAnsi(formatTaskStatsText(stats));
     assert.ok(text.includes('1h 1m 1s'));
 });
 
@@ -1589,7 +1589,7 @@ test('formatTaskStatsText renders depth and budget forecast when present', () =>
             visible_summary_line: 'Suppressed output: ~1600 chars (~27%) (compile gate output ~1600 chars). Token estimate: ~400.'
         }
     };
-    const text = formatTaskStatsText(stats);
+    const text = stripAnsi(formatTaskStatsText(stats));
     assert.ok(text.includes('Depth: 1 -> 2 (escalated)'));
     assert.ok(text.includes('Budget Forecast:'));
     assert.ok(text.includes('Total forecast: ~1700'));
