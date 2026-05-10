@@ -228,8 +228,21 @@ function canCreateSymlinks(): boolean {
         const target = path.join(dir, 'target');
         const link = path.join(dir, 'link');
         fs.mkdirSync(target);
-        fs.symlinkSync(target, link, 'junction');
-        return true;
+        
+        try {
+            fs.symlinkSync(target, link, 'junction');
+            return true;
+        } catch (e: any) {
+            // On Windows, EPERM usually means "Developer Mode" is off or not running as Admin.
+            // This is a legitimate environment constraint, not a code failure.
+            if (process.platform === 'win32' && e.code === 'EPERM') {
+                // Policy: T-494 decides to keep explicit skip with a clear diagnostic.
+                // Coverage fallback: resolveRealPath and isSubpath are still tested via 
+                // non-escaping paths and deep ancestor resolution (see above).
+                return false;
+            }
+            throw e;
+        }
     } catch {
         return false;
     } finally {
