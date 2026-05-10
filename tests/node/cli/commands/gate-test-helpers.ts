@@ -57,3 +57,7 @@ export {
     captureExpectedAsyncError,
     runCliWithCapturedOutput
 } from './gate-test-cli-capture';
+
+export {
+    assertGateChainDecision
+} from './gate-test-gatechain';

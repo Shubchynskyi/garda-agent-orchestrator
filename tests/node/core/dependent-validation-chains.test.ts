@@ -14,6 +14,7 @@ import {
     getGateChainEdgesForConsumer,
     getGateChainEdgesForProducer
 } from '../../../src/core/dependent-validation-chains';
+import { assertGateChainDecision } from '../cli/commands/gate-test-gatechain';
 
 function writeFile(filePath: string, content: string): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -272,8 +273,11 @@ test('buildGateChainLaunchDecision formats block decisions from the manifest', (
         'node bin/garda.js gate classify-change --task-id "T-333" --task-intent "<task summary>" --output-path "garda-agent-orchestrator/runtime/reviews/T-333-preflight.json" --repo-root "."'
     );
     const rendered = formatGateChainLaunchDecision(decision);
-    assert.match(rendered, /GateChain preflight-to-post-preflight-rules block/);
-    assert.match(rendered, /NextCommand: node bin\/garda\.js gate classify-change/);
+    assertGateChainDecision(rendered, {
+        edgeId: 'preflight-to-post-preflight-rules',
+        status: 'block',
+        remediation: 'node bin/garda.js gate classify-change'
+    });
 });
 
 test('buildGateChainLaunchDecision can route stale consumers to the consumer gate', () => {

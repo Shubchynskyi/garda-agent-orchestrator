@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import { formatNextStepText, resolveNextStep } from '../../../src/gates/next-step';
+import { assertGateChainDecision } from '../cli/commands/gate-test-gatechain';
 import { getWorkspaceSnapshot } from '../../../src/gates/compile-gate';
 import { getWorkspaceSnapshotCached } from '../../../src/gates/workspace-snapshot-cache';
 import { buildRulePackArtifact } from '../../../src/gates/rule-pack';
@@ -4558,7 +4559,10 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'build-review-context');
         assert.equal(result.review.next_review_type, 'security');
         assert.match(result.title, /Prepare 'security' review context/);
-        assert.ok(result.reason.includes('GateChain compile-to-review-context pass'));
+        assertGateChainDecision(result.reason, {
+            edgeId: 'compile-to-review-context',
+            status: 'pass'
+        });
         assert.ok(result.reason.includes('LaneScope=review_type'));
         assert.ok(result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
@@ -4817,7 +4821,10 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'record-review-routing');
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('current REVIEWER_DELEGATION_ROUTED telemetry'));
-        assert.ok(result.reason.includes('GateChain review-context-to-routing pass'));
+        assertGateChainDecision(result.reason, {
+            edgeId: 'review-context-to-routing',
+            status: 'pass'
+        });
         assert.ok(result.reason.includes('LaneScope=review_type'));
         assert.ok(result.reason.includes('opaque handoff artifact'));
         assert.ok(result.reason.includes('Do not open or summarize'));
@@ -4847,7 +4854,10 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'prepare-reviewer-launch');
         assert.ok(result.reason.includes('task-owned reviewer launch metadata'));
-        assert.ok(result.reason.includes('GateChain review-routing-to-launch-prepared pass'));
+        assertGateChainDecision(result.reason, {
+            edgeId: 'review-routing-to-launch-prepared',
+            status: 'pass'
+        });
         assert.ok(result.reason.includes('Reviewer readiness chain: preflight scope=current -> review context=current'));
         assert.ok(result.reason.includes('routing=current'));
         assert.ok(result.reason.includes('launch artifact=missing or stale'));
@@ -4903,7 +4913,10 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Launch the delegated reviewer with the prepared prompt path as an opaque handoff'));
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('complete-reviewer-launch'));
-        assert.ok(result.reason.includes('GateChain review-launch-prepared-to-launch-completed pass'));
+        assertGateChainDecision(result.reason, {
+            edgeId: 'review-launch-prepared-to-launch-completed',
+            status: 'pass'
+        });
         assert.ok(result.reason.includes('launch artifact=prepared'));
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
         assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
@@ -4959,7 +4972,10 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('launch metadata'));
         assert.ok(result.reason.includes('already contains completed launch evidence'));
         assert.ok(!result.reason.includes('Launch the delegated reviewer with the prepared prompt'));
-        assert.ok(result.reason.includes('GateChain review-launch-completed-to-invocation pass'));
+        assertGateChainDecision(result.reason, {
+            edgeId: 'review-launch-completed-to-invocation',
+            status: 'pass'
+        });
         assert.ok(result.reason.includes('launch artifact=launched'));
         assert.ok(result.reason.includes('invocation=missing current-cycle attestation'));
         assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
@@ -5079,7 +5095,10 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-result');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
-        assert.ok(result.reason.includes('GateChain review-invocation-to-result pass'));
+        assertGateChainDecision(result.reason, {
+            edgeId: 'review-invocation-to-result',
+            status: 'pass'
+        });
         assert.ok(result.reason.includes('invocation=attested'));
         assert.ok(result.reason.includes('review output/receipt=receipt invalid or stale'));
     });

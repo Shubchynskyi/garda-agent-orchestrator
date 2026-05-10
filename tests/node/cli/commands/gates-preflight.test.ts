@@ -21,7 +21,10 @@ import {
     runLoadRulePackCommand,
     runShellSmokePreflightCommand
 } from '../../../../src/cli/commands/gates';
-import { runCliWithCapturedOutput } from './gate-test-cli-capture';
+import {
+    assertGateChainDecision,
+    runCliWithCapturedOutput
+} from './gate-test-helpers';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import * as childProcess from 'node:child_process';
 
@@ -1588,9 +1591,12 @@ describe('cli/commands/gates — preflight', () => {
 
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'RULE_PACK_LOAD_FAILED');
-        assert.ok(result.outputLines.some((line) => line.includes('Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT')));
-        assert.ok(result.outputLines.some((line) => line.includes('GateChain preflight-to-post-preflight-rules block')));
-        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate classify-change --task-id')));
+        assertGateChainDecision(result.outputLines, {
+            edgeId: 'preflight-to-post-preflight-rules',
+            status: 'block',
+            reason: 'Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT',
+            remediation: 'node bin/garda.js gate classify-change --task-id'
+        });
         assert.equal(artifact.stages.post_preflight.status, 'FAILED');
         assert.equal(artifact.stages.post_preflight.preflight_event_sequence, null);
 
@@ -2264,9 +2270,12 @@ describe('cli/commands/gates — preflight', () => {
 
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
-        assert.ok(result.outputLines.some((line) => line.includes('missing POST_PREFLIGHT RULE_PACK_LOADED evidence')));
-        assert.ok(result.outputLines.some((line) => line.includes('GateChain post-preflight-rules-to-compile block')));
-        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate load-rule-pack --task-id')));
+        assertGateChainDecision(result.outputLines, {
+            edgeId: 'post-preflight-rules-to-compile',
+            status: 'block',
+            reason: 'missing POST_PREFLIGHT RULE_PACK_LOADED evidence',
+            remediation: 'node bin/garda.js gate load-rule-pack --task-id'
+        });
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2307,7 +2316,12 @@ describe('cli/commands/gates — preflight', () => {
 
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
-        assert.ok(result.outputLines.some((line) => line.includes('Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT')));
+        assertGateChainDecision(result.outputLines, {
+            edgeId: 'preflight-to-post-preflight-rules',
+            status: 'block',
+            reason: 'Run classify-change to completion before load-rule-pack --stage POST_PREFLIGHT',
+            remediation: 'node bin/garda.js gate classify-change --task-id'
+        });
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

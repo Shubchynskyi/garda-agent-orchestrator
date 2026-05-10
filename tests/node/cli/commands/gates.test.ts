@@ -72,6 +72,7 @@ import {
     readTaskQueueStatusFromTaskFile,
     captureExpectedAsyncError,
     runCliWithCapturedOutput,
+    assertGateChainDecision,
     ageFixturePath
 } from './gate-test-helpers';
 
@@ -2103,9 +2104,12 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
-        assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
-        assert.ok(result.outputLines.some((line) => line.includes('GateChain post-preflight-rules-to-compile block')));
-        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate load-rule-pack --task-id')));
+        assertGateChainDecision(result.outputLines, {
+            edgeId: 'post-preflight-rules-to-compile',
+            status: 'block',
+            reason: 'Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate',
+            remediation: 'node bin/garda.js gate load-rule-pack --task-id'
+        });
         assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2331,9 +2335,12 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
-        assert.ok(result.outputLines.some((line) => line.includes('Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate')));
-        assert.ok(result.outputLines.some((line) => line.includes('GateChain post-preflight-rules-to-compile block')));
-        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate load-rule-pack --task-id')));
+        assertGateChainDecision(result.outputLines, {
+            edgeId: 'post-preflight-rules-to-compile',
+            status: 'block',
+            reason: 'Do not parallelize classify-change, load-rule-pack --stage POST_PREFLIGHT, and compile-gate',
+            remediation: 'node bin/garda.js gate load-rule-pack --task-id'
+        });
         assertCompileFailureIncludesNextStepHint(result.outputLines);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -2383,9 +2390,12 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Unsafe same-task overlap detected')));
-        assert.ok(result.outputLines.some((line) => line.includes('shell-smoke-preflight -> classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate')));
-        assert.ok(result.outputLines.some((line) => line.includes('GateChain handshake-to-shell-smoke block')));
-        assert.ok(result.outputLines.some((line) => line.includes('NextCommand: node bin/garda.js gate shell-smoke-preflight --task-id')));
+        assertGateChainDecision(result.outputLines, {
+            edgeId: 'handshake-to-shell-smoke',
+            status: 'block',
+            reason: 'shell-smoke-preflight -> classify-change -> load-rule-pack --stage POST_PREFLIGHT -> compile-gate',
+            remediation: 'node bin/garda.js gate shell-smoke-preflight --task-id'
+        });
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
