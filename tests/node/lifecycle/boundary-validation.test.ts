@@ -1,6 +1,6 @@
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
+import fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
@@ -253,12 +253,23 @@ describe('symlink/junction escape detection', { skip: !symlinkSupported && 'Syml
             const junction = path.join(root, 'escape');
             fs.symlinkSync(outside, junction, 'junction');
 
-            // Lexically the path looks inside root, but realpath resolves outside
-            const candidate = path.join(root, 'escape', 'secret.txt');
-            assert.throws(
-                () => ensureWithinRoot(root, candidate, 'Junction test'),
-                /symlink or junction/
-            );
+            // Instrument fs.statSync and fs.readFileSync to prove they are not reached
+            const statMock = mock.method(fs, 'statSync');
+            const readMock = mock.method(fs, 'readFileSync');
+
+            try {
+                // Lexically the path looks inside root, but realpath resolves outside
+                const candidate = path.join(root, 'escape', 'secret.txt');
+                assert.throws(
+                    () => ensureWithinRoot(root, candidate, 'Junction test'),
+                    /symlink or junction/
+                );
+
+                assert.equal(statMock.mock.callCount(), 0, 'fs.statSync should not be called');
+                assert.equal(readMock.mock.callCount(), 0, 'fs.readFileSync should not be called');
+            } finally {
+                mock.restoreAll();
+            }
         } finally {
             removePathRecursive(dir);
         }
