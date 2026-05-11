@@ -709,6 +709,8 @@ export function readReviewTrustSummaryFromReviewGate(
     }
 
     const executionModes = new Set<string>();
+    let reusedCount = 0;
+    let freshCount = 0;
     for (const reviewType of requiredReviewTypes) {
         if (reviewGateRequiredReviews[reviewType] !== true) {
             return null;
@@ -719,19 +721,29 @@ export function readReviewTrustSummaryFromReviewGate(
         if (!check || !reviewGateCheckIsIndependent(check)) {
             return null;
         }
+        if (check.reused_existing_review === true) {
+            reusedCount++;
+        } else {
+            freshCount++;
+        }
         executionModes.add('DELEGATED_SUBAGENT');
     }
 
     const scopeLabel = String(scopeCategory || '').trim() ? `${String(scopeCategory).trim()} task` : 'task';
     const formattedModes = [...executionModes].sort().join(', ') || 'unknown execution mode';
+    const reuseSuffix = reusedCount > 0
+        ? (freshCount > 0 ? ` (REUSED: ${reusedCount}, FRESH: ${freshCount})` : ' (REUSED)')
+        : '';
     return {
         status: 'INDEPENDENT_AUDITED',
         trust_levels: ['INDEPENDENT_AUDITED'],
         execution_modes: [...executionModes].sort(),
         independent_review_attested: true,
+        reused_count: reusedCount,
+        fresh_count: freshCount,
         completion_policy: 'INDEPENDENT_REVIEW_ATTESTED',
         visible_summary_line:
-            `Review trust: INDEPENDENT_AUDITED via ${formattedModes}; ` +
+            `Review trust: INDEPENDENT_AUDITED${reuseSuffix} via ${formattedModes}; ` +
             'independent reviewer launch attested.',
         policy_summary_line:
             `Review policy: independent reviewer launch attestation satisfies mandatory review for this ${scopeLabel}.`
@@ -901,7 +913,8 @@ function readReviewTrustSummaryUnlocked(
             reviewer_identity: typeof receipt.reviewer_identity === 'string' ? receipt.reviewer_identity : null,
             reviewer_fallback_reason: typeof receipt.reviewer_fallback_reason === 'string' ? receipt.reviewer_fallback_reason : null,
             reviewer_fallback_reason_required: contextFallbackReasonRequired,
-            reviewer_provenance: receipt.reviewer_provenance ?? null
+            reviewer_provenance: receipt.reviewer_provenance ?? null,
+            reused_existing_review: receipt.reused_existing_review === true
         }];
     });
     return buildReviewTrustSummary(entries, scopeCategory, compatibilityReviewTypes.length);

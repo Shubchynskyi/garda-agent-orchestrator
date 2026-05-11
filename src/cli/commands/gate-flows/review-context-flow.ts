@@ -1170,6 +1170,7 @@ export async function runBuildReviewContextCommand(
             ruleContextArtifactPath: currentPassReviewEvidence.ruleContextArtifactPath,
             handoffInstruction: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
             tokenEconomyActive: currentPassReviewEvidence.tokenEconomyActive === true,
+            reviewReuseEvidence: currentPassReviewEvidence.reusedExistingReview ? 'REUSED' : 'FRESH',
             reviewReuseDecision: 'accepted',
             reviewReuseReason: currentPassReviewEvidence.reason,
             currentPassReviewEvidence: true
@@ -1179,16 +1180,16 @@ export async function runBuildReviewContextCommand(
             'ruleContextArtifactPath',
             'handoffInstruction',
             'tokenEconomyActive',
+            'reviewReuseEvidence',
             'reviewReuseDecision',
             'reviewReuseReason',
             'currentPassReviewEvidence'
         ];
         if (currentPassReviewEvidence.reusedExistingReview) {
-            outputKV.reusedReviewEvidence = true;
             outputKV.reusedReceiptPath = currentPassReviewEvidence.receiptPath;
             outputKV.reusedReviewerExecutionMode = currentPassReviewEvidence.reviewerExecutionMode;
             outputKV.reusedReviewerIdentity = currentPassReviewEvidence.reviewerIdentity;
-            orderedKeys.push('reusedReviewEvidence', 'reusedReceiptPath', 'reusedReviewerExecutionMode', 'reusedReviewerIdentity');
+            orderedKeys.push('reusedReceiptPath', 'reusedReviewerExecutionMode', 'reusedReviewerIdentity');
         }
         return {
             reviewType,
@@ -1283,6 +1284,7 @@ export async function runBuildReviewContextCommand(
         ruleContextArtifactPath: result.rule_context.artifact_path,
         handoffInstruction: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
         tokenEconomyActive: result.token_economy_active,
+        reviewReuseEvidence: reviewReuseResult.reused ? 'REUSED' : 'FRESH',
         reviewReuseDecision: reviewReuseResult.reused ? 'accepted' : 'rejected',
         reviewReuseReason: reviewReuseResult.reason,
         currentPassReviewEvidence: currentPassReviewEvidence?.accepted === true ? true : 'rejected',
@@ -1293,17 +1295,17 @@ export async function runBuildReviewContextCommand(
         'ruleContextArtifactPath',
         'handoffInstruction',
         'tokenEconomyActive',
+        'reviewReuseEvidence',
         'reviewReuseDecision',
         'reviewReuseReason',
         'currentPassReviewEvidence',
         'currentPassReviewEvidenceReason'
     ];
     if (reviewReuseResult.reused) {
-        outputKV.reusedReviewEvidence = true;
         outputKV.reusedReceiptPath = reviewReuseResult.receiptPath;
         outputKV.reusedReviewerExecutionMode = reviewReuseResult.reviewerExecutionMode;
         outputKV.reusedReviewerIdentity = reviewReuseResult.reviewerIdentity;
-        orderedKeys.push('reusedReviewEvidence', 'reusedReceiptPath', 'reusedReviewerExecutionMode', 'reusedReviewerIdentity');
+        orderedKeys.push('reusedReceiptPath', 'reusedReviewerExecutionMode', 'reusedReviewerIdentity');
     }
     const outputLines = buildKeyValueOutputLines(outputKV, orderedKeys);
     return {

@@ -284,6 +284,7 @@ function validateDerivedReviewReceiptPath(options: {
 export interface ReviewArtifactGateEligibilityResult {
     compactionAudit: ReturnType<typeof auditReviewArtifactCompaction> | null;
     receiptValid: boolean;
+    reusedExistingReview: boolean;
     reviewerExecutionMode: string | null;
     reviewerIdentity: string | null;
     reviewerFallbackReason: string | null;
@@ -1002,6 +1003,7 @@ export function validateReviewArtifactGateEligibility(options: {
     return {
         compactionAudit,
         receiptValid,
+        reusedExistingReview,
         reviewerExecutionMode,
         reviewerIdentity,
         reviewerFallbackReason,
@@ -1089,6 +1091,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
 
         let compactionAudit = null;
         let receiptValid = false;
+        let reusedExistingReview = false;
         let reviewerExecutionMode: string | null = null;
         let reviewerIdentity: string | null = null;
         let reviewerFallbackReason: string | null = null;
@@ -1117,6 +1120,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
             });
             compactionAudit = validation.compactionAudit;
             receiptValid = validation.receiptValid;
+            reusedExistingReview = validation.reusedExistingReview;
             reviewerExecutionMode = validation.reviewerExecutionMode;
             reviewerIdentity = validation.reviewerIdentity;
             reviewerFallbackReason = validation.reviewerFallbackReason;
@@ -1134,6 +1138,7 @@ export function checkRequiredReviews(options: CheckRequiredReviewsOptions) {
             pass_token: passToken,
             compaction_audit: compactionAudit,
             receipt_valid: receiptValid,
+            reused_existing_review: reusedExistingReview,
             reviewer_execution_mode: reviewerExecutionMode,
             reviewer_identity: reviewerIdentity,
             reviewer_fallback_reason: reviewerFallbackReason,

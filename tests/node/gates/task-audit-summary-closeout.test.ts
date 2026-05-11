@@ -608,6 +608,8 @@ describe('gates/task-audit-summary', () => {
                     trust_levels: ['LOCAL_ASSERTED'],
                     execution_modes: ['DELEGATED_SUBAGENT'],
                     independent_review_attested: false,
+                    reused_count: 0,
+                    fresh_count: 1,
                     completion_policy: 'ASSERTED_LOCAL_BLOCKED',
                     visible_summary_line: 'Review trust: LOCAL_ASSERTED via DELEGATED_SUBAGENT; not independent audited review.',
                     policy_summary_line: 'Review policy: asserted local review cannot satisfy mandatory independent review for this code task; use independent reviewer launch attestation or human sign-off.'

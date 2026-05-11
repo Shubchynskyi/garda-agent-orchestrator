@@ -10,6 +10,7 @@ export interface ReviewTrustEvidenceEntry {
     reviewer_fallback_reason?: string | null;
     reviewer_fallback_reason_required?: boolean | null;
     reviewer_provenance?: unknown;
+    reused_existing_review?: boolean | null;
 }
 
 export interface ReviewTrustSummary {
@@ -22,6 +23,8 @@ export interface ReviewTrustSummary {
     trust_levels: string[];
     execution_modes: string[];
     independent_review_attested: boolean;
+    reused_count: number;
+    fresh_count: number;
     completion_policy: 'ASSERTED_LOCAL_BLOCKED' | 'INDEPENDENT_REVIEW_ATTESTED';
     visible_summary_line: string;
     policy_summary_line: string;
@@ -58,6 +61,16 @@ function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutionMode |
 
 function formatModes(executionModes: ReviewerExecutionMode[]): string {
     return executionModes.length > 0 ? executionModes.join(', ') : 'unknown execution mode';
+}
+
+function formatReuse(reusedCount: number, freshCount: number): string {
+    if (reusedCount > 0 && freshCount > 0) {
+        return ` (REUSED: ${reusedCount}, FRESH: ${freshCount})`;
+    }
+    if (reusedCount > 0) {
+        return ' (REUSED)';
+    }
+    return '';
 }
 
 function formatScopeLabel(scopeCategory: string | null | undefined): string {
@@ -135,7 +148,8 @@ export function buildReviewTrustSummaryFromCompatibilityArtifacts(
                 ? receipt.reviewer_fallback_reason
                 : null,
             reviewer_fallback_reason_required: getReviewTrustFallbackReasonRequired(reviewContext),
-            reviewer_provenance: receipt.reviewer_provenance ?? null
+            reviewer_provenance: receipt.reviewer_provenance ?? null,
+            reused_existing_review: receipt.reused_existing_review === true
         }];
     });
 
@@ -182,7 +196,8 @@ export function buildReviewTrustSummary(
             invalid_provenance:
                 (provenanceProvided && normalizedProvenance == null)
                 || missingDelegatedProvenance
-                || invalidIndependentProvenance
+                || invalidIndependentProvenance,
+            reused: entry.reused_existing_review === true
         };
     });
     const usableEntries = normalizedEntries.filter(
@@ -202,6 +217,8 @@ export function buildReviewTrustSummary(
             .map((entry) => entry.execution_mode)
             .filter((entry): entry is ReviewerExecutionMode => entry != null)
     )].sort();
+    const reusedCount = usableEntries.filter((entry) => entry.reused).length;
+    const freshCount = usableEntries.length - reusedCount;
     const scopeLabel = formatScopeLabel(scopeCategory);
 
     if (
@@ -215,6 +232,8 @@ export function buildReviewTrustSummary(
             trust_levels: [],
             execution_modes: executionModes,
             independent_review_attested: false,
+            reused_count: reusedCount,
+            fresh_count: freshCount,
             completion_policy: 'ASSERTED_LOCAL_BLOCKED',
             visible_summary_line: 'Review trust: unavailable (required review trust evidence incomplete or invalid).',
             policy_summary_line:
@@ -231,9 +250,11 @@ export function buildReviewTrustSummary(
             trust_levels: trustLevels,
             execution_modes: executionModes,
             independent_review_attested: true,
+            reused_count: reusedCount,
+            fresh_count: freshCount,
             completion_policy: 'INDEPENDENT_REVIEW_ATTESTED',
             visible_summary_line:
-                `Review trust: INDEPENDENT_AUDITED via ${formatModes(executionModes)}; ` +
+                `Review trust: INDEPENDENT_AUDITED${formatReuse(reusedCount, freshCount)} via ${formatModes(executionModes)}; ` +
                 'independent reviewer launch attested.',
             policy_summary_line:
                 `Review policy: independent reviewer launch attestation satisfies mandatory review for this ${scopeLabel}.`
@@ -243,17 +264,17 @@ export function buildReviewTrustSummary(
     if (trustLevels.length === 1 && trustLevels[0] === 'LOCAL_ASSERTED') {
         status = 'ASSERTED_LOCAL_ONLY';
         visibleSummaryLine =
-            `Review trust: LOCAL_ASSERTED via ${formatModes(executionModes)}; ` +
+            `Review trust: LOCAL_ASSERTED${formatReuse(reusedCount, freshCount)} via ${formatModes(executionModes)}; ` +
             'not independent audited review.';
     } else if (trustLevels.length === 1 && trustLevels[0] === 'LOCAL_AUDITED') {
         status = 'LEGACY_LOCAL_AUDITED_CLAIM';
         visibleSummaryLine =
-            `Review trust: legacy LOCAL_AUDITED claim via ${formatModes(executionModes)}; ` +
+            `Review trust: legacy LOCAL_AUDITED claim${formatReuse(reusedCount, freshCount)} via ${formatModes(executionModes)}; ` +
             'treat as local historical evidence, not independent audited review.';
     } else {
         status = 'MIXED_LOCAL_TRUST';
         visibleSummaryLine =
-            `Review trust: mixed local trust receipts (${trustLevels.join(', ')}) via ${formatModes(executionModes)}; ` +
+            `Review trust: mixed local trust receipts (${trustLevels.join(', ')})${formatReuse(reusedCount, freshCount)} via ${formatModes(executionModes)}; ` +
             'not independent audited review.';
     }
 
@@ -262,6 +283,8 @@ export function buildReviewTrustSummary(
         trust_levels: trustLevels,
         execution_modes: executionModes,
         independent_review_attested: false,
+        reused_count: reusedCount,
+        fresh_count: freshCount,
         completion_policy: 'ASSERTED_LOCAL_BLOCKED',
         visible_summary_line: visibleSummaryLine,
         policy_summary_line:

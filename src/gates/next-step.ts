@@ -3109,7 +3109,8 @@ function readReviewTrust(
             reviewer_fallback_reason: typeof receipt.reviewer_fallback_reason === 'string'
                 ? receipt.reviewer_fallback_reason
                 : null,
-            reviewer_provenance: receipt.reviewer_provenance ?? null
+            reviewer_provenance: receipt.reviewer_provenance ?? null,
+            reused_existing_review: receipt.reused_existing_review === true
         }];
     });
     return buildReviewTrustSummary(entries, scopeCategory, requiredReviewTypes.length);
