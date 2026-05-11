@@ -1317,7 +1317,6 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('TaskProfile: fast (task_queue)'));
         assert.ok(text.includes('RuntimeActiveProfile: balanced (built_in)'));
         assert.ok(text.includes('EffectiveProfile: fast (built_in)'));
-        assert.ok(text.includes('Depth: requested=1; effective=2; escalation=full_path_minimum_depth_2, test_review_required'));
         assert.ok(text.includes('TokenBudget: total~1800; effective~1170; token_economy_active=true'));
     });
 
@@ -5974,7 +5973,7 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/SPLIT_REQUIRED/DONE'));
         assert.ok(text.includes('FinalReportOrder:'));
         assert.ok(text.includes('1. review integrity attestation'));
-        assert.ok(text.includes('2. implementation summary (include depth, path mode, review verdicts, docs updated)'));
+        assert.ok(text.includes('2. implementation summary (include path mode, review verdicts, docs updated)'));
         assert.ok(text.includes('3. git commit -m "'));
         assert.ok(text.includes('4. Do you want me to commit now? (yes/no)'));
         assert.ok(text.includes('Commands:'));

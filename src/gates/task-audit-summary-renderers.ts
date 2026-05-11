@@ -247,14 +247,9 @@ function getReviewAttemptSummaryLine(summary: ReviewAttemptSummary | null | unde
 
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
-    const depthParts: string[] = [];
-    if (closeout.implementation_summary.requested_depth != null) {
-        depthParts.push(`requested depth=${closeout.implementation_summary.requested_depth}`);
-    }
-    if (closeout.implementation_summary.effective_depth != null) {
-        depthParts.push(`effective depth=${closeout.implementation_summary.effective_depth}`);
-    }
-    const depthText = depthParts.length > 0 ? depthParts.join(', ') : 'depth=unknown';
+    const profileText = closeout.implementation_summary.active_profile
+        ? `profile=${closeout.implementation_summary.active_profile}`
+        : 'profile=unknown';
     const pathModeText = closeout.implementation_summary.path_mode || 'unknown';
     const reviewVerdicts = Object.entries(closeout.implementation_summary.review_verdicts)
         .map(([reviewType, verdict]) => `\`${reviewType}: ${verdict}\``);
@@ -274,7 +269,7 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
 
     lines.push('');
     lines.push(
-        `Task \`${closeout.task_id}\` completed in \`${depthText}\`, \`path mode=${pathModeText}\`. ` +
+        `Task \`${closeout.task_id}\` completed in \`${profileText}\`, \`path mode=${pathModeText}\`. ` +
         `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
     );
 

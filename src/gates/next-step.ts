@@ -7233,16 +7233,6 @@ export function formatNextStepText(result: NextStepResult): string {
         if (result.profile.effective_profile) {
             lines.push(`EffectiveProfile: ${result.profile.effective_profile} (${result.profile.effective_profile_source || 'unknown'})`);
         }
-        if (result.profile.requested_depth != null || result.profile.effective_depth != null) {
-            const depthParts = [
-                `requested=${result.profile.requested_depth != null ? result.profile.requested_depth : 'unknown'}`,
-                `effective=${result.profile.effective_depth != null ? result.profile.effective_depth : 'unknown'}`
-            ];
-            if (result.profile.depth_escalation_reason) {
-                depthParts.push(`escalation=${result.profile.depth_escalation_reason}`);
-            }
-            lines.push(`Depth: ${depthParts.join('; ')}`);
-        }
         if (result.profile.total_forecast_tokens != null) {
             const tokenParts = [`total~${result.profile.total_forecast_tokens}`];
             if (result.profile.effective_forecast_tokens != null) {

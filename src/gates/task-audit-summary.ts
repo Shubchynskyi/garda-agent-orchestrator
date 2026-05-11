@@ -1526,7 +1526,6 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         taskEventsTimelineEvidence
     );
     const implementationSummaryRequirements = [
-        'depth',
         'path mode',
         'review verdicts',
         'docs updated'
