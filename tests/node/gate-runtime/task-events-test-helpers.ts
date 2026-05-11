@@ -62,12 +62,12 @@ export function runConcurrentAppendWorker(
         });
 
         child.on('error', reject);
-        child.on('exit', (code) => {
+        child.on('close', (code) => {
             if (code === 0) {
                 resolve();
                 return;
             }
-            reject(new Error(stderr || `append worker exited with code ${code}`));
+            reject(new Error(stderr || `worker exited with code ${code}`));
         });
     });
 }
@@ -119,7 +119,7 @@ export function runConcurrentPruneWorker(
         });
 
         child.on('error', reject);
-        child.on('exit', (code) => {
+        child.on('close', (code) => {
             if (code === 0) {
                 resolve();
                 return;
@@ -181,7 +181,7 @@ export async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: 
             clearInterval(timer);
             reject(error);
         });
-        child.once('exit', (code) => {
+        child.once('close', (code) => {
             if (!fs.existsSync(ownerPath) && code !== 0) {
                 clearInterval(timer);
                 reject(new Error(stderr || `task-event lock holder exited with code ${code}`));
@@ -194,7 +194,7 @@ export async function holdTaskEventLockInChildProcess(lockPath: string, holdMs: 
             child.kill();
         }
         await new Promise<void>((resolve) => {
-            child.once('exit', () => resolve());
+            child.once('close', () => resolve());
             setTimeout(resolve, 250);
         });
     };
