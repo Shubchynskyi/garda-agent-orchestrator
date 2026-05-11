@@ -1,325 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 
-import {
-    validateStageSequence,
-    detectCodeChanged,
-    preflightRequiresAnyReview,
-    validateReviewSkillEvidence,
-    STAGE_SEQUENCE_ORDER,
-    NON_CODE_STAGE_SEQUENCE_ORDER
-} from '../../../src/gates/completion';
-
+import { validateReviewSkillEvidence } from '../../../src/gates/completion';
 import type { TimelineEventEntry } from '../../../src/gates/completion';
+
+import { makeTimelineEvent } from './completion-stage-evidence-fixtures';
+
 describe('gates/completion — stage and evidence validation', () => {
-    describe('validateStageSequence', () => {
-        function makeEvents(...types: (string | { type: string, details: any })[]): TimelineEventEntry[] {
-            return types.map((t, i) => {
-                const type = typeof t === 'string' ? t : t.type;
-                const details = typeof t === 'object' ? t.details : null;
-                return {
-                    event_type: type,
-                    timestamp_utc: `2026-01-01T00:0${i}:00.000Z`,
-                    sequence: i,
-                    details
-                };
-            });
-        }
-
-        it('passes when stages are in correct order for code-changing task', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED', 'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED', 'REVIEW_RECORDED', 'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, true, '/timeline.jsonl');
-            assert.equal(result.violations.some((entry) => entry.includes('single-agent providers')), false);
-        });
-
-        it('requires canonical preflight and implementation stages for non-code tasks too', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, false, '/timeline.jsonl');
-            assert.equal(result.violations.some((entry) => entry.includes('single-agent providers')), false);
-            assert.deepEqual(result.observed_order, [...NON_CODE_STAGE_SEQUENCE_ORDER]);
-        });
-
-        it('rejects non-code latest-cycle review evidence when preflight and implementation only exist in an older cycle', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, false, '/timeline.jsonl');
-            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'PREFLIGHT_CLASSIFIED' from an older execution cycle.")));
-            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'IMPLEMENTATION_STARTED' from an older execution cycle.")));
-        });
-
-        it('does not require REVIEW_RECORDED when the current code-changing cycle required zero reviews', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, true, '/timeline.jsonl', false);
-            assert.equal(result.violations.length, 0);
-            assert.deepEqual(result.expected_order, [...NON_CODE_STAGE_SEQUENCE_ORDER]);
-        });
-
-        it('still requires REVIEW_RECORDED when the current code-changing cycle required reviews', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, true, '/timeline.jsonl', true);
-            assert.ok(result.violations.some((item) => item.includes("latest 'REVIEW_GATE_PASSED' evidence")));
-            assert.ok(result.violations.some((item) => item.includes("'REVIEW_RECORDED'")));
-        });
-
-        it('uses the latest coherent cycle instead of the first stale stage occurrences', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'REVIEW_PHASE_STARTED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_RECORDED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, true, '/timeline.jsonl');
-            assert.equal(result.violations.length, 0);
-            assert.deepEqual(result.observed_order, [...STAGE_SEQUENCE_ORDER]);
-        });
-
-        it('does not let an early task-entry rule-pack misorder poison a later valid cycle', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                { type: 'RULE_PACK_LOADED', details: { stage: 'TASK_ENTRY' } },
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_RECORDED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, true, '/timeline.jsonl');
-            assert.equal(result.violations.some(v =>
-                v.includes('receipt cannot use delegated_subagent') && v.includes('Gemini')
-            ), false);
-        });
-
-        it('rejects backfilling compile evidence from an older cycle when the latest cycle is misordered', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'REVIEW_PHASE_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_RECORDED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, true, '/timeline.jsonl');
-            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
-        });
-
-        it('rejects latest-cycle review evidence when compile and implementation only exist in an older cycle', () => {
-            const events = makeEvents(
-                'TASK_MODE_ENTERED',
-                'HANDSHAKE_DIAGNOSTICS_RECORDED',
-                'SHELL_SMOKE_PREFLIGHT_RECORDED',
-                'PREFLIGHT_CLASSIFIED',
-                'IMPLEMENTATION_STARTED',
-                'COMPILE_GATE_PASSED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_GATE_PASSED',
-                'PREFLIGHT_CLASSIFIED',
-                'REVIEW_PHASE_STARTED',
-                'REVIEW_RECORDED',
-                'REVIEW_GATE_PASSED'
-            );
-            const result = validateStageSequence(events, true, '/timeline.jsonl');
-            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'IMPLEMENTATION_STARTED' from an older execution cycle.")));
-            assert.ok(result.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
-        });
-    });
-
-    describe('detectCodeChanged', () => {
-        it('detects when preflight requires any review', () => {
-            assert.equal(preflightRequiresAnyReview({
-                required_reviews: {
-                    code: false,
-                    test: true
-                }
-            }), true);
-            assert.equal(preflightRequiresAnyReview({
-                required_reviews: {
-                    code: false,
-                    test: false
-                }
-            }), false);
-        });
-
-        it('returns false for docs-only preflight with non-zero diff but no code-like changes or required reviews', () => {
-            const result = detectCodeChanged({
-                scope_category: 'docs-only',
-                changed_files: ['docs/runbook.md'],
-                metrics: {
-                    changed_lines_total: 12,
-                    code_like_changed_count: 0,
-                    runtime_code_like_changed_count: 0
-                },
-                required_reviews: {
-                    code: false,
-                    test: false
-                },
-                triggers: {
-                    runtime_code_changed: false
-                }
-            });
-
-            assert.equal(result, false);
-        });
-
-        it('returns false for other explicit non-code scope categories without required reviews', () => {
-            const scopeCategories = ['config-only', 'audit-only', 'empty'];
-            for (const scopeCategory of scopeCategories) {
-                const result = detectCodeChanged({
-                    scope_category: scopeCategory,
-                    changed_files: scopeCategory === 'empty' ? [] : [`meta/${scopeCategory}.txt`],
-                    metrics: {
-                        changed_lines_total: scopeCategory === 'empty' ? 0 : 5,
-                        code_like_changed_count: 0,
-                        runtime_code_like_changed_count: 0
-                    },
-                    required_reviews: {
-                        code: false,
-                        test: false
-                    },
-                    triggers: {
-                        runtime_code_changed: false
-                    }
-                });
-
-                assert.equal(result, false, `Expected ${scopeCategory} to remain non-code.`);
-            }
-        });
-
-        it('returns false for legacy docs-only preflight artifacts without new classifier fields', () => {
-            const result = detectCodeChanged({
-                changed_files: ['docs/runbook.md'],
-                metrics: {
-                    changed_lines_total: 12
-                },
-                required_reviews: {
-                    code: false,
-                    test: false
-                }
-            });
-
-            assert.equal(result, false);
-        });
-
-        it('uses workspace paths config for legacy fallback classification', () => {
-            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-completion-paths-'));
-
-            try {
-                const configPath = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
-                fs.mkdirSync(path.dirname(configPath), { recursive: true });
-                fs.writeFileSync(configPath, JSON.stringify({
-                    runtime_roots: ['docs/'],
-                    code_like_regexes: ['\\.md$']
-                }, null, 2), 'utf8');
-
-                const result = detectCodeChanged({
-                    changed_files: ['docs/runbook.md'],
-                    metrics: {
-                        changed_lines_total: 12
-                    },
-                    required_reviews: {
-                        code: false,
-                        test: false
-                    }
-                }, tempDir);
-
-                assert.equal(result, true);
-            } finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
-            }
-        });
-
-        it('returns true when reviews are required even if code-like metrics are absent', () => {
-            const result = detectCodeChanged({
-                changed_files: ['src/main.ts'],
-                required_reviews: {
-                    code: true,
-                    test: true
-                }
-            });
-
-            assert.equal(result, true);
-        });
-    });
-
     describe('validateReviewSkillEvidence', () => {
-        function makeEvent(
-            eventType: string,
-            sequence: number,
-            details: Record<string, unknown> | null = null,
-            integrity: Record<string, unknown> | null = null
-        ): TimelineEventEntry {
-            return {
-                event_type: eventType,
-                timestamp_utc: `2026-01-01T00:0${sequence}:00.000Z`,
-                sequence,
-                details,
-                integrity: integrity as TimelineEventEntry['integrity']
-            };
-        }
-
         it('rejects local asserted delegated review telemetry even when artifacts and routing hashes are present', () => {
             const codeRoutingIntegrity = {
                 schema_version: 1,
@@ -334,32 +22,32 @@ describe('gates/completion — stage and evidence validation', () => {
                 event_sha256: 'd'.repeat(64)
             } satisfies TimelineEventEntry['integrity'];
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }, codeRoutingIntegrity),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_PHASE_STARTED', 6, { review_type: 'test' }),
-                makeEvent('SKILL_SELECTED', 7, { skill_id: 'testing-strategy' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 6, { review_type: 'test' }),
+                makeTimelineEvent('SKILL_SELECTED', 7, { skill_id: 'testing-strategy' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 8, {
                     skill_id: 'testing-strategy',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 9, {
                     review_type: 'test',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:test-reviewer'
                 }, testRoutingIntegrity),
-                makeEvent('REVIEW_RECORDED', 10, { review_type: 'test' }),
-                makeEvent('REVIEW_GATE_PASSED', 11)
+                makeTimelineEvent('REVIEW_RECORDED', 10, { review_type: 'test' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 11)
             ];
             const requiredReviews = { code: true, test: true };
             const reviewArtifacts = {
@@ -479,30 +167,30 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when downstream test review starts before upstream code review is recorded in the same cycle', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'test' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'test' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'testing-strategy',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'test',
                     reviewer_execution_mode: 'delegated_subagent'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
-                makeEvent('REVIEW_PHASE_STARTED', 6, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 6, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 8, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 9, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent'
                 }),
-                makeEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 11)
+                makeTimelineEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 11)
             ];
             const requiredReviews = { code: true, test: true };
             const reviewArtifacts = {
@@ -621,30 +309,30 @@ describe('gates/completion — stage and evidence validation', () => {
             try {
                 for (const upstreamReviewType of upstreamReviewTypes) {
                     const events = [
-                        makeEvent('COMPILE_GATE_PASSED', 0),
-                        makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'test' }),
-                        makeEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
-                        makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                        makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                        makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'test' }),
+                        makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
+                        makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                             skill_id: 'testing-strategy',
                             reference_path: '/repo/garda-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
                         }),
-                        makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                        makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                             review_type: 'test',
                             reviewer_execution_mode: 'delegated_subagent'
                         }),
-                        makeEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
-                        makeEvent('REVIEW_PHASE_STARTED', 6, { review_type: upstreamReviewType }),
-                        makeEvent('SKILL_SELECTED', 7, { skill_id: skillIds[upstreamReviewType] }),
-                        makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                        makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
+                        makeTimelineEvent('REVIEW_PHASE_STARTED', 6, { review_type: upstreamReviewType }),
+                        makeTimelineEvent('SKILL_SELECTED', 7, { skill_id: skillIds[upstreamReviewType] }),
+                        makeTimelineEvent('SKILL_REFERENCE_LOADED', 8, {
                             skill_id: skillIds[upstreamReviewType],
                             reference_path: `/repo/garda-agent-orchestrator/live/skills/${skillIds[upstreamReviewType]}/SKILL.md`
                         }),
-                        makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                        makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 9, {
                             review_type: upstreamReviewType,
                             reviewer_execution_mode: 'delegated_subagent'
                         }),
-                        makeEvent('REVIEW_RECORDED', 10, { review_type: upstreamReviewType }),
-                        makeEvent('REVIEW_GATE_PASSED', 11)
+                        makeTimelineEvent('REVIEW_RECORDED', 10, { review_type: upstreamReviewType }),
+                        makeTimelineEvent('REVIEW_GATE_PASSED', 11)
                     ];
                     const requiredReviews = { [upstreamReviewType]: true, test: true };
                     const reviewArtifacts = {
@@ -730,14 +418,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('uses the latest reviewer routing telemetry for repeated review attempts', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:stale-reviewer'
@@ -747,14 +435,14 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_PHASE_STARTED', 6),
-                makeEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 6),
+                makeTimelineEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 8, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 9, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:fresh-reviewer'
@@ -764,8 +452,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'c'.repeat(64),
                     event_sha256: 'd'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 11)
+                makeTimelineEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 11)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -826,32 +514,32 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when the latest reviewer routing telemetry records a different reviewer identity', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:fresh-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_PHASE_STARTED', 6),
-                makeEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 8, {
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 6),
+                makeTimelineEvent('SKILL_SELECTED', 7, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 8, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 9, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 9, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:stale-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 11)
+                makeTimelineEvent('REVIEW_RECORDED', 10, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 11)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -894,19 +582,19 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when delegation-required provider records same-agent fallback for a required review', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'testing-strategy' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'testing-strategy',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/testing-strategy/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'test',
                     reviewer_execution_mode: 'same_agent_fallback'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'test' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -939,20 +627,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when review-context omits canonical_source_of_truth for a required review', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -981,20 +669,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when review-context omits execution_provider_source for a required review', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1026,20 +714,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when canonical SourceOfTruth is unavailable for required review validation', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1069,20 +757,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when review-context omits execution_provider and identity_status for a required review', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1112,20 +800,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('allows delegated_subagent for Qwen after fallback removal', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1157,20 +845,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when review-context uses an invalid reviewer execution mode', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1209,20 +897,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when receipt reviewer identity disagrees with review-context reviewer session', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1264,14 +952,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when LOCAL_AUDITED delegated receipts omit reviewer_provenance', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -1281,8 +969,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1323,14 +1011,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('normalizes non-canonical delegated LOCAL_AUDITED trust strings before enforcement', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -1340,8 +1028,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1381,14 +1069,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when reviewer_provenance does not match REVIEWER_DELEGATION_ROUTED telemetry integrity', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -1398,8 +1086,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1450,14 +1138,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when same_agent_fallback receipts appear in the current cycle even if they claim LOCAL_AUDITED trust', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'same_agent_fallback',
                     reviewer_session_id: 'self:T-123'
@@ -1467,8 +1155,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1509,14 +1197,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when delegated LOCAL_AUDITED receipts rely on provider-like launch markers that are out of scope for the current contract', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer',
@@ -1528,8 +1216,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1577,14 +1265,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when delegated_subagent receipts omit reviewer_provenance even with asserted trust', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -1594,8 +1282,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1635,20 +1323,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when delegated reviewer telemetry exists but its integrity payload is missing', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1696,14 +1384,14 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('matches reviewer_provenance against the attested routing event instead of a newer stale routed residue', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -1713,7 +1401,7 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'a'.repeat(64),
                     event_sha256: 'b'.repeat(64)
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 6, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 6, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -1723,8 +1411,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: 'c'.repeat(64),
                     event_sha256: 'd'.repeat(64)
                 }),
-                makeEvent('REVIEW_RECORDED', 7, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 8)
+                makeTimelineEvent('REVIEW_RECORDED', 7, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 8)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1781,20 +1469,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when receipt execution mode disagrees with review-context execution mode', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'same_agent_fallback',
                     reviewer_session_id: 'self:T-123'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1833,20 +1521,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when telemetry execution mode contradicts review-context execution mode', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -1887,9 +1575,9 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when code changed but review telemetry is missing', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('REVIEW_GATE_PASSED', 2)
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 2)
             ];
             const requiredReviews = { code: true };
             const result = validateReviewSkillEvidence(events, requiredReviews, {}, true, '/T-123.jsonl', 'Codex');
@@ -1898,15 +1586,15 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when reviewer delegation telemetry is missing', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEW_RECORDED', 4, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 5)
+                makeTimelineEvent('REVIEW_RECORDED', 4, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 5)
             ];
             const requiredReviews = { code: true };
             const result = validateReviewSkillEvidence(
@@ -1930,7 +1618,7 @@ describe('gates/completion — stage and evidence validation', () => {
             const originalTreeStateSha = '7'.repeat(64);
             const currentTreeStateSha = '8'.repeat(64);
             const events = [
-                makeEvent('REVIEWER_INVOCATION_ATTESTED', 0, {
+                makeTimelineEvent('REVIEWER_INVOCATION_ATTESTED', 0, {
                     task_id: 'T-123',
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
@@ -1945,14 +1633,14 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: null,
                     event_sha256: invocationEventSha
                 }),
-                makeEvent('COMPILE_GATE_PASSED', 1),
-                makeEvent('REVIEW_PHASE_STARTED', 2, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 3, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 4, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 1),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 2, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 3, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 4, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, {
+                makeTimelineEvent('REVIEW_RECORDED', 5, {
                     review_type: 'code',
                     reused_existing_review: true,
                     receipt_path: '/reviews/T-123-code-receipt.json',
@@ -1964,7 +1652,7 @@ describe('gates/completion — stage and evidence validation', () => {
                     reused_from_review_context_reuse_sha256: contextReuseSha,
                     reused_from_review_tree_state_sha256: originalTreeStateSha
                 }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -2040,14 +1728,14 @@ describe('gates/completion — stage and evidence validation', () => {
             const invocationEventSha = '4'.repeat(64);
             const artifactSha = '5'.repeat(64);
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -2057,7 +1745,7 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: null,
                     event_sha256: routingEventSha
                 }),
-                makeEvent('REVIEWER_INVOCATION_ATTESTED', 5, {
+                makeTimelineEvent('REVIEWER_INVOCATION_ATTESTED', 5, {
                     task_id: 'T-123',
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
@@ -2071,8 +1759,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: routingEventSha,
                     event_sha256: invocationEventSha
                 }),
-                makeEvent('REVIEW_RECORDED', 6, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 7)
+                makeTimelineEvent('REVIEW_RECORDED', 6, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 7)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -2148,14 +1836,14 @@ describe('gates/completion — stage and evidence validation', () => {
             const invocationEventSha = '4'.repeat(64);
             const artifactSha = '5'.repeat(64);
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1, { review_type: 'code' }),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
@@ -2165,7 +1853,7 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: null,
                     event_sha256: routingEventSha
                 }),
-                makeEvent('REVIEWER_INVOCATION_ATTESTED', 5, {
+                makeTimelineEvent('REVIEWER_INVOCATION_ATTESTED', 5, {
                     task_id: 'T-123',
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
@@ -2180,8 +1868,8 @@ describe('gates/completion — stage and evidence validation', () => {
                     prev_event_sha256: routingEventSha,
                     event_sha256: invocationEventSha
                 }),
-                makeEvent('REVIEW_RECORDED', 6, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 7)
+                makeTimelineEvent('REVIEW_RECORDED', 6, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 7)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -2249,20 +1937,20 @@ describe('gates/completion — stage and evidence validation', () => {
         // Receipt field presence enforcement tests.
         it('fails when receipt is missing reviewer_execution_mode', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -2301,20 +1989,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when receipt is missing reviewer_identity', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -2353,20 +2041,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when receipt uses deprecated same_agent_fallback without reviewer_fallback_reason', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'same_agent_fallback',
                     reviewer_session_id: 'self:T-123'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -2406,20 +2094,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('fails when receipt claims delegated_subagent on delegation-required provider but execution mode is fallback', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'same_agent_fallback',
                     reviewer_session_id: 'self:T-123'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
@@ -2469,20 +2157,20 @@ describe('gates/completion — stage and evidence validation', () => {
 
         it('allows delegated_subagent on direct-entrypoint providers after fallback removal', () => {
             const events = [
-                makeEvent('COMPILE_GATE_PASSED', 0),
-                makeEvent('REVIEW_PHASE_STARTED', 1),
-                makeEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
-                makeEvent('SKILL_REFERENCE_LOADED', 3, {
+                makeTimelineEvent('COMPILE_GATE_PASSED', 0),
+                makeTimelineEvent('REVIEW_PHASE_STARTED', 1),
+                makeTimelineEvent('SKILL_SELECTED', 2, { skill_id: 'code-review' }),
+                makeTimelineEvent('SKILL_REFERENCE_LOADED', 3, {
                     skill_id: 'code-review',
                     reference_path: '/repo/garda-agent-orchestrator/live/skills/code-review/SKILL.md'
                 }),
-                makeEvent('REVIEWER_DELEGATION_ROUTED', 4, {
+                makeTimelineEvent('REVIEWER_DELEGATION_ROUTED', 4, {
                     review_type: 'code',
                     reviewer_execution_mode: 'delegated_subagent',
                     reviewer_session_id: 'agent:code-reviewer'
                 }),
-                makeEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
-                makeEvent('REVIEW_GATE_PASSED', 6)
+                makeTimelineEvent('REVIEW_RECORDED', 5, { review_type: 'code' }),
+                makeTimelineEvent('REVIEW_GATE_PASSED', 6)
             ];
             const result = validateReviewSkillEvidence(
                 events,
