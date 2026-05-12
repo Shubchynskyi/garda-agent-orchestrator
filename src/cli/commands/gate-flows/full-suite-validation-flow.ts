@@ -366,6 +366,12 @@ function formatGeneratedLockCleanupObservation(observation: GeneratedLockCleanup
         + `(reason=${observation.reason}; owner_pid=${ownerPid}; owner_alive=${ownerAlive}).`;
 }
 
+function buildFullSuiteValidationCommandEnv(): NodeJS.ProcessEnv {
+    return {
+        GARDA_BUNDLE_NAME: undefined
+    };
+}
+
 export async function runFullSuiteValidationCommand(
     options: FullSuiteValidationCommandOptions
 ): Promise<FullSuiteValidationCommandResult> {
@@ -465,6 +471,7 @@ export async function runFullSuiteValidationCommand(
     try {
         const execution = await executeCommandAsync(config.command, {
             cwd: repoRoot,
+            env: buildFullSuiteValidationCommandEnv(),
             timeoutMs: config.timeout_ms
         });
         commandExitCode = execution.exitCode;

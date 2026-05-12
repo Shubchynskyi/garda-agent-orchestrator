@@ -16,6 +16,7 @@ export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 600_000;
 export interface ExecuteCommandOptions {
     cwd?: string;
     envPath?: string;
+    env?: Record<string, string | undefined>;
     timeoutMs?: number;
     signal?: AbortSignal | null;
 }
@@ -42,6 +43,21 @@ function splitOutputLines(text: unknown): string[] {
         lines.pop();
     }
     return lines;
+}
+
+function buildSubprocessEnv(overrides?: Record<string, string | undefined>): NodeJS.ProcessEnv | undefined {
+    if (!overrides) {
+        return undefined;
+    }
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const [key, value] of Object.entries(overrides)) {
+        if (value === undefined) {
+            env[key] = undefined;
+        } else {
+            env[key] = value;
+        }
+    }
+    return env;
 }
 
 export function splitCommandLine(commandText: unknown): string[] {
@@ -167,15 +183,18 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
     const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
     const args = tokens.slice(1);
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_SUBPROCESS_TIMEOUT_MS;
+    const env = buildSubprocessEnv(options.env);
 
     const result = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)
         ? await spawnShellCommand(executablePath, args, {
             cwd,
+            env,
             timeoutMs,
             signal: options.signal ?? undefined
         })
         : await spawnStreamed(executablePath, args, {
             cwd,
+            env,
             timeoutMs,
             signal: options.signal ?? undefined
         });
@@ -228,10 +247,12 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
     const executablePath = resolveExecutablePath(tokens[0], cwd, options.envPath);
     const args = tokens.slice(1);
     const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_SUBPROCESS_TIMEOUT_MS;
+    const env = buildSubprocessEnv(options.env);
 
     const result = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executablePath)
         ? spawnSyncWithTimeout(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', buildWindowsBatchCommandLine(executablePath, args)], {
             cwd,
+            env,
             windowsHide: true,
             windowsVerbatimArguments: true,
             encoding: 'utf8',
@@ -240,6 +261,7 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
         })
         : spawnSyncWithTimeout(executablePath, args, {
             cwd,
+            env,
             windowsHide: true,
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'pipe'],

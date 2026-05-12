@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- stopped `full-suite-validation` from leaking gate-owned `GARDA_BUNDLE_NAME` into repository test subprocesses so bundle auto-discovery tests match direct `npm test`, while real full-suite failures still fail the gate
 - routed `next-step` back to failed-review remediation after a current required review records FAIL, preventing `code_first_optional` from launching other review lanes until the failed review has fresh PASS evidence
 - added remediation-aware review reuse so classified narrow failed-review fixes can preserve unaffected review evidence only after receipt, provenance, tree-state, and scope-fingerprint validation, while protected control-plane and fail-closed categories relaunch required review lanes
 - added current-cycle review dependency diagnostics with explicit blocker taxonomy for missing upstream PASS evidence, missing receipts, missing review context, stale freshness, and independent no-edge reviews

@@ -478,6 +478,146 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
+        it('gate full-suite-validation clears bundle selector env only for the test subprocess', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-env-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'env-pass.js');
+            const envReportPath = path.join(tempDir, 'env-report.json');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const fs = require("node:fs");',
+                    'fs.writeFileSync(process.argv[2], JSON.stringify({',
+                    '  bundleName: process.env.GARDA_BUNDLE_NAME ?? null,',
+                    '  executionProvider: process.env.GARDA_EXECUTION_PROVIDER ?? null',
+                    '}, null, 2) + "\\n", "utf8");',
+                    'if (process.env.GARDA_BUNDLE_NAME !== undefined) process.exit(41);',
+                    'if (process.env.GARDA_EXECUTION_PROVIDER !== "Codex") process.exit(42);',
+                    'process.stdout.write("# tests 1\\n# pass 1\\n# fail 0\\n# duration_ms 1\\n");',
+                    'process.exit(0);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}" "${envReportPath.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-ENV-PASS-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-ENV-PASS',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const previousBundleName = process.env.GARDA_BUNDLE_NAME;
+            const previousExecutionProvider = process.env.GARDA_EXECUTION_PROVIDER;
+            process.env.GARDA_BUNDLE_NAME = 'garda-agent-orchestrator';
+            process.env.GARDA_EXECUTION_PROVIDER = 'Codex';
+            try {
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-ENV-PASS',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+                const artifactPath = path.join(reviewsDir, 'T-ENV-PASS-full-suite-validation.json');
+                const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+                assert.equal(artifact.status, 'PASSED');
+                const envReport = JSON.parse(fs.readFileSync(envReportPath, 'utf8'));
+                assert.equal(envReport.bundleName, null);
+                assert.equal(envReport.executionProvider, 'Codex');
+            } finally {
+                if (previousBundleName == null) {
+                    delete process.env.GARDA_BUNDLE_NAME;
+                } else {
+                    process.env.GARDA_BUNDLE_NAME = previousBundleName;
+                }
+                if (previousExecutionProvider == null) {
+                    delete process.env.GARDA_EXECUTION_PROVIDER;
+                } else {
+                    process.env.GARDA_EXECUTION_PROVIDER = previousExecutionProvider;
+                }
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('gate full-suite-validation still fails real subprocess test failures after env sanitization', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-env-fail-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'env-fail.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'if (process.env.GARDA_BUNDLE_NAME !== undefined) process.exit(41);',
+                    'process.stdout.write("not ok 1 - failed at src/changed.ts:1\\n");',
+                    'process.exit(13);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 10,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-ENV-FAIL-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-ENV-FAIL',
+                changed_files: ['src/changed.ts']
+            }), 'utf8');
+
+            const previousBundleName = process.env.GARDA_BUNDLE_NAME;
+            process.env.GARDA_BUNDLE_NAME = 'garda-agent-orchestrator';
+            try {
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', 'T-ENV-FAIL',
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+                const artifactPath = path.join(reviewsDir, 'T-ENV-FAIL-full-suite-validation.json');
+                const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+                assert.equal(artifact.status, 'FAILED');
+                assert.equal(artifact.exit_code, 13);
+            } finally {
+                if (previousBundleName == null) {
+                    delete process.env.GARDA_BUNDLE_NAME;
+                } else {
+                    process.env.GARDA_BUNDLE_NAME = previousBundleName;
+                }
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
         it('gate full-suite-validation streams over 1 MiB stdout without maxBuffer failure', async () => {
             const repoRoot = path.resolve(process.cwd());
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-large-output-'));
