@@ -17,6 +17,7 @@ import {
     normalizeDirtyWorkspaceBaseline,
     type DirtyWorkspaceBaseline
 } from './dirty-worktree-protection';
+import { normalizeWorkflowConfigFileHashes } from './workflow-config-work';
 import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo } from './helpers';
 
 export const TASK_MODE_ENTRY_MODES = Object.freeze([
@@ -69,6 +70,7 @@ export interface TaskModeArtifact {
     effective_depth: number;
     task_summary: string;
     orchestrator_work: boolean;
+    workflow_config_work: boolean;
     start_banner: string;
     provider: string | null;
     canonical_source_of_truth: string | null;
@@ -94,6 +96,7 @@ export interface TaskModeArtifact {
     runtime_active_profile: string | null;
     runtime_profile_source: 'built_in' | 'user' | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
+    workflow_config_file_hashes: Record<string, string | null> | null;
 }
 
 export interface BuildTaskModeArtifactOptions {
@@ -103,6 +106,7 @@ export interface BuildTaskModeArtifactOptions {
     effectiveDepth: unknown;
     taskSummary: string;
     orchestratorWork?: boolean;
+    workflowConfigWork?: boolean;
     startBanner?: string | null;
     provider?: string | null;
     canonicalSourceOfTruth?: string | null;
@@ -128,6 +132,7 @@ export interface BuildTaskModeArtifactOptions {
     runtimeActiveProfile?: string | null;
     runtimeProfileSource?: 'built_in' | 'user' | null;
     dirtyWorkspaceBaseline?: DirtyWorkspaceBaseline | null;
+    workflowConfigFileHashes?: Record<string, string | null> | null;
 }
 
 export interface TaskModeEvidenceResult {
@@ -149,6 +154,7 @@ export interface TaskModeEvidenceResult {
     effective_depth: number | null;
     task_summary: string | null;
     orchestrator_work: boolean | null;
+    workflow_config_work: boolean | null;
     start_banner: string | null;
     provider: string | null;
     canonical_source_of_truth: string | null;
@@ -173,6 +179,7 @@ export interface TaskModeEvidenceResult {
     runtime_active_profile: string | null;
     runtime_profile_source: string | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
+    workflow_config_file_hashes: Record<string, string | null> | null;
 }
 
 function isStartBannerRequiredForArtifact(artifactObject: Record<string, unknown>): boolean {
@@ -470,6 +477,7 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         effective_depth: effectiveDepth,
         task_summary: taskSummary,
         orchestrator_work: !!options.orchestratorWork,
+        workflow_config_work: !!options.workflowConfigWork,
         start_banner: normalizedStartBanner,
         provider: String(options.provider || '').trim() || null,
         canonical_source_of_truth: String(options.canonicalSourceOfTruth || '').trim() || null,
@@ -498,7 +506,8 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         profile_source: options.profileSource || null,
         runtime_active_profile: String(options.runtimeActiveProfile || '').trim() || null,
         runtime_profile_source: options.runtimeProfileSource || null,
-        dirty_workspace_baseline: dirtyWorkspaceBaseline
+        dirty_workspace_baseline: dirtyWorkspaceBaseline,
+        workflow_config_file_hashes: normalizeWorkflowConfigFileHashes(options.workflowConfigFileHashes || null)
     };
 }
 
@@ -522,6 +531,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         effective_depth: null,
         task_summary: null,
         orchestrator_work: null,
+        workflow_config_work: null,
         start_banner: null,
         provider: null,
         canonical_source_of_truth: null,
@@ -545,7 +555,8 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         profile_source: null,
         runtime_active_profile: null,
         runtime_profile_source: null,
-        dirty_workspace_baseline: null
+        dirty_workspace_baseline: null,
+        workflow_config_file_hashes: null
     };
 
     if (!taskId) {
@@ -592,6 +603,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.entry_mode = String(artifactObject.entry_mode || '').trim() || null;
     result.task_summary = String(artifactObject.task_summary || '').trim() || null;
     result.orchestrator_work = typeof artifactObject.orchestrator_work === 'boolean' ? artifactObject.orchestrator_work : null;
+    result.workflow_config_work = typeof artifactObject.workflow_config_work === 'boolean' ? artifactObject.workflow_config_work : null;
     result.start_banner = normalizeOrchestratorStartBanner(artifactObject.start_banner);
     result.provider = String(artifactObject.provider || '').trim() || null;
     result.canonical_source_of_truth = String(artifactObject.canonical_source_of_truth || '').trim() || null;
@@ -641,6 +653,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.runtime_active_profile = String(artifactObject.runtime_active_profile || '').trim() || null;
     result.runtime_profile_source = String(artifactObject.runtime_profile_source || '').trim() || null;
     result.dirty_workspace_baseline = normalizeDirtyWorkspaceBaseline(artifactObject.dirty_workspace_baseline);
+    result.workflow_config_file_hashes = normalizeWorkflowConfigFileHashes(artifactObject.workflow_config_file_hashes);
 
     const requestedDepth = artifactObject.requested_depth;
     if (typeof requestedDepth === 'number' && Number.isInteger(requestedDepth)) {

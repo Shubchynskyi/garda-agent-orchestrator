@@ -45,6 +45,8 @@ export {
     writeProtectedControlPlaneManifest,
     evaluateProtectedControlPlaneManifest,
     normalizeProtectedControlPlaneRoots,
+    isWorkflowConfigControlPlanePath,
+    isWorkflowConfigControlPlanePathShape,
     computeProtectedSnapshotDigest
 } from './protected-control-plane';
 export type {

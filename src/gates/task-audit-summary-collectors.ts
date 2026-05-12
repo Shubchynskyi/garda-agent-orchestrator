@@ -28,6 +28,7 @@ export interface TaskQueueMetadata {
     area: string | null;
     title: string | null;
     profile: string | null;
+    notes: string | null;
 }
 
 export interface GateOutcome {
@@ -249,7 +250,8 @@ export function readTaskQueueMetadata(repoRoot: string, taskId: string): TaskQue
         return {
             area: cells[3] || null,
             title: cells[4] || null,
-            profile: cells[7] || null
+            profile: cells[7] || null,
+            notes: cells[8] || null
         };
     }
 

@@ -68,6 +68,11 @@ import {
     resolveNoOpArtifactPath
 } from '../../../gates/no-op';
 import {
+    getCurrentWorkflowConfigFileHashes,
+    getWorkflowConfigControlPlanePaths,
+    getWorkflowConfigPreTaskBaselineState
+} from '../../../gates/workflow-config-work';
+import {
     readTaskQueueMetadata
 } from '../../../gates/task-audit-summary-collectors';
 import * as gateHelpers from '../../../gates/helpers';
@@ -105,6 +110,7 @@ export interface EnterTaskModeCommandOptions {
     startBanner?: unknown;
     plannedChangedFiles?: unknown;
     orchestratorWork?: unknown;
+    workflowConfigWork?: unknown;
     provider?: unknown;
     routedTo?: unknown;
     actor?: unknown;
@@ -219,7 +225,8 @@ function buildOrchestratorWorkHandoffCommand(
     repoRoot: string,
     taskId: string,
     options: EnterTaskModeCommandOptions,
-    plannedChangedFiles: string[]
+    plannedChangedFiles: string[],
+    includeWorkflowConfigWork = false
 ): string {
     const cliPrefix = gateHelpers.isOrchestratorSourceCheckout(repoRoot)
         ? getSourceCliCommand()
@@ -233,6 +240,9 @@ function buildOrchestratorWorkHandoffCommand(
         `--task-summary ${quotePowerShellCliValue(String(options.taskSummary || '').trim())}`,
         '--orchestrator-work'
     ];
+    if (includeWorkflowConfigWork) {
+        parts.push('--workflow-config-work');
+    }
     const startBanner = String(options.startBanner || '').trim();
     if (startBanner) {
         parts.push(`--start-banner ${quotePowerShellCliValue(startBanner)}`);
@@ -279,6 +289,19 @@ function buildGateCommandPrefix(repoRoot: string): string {
     return gateHelpers.isOrchestratorSourceCheckout(repoRoot)
         ? getSourceCliCommand()
         : getBundleCliCommand(resolveBundleName());
+}
+
+function taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata: ReturnType<typeof readTaskQueueMetadata>): boolean {
+    if (!taskQueueMetadata) {
+        return false;
+    }
+    const trustedTaskText = [
+        taskQueueMetadata.area,
+        taskQueueMetadata.title,
+        taskQueueMetadata.notes
+    ].filter(Boolean).join(' ').toLowerCase();
+    return trustedTaskText.includes('workflow-config policy changes')
+        || trustedTaskText.includes('workflow config policy changes');
 }
 
 function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: string, taskModePath = ''): string {
@@ -517,11 +540,19 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const routingDecision = readRoutingDecision(repoRoot, options.provider, options.routedTo);
     assertTaskModeRuntimeIdentity(repoRoot, taskId, routingDecision, artifactPath);
     const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot);
+    const workflowConfigFileHashes = getCurrentWorkflowConfigFileHashes(repoRoot);
     const plannedChangedFiles = normalizePlannedChangedFiles(repoRoot, options.plannedChangedFiles);
     const protectedPlannedFiles = plannedChangedFiles.filter((entry) =>
         gateHelpers.testPathPrefix(entry, gateHelpers.getProtectedControlPlaneRoots(repoRoot))
     );
     const orchestratorWork = parseBooleanOption(options.orchestratorWork, false);
+    const workflowConfigWork = parseBooleanOption(options.workflowConfigWork, false);
+    const workflowConfigControlPlanePaths = new Set(getWorkflowConfigControlPlanePaths(repoRoot));
+    const workflowConfigPlannedFiles = plannedChangedFiles.filter((entry) =>
+        workflowConfigControlPlanePaths.has(gateHelpers.normalizePath(entry))
+    );
+    const workflowConfigPreTaskBaseline = getWorkflowConfigPreTaskBaselineState(repoRoot, workflowConfigFileHashes);
+    const dirtyWorkflowConfigFiles = [...workflowConfigPreTaskBaseline.changed_files].sort();
     const startBanner = resolveTaskModeStartBanner(repoRoot, taskId, artifactPath, options.startBanner);
 
     let planMetadata: TaskModePlanMetadata | null = null;
@@ -550,8 +581,48 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         };
     }
 
+    const taskQueueMetadata = readTaskQueueMetadata(repoRoot, taskId);
+
+    if (dirtyWorkflowConfigFiles.length > 0) {
+        throw new Error(
+            `Workspace already contains workflow config changes before task-mode entry: ${dirtyWorkflowConfigFiles.join(', ')}. ` +
+            'Enter task mode before editing workflow-config.json so the change cannot be laundered into the baseline.'
+        );
+    }
+
+    if (workflowConfigWork && !orchestratorWork) {
+        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles, true);
+        throw new Error(
+            'Task-mode --workflow-config-work requires --orchestrator-work because workflow-config.json is part of the protected orchestrator control plane. ' +
+            `Suggested command: ${rerunCommand}`
+        );
+    }
+
+    if (workflowConfigWork && workflowConfigPlannedFiles.length === 0) {
+        throw new Error(
+            'Task-mode --workflow-config-work requires the planned task scope to include a protected workflow-config.json file. ' +
+            'Add the intended workflow-config.json path to the planned changed files before entering task mode.'
+        );
+    }
+
+    if (workflowConfigWork && !taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata)) {
+        throw new Error(
+            'Task-mode --workflow-config-work requires trusted TASK.md metadata to explicitly own workflow-config policy changes. ' +
+            'Update the task row to mention workflow-config.json or workflow-config policy changes before entering task mode.'
+        );
+    }
+
+    if (workflowConfigPlannedFiles.length > 0 && !workflowConfigWork) {
+        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles, true);
+        throw new Error(
+            `Planned task scope includes workflow config files: ${workflowConfigPlannedFiles.join(', ')}. ` +
+            'Re-run enter-task-mode with --orchestrator-work --workflow-config-work before preflight so this high-risk config intent stays explicit and auditable. ' +
+            `Suggested command: ${rerunCommand}`
+        );
+    }
+
     if (!orchestratorWork && protectedPlannedFiles.length > 0) {
-        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles);
+        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles, workflowConfigWork);
         throw new Error(
             `Planned task scope includes protected orchestrator files: ${protectedPlannedFiles.join(', ')}. ` +
             'Re-run enter-task-mode with --orchestrator-work before preflight so the intent stays explicit and auditable. ' +
@@ -559,7 +630,6 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         );
     }
 
-    const taskQueueMetadata = readTaskQueueMetadata(repoRoot, taskId);
     const rawTaskProfile = taskQueueMetadata?.profile || null;
     let taskProfile: string | null = null;
     let profileSelectionSource: 'task_queue' | 'workspace_active' | null = null;
@@ -595,6 +665,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         effectiveDepth: parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)),
         taskSummary: String(options.taskSummary || ''),
         orchestratorWork,
+        workflowConfigWork,
         startBanner,
         provider: routingDecision.provider,
         canonicalSourceOfTruth: routingDecision.canonicalSourceOfTruth,
@@ -627,7 +698,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         profileSource,
         runtimeActiveProfile,
         runtimeProfileSource,
-        dirtyWorkspaceBaseline
+        dirtyWorkspaceBaseline,
+        workflowConfigFileHashes
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
 
@@ -645,6 +717,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         effective_depth: taskModeArtifact.effective_depth,
         start_banner: taskModeArtifact.start_banner,
         orchestrator_work: taskModeArtifact.orchestrator_work,
+        workflow_config_work: taskModeArtifact.workflow_config_work,
         actor: taskModeArtifact.actor,
         plan_guided: !!taskModeArtifact.plan,
         task_profile: taskModeArtifact.task_profile,
@@ -654,7 +727,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         runtime_active_profile: taskModeArtifact.runtime_active_profile,
         runtime_profile_source: taskModeArtifact.runtime_profile_source,
         dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
-        dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
+        dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
+        workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length
     }, parseBooleanOption(options.emitMetrics, true));
 
     try {
@@ -673,6 +747,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 effective_depth: taskModeArtifact.effective_depth,
                 task_summary: taskModeArtifact.task_summary,
                 orchestrator_work: taskModeArtifact.orchestrator_work,
+                workflow_config_work: taskModeArtifact.workflow_config_work,
                 start_banner: taskModeArtifact.start_banner,
                 provider: taskModeArtifact.provider,
                 canonical_source_of_truth: taskModeArtifact.canonical_source_of_truth,
@@ -699,7 +774,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 runtime_active_profile: taskModeArtifact.runtime_active_profile,
                 runtime_profile_source: taskModeArtifact.runtime_profile_source,
                 dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
-                dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
+                dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
+                workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length
             }
         );
     } catch (error: unknown) {
@@ -716,6 +792,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         effective_depth: taskModeArtifact.effective_depth,
         task_summary: taskModeArtifact.task_summary,
         start_banner: taskModeArtifact.start_banner,
+        orchestrator_work: taskModeArtifact.orchestrator_work,
+        workflow_config_work: taskModeArtifact.workflow_config_work,
         provider: taskModeArtifact.provider,
         canonical_source_of_truth: taskModeArtifact.canonical_source_of_truth,
         execution_provider_source: taskModeArtifact.execution_provider_source,
@@ -753,6 +831,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `RequestedDepth: ${taskModeArtifact.requested_depth}`,
             `EffectiveDepth: ${taskModeArtifact.effective_depth}`,
             `StartBanner: ${taskModeArtifact.start_banner}`,
+            `OrchestratorWork: ${taskModeArtifact.orchestrator_work}`,
+            `WorkflowConfigWork: ${taskModeArtifact.workflow_config_work}`,
             ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),
             ...(routingDecision.canonicalSourceOfTruth ? [`CanonicalSourceOfTruth: ${routingDecision.canonicalSourceOfTruth}`] : []),
             ...(routingDecision.executionProviderSource ? [`ExecutionProviderSource: ${routingDecision.executionProviderSource}`] : []),

@@ -45,7 +45,8 @@ const BOOLEAN_GATE_OPTIONS = new Set([
     '--review-output-stdin',
     '--sensitive-reviewed',
     '--sensitive-scope-reviewed',
-    '--use-staged'
+    '--use-staged',
+    '--workflow-config-work'
 ]);
 const HELP_PREFERRED_VALUE_OPTIONS = new Set([
     '--task-id'
@@ -158,7 +159,7 @@ function buildPreflightGateHelpEntries(
         'enter-task-mode': {
             ...createSingleUsageEntry(
                 'Enter explicit task mode before any implementation, with runtime identity pinned through explicit provider selection and optional route telemetry.',
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] --repo-root "."`,
+                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] [--orchestrator-work [--workflow-config-work]] --repo-root "."`,
                 true
             )
         },

@@ -4,6 +4,9 @@ import * as crypto from 'node:crypto';
 import { writeFileAtomically } from '../core/filesystem';
 import {
     ALL_AGENT_ENTRYPOINT_FILES,
+    DEFAULT_BUNDLE_NAME,
+    isBundleRootLike,
+    isRecognizedBundleName,
     isRecognizedPackageName,
     resolveBundleNameForTarget
 } from '../core/constants';
@@ -57,23 +60,30 @@ export function isOrchestratorSourceCheckout(repoRoot: string): boolean {
  */
 export function getProtectedControlPlaneRoots(repoRoot: string): string[] {
     const effectiveName = resolveBundleNameForTarget(repoRoot);
+    const protectsRootControlPlane = isOrchestratorSourceCheckout(repoRoot) || isBundleRootLike(repoRoot);
+    const bundleNames = [...new Set([effectiveName, DEFAULT_BUNDLE_NAME].filter(Boolean))];
+    const bundleRoots = bundleNames.flatMap((bundleName) => [
+        `${bundleName}/src/bin/`,
+        `${bundleName}/src/cli/`,
+        `${bundleName}/src/gates/`,
+        `${bundleName}/src/gate-runtime/`,
+        `${bundleName}/src/lifecycle/`,
+        `${bundleName}/src/materialization/`,
+        `${bundleName}/bin/`,
+        `${bundleName}/dist/`,
+        `${bundleName}/live/config/workflow-config.json`,
+        `${bundleName}/template/config/workflow-config.json`,
+        `${bundleName}/live/docs/agent-rules/`
+    ]);
     const roots = [
-        `${effectiveName}/src/bin/`,
-        `${effectiveName}/src/cli/`,
-        `${effectiveName}/src/gates/`,
-        `${effectiveName}/src/gate-runtime/`,
-        `${effectiveName}/src/lifecycle/`,
-        `${effectiveName}/src/materialization/`,
-        `${effectiveName}/bin/`,
-        `${effectiveName}/dist/`,
-        `${effectiveName}/live/docs/agent-rules/`,
+        ...bundleRoots,
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
         ...ALL_AGENT_ENTRYPOINT_FILES,
         ...getProviderOrchestratorProfileDefinitions().map((profile) => profile.orchestratorRelativePath),
         ...getGitHubSkillBridgeProfileDefinitions().map((profile) => profile.relativePath)
     ];
 
-    if (isOrchestratorSourceCheckout(repoRoot)) {
+    if (protectsRootControlPlane) {
         roots.push(
             'src/bin/',
             'src/cli/',
@@ -83,11 +93,51 @@ export function getProtectedControlPlaneRoots(repoRoot: string): string[] {
             'src/materialization/',
             'bin/',
             'dist/',
+            'live/config/workflow-config.json',
+            'template/config/workflow-config.json',
             'live/docs/agent-rules/'
         );
     }
 
     return normalizeProtectedControlPlaneRoots(roots);
+}
+
+export function isWorkflowConfigControlPlanePathShape(relativePath: string): boolean {
+    const normalized = normalizePath(relativePath).replace(/^\.\//, '');
+    if (
+        normalized === 'live/config/workflow-config.json'
+        || normalized === 'template/config/workflow-config.json'
+    ) {
+        return true;
+    }
+    const parts = normalized.split('/');
+    return parts.length === 4
+        && (
+            (
+                parts[1] === 'live'
+                && parts[2] === 'config'
+                && parts[3] === 'workflow-config.json'
+            )
+            || (
+                parts[1] === 'template'
+                && parts[2] === 'config'
+                && parts[3] === 'workflow-config.json'
+            )
+        );
+}
+
+export function isWorkflowConfigControlPlanePath(relativePath: string): boolean {
+    const normalized = normalizePath(relativePath).replace(/^\.\//, '');
+    if (
+        normalized === 'live/config/workflow-config.json'
+        || normalized === 'template/config/workflow-config.json'
+    ) {
+        return true;
+    }
+    const parts = normalized.split('/');
+    return parts.length === 4
+        && isRecognizedBundleName(parts[0])
+        && isWorkflowConfigControlPlanePathShape(normalized);
 }
 
 /**
@@ -199,8 +249,24 @@ export function evaluateProtectedControlPlaneManifest(
             manifest: manifestObject
         };
     }
+    const manifestRoots = normalizeProtectedControlPlaneRoots(manifestObject.protected_roots || []);
+    const pathBelongsToManifestRoots = (protectedPath: string): boolean => {
+        if (manifestRoots.length === 0) {
+            return true;
+        }
+        const normalizedPath = normalizePath(protectedPath);
+        return manifestRoots.some((root) => (
+            root.endsWith('/')
+                ? normalizedPath.startsWith(root)
+                : normalizedPath === root
+        ));
+    };
+
     const changedFiles: string[] = [];
-    const allProtectedPaths = new Set([...Object.keys(manifestSnapshot), ...Object.keys(snapshot)]);
+    const allProtectedPaths = new Set([
+        ...Object.keys(manifestSnapshot),
+        ...Object.keys(snapshot).filter(pathBelongsToManifestRoots)
+    ]);
     for (const protectedPath of allProtectedPaths) {
         if (manifestSnapshot[protectedPath] !== snapshot[protectedPath]) {
             changedFiles.push(protectedPath);

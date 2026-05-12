@@ -79,6 +79,12 @@ import {
     getTaskModeEvidenceViolations
 } from '../../../gates/task-mode';
 import {
+    getCurrentWorkflowConfigChanges,
+    getWorkflowConfigChangedFiles,
+    getWorkflowConfigControlPlanePaths,
+    getWorkflowConfigWorkViolations
+} from '../../../gates/workflow-config-work';
+import {
     readTaskQueueMetadata
 } from '../../../gates/task-audit-summary-collectors';
 import {
@@ -448,6 +454,14 @@ function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
         `--task-summary ${quotePowerShellCliValue(params.taskSummary || params.taskModeEvidence.task_summary || '')}`,
         '--orchestrator-work'
     ];
+    const includeWorkflowConfigWork = params.taskModeEvidence.workflow_config_work === true
+        || getWorkflowConfigChangedFiles([
+            ...(params.taskModeEvidence.planned_changed_files || []),
+            ...params.changedFiles
+        ], getWorkflowConfigControlPlanePaths(params.repoRoot)).length > 0;
+    if (includeWorkflowConfigWork) {
+        parts.push('--workflow-config-work');
+    }
     if (params.taskModeEvidence.start_banner) {
         parts.push(`--start-banner ${quotePowerShellCliValue(params.taskModeEvidence.start_banner)}`);
     }
@@ -487,6 +501,10 @@ function getChangedProtectedFiles(result: ClassificationResult): string[] {
     return rawValue
         .map((entry) => gateHelpers.normalizePath(entry))
         .filter((entry) => entry.length > 0);
+}
+
+function mergePathLists(...pathLists: string[][]): string[] {
+    return [...new Set(pathLists.flat().map((entry) => gateHelpers.normalizePath(entry)).filter(Boolean))].sort();
 }
 
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
@@ -672,8 +690,40 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             dirtyWorkspaceProtectedScope
         );
         preflightErrors.push(...getTaskModeEvidenceViolations(taskModeEvidence));
-        const changedProtectedFiles = getChangedProtectedFiles(result);
-        if (preflightErrors.length === 0 && changedProtectedFiles.length > 0 && taskModeEvidence.orchestrator_work !== true) {
+        const workflowConfigChanges = getCurrentWorkflowConfigChanges(
+            repoRoot,
+            taskModeEvidence.workflow_config_file_hashes
+        );
+        const changedWorkflowConfigFiles = mergePathLists(
+            workflowConfigChanges.changed_files,
+            taskModeEvidence.workflow_config_file_hashes
+                ? []
+                : getWorkflowConfigChangedFiles(result.changed_files, getWorkflowConfigControlPlanePaths(repoRoot))
+        );
+        (result.triggers as any).changed_workflow_config_files = changedWorkflowConfigFiles;
+        (result.triggers as any).workflow_config_file_hashes = workflowConfigChanges.current_file_hashes;
+        if (workflowConfigChanges.scan_error) {
+            (result.triggers as any).workflow_config_workspace_scan_error = workflowConfigChanges.scan_error;
+        }
+        const changedProtectedFiles = mergePathLists(getChangedProtectedFiles(result), changedWorkflowConfigFiles);
+        if (changedProtectedFiles.length > 0) {
+            (result.triggers as any).changed_protected_files = changedProtectedFiles;
+            (result.triggers as any).protected_control_plane_changed = true;
+        }
+        if (preflightErrors.length === 0) {
+            preflightErrors.push(...getWorkflowConfigWorkViolations({
+                changedFiles: changedWorkflowConfigFiles,
+                taskModeEvidence,
+                phaseLabel: 'preflight classification',
+                baselineFileHashes: taskModeEvidence.workflow_config_file_hashes,
+                currentFileHashes: workflowConfigChanges.current_file_hashes
+            }));
+        }
+        if (
+            preflightErrors.length === 0
+            && changedProtectedFiles.length > 0
+            && taskModeEvidence.orchestrator_work !== true
+        ) {
             preflightErrors.push(
                 `Preflight scope touches protected orchestrator control-plane files without task-mode --orchestrator-work: ${changedProtectedFiles.join(', ')}. ` +
                 'Restart task mode as orchestrator work before preflight classification. ' +
@@ -1115,6 +1165,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let dirtyWorkspaceProtectionDrift = detectProtectedDirtyWorkspaceDrift(repoRoot, null);
     let protectedManifestGuard: ReturnType<typeof getProtectedManifestLifecycleGuard> | null = null;
     let postPreflightSequenceEvidence: ReturnType<typeof getPostPreflightSequenceEvidence> | null = null;
+    let workflowConfigBaselineForCompile: Record<string, string | null> | null = null;
 
     try {
         const commandsPathValue = options.commandsPath
@@ -1167,6 +1218,29 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (!exceptionMessage && protectedManifestGuard.status === 'BLOCK') {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = protectedManifestGuard.violations.join(' ');
+        }
+        if (!exceptionMessage) {
+            workflowConfigBaselineForCompile = taskModeEvidence.workflow_config_file_hashes;
+            const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile);
+            const workflowConfigViolations = getWorkflowConfigWorkViolations({
+                changedFiles: mergePathLists(
+                    workflowConfigChanges.changed_files,
+                    workflowConfigBaselineForCompile
+                        ? []
+                        : getWorkflowConfigChangedFiles(preflightChangedFiles, getWorkflowConfigControlPlanePaths(repoRoot))
+                ),
+                taskModeEvidence,
+                phaseLabel: 'compile gate',
+                baselineFileHashes: workflowConfigBaselineForCompile,
+                currentFileHashes: workflowConfigChanges.current_file_hashes
+            });
+            if (workflowConfigViolations.length > 0) {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = workflowConfigViolations.join(' ');
+                if (workflowConfigChanges.scan_error) {
+                    exceptionMessage += ` Workspace scan warning: ${workflowConfigChanges.scan_error}`;
+                }
+            }
         }
         workspaceSnapshot = getWorkspaceSnapshotCached(
             repoRoot,
@@ -1375,6 +1449,23 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             }
             if (compileOutputPath && compileOutputInitialized) {
                 writeTextArtifact(compileOutputPath, compileOutputChunks.join(''));
+            }
+        }
+        if (!exceptionMessage) {
+            const postCompileWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile);
+            const postCompileWorkflowConfigViolations = getWorkflowConfigWorkViolations({
+                changedFiles: postCompileWorkflowConfigChanges.changed_files,
+                taskModeEvidence,
+                phaseLabel: 'compile output validation',
+                baselineFileHashes: workflowConfigBaselineForCompile,
+                currentFileHashes: postCompileWorkflowConfigChanges.current_file_hashes
+            });
+            if (postCompileWorkflowConfigViolations.length > 0) {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = postCompileWorkflowConfigViolations.join(' ');
+                if (postCompileWorkflowConfigChanges.scan_error) {
+                    exceptionMessage += ` Workspace scan warning: ${postCompileWorkflowConfigChanges.scan_error}`;
+                }
             }
         }
         if (!exceptionMessage && taskModeEvidence.orchestrator_work !== true) {

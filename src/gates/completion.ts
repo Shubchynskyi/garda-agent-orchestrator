@@ -80,6 +80,10 @@ import {
     validateStrictDeferredReviewFollowups,
     type DeferredFollowupValidationResult
 } from './completion-deferred-followups';
+import {
+    getCurrentWorkflowConfigChanges,
+    getWorkflowConfigWorkViolations
+} from './workflow-config-work';
 import { resolveReviewExecutionPolicyModeFromPreflight } from '../core/review-execution-policy';
 import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 
@@ -258,6 +262,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const isolationConfig = loadIsolationModeConfig(repoRoot);
     const isolationWarnings: string[] = [];
     let currentProtectedSnapshot: Record<string, string> | null = null;
+    let protectedControlPlaneWorkflowConfigChangedFilesAtCompletion: string[] = [];
     if (hasProtectedSnapshot || hasProtectedSnapshotDigest) {
         currentProtectedSnapshot = scanProtectedPathHashes(
             repoRoot,
@@ -275,6 +280,9 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
                 }
             }
             taskMutatedProtectedControlPlane = changedFiles.length > 0;
+            protectedControlPlaneWorkflowConfigChangedFilesAtCompletion = changedFiles.filter((changedFile) => (
+                Object.prototype.hasOwnProperty.call(preflightProtectedSnapshot, changedFile)
+            ));
         } else if (hasProtectedSnapshotDigest) {
             taskMutatedProtectedControlPlane = currentProtectedSnapshotDigest !== preflightProtectedSnapshotDigest;
         }
@@ -307,6 +315,23 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         } else {
             errors.push(...protectedManifestGuard.violations);
         }
+    }
+
+    const workflowConfigBaseline = taskModeEvidence.workflow_config_file_hashes;
+    const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline);
+    const workflowConfigWorkViolations = getWorkflowConfigWorkViolations({
+        changedFiles: [
+            ...workflowConfigChanges.changed_files,
+            ...protectedControlPlaneWorkflowConfigChangedFilesAtCompletion
+        ],
+        taskModeEvidence,
+        phaseLabel: 'completion gate',
+        baselineFileHashes: workflowConfigBaseline,
+        currentFileHashes: workflowConfigChanges.current_file_hashes
+    });
+    errors.push(...workflowConfigWorkViolations);
+    if (workflowConfigChanges.scan_error && workflowConfigWorkViolations.length > 0) {
+        isolationWarnings.push(`Workflow config workspace scan warning: ${workflowConfigChanges.scan_error}`);
     }
 
     const compileEvidence = readJsonArtifact(compileEvidencePath, 'Compile gate', errors);

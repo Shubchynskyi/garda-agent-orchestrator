@@ -11,8 +11,14 @@ import {
     buildValidationResult,
     formatFullSuiteValidationResult,
     loadFullSuiteValidationConfig,
-    type FullSuiteValidationCycleBinding
+    type FullSuiteValidationCycleBinding,
+    type FullSuiteValidationResult
 } from '../../../gates/full-suite-validation';
+import { getTaskModeEvidence } from '../../../gates/task-mode';
+import {
+    getCurrentWorkflowConfigChanges,
+    getWorkflowConfigWorkViolations
+} from '../../../gates/workflow-config-work';
 import { executeCommandAsync } from '../gates-subprocess';
 import { EXIT_GATE_FAILURE, EXIT_GENERAL_FAILURE } from '../../exit-codes';
 import {
@@ -372,6 +378,30 @@ function buildFullSuiteValidationCommandEnv(): NodeJS.ProcessEnv {
     };
 }
 
+function buildWorkflowConfigWorkBlockedResult(
+    config: ReturnType<typeof loadFullSuiteValidationConfig>,
+    cycleBinding: FullSuiteValidationCycleBinding,
+    violations: string[],
+    scanError: string | null
+): FullSuiteValidationResult {
+    return {
+        status: 'FAILED',
+        enabled: config.enabled,
+        command: config.command,
+        exit_code: null,
+        timed_out: false,
+        output_artifact_path: null,
+        compact_summary: ['Workflow config change is not authorized for this task mode.'],
+        failure_chunks: [],
+        out_of_scope_failure_policy: config.out_of_scope_failure_policy,
+        out_of_scope_failure_detected: false,
+        out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+        violations,
+        warnings: scanError ? [`Workflow config workspace scan warning: ${scanError}`] : [],
+        cycle_binding: cycleBinding
+    };
+}
+
 export async function runFullSuiteValidationCommand(
     options: FullSuiteValidationCommandOptions
 ): Promise<FullSuiteValidationCommandResult> {
@@ -411,6 +441,41 @@ export async function runFullSuiteValidationCommand(
         compile_gate_timestamp: readLatestCompileGatePassedTimestamp(repoRoot, taskId),
         scope_binding: readFullSuiteScopeBinding(repoRoot, taskId, preflight)
     };
+
+    const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
+    const workflowConfigBaseline = taskModeEvidence.workflow_config_file_hashes;
+    const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline);
+    const workflowConfigViolations = getWorkflowConfigWorkViolations({
+        changedFiles: workflowConfigChanges.changed_files,
+        taskModeEvidence,
+        phaseLabel: 'full-suite validation',
+        baselineFileHashes: workflowConfigBaseline,
+        currentFileHashes: workflowConfigChanges.current_file_hashes
+    });
+    if (workflowConfigViolations.length > 0) {
+        const blockedResult = buildWorkflowConfigWorkBlockedResult(
+            config,
+            cycleBinding,
+            workflowConfigViolations,
+            workflowConfigChanges.scan_error
+        );
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, blockedResult.status, blockedResult, {
+            status: blockedResult.status,
+            enabled: blockedResult.enabled,
+            command: blockedResult.command,
+            exit_code: blockedResult.exit_code,
+            timed_out: blockedResult.timed_out,
+            preflight_path: cycleBinding.preflight_path,
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            cycle_binding: blockedResult.cycle_binding,
+            violations: blockedResult.violations,
+            warnings: blockedResult.warnings
+        });
+        return {
+            outputText: `${formatFullSuiteValidationResult(blockedResult)}\n`,
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
 
     if (!config.enabled) {
         const skippedResult = buildSkippedResult(config, cycleBinding);
@@ -509,6 +574,42 @@ export async function runFullSuiteValidationCommand(
         result.warnings.push(...generatedLockCleanup.map(formatGeneratedLockCleanupObservation));
     }
     result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);
+    const postWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline);
+    const postWorkflowConfigViolations = getWorkflowConfigWorkViolations({
+        changedFiles: postWorkflowConfigChanges.changed_files,
+        taskModeEvidence,
+        phaseLabel: 'full-suite validation output validation',
+        baselineFileHashes: workflowConfigBaseline,
+        currentFileHashes: postWorkflowConfigChanges.current_file_hashes
+    });
+    if (postWorkflowConfigViolations.length > 0) {
+        const blockedResult = buildWorkflowConfigWorkBlockedResult(
+            config,
+            cycleBinding,
+            postWorkflowConfigViolations,
+            postWorkflowConfigChanges.scan_error
+        );
+        blockedResult.output_artifact_path = gateHelpers.normalizePath(outputArtifactPath);
+        blockedResult.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, blockedResult);
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, blockedResult.status, blockedResult, {
+            status: blockedResult.status,
+            enabled: blockedResult.enabled,
+            command: blockedResult.command,
+            exit_code: blockedResult.exit_code,
+            timed_out: blockedResult.timed_out,
+            preflight_path: cycleBinding.preflight_path,
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            output_artifact_path: gateHelpers.normalizePath(outputArtifactPath),
+            cycle_binding: blockedResult.cycle_binding,
+            violations: blockedResult.violations,
+            warnings: blockedResult.warnings,
+            output_telemetry: blockedResult.output_telemetry
+        });
+        return {
+            outputText: `${formatFullSuiteValidationResult(blockedResult)}\n`,
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
     await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, result.status, result, {
         status: result.status,
         enabled: result.enabled,

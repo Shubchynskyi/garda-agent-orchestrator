@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
     resolveBundleName
 } from '../../core/constants';
@@ -104,6 +105,7 @@ interface WorkflowSetResult extends WorkflowCommandResultBase {
     status: 'CHANGED' | 'NO_CHANGE';
     changed: boolean;
     changed_fields: string[];
+    audit_path: string | null;
 }
 
 interface WorkflowValidateResult extends WorkflowCommandResultBase {
@@ -453,6 +455,37 @@ function writeWorkflowConfig(configPath: string, config: WorkflowFileConfigData)
     fs.writeFileSync(configPath, JSON.stringify(validated, null, 2) + '\n', 'utf8');
 }
 
+function sha256Text(text: string): string {
+    return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function normalizeOutputPath(value: string): string {
+    return path.normalize(value).replace(/\\/g, '/');
+}
+
+function writeWorkflowConfigAuditRecord(
+    bundleRoot: string,
+    configPath: string,
+    changedFields: string[],
+    beforeText: string,
+    afterText: string
+): string {
+    const auditPath = path.join(bundleRoot, 'runtime', 'workflow-config-audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    fs.appendFileSync(auditPath, JSON.stringify({
+        schema_version: 1,
+        event_source: 'workflow-config-set',
+        timestamp_utc: new Date().toISOString(),
+        actor: 'operator_command',
+        command: 'workflow set',
+        config_path: normalizeOutputPath(configPath),
+        changed_fields: changedFields,
+        before_sha256: sha256Text(beforeText),
+        after_sha256: sha256Text(afterText)
+    }) + '\n', 'utf8');
+    return auditPath;
+}
+
 function handleShow(options: ParsedOptionsRecord): WorkflowShowResult {
     const roots = resolveWorkflowRoots(options);
     const state = readWorkflowConfigState(roots.configPath, roots.bundleRoot);
@@ -676,8 +709,16 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const nextSerialized = JSON.stringify(nextValidated, null, 2) + '\n';
     const changed = !state.exists || nextSerialized !== currentSerialized;
 
+    let auditPath: string | null = null;
     if (changed) {
         writeWorkflowConfig(roots.configPath, nextValidated);
+        auditPath = writeWorkflowConfigAuditRecord(
+            roots.bundleRoot,
+            roots.configPath,
+            changedFields,
+            currentSerialized,
+            nextSerialized
+        );
     }
 
     const result: WorkflowSetResult = {
@@ -690,12 +731,16 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         action: 'set',
         status: changed ? 'CHANGED' : 'NO_CHANGE',
         changed,
-        changed_fields: changedFields
+        changed_fields: changedFields,
+        audit_path: auditPath ? normalizeOutputPath(auditPath) : null
     };
     console.log(formatWorkflowShowOutput(result, options.json === true));
     if (options.json !== true) {
         console.log(`Status: ${result.status}`);
         console.log(`ChangedFields: ${result.changed_fields.join(', ')}`);
+        if (result.audit_path) {
+            console.log(`AuditPath: ${result.audit_path}`);
+        }
     }
     return result;
 }
