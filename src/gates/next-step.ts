@@ -3130,8 +3130,6 @@ function getNextReviewType(
             .filter((state) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state))
             .map((state) => state.reviewType)
     );
-    let firstCurrentFailedReview: string | null = null;
-    let firstCurrentFailedReviewBlockedDependencies: string[] = [];
     for (const reviewType of requiredReviewTypes) {
         if (passedReviews.has(reviewType)) {
             continue;
@@ -3140,12 +3138,6 @@ function getNextReviewType(
         const blockedDependencies = getReviewExecutionDependencies(reviewType, requiredReviews, policyMode)
             .filter((dependency) => !passedReviews.has(dependency));
         if (blockedDependencies.length > 0) {
-            if (firstCurrentFailedReview) {
-                return {
-                    reviewType: firstCurrentFailedReview,
-                    blockedDependencies: firstCurrentFailedReviewBlockedDependencies
-                };
-            }
             return {
                 reviewType,
                 blockedDependencies
@@ -3155,21 +3147,14 @@ function getNextReviewType(
             state?.failed
             && reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state)
         ) {
-            if (!firstCurrentFailedReview) {
-                firstCurrentFailedReview = reviewType;
-                firstCurrentFailedReviewBlockedDependencies = blockedDependencies;
-            }
-            continue;
+            return {
+                reviewType,
+                blockedDependencies
+            };
         }
         return {
             reviewType,
             blockedDependencies: []
-        };
-    }
-    if (firstCurrentFailedReview) {
-        return {
-            reviewType: firstCurrentFailedReview,
-            blockedDependencies: firstCurrentFailedReviewBlockedDependencies
         };
     }
     return {

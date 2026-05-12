@@ -4545,7 +4545,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('record-review-result'));
     });
 
-    it('continues to independent review lanes after a current failed code review', () => {
+    it('routes back to failed code remediation instead of independent review lanes after a current failed code review', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, refactor: true, test: true });
@@ -4555,17 +4555,13 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.status, 'BLOCKED');
-        assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'security');
-        assert.match(result.title, /Prepare 'security' review context/);
-        assertGateChainDecision(result.reason, {
-            edgeId: 'compile-to-review-context',
-            status: 'pass'
-        });
-        assert.ok(result.reason.includes('LaneScope=review_type'));
-        assert.ok(result.commands[0].command.includes('--review-type "security"'));
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Fix failed 'code' review findings/);
+        assert.match(result.reason, /Do not launch downstream reviewers/);
+        assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('implementation'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
     });
 
     it('returns to failed code remediation after independent reviews complete before downstream test', () => {
@@ -4585,6 +4581,24 @@ describe('gates/next-step', () => {
         assert.match(result.title, /Fix failed 'code' review findings/);
         assert.match(result.reason, /Dependent reviews currently blocked by this failure: test/);
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('blocks completion while a current failed code review remains even when independent lanes passed', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, refactor: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Fix failed 'code' review findings/);
+        assert.ok(!result.commands[0].command.includes('completion-gate'));
     });
 
     it('routes launch-package review failures to review-cycle retry without implementation changes', () => {

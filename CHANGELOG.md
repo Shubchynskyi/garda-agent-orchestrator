@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- routed `next-step` back to failed-review remediation after a current required review records FAIL, preventing `code_first_optional` from launching other review lanes until the failed review has fresh PASS evidence
 - added remediation-aware review reuse so classified narrow failed-review fixes can preserve unaffected review evidence only after receipt, provenance, tree-state, and scope-fingerprint validation, while protected control-plane and fail-closed categories relaunch required review lanes
 - added current-cycle review dependency diagnostics with explicit blocker taxonomy for missing upstream PASS evidence, missing receipts, missing review context, stale freshness, and independent no-edge reviews
 - added release-time embedded bundle parity validation for root source, dist, templates, package files, and runtime-referenced docs
