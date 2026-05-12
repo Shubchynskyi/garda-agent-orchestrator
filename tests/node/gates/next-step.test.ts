@@ -5744,6 +5744,222 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Completion requires an explicit docs decision.'));
     });
 
+    it('keeps changelog-only closeout in doc-impact lane after failed completion', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+            reason: 'Completion failed before changelog closeout was recorded.'
+        });
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Documented reviewed behavior.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+        assert.ok(result.reason.includes('Completion requires an explicit docs decision.'));
+    });
+
+    it('keeps ordinary docs-only closeout in doc-impact lane after failed completion', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI reference\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+            reason: 'Completion failed before docs closeout was recorded.'
+        });
+        fs.appendFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '\nDocumented reviewed CLI behavior.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "docs/cli-reference.md"'));
+        assert.ok(result.commands[0].command.includes('--changelog-updated false'));
+    });
+
+    it('routes repaired ordinary docs doc-impact to completion after failed completion without preflight refresh', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI reference\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '\nDocumented reviewed CLI behavior.\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+            reason: 'Completion failed before the repaired doc-impact closeout was retried.'
+        });
+        const docImpact = {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            preflight_path: preflightPath,
+            preflight_hash_sha256: fileSha256(preflightPath),
+            docs_updated: ['docs/cli-reference.md'],
+            behavior_changed: false,
+            changelog_updated: false
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), docImpact);
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', docImpact);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'completion-gate');
+        assert.ok(result.commands[0].command.includes('gate completion-gate'));
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+    });
+
+    it('routes stale docs-only doc-impact evidence after failed completion back to preflight refresh', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI reference\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '\nDocumented reviewed CLI behavior.\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+            reason: 'Completion failed after stale doc-impact evidence.'
+        });
+        const docImpact = {
+            task_id: TASK_ID,
+            decision: 'DOCS_UPDATED',
+            status: 'PASSED',
+            outcome: 'PASS',
+            preflight_path: preflightPath,
+            preflight_hash_sha256: 'stale-preflight-hash',
+            docs_updated: ['docs/cli-reference.md'],
+            behavior_changed: false,
+            changelog_updated: false
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), docImpact);
+        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', docImpact);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('Preflight evidence is older than the latest COMPLETION_GATE_FAILED'));
+    });
+
+    for (const scenario of [
+        {
+            name: 'mismatched doc-impact task id',
+            mutateArtifact: (artifact: Record<string, unknown>) => ({ ...artifact, task_id: 'T-999' }),
+            appendEvents: (repoRoot: string, artifact: Record<string, unknown>) => {
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', artifact);
+            }
+        },
+        {
+            name: 'mismatched doc-impact preflight path',
+            mutateArtifact: (artifact: Record<string, unknown>) => ({ ...artifact, preflight_path: 'garda-agent-orchestrator/runtime/reviews/T-999-preflight.json' }),
+            appendEvents: (repoRoot: string, artifact: Record<string, unknown>) => {
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', artifact);
+            }
+        },
+        {
+            name: 'missing matching DOC_IMPACT_ASSESSED details',
+            mutateArtifact: (artifact: Record<string, unknown>) => artifact,
+            appendEvents: (repoRoot: string) => {
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', {});
+            }
+        },
+        {
+            name: 'mismatched doc-impact changelog flag',
+            mutateArtifact: (artifact: Record<string, unknown>) => artifact,
+            appendEvents: (repoRoot: string, artifact: Record<string, unknown>) => {
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', { ...artifact, changelog_updated: true });
+            }
+        },
+        {
+            name: 'behavior-changing doc-impact evidence',
+            mutateArtifact: (artifact: Record<string, unknown>) => ({
+                ...artifact,
+                behavior_changed: true,
+                changelog_updated: true,
+                docs_updated: ['CHANGELOG.md', 'docs/cli-reference.md']
+            }),
+            appendEvents: (repoRoot: string, artifact: Record<string, unknown>) => {
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', {
+                    ...artifact,
+                    behavior_changed: true,
+                    changelog_updated: true,
+                    docs_updated: ['CHANGELOG.md', 'docs/cli-reference.md']
+                });
+            }
+        },
+        {
+            name: 'newer stale doc-impact event',
+            mutateArtifact: (artifact: Record<string, unknown>) => artifact,
+            appendEvents: (repoRoot: string, artifact: Record<string, unknown>) => {
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', artifact);
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', {
+                    ...artifact,
+                    preflight_hash_sha256: 'newer-stale-preflight-hash'
+                });
+            }
+        }
+    ]) {
+        it(`routes ${scenario.name} after failed completion back to preflight refresh`, () => {
+            const repoRoot = makeTempRepo();
+            fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI reference\n', 'utf8');
+            initGitRepo(repoRoot);
+            fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+            seedStartedTask(repoRoot, TASK_ID);
+            const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+            seedGitAutoCompilePass(repoRoot, TASK_ID);
+            writeReviewEvidence(repoRoot, TASK_ID, 'code');
+            seedReviewGatePass(repoRoot, TASK_ID);
+            fs.appendFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '\nDocumented reviewed CLI behavior.\n', 'utf8');
+            appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL', {
+                reason: 'Completion failed before repaired doc-impact binding was validated.'
+            });
+            const baseDocImpact = {
+                task_id: TASK_ID,
+                decision: 'DOCS_UPDATED',
+                status: 'PASSED',
+                outcome: 'PASS',
+                preflight_path: preflightPath,
+                preflight_hash_sha256: fileSha256(preflightPath),
+                docs_updated: ['docs/cli-reference.md'],
+                behavior_changed: false,
+                changelog_updated: false
+            };
+            const docImpact = scenario.mutateArtifact(baseDocImpact);
+            writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), docImpact);
+            scenario.appendEvents(repoRoot, baseDocImpact);
+
+            const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+            assert.equal(result.next_gate, 'classify-change');
+            assert.ok(result.reason.includes('Preflight evidence is older than the latest COMPLETION_GATE_FAILED'));
+        });
+    }
+
     it('routes back to preflight when post-review docs delta touches protected control-plane docs', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);

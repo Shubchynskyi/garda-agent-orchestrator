@@ -1820,6 +1820,11 @@ interface PreflightCycleReadiness {
     reason: string;
 }
 
+interface PreflightCycleReadinessOptions {
+    allowStaleCompletionFailureForDocCloseout?: boolean;
+    staleCompletionFailureDocCloseoutReason?: string;
+}
+
 interface FailedGateRecovery {
     nextGate: string;
     title: string;
@@ -3410,6 +3415,171 @@ function getDocImpactDeclaredDocsUpdated(docImpactPath: string | null | undefine
         : [];
 }
 
+function hasPassedDocImpactArtifact(docImpactPath: string | null | undefined): boolean {
+    if (!docImpactPath) {
+        return false;
+    }
+    const docImpact = safeReadJson(docImpactPath);
+    if (!docImpact) {
+        return false;
+    }
+    return String(docImpact.status || '').trim().toUpperCase() === 'PASSED'
+        && String(docImpact.outcome || '').trim().toUpperCase() === 'PASS';
+}
+
+function docImpactTimelineDetailsMatchArtifact(
+    details: Record<string, unknown> | null,
+    docImpact: Record<string, unknown>,
+    taskId: string,
+    preflightPath: string,
+    preflightSha256: string
+): boolean {
+    if (!details) {
+        return false;
+    }
+    const expectedDocsUpdated = Array.isArray(docImpact.docs_updated)
+        ? docImpact.docs_updated.map((entry) => normalizePath(entry)).filter(Boolean).sort()
+        : [];
+    const actualDocsUpdated = Array.isArray(details.docs_updated)
+        ? details.docs_updated.map((entry) => normalizePath(entry)).filter(Boolean).sort()
+        : [];
+    return String(details.task_id || '').trim() === taskId
+        && normalizePath(String(details.preflight_path || '').trim()) === normalizePath(preflightPath)
+        && String(details.preflight_hash_sha256 || '').trim().toLowerCase() === preflightSha256
+        && String(details.decision || '').trim().toUpperCase() === String(docImpact.decision || '').trim().toUpperCase()
+        && String(details.status || '').trim().toUpperCase() === String(docImpact.status || '').trim().toUpperCase()
+        && String(details.outcome || '').trim().toUpperCase() === String(docImpact.outcome || '').trim().toUpperCase()
+        && details.behavior_changed === docImpact.behavior_changed
+        && details.changelog_updated === docImpact.changelog_updated
+        && stringSha256(actualDocsUpdated.join('\n')) === stringSha256(expectedDocsUpdated.join('\n'));
+}
+
+function getPassedOrdinaryDocsOnlyDocImpactUpdatedFiles(
+    repoRoot: string,
+    eventsRoot: string,
+    taskId: string,
+    preflightPath: string,
+    preflightSha256: string | null,
+    docImpactPath: string | null | undefined
+): string[] {
+    if (!docImpactPath) {
+        return [];
+    }
+    const docImpact = safeReadJson(docImpactPath);
+    if (!docImpact) {
+        return [];
+    }
+    if (String(docImpact.task_id || '').trim() !== taskId) {
+        return [];
+    }
+    const evidencePreflightPath = normalizePath(String(docImpact.preflight_path || '').trim());
+    const expectedPreflightPath = normalizePath(preflightPath);
+    if (!evidencePreflightPath || evidencePreflightPath !== expectedPreflightPath) {
+        return [];
+    }
+    const evidencePreflightHash = String(docImpact.preflight_hash_sha256 || '').trim().toLowerCase();
+    if (!preflightSha256 || !evidencePreflightHash || evidencePreflightHash !== preflightSha256) {
+        return [];
+    }
+    const decision = String(docImpact.decision || '').trim().toUpperCase();
+    const status = String(docImpact.status || '').trim().toUpperCase();
+    const outcome = String(docImpact.outcome || '').trim().toUpperCase();
+    if (
+        decision !== 'DOCS_UPDATED'
+        || status !== 'PASSED'
+        || outcome !== 'PASS'
+        || docImpact.behavior_changed !== false
+    ) {
+        return [];
+    }
+    const docsUpdated = Array.isArray(docImpact.docs_updated)
+        ? [...new Set(docImpact.docs_updated.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+    if (docsUpdated.length === 0) {
+        return [];
+    }
+    const classificationConfig = getClassificationConfig(repoRoot);
+    if (docsUpdated.some((entry) => !isOrdinaryDocumentationDeltaPath(entry, classificationConfig))) {
+        return [];
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    const timelineErrors: string[] = [];
+    const events = collectOrderedTimelineEvents(timelinePath, timelineErrors);
+    if (timelineErrors.length > 0 || events.length === 0) {
+        return [];
+    }
+    const latestPreflight = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'PREFLIGHT_CLASSIFIED'
+    );
+    const latestDocImpactAssessed = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'DOC_IMPACT_ASSESSED'
+    );
+    const latestCompletionFailure = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'COMPLETION_GATE_FAILED'
+    );
+    if (
+        !latestPreflight
+        || !latestDocImpactAssessed
+        || !latestCompletionFailure
+        || !docImpactTimelineDetailsMatchArtifact(
+            latestDocImpactAssessed.details,
+            docImpact,
+            taskId,
+            preflightPath,
+            preflightSha256
+        )
+        || latestDocImpactAssessed.sequence < latestPreflight.sequence
+        || latestDocImpactAssessed.sequence < latestCompletionFailure.sequence
+    ) {
+        return [];
+    }
+    return docsUpdated;
+}
+
+function buildStaleCompletionFailureDocCloseoutAllowance(
+    repoRoot: string,
+    eventsRoot: string,
+    taskId: string,
+    preflightPath: string,
+    preflightSha256: string | null,
+    preflightWorkspaceReadiness: PreflightWorkspaceReadiness,
+    docImpactPath: string
+): PreflightCycleReadinessOptions {
+    if (!preflightWorkspaceReadiness.ready) {
+        return {};
+    }
+    if (hasPassedDocImpactArtifact(docImpactPath)) {
+        const docImpactUpdatedFiles = getPassedOrdinaryDocsOnlyDocImpactUpdatedFiles(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            preflightPath,
+            preflightSha256,
+            docImpactPath
+        );
+        if (docImpactUpdatedFiles.length > 0) {
+            return {
+                allowStaleCompletionFailureForDocCloseout: true,
+                staleCompletionFailureDocCloseoutReason:
+                    `latest doc-impact evidence records ordinary documentation updates ${describePathList(docImpactUpdatedFiles)} with behavior_changed=false`
+            };
+        }
+        return {};
+    }
+    const acceptedDeltaFiles = preflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || [];
+    if (acceptedDeltaFiles.length > 0) {
+        return {
+            allowStaleCompletionFailureForDocCloseout: true,
+            staleCompletionFailureDocCloseoutReason:
+                `current workspace drift is limited to ordinary documentation updates ${describePathList(acceptedDeltaFiles)}`
+        };
+    }
+    return {};
+}
+
 function isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource: string): boolean {
     const normalized = String(detectionSource || '').trim().toLowerCase();
     return normalized === 'git_auto' || normalized === 'explicit_changed_files';
@@ -3648,7 +3818,8 @@ function readPreflightWorkspaceReadiness(
 
 function readPreflightCycleReadiness(
     eventsRoot: string,
-    taskId: string
+    taskId: string,
+    options: PreflightCycleReadinessOptions = {}
 ): PreflightCycleReadiness {
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const timelineErrors: string[] = [];
@@ -3698,6 +3869,14 @@ function readPreflightCycleReadiness(
         (entry) => entry.event_type === 'COMPLETION_GATE_FAILED'
     );
     if (latestCompletionFailure && latestPreflight.sequence < latestCompletionFailure.sequence) {
+        if (options.allowStaleCompletionFailureForDocCloseout) {
+            return {
+                ready: true,
+                reason:
+                    `Preflight evidence predates latest COMPLETION_GATE_FAILED (preflight seq ${latestPreflight.sequence}, completion failure seq ${latestCompletionFailure.sequence}), ` +
+                    `but the closeout lane remains current because ${options.staleCompletionFailureDocCloseoutReason || 'only ordinary documentation closeout evidence changed'}.`
+            };
+        }
         return {
             ready: false,
             reason: `Preflight evidence is older than the latest COMPLETION_GATE_FAILED event (preflight seq ${latestPreflight.sequence}, completion failure seq ${latestCompletionFailure.sequence}). Refresh classify-change for the resumed cycle.`
@@ -6176,7 +6355,27 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const preflightCycleReadiness = readPreflightCycleReadiness(eventsRoot, taskId);
+    const docImpactPath = path.join(reviewsRoot, `${taskId}-doc-impact.json`);
+    const preflightWorkspaceReadiness = preflight
+        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: null,
+            failedReviewVerdict: null,
+            docImpactPath
+        })
+        : { ready: false, reason: 'No current preflight exists.' };
+    const preflightCycleReadiness = readPreflightCycleReadiness(
+        eventsRoot,
+        taskId,
+        buildStaleCompletionFailureDocCloseoutAllowance(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            preflightPath,
+            preflightSha256,
+            preflightWorkspaceReadiness,
+            docImpactPath
+        )
+    );
     if (!preflightCycleReadiness.ready) {
         const classifyCommand = buildClassifyChangeCommand({
             repoRoot,
@@ -6225,14 +6424,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const failedCurrentReviewStateForPreflight = nextReview.reviewType
         ? reviewStates.find((candidate) => candidate.reviewType === nextReview.reviewType && candidate.failed)
         : undefined;
-    const preflightWorkspaceReadiness = preflight
+    const effectivePreflightWorkspaceReadiness = failedCurrentReviewStateForPreflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
             failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
-            docImpactPath: path.join(reviewsRoot, `${taskId}-doc-impact.json`)
+            docImpactPath
         })
-        : { ready: false, reason: 'No current preflight exists.' };
-    if (!preflightWorkspaceReadiness.ready) {
+        : preflightWorkspaceReadiness;
+    if (!effectivePreflightWorkspaceReadiness.ready) {
         const classifyCommand = buildClassifyChangeCommand({
             repoRoot,
             cliPrefix,
@@ -6241,7 +6440,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
-            changedFiles: preflightWorkspaceReadiness.currentChangedFiles
+            changedFiles: effectivePreflightWorkspaceReadiness.currentChangedFiles
                 ?? getPreflightRefreshChangedFiles(taskMode, preflight)
         });
         return buildResult({
@@ -6249,7 +6448,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             status: 'BLOCKED',
             nextGate: 'classify-change',
             title: 'Refresh preflight for the current workspace.',
-            reason: preflightWorkspaceReadiness.reason,
+            reason: effectivePreflightWorkspaceReadiness.reason,
             commands: [
                 buildCommand(
                     'Refresh preflight',
@@ -7075,7 +7274,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         preflightCommandPath,
                         preflight,
                         repoRoot,
-                        preflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
+                        effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
                     )
                 )
             ]
