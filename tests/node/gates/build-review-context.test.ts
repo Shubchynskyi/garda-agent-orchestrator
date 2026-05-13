@@ -362,6 +362,16 @@ describe('gates/build-review-context', () => {
             fs.mkdirSync(reviewsRoot, { recursive: true });
             fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
             fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }, null, 2), 'utf8');
             writeTaskModeArtifactFixture(repoRoot, 'T-920', {
                 provider: 'Codex',
                 canonicalSourceOfTruth: 'Codex',
@@ -438,6 +448,69 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifactText.includes('- Matches current compile gate: true'));
             assert.ok(promptArtifactText.includes('- Cycle binding valid: true'));
             assert.ok(promptArtifactText.includes('- # pass 91'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('marks full-suite evidence not required for test review when full-suite validation is disabled', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-disabled-full-suite-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-924', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-924-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-924',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(orchestratorRoot, 'runtime', 'task-events', 'T-924.jsonl'), JSON.stringify({
+                event_type: 'COMPILE_GATE_PASSED',
+                timestamp_utc: '2026-05-05T00:10:00.000Z'
+            }) + '\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsRoot, 'T-924-compile-gate.json'), JSON.stringify({
+                timestamp_utc: '2026-05-05T00:10:00.250Z',
+                status: 'PASSED'
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-924-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-924-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.full_suite_validation?.required_for_review, false);
+            assert.equal(result.full_suite_validation?.enabled, false);
+            assert.equal(result.full_suite_validation?.command, 'npm test');
+            assert.equal(result.full_suite_validation?.available, false);
+            assert.equal(result.full_suite_validation?.mismatch_reason, null);
+
+            const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
+            assert.ok(promptArtifactText.includes('## Full-Suite Validation Evidence'));
+            assert.ok(promptArtifactText.includes('- Required before this review: no'));
+            assert.ok(promptArtifactText.includes('- Enabled: false'));
+            assert.ok(!promptArtifactText.includes('Full-suite validation evidence artifact is missing.'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 

@@ -33,7 +33,10 @@ import {
     getReviewContextContractViolations,
 } from './review-context-contract';
 import { collectOrderedTimelineEvents } from './completion-evidence';
-import type { FullSuiteValidationResult } from './full-suite-validation';
+import {
+    loadFullSuiteValidationConfig,
+    type FullSuiteValidationResult
+} from './full-suite-validation';
 import {
     getCycleBindingSnapshotFromPayload,
     normalizeTaskCycleScopeBinding,
@@ -524,41 +527,42 @@ function buildFullSuiteValidationEvidence(options: {
     preflightPath: string;
     preflightSha256: string | null;
 }): ReviewContextFullSuiteValidationEvidence | null {
-    const requiredForReview = options.reviewType === 'test';
-    if (!requiredForReview) {
+    if (options.reviewType !== 'test') {
         return null;
     }
+    const fullSuiteValidationConfig = loadFullSuiteValidationConfig(options.repoRoot);
+    const requiredForReview = fullSuiteValidationConfig.enabled === true;
 
     const compileGateEvidence = readCurrentCompileGateEvidence(options.repoRoot, options.taskId);
     const artifactPath = options.taskId
         ? joinOrchestratorPath(options.repoRoot, path.join('runtime', 'reviews', `${options.taskId}-full-suite-validation.json`))
         : null;
     if (!artifactPath) {
-        return requiredForReview
-            ? {
-                required_for_review: true,
-                artifact_path: null,
-                artifact_sha256: null,
-                available: false,
-                status: null,
-                enabled: null,
-                command: null,
-                exit_code: null,
-                timed_out: null,
-                output_artifact_path: null,
-                compact_summary: [],
-                violations: [],
-                warnings: [],
-                cycle_binding: null,
-                matches_current_preflight: null,
-                compile_gate_artifact_path: compileGateEvidence.artifact_path,
-                compile_gate_timestamp_utc: compileGateEvidence.timeline_timestamp_utc,
-                compile_gate_status: compileGateEvidence.status,
-                matches_current_compile_gate: null,
-                cycle_binding_valid: null,
-                mismatch_reason: 'Task id is unavailable, so full-suite validation evidence cannot be resolved.'
-            }
-            : null;
+        return {
+            required_for_review: requiredForReview,
+            artifact_path: null,
+            artifact_sha256: null,
+            available: false,
+            status: null,
+            enabled: fullSuiteValidationConfig.enabled,
+            command: fullSuiteValidationConfig.command,
+            exit_code: null,
+            timed_out: null,
+            output_artifact_path: null,
+            compact_summary: [],
+            violations: [],
+            warnings: [],
+            cycle_binding: null,
+            matches_current_preflight: null,
+            compile_gate_artifact_path: compileGateEvidence.artifact_path,
+            compile_gate_timestamp_utc: compileGateEvidence.timeline_timestamp_utc,
+            compile_gate_status: compileGateEvidence.status,
+            matches_current_compile_gate: null,
+            cycle_binding_valid: null,
+            mismatch_reason: requiredForReview
+                ? 'Task id is unavailable, so full-suite validation evidence cannot be resolved.'
+                : null
+        };
     }
 
     const normalizedArtifactPath = normalizePath(artifactPath);
@@ -569,8 +573,8 @@ function buildFullSuiteValidationEvidence(options: {
             artifact_sha256: null,
             available: false,
             status: null,
-            enabled: null,
-            command: null,
+            enabled: fullSuiteValidationConfig.enabled,
+            command: fullSuiteValidationConfig.command,
             exit_code: null,
             timed_out: null,
             output_artifact_path: null,
