@@ -115,10 +115,14 @@ test('AGENT_INIT_PROMPT distinguishes optional packs from already available skil
     assert.match(content, /recommend only optional packs and optional skills that are not already available/i);
 });
 
-test('AGENT_INIT_PROMPT keeps the task execution contract profile-first', () => {
+test('AGENT_INIT_PROMPT keeps the task execution contract navigator-first', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
-    assert.match(content, /canonical user command: `Execute task <task-id> from TASK\.md strictly through all mandatory orchestrator gates\.`/i);
-    assert.match(content, /active profile is the default execution mode/i);
-    assert.match(content, /explicit `depth=<1\|2\|3>` is a one-run override only/i);
+    assert.match(content, /canonical user instruction/i);
+    assert.match(content, /Use `next-step` as the navigator/i);
+    assert.match(content, /launch a sub-agent using your internal tools/i);
+    assert.match(content, /active profile selection comes from `garda-agent-orchestrator\/live\/config\/profiles\.json`/i);
+    assert.match(content, /do not present `depth=<1\|2\|3>` as normal user task-start guidance/i);
+    assert.match(content, /workflow set --full-suite-enabled true --full-suite-command "<project test command>"/i);
+    assert.match(content, /recommend excluding `garda-agent-orchestrator\/` from application-code, stack-detection, and IDE\/AI semantic indexing/i);
     assert.doesNotMatch(content, /default depth when omitted:\s*`2`/i);
 });

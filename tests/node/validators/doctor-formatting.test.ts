@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import {
     formatDoctorResult,
     formatDoctorResultCompact
 } from '../../../src/validators/doctor';
 import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
-import { buildFakeDoctorResult, DEFAULT_NEW_EVIDENCE } from './doctor-workspace-builder';
+import { buildFakeDoctorResult, createDoctorWorkspace, DEFAULT_NEW_EVIDENCE } from './doctor-workspace-builder';
 
 // formatDoctorResult: verify + manifest output
 
@@ -303,6 +305,47 @@ test('formatDoctorResult shows profile health section for healthy profile', () =
     assert.ok(output.includes('ProfileSource: built_in'));
     assert.ok(output.includes('ProfileCount: 4'));
     assert.ok(output.includes('Status: HEALTHY'));
+});
+
+test('formatDoctorResult uses deployed profile command prefix in PASS guidance', () => {
+    const workspace = createDoctorWorkspace();
+    try {
+        const profilesPath = path.join(workspace.bundlePath, 'live', 'config', 'profiles.json');
+        fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
+        fs.writeFileSync(profilesPath, JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced profile',
+                    depth: 2,
+                    review_policy: {},
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: false,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: {}
+                }
+            },
+            user_profiles: {}
+        }, null, 2), 'utf8');
+
+        const fakeResult = buildFakeDoctorResult({
+            targetRoot: workspace.tmpDir,
+            verifyResult: {
+                ...buildFakeDoctorResult().verifyResult,
+                targetRoot: workspace.tmpDir
+            }
+        });
+        const output = formatDoctorResult(fakeResult);
+        assert.ok(output.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
+        assert.ok(!output.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
+    } finally {
+        workspace.cleanup();
+    }
 });
 
 test('formatDoctorResult shows NOT_CONFIGURED when profiles config absent', () => {

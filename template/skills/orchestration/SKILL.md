@@ -93,8 +93,8 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
   5. Final report contract remains mandatory on resume: review integrity attestation -> implementation summary -> commit command -> explicit commit question.
 
 ## Task Start Contract
-- The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
-- Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.
+- The canonical user command is: ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``
+- Active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; do not present `depth=<1|2|3>` as normal user task-start guidance.
 - Before any edit, a fresh main-agent task run must emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) and list the first mandatory gates to run.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.

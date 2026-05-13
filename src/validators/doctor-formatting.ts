@@ -1,5 +1,6 @@
 import { formatManifestResult } from './validate-manifest';
 import { formatVerifyResult } from './verify';
+import { resolveBundleName } from '../core/constants';
 import { getBundlePath } from './workspace-layout';
 import {
     formatProviderComplianceDetail
@@ -313,7 +314,7 @@ export function formatDoctorResult(result: DoctorResult): string {
 
     if (result.passed) {
         lines.push('Doctor: PASSED');
-        lines.push(buildProfileAwareNextLine(getBundlePath(result.targetRoot)));
+        lines.push(buildProfileAwareNextLine(getBundlePath(result.targetRoot), undefined, `node ${resolveBundleName()}/bin/garda.js`));
     }
     else { lines.push('Doctor: FAIL'); lines.push('Resolve listed issues and rerun doctor.'); }
     return lines.join('\n');

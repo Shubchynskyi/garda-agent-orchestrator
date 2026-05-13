@@ -52,8 +52,8 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
         templateRelativePath: `${bn}/template/docs/agent-rules/80-task-workflow.md`,
         heading: '## Agent Start Contract',
         requiredSnippets: Object.freeze([
-            'The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
-            'Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.',
+            'The canonical user instruction is: Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.',
+            'Active profile selection comes from `live/config/profiles.json` and the `TASK.md` `Profile` column; do not present `depth=<1|2|3>` as normal user task-start guidance.',
             FRESH_MAIN_AGENT_START_BANNER_RULE,
             START_BANNER_GATE_LIST_RULE,
             START_BANNER_EXEMPTION_RULE,

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { buildActiveProfileGuidance, buildTaskStartNavigatorPrompt } from '../core/onboarding-contract';
 import { getProfileEntry, loadProfilesData, type ProfilesData } from '../policy/profile-resolver';
 
 export interface ProfileTaskHint {
@@ -9,7 +10,6 @@ export interface ProfileTaskHint {
 
 const DEFAULT_TASK_ID = 'T-001';
 const DEFAULT_TASK_DEPTH = 2;
-const DEFAULT_TASK_COMMAND_SUFFIX = 'from TASK.md strictly through all mandatory orchestrator gates.';
 
 function resolveProfilesPath(bundlePath: string): string {
     return path.join(bundlePath, 'live', 'config', 'profiles.json');
@@ -65,7 +65,7 @@ export function readActiveProfileHint(bundlePath: string): ProfileTaskHint {
 }
 
 function buildExecuteTaskCommand(taskId: string): string {
-    return `Execute task ${taskId} ${DEFAULT_TASK_COMMAND_SUFFIX}`;
+    return buildTaskStartNavigatorPrompt(taskId);
 }
 
 export function buildProfileAwareExecuteTaskNextCommand(bundlePath: string, taskId = DEFAULT_TASK_ID): string {
@@ -73,12 +73,12 @@ export function buildProfileAwareExecuteTaskNextCommand(bundlePath: string, task
     return buildExecuteTaskCommand(taskId);
 }
 
-export function buildProfileAwareNextLine(bundlePath: string, taskId = DEFAULT_TASK_ID): string {
+export function buildProfileAwareNextLine(bundlePath: string, taskId = DEFAULT_TASK_ID, cliCommand = 'node bin/garda.js'): string {
     const hint = readActiveProfileHint(bundlePath);
     const command = buildExecuteTaskCommand(taskId);
     if (!hint.activeProfile) {
         return `Next: ${command}`;
     }
 
-    return `Next: ${command} Active profile: ${hint.activeProfile} (default depth=${hint.activeProfileDepth}); use explicit depth only as a one-run override.`;
+    return `Next: ${command} ${buildActiveProfileGuidance(hint.activeProfile, cliCommand)}`;
 }

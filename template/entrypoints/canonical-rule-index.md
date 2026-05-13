@@ -20,12 +20,12 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - Before implementing any task, open `.agents/workflows/start-task.md`.
 - Do not execute task work until this canonical file and `TASK.md` are both read.
 - Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.
-- Execute tasks only through orchestration workflow (`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`), with preflight and required review gates.
+- Execute tasks only through orchestration workflow (``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``), with preflight and required review gates.
 - Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
 - After the review receipt is persisted, close or release the reviewer sub-agent session.
-- Use the active profile as the default execution mode; explicit `depth=<1|2|3>` is only a one-run override.
+- Active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; do not present `depth=<1|2|3>` as normal user task-start guidance.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 - After opening downstream workflow files (`40-commands.md`, `80-task-workflow.md`, `90-skill-catalog.md`, and any risk-specific rule pack), record them via `node bin/garda.js gate load-rule-pack ...` in a self-hosted source checkout, or `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack ...` inside a materialized/deployed workspace.
 - If provider-native agent directories are available, execute through provider bridge profiles (`.github/agents/orchestrator.md`, `.windsurf/agents/orchestrator.md`, `.junie/agents/orchestrator.md`, `.antigravity/agents/orchestrator.md`).

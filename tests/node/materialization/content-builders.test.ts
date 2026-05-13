@@ -509,6 +509,8 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes('Copy-Paste Start Commands'));
         assert.ok(result.includes('First/resume command (source checkout): `node bin/garda.js next-step "<task-id>" --repo-root "."`'));
         assert.ok(result.includes('First/resume command (deployed workspace): `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`'));
+        assert.ok(result.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
         assert.ok(result.includes('node bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
         assert.ok(result.includes('--provider "GitHub Copilot"'));
         assert.ok(result.includes('--routed-to ".github/agents/orchestrator.md"'));
@@ -527,6 +529,8 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes('Copy-Paste Start Commands'));
         assert.ok(result.includes('First/resume command (source checkout): `node bin/garda.js next-step "<task-id>" --repo-root "."`'));
         assert.ok(result.includes('First/resume command (deployed workspace): `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`'));
+        assert.ok(result.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
         assert.ok(result.includes('--provider "Antigravity"'));
         assert.ok(result.includes('--routed-to ".antigravity/agents/orchestrator.md"'));
         assert.ok(result.includes('Required runtime identity: use `--provider "Antigravity"`'));
@@ -571,7 +575,11 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('gate completion-gate'));
         assert.ok(result.includes('shared start-task router'));
         assert.ok(result.includes('If an active provider bridge exists'));
-        assert.ok(result.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
+        assert.ok(result.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
+        assert.ok(result.includes('Use `next-step` as the navigator'));
+        assert.ok(result.includes('launch a sub-agent using your internal tools'));
+        assert.ok(result.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
         assert.ok(result.includes('start banner'));
         assert.ok(result.includes('Garda captures my mind'));
     });

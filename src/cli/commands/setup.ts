@@ -5,9 +5,16 @@ import {
     DEFAULT_SOURCE_OF_TRUTH,
     SOURCE_OF_TRUTH_VALUES
 } from '../../core/constants';
+import {
+    buildActiveProfileGuidance,
+    buildFullSuiteDisabledGuidance,
+    buildNextStepNavigatorGuidance,
+    buildTaskStartNavigatorPrompt
+} from '../../core/onboarding-contract';
 import { buildSetupStartBannerSentence } from '../../core/orchestrator-start-banner';
 import { pathExists, readTextFile } from '../../core/filesystem';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
+import { getNodeBundleCliCommand } from '../../materialization/command-constants';
 import { getStatusSnapshot } from '../../validators/status';
 import { readActiveProfileHint } from '../../validators/task-command';
 import {
@@ -259,15 +266,13 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate';
     const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
     const reportMessages = getAgentReportMessages();
-    const activeProfileSummary = activeProfileHint.activeProfile
-        ? `${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth})`
-        : null;
+    const activeProfileSummary = activeProfileHint.activeProfile || null;
     const reviewModeSummary = reportMessages.summaries.mandatoryOrchestratorGates;
     const optionalSkillsSummary = reportMessages.summaries.askDuringAgentInit;
     const projectMemoryRolloutSummary = readProjectMemoryMaintenanceRolloutSummaryFromBundle(snapshot.bundlePath);
-    const activeProfileLine = activeProfileHint.activeProfile
-        ? `Current active profile: ${activeProfileHint.activeProfile} (default depth=${activeProfileHint.activeProfileDepth}). Use explicit depth only as a one-run override.`
-        : 'Use explicit depth only as a one-run override.';
+    const deployedCliCommand = getNodeBundleCliCommand();
+    const activeProfileLine = buildActiveProfileGuidance(activeProfileHint.activeProfile, deployedCliCommand);
+    const firstTaskPrompt = buildTaskStartNavigatorPrompt('T-001');
     const lines = [
         buildAgentReportBlock({
             context: 'setup_handoff',
@@ -278,7 +283,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
             optionalSkillsSummary,
             mandatoryFullSuiteEnabled: snapshot.mandatoryFullSuiteEnabled,
             nextCommand: `Give your agent "${initPromptPath}"`,
-            nextTaskPrompt: 'Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.',
+            nextTaskPrompt: firstTaskPrompt,
             latestUpdateNotice: snapshot.latestUpdateNotice
         }),
         ''
@@ -295,11 +300,15 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push('');
     lines.push(formatSetupHandoffHeading('First Task Command'));
     lines.push(`  ${yellow('After agent-init passes, pick a task row from TASK.md and tell the agent:')}`);
-    lines.push('  Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.');
+    lines.push(`  ${firstTaskPrompt}`);
+    lines.push(`  ${buildNextStepNavigatorGuidance(deployedCliCommand)}`);
     lines.push('');
     lines.push(formatSetupHandoffHeading('Active Profile'));
     lines.push(`  ${formatSetupHandoffLabel('Start banner:')} ${buildSetupStartBannerSentence()}`);
     lines.push(`  ${activeProfileLine}`);
+    if (snapshot.mandatoryFullSuiteEnabled === false) {
+        lines.push(`  ${buildFullSuiteDisabledGuidance(deployedCliCommand)}`);
+    }
     lines.push('');
     lines.push(formatSetupHandoffHeading('Mandatory Flow'));
     lines.push('  Mandatory orchestrator flow:');

@@ -1,6 +1,8 @@
 import * as path from 'node:path';
 import { resolveBundleNameForTarget, resolveInitAnswersRelativePathForTarget } from '../../core/constants';
+import { buildFullSuiteDisabledGuidance } from '../../core/onboarding-contract';
 import { runAgentInit } from '../../lifecycle/agent-init';
+import { getNodeBundleCliCommand } from '../../materialization/command-constants';
 import { getStatusSnapshot } from '../../validators/status';
 import { buildProfileAwareNextLine } from '../../validators/task-command';
 import {
@@ -63,6 +65,9 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
     lines.push(...result.projectMemoryReadFirst.map((entry) => `  - ${entry}`));
     lines.push(`ProjectMemorySummary: ${result.projectMemorySummaryRule}`);
     lines.push(`ProjectMemoryBootstrapReport: ${result.projectMemoryBootstrapReport}`);
+    if (snapshot.mandatoryFullSuiteEnabled === false) {
+        lines.push(`FullSuiteValidationNotice: ${buildFullSuiteDisabledGuidance(getNodeBundleCliCommand())}`);
+    }
     for (const warning of result.projectMemoryWarnings) {
         lines.push(`ProjectMemoryWarning: ${warning}`);
     }
@@ -74,7 +79,7 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
 
 export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>): string {
     if (result.readyForTasks) {
-        return buildProfileAwareNextLine(result.bundleRoot || '');
+        return buildProfileAwareNextLine(result.bundleRoot || '', undefined, getNodeBundleCliCommand());
     }
 
     const blockers: string[] = [];

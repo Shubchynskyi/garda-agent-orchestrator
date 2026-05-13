@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { getSetupAnswerDefaults } from '../../../src/cli/commands/setup';
-import { buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
+import { buildAgentInitNextStep, buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
 import { runAgentInit } from '../../../src/lifecycle/agent-init';
 import { getStatusSnapshot } from '../../../src/validators/status';
 import { resolveInitAnswersRelativePath } from '../../../src/core/constants';
@@ -85,6 +85,26 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         });
         fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n', 'utf8');
         fs.writeFileSync(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n', 'utf8');
+        writeJson(path.join(bundleRoot, 'live', 'config', 'profiles.json'), {
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced profile',
+                    depth: 2,
+                    review_policy: {},
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: false,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: {}
+                }
+            },
+            user_profiles: {}
+        });
         seedReadyProjectMemory(bundleRoot);
 
         const result = runAgentInit({
@@ -121,6 +141,10 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         assert.equal(persistedState.VerificationPassed, true);
         assert.equal(persistedState.ManifestValidationPassed, true);
         assert.deepEqual(persistedState.ActiveAgentFiles, ['CLAUDE.md', 'AGENTS.md']);
+
+        const nextStepLine = buildAgentInitNextStep(result);
+        assert.ok(nextStepLine.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
+        assert.ok(!nextStepLine.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

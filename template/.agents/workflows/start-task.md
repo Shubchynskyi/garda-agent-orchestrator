@@ -13,10 +13,10 @@ Before any code changes:
 - If an active provider bridge exists, open it too before implementation.
 - Fresh main-agent task runs must begin with exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits and then list the first mandatory gates to run.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
-- Enter orchestrator mode with the canonical command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
-- Use `node bin/garda.js next-step "<task-id>" --repo-root "."` in a source checkout, or `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` in a deployed workspace, as the first command and repeat it after every suggested command.
+- Enter orchestrator mode with the canonical command: Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.
+- Run `node bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure. Follow only the single command it prints. In deployed workspaces use `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`.
 - Do not start by guessing `compile-gate`, `classify-change`, or default config flags. Static gate order below is policy context; `next-step` is the executable navigator.
-- Use the active profile as the default execution mode; explicit `depth=<1|2|3>` is only a one-run override.
+- Active profile selection comes from the workspace profile config. Inspect, switch, or create profiles with `node bin/garda.js profile current|list|use|create --target-root "."` in a self-hosted source checkout, or `node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."` inside a materialized/deployed workspace.
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.
 - Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.
 

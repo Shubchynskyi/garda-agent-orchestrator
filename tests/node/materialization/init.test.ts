@@ -641,7 +641,7 @@ describe('runInit', () => {
         }
     });
 
-    it('renders profile-first task execution guidance in USAGE.md', () => {
+    it('renders navigator-first profile and config guidance in USAGE.md', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             runInit({
@@ -653,20 +653,23 @@ describe('runInit', () => {
             });
 
             const usage = fs.readFileSync(path.join(bundleRoot, 'live/USAGE.md'), 'utf8');
-            assert.ok(usage.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
-            assert.ok(
-                usage.includes(
-                    'The command automatically runs mandatory orchestration gates in order: `enter-task-mode`, `load-rule-pack`, `handshake-diagnostics`, `shell-smoke-preflight`, `classify-change`, `load-rule-pack`, `compile-gate`, `build-review-context` (for each required review), `required-reviews-check`, `doc-impact-gate`, `completion-gate`.'
-                )
-            );
+            assert.ok(usage.includes('Path: `garda-agent-orchestrator/live/USAGE.md`'));
+            assert.ok(usage.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
+            assert.ok(usage.includes('Use `next-step` as the navigator'));
+            assert.ok(usage.includes('launch a sub-agent using your internal tools'));
+            assert.ok(usage.includes('next-step "<task-id>" --repo-root "."'));
             assert.ok(usage.includes('Require the first fresh main-agent execution reply to emit exactly one English start banner'));
             assert.ok(usage.includes('Garda captures my mind'));
-            assert.ok(
-                usage.includes(
-                    'Default execution comes from the active profile. Built-in profiles: `balanced` (depth `2`), `fast` (depth `1`), `strict` (depth `3`), `docs-only` (depth `1`).'
-                )
-            );
-            assert.ok(usage.includes('Use `depth=<1|2|3>` only when you intentionally want a one-run override of the selected profile.'));
+            assert.ok(usage.includes('garda-agent-orchestrator/live/config/profiles.json'));
+            assert.ok(usage.includes('node garda-agent-orchestrator/bin/garda.js profile current --target-root "."'));
+            assert.ok(usage.includes('garda-agent-orchestrator/live/config/workflow-config.json'));
+            assert.ok(usage.includes('workflow show --target-root "."'));
+            assert.ok(usage.includes('garda-agent-orchestrator/live/config/review-capabilities.json'));
+            assert.ok(usage.includes('review-capabilities list|enable|disable'));
+            assert.ok(usage.includes('ordinary_doc_paths'));
+            assert.ok(usage.includes('Full repository test validation after each task is currently disabled.'));
+            assert.ok(usage.includes('exclude `garda-agent-orchestrator/` from application-code, stack-detection, and IDE/AI semantic indexing'));
+            assert.ok(!usage.includes('Use `depth=<1|2|3>` only when you intentionally want a one-run override'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

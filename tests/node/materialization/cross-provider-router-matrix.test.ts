@@ -93,6 +93,16 @@ describe('cross-provider-router-matrix: root-entrypoint canonical blocks', () =>
             }
         });
 
+        it(`${provider}: canonical block uses navigator-first task-start contract`, () => {
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
+            assert.ok(block.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
+            assert.ok(block.includes('Use `next-step` as the navigator'));
+            assert.ok(block.includes('launch a sub-agent using your internal tools'));
+            assert.ok(block.includes('do not present `depth=<1|2|3>` as normal user task-start guidance'));
+            assert.ok(!block.includes('strictly through all mandatory orchestrator gates'));
+            assert.ok(!block.includes('Active profile is the default execution mode'));
+        });
+
         it(`${provider}: canonical block includes Hard Stop section with TASK.md reference`, () => {
             const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             assert.ok(block.includes('Hard Stop'), `${provider}: missing Hard Stop section`);
@@ -173,7 +183,8 @@ describe('cross-provider-router-matrix: redirect entrypoint blocks', () => {
         assert.ok(redirect.includes('orchestration control-plane files'));
         assert.ok(redirect.includes('start banner'));
         assert.ok(redirect.includes('Garda captures my mind'));
-        assert.ok(redirect.includes('Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.'));
+        assert.ok(redirect.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
+        assert.ok(redirect.includes('Use `next-step` as the navigator'));
     });
 });
 

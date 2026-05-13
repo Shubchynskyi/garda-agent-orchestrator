@@ -907,8 +907,10 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Next stage: launch your agent'));
     assert.ok(text.includes('CLAUDE.md, AGENTS.md'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md'));
-    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
-    assert.ok(text.includes('Use explicit depth only as a one-run override.'));
+    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
+    assert.ok(text.includes('Use `next-step` as the navigator'));
+    assert.ok(text.includes('launch a sub-agent using your internal tools'));
+    assert.ok(text.includes('profile current|list|use|create'));
     assert.ok(text.includes('start banner'));
     assert.ok(text.includes('Garda captures my mind'));
     assert.ok(text.includes('Mandatory orchestrator flow:'));
@@ -935,7 +937,8 @@ test('buildSetupHandoffText renders scannable plain human sections', () => {
     assert.ok(text.includes('Project Memory Refresh'));
     assert.ok(text.includes('Give your agent:'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
-    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
+    assert.ok(text.includes('next-step "<task-id>"'));
 });
 
 test('buildSetupHandoffText colors human setup handoff when FORCE_COLOR is set', () => {
@@ -951,7 +954,7 @@ test('buildSetupHandoffText colors human setup handoff when FORCE_COLOR is set',
     assert.ok(text.includes('\u001b[36mAgent Initialization\u001b[0m'));
     assert.ok(text.includes('\u001b[32mPrimary setup is complete.\u001b[0m'));
     assert.ok(text.includes('\u001b[33mNext stage: launch your agent and give it the init prompt.\u001b[0m'));
-    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
 });
 
@@ -1004,7 +1007,7 @@ test('buildSetupHandoffText does not infer a locale from German assistant langua
     assert.ok(text.includes('Latest update notice: 1.2.3'));
 });
 
-test('buildSetupHandoffText reports the active profile and default depth', () => {
+test('buildSetupHandoffText reports the active profile and profile commands', () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'setup-handoff-profile-'));
     try {
         const bundlePath = path.join(workspace, 'garda-agent-orchestrator');
@@ -1039,7 +1042,9 @@ test('buildSetupHandoffText reports the active profile and default depth', () =>
             bundlePath,
             activeAgentFiles: 'CLAUDE.md'
         } as unknown as StatusSnapshot);
-        assert.ok(text.includes('Current active profile: strict (default depth=3).'));
+        assert.ok(text.includes('Current active profile: strict.'));
+        assert.ok(text.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
+        assert.ok(!text.includes('default depth=3'));
     } finally {
         fs.rmSync(workspace, { recursive: true, force: true });
     }

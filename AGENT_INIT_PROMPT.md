@@ -128,10 +128,11 @@ node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-a
 ```
 This command is mandatory. It reruns answer-dependent install materialization, runs `verify`, runs manifest validation, and writes `garda-agent-orchestrator/runtime/agent-init-state.json`.
 If the command fails, fix the reported issue and rerun it until it prints PASS.
-9. Confirm task execution contract is profile-first:
-   - canonical user command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
-   - active profile is the default execution mode
-   - explicit `depth=<1|2|3>` is a one-run override only
+9. Confirm task execution contract is navigator-first and profile/config driven:
+   - canonical user instruction: ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``
+   - active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; inspect, switch, or create profiles through `node garda-agent-orchestrator/bin/garda.js profile ... --target-root "."`
+   - do not present `depth=<1|2|3>` as normal user task-start guidance; depth remains internal gate/profile evidence unless a debug or recovery command explicitly needs it
+   - run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure
 10. Optional post-init specialization:
    - before the yes/no question, provide in `<assistant-language>`:
      - one-sentence clarification:
@@ -221,12 +222,14 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - Result of each command (PASS or FAIL with key lines).
 - Files created or updated.
 - `Usage Instructions` section for the user in `<assistant-language>`, with exact next commands for:
-  - executing a task (`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`);
-  - using the current active profile (the same command without explicit depth override);
-  - using a one-run depth override (`Execute task <task-id> depth=<1|2|3> from TASK.md strictly through all mandatory orchestrator gates.`);
-  - when to use `depth=1`, `depth=2`, and `depth=3`.
-  - if token economy is enabled, use `depth=1` only for small, well-localized tasks.
-  - default `depth=3` keeps full reviewer context while shared gate-output filtering still applies.
+  - executing a task (``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``);
+  - running `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure.
+  - using the current active profile through `garda-agent-orchestrator/live/config/profiles.json`, the `TASK.md` `Profile` column, and `node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."`;
+  - inspecting repo-local workflow settings with `node garda-agent-orchestrator/bin/garda.js workflow show --target-root "."` and changing them only with audited `workflow set` commands;
+  - inspecting optional review capabilities with `node garda-agent-orchestrator/bin/garda.js review-capabilities list --target-root "."`;
+  - explaining `workflow-config.json` review execution policy, full-suite validation, scope/review-cycle guards, project-memory maintenance, task reset, and `paths.json` `ordinary_doc_paths`;
+  - if full-suite validation is disabled, state that full repository test validation after each task is disabled and the agent must not silently enable it; ask for explicit permission or show `node garda-agent-orchestrator/bin/garda.js workflow set --full-suite-enabled true --full-suite-command "<project test command>" --target-root "."`;
+  - indexing note: recommend excluding `garda-agent-orchestrator/` from application-code, stack-detection, and IDE/AI semantic indexing where supported, while keeping explicit Garda rule/config/skill paths and `bin/garda.js` readable to agents.
   - where tasks are defined: tasks are managed in the root `TASK.md` file.
   - updating orchestrator workspace:
     - `node garda-agent-orchestrator/bin/garda.js check-update --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json"`

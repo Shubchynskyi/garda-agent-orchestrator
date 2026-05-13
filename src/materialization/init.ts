@@ -17,6 +17,11 @@ import {
     normalizeProjectMemoryMaintenanceForDisplay
 } from '../core/project-memory-rollout';
 import {
+    buildFullSuiteDisabledGuidance,
+    buildNextStepNavigatorGuidance,
+    buildTaskStartNavigatorPrompt
+} from '../core/onboarding-contract';
+import {
     ALL_AGENT_ENTRYPOINT_FILES,
     DEFAULT_ASSISTANT_BREVITY,
     DEFAULT_ASSISTANT_LANGUAGE,
@@ -48,7 +53,7 @@ import {
     applyAssistantDefaults,
     generateProjectMemorySummary
 } from './rule-materialization';
-import { getNodeHumanCommitCommand, getNodeInteractiveUpdateCommand, getNodeNonInteractiveUpdateCommand } from './command-constants';
+import { getNodeBundleCliCommand, getNodeHumanCommitCommand, getNodeInteractiveUpdateCommand, getNodeNonInteractiveUpdateCommand } from './command-constants';
 import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
 import {
     seedProjectMemoryFromTemplate,
@@ -172,6 +177,7 @@ interface BuildUsageOptions {
     brevity: string;
     canonicalEntrypoint: string;
     enforceNoAutoCommit: boolean;
+    fullSuiteValidationEnabled: boolean;
 }
 
 export function runInit(options: RunInitOptions) {
@@ -394,6 +400,7 @@ export function runInit(options: RunInitOptions) {
     let projectMemoryMaintenanceSummaryLine = buildProjectMemoryMaintenanceSummaryLine(
         buildDefaultWorkflowConfig().project_memory_maintenance
     );
+    let materializedWorkflowConfig: Record<string, unknown> = buildDefaultWorkflowConfig();
 
     for (const configName of managedConfigNames) {
         const templateConfigPath = path.join(templateRoot, `config/${configName}.json`);
@@ -450,6 +457,7 @@ export function runInit(options: RunInitOptions) {
                 materializedConfig.enabled = tokenEconomyEnabled;
             }
             if (configName === 'workflow-config') {
+                materializedWorkflowConfig = materializedConfig;
                 projectMemoryMaintenanceSummaryLine = buildProjectMemoryMaintenanceSummaryLine(
                     normalizeProjectMemoryMaintenanceForDisplay(materializedConfig.project_memory_maintenance)
                 );
@@ -539,7 +547,11 @@ export function runInit(options: RunInitOptions) {
         // Usage (seed if not present)
         if (!pathExists(usagePath)) {
             const usageLines = buildUsageLines({
-                lang, brevity, canonicalEntrypoint, enforceNoAutoCommit
+                lang,
+                brevity,
+                canonicalEntrypoint,
+                enforceNoAutoCommit,
+                fullSuiteValidationEnabled: getFullSuiteEnabledDiagnostic(materializedWorkflowConfig) === 'true'
             });
             fs.writeFileSync(usagePath, usageLines.join('\r\n'), 'utf8');
         }
@@ -798,29 +810,43 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
 }
 
 function buildUsageLines(opts: BuildUsageOptions): string[] {
-    const { lang, brevity, canonicalEntrypoint, enforceNoAutoCommit } = opts;
+    const { lang, brevity, canonicalEntrypoint, enforceNoAutoCommit, fullSuiteValidationEnabled } = opts;
+    const cliCommand = getNodeBundleCliCommand();
     const commitGuardLine = enforceNoAutoCommit
         ? `Hard no-auto-commit guard is enabled. It blocks detected agent-session commits while normal human commits remain available; for intentional manual commits from the same agent shell use: \`${getNodeHumanCommitCommand()}\`.`
         : 'Hard no-auto-commit guard is disabled.';
+    const fullSuiteLine = fullSuiteValidationEnabled
+        ? '- Mandatory full-suite validation is enabled through `garda-agent-orchestrator/live/config/workflow-config.json`; `next-step` routes `full-suite-validation` with the configured command when required.'
+        : `- ${buildFullSuiteDisabledGuidance(cliCommand)}`;
 
     return [
         '# Usage Instructions', '',
+        'Path: `garda-agent-orchestrator/live/USAGE.md`', '',
         `Language: ${lang}`,
         `Default response brevity: ${brevity}`, '',
         '## Execute Tasks',
         'Start by selecting a row from root `TASK.md` and tell the agent:',
-        '- `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
+        `- ${buildTaskStartNavigatorPrompt()}`,
+        `- ${buildNextStepNavigatorGuidance(cliCommand)}`,
         `- ${buildSetupStartBannerSentence()}`,
-        '- The command automatically runs mandatory orchestration gates in order: `enter-task-mode`, `load-rule-pack`, `handshake-diagnostics`, `shell-smoke-preflight`, `classify-change`, `load-rule-pack`, `compile-gate`, `build-review-context` (for each required review), `required-reviews-check`, `doc-impact-gate`, `completion-gate`.',
-        '- Default execution comes from the active profile. Built-in profiles: `balanced` (depth `2`), `fast` (depth `1`), `strict` (depth `3`), `docs-only` (depth `1`).',
-        '- Per-task profile override in `TASK.md` `Profile` column: `default` inherits the workspace active profile; explicit profile names override it.', '',
-        '## Explicit Depth Override',
-        '- Use `depth=<1|2|3>` only when you intentionally want a one-run override of the selected profile.',
-        '- `depth=1`: force a shallow one-run execution.',
-        '- `depth=2`: force a balanced one-run execution.',
-        '- `depth=3`: force a strict one-run execution.',
+        '- `next-step` owns the executable gate order. Static gate lists are policy context, not commands to guess by hand.',
+        '- When independent review is required, launch a fresh sub-agent using your provider/internal tools and record the review only through Garda review gates.', '',
+        '## Profiles And Config',
+        '- Active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json`; the root `TASK.md` `Profile` column may override it per task, while `default` inherits the workspace active profile.',
+        '- Inspect profiles with `node garda-agent-orchestrator/bin/garda.js profile current --target-root "."` or `profile list`; switch with `profile use <name>`; create a user profile with `profile create <name> ...`.',
+        '- Review execution modes live in `garda-agent-orchestrator/live/config/workflow-config.json`; inspect with `node garda-agent-orchestrator/bin/garda.js workflow show --target-root "."` and explain with `workflow explain`.',
+        '- Optional review capabilities live in `garda-agent-orchestrator/live/config/review-capabilities.json`; inspect or change them with `node garda-agent-orchestrator/bin/garda.js review-capabilities list|enable|disable ... --target-root "."`.',
+        '- Scope budget, review-cycle guard, task-reset availability, and project-memory maintenance are workflow settings. Change them only through `node garda-agent-orchestrator/bin/garda.js workflow set ... --target-root "."`.',
+        '- Ordinary document path exceptions live in `garda-agent-orchestrator/live/config/paths.json` as `ordinary_doc_paths`; they are auditable planning/changelog doc exceptions, not a global ignore list.', '',
+        '## Full-Suite Validation',
+        fullSuiteLine,
+        '- Full-suite out-of-scope handling is configured in `workflow-config.json`; do not change it to bypass a failing gate.', '',
+        '## Indexing Note',
+        '- Where the host supports indexing controls, exclude `garda-agent-orchestrator/` from application-code, stack-detection, and IDE/AI semantic indexing. Keep explicit Garda rule/config/skill paths and `bin/garda.js` readable to agents.',
+        '- Do not infer the project stack or commands from the orchestrator bundle; inspect the host repository outside `garda-agent-orchestrator/` for application evidence.', '',
+        '## Scope Safety',
         '- If the workspace is already dirty before task-mode entry, do not continue as a normal run; isolate the task scope with `--use-staged` or repeated `--changed-file` values before preflight.',
-        '- If token economy mode is enabled, use `depth=1` only for small, well-localized tasks; default `depth=3` keeps full reviewer context while shared gate-output compaction still applies.', '',
+        '- Keep generated runtime artifacts out of task scope unless the task explicitly owns them.', '',
         '## Update Workspace',
         `- Interactive update: \`${getNodeInteractiveUpdateCommand()}\``,
         `- Non-interactive apply: \`${getNodeNonInteractiveUpdateCommand()}\``,

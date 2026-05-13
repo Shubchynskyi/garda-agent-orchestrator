@@ -37,10 +37,10 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
   - preflight requires specialized review (`db`, `security`, `refactor`, or enabled optional specialist review).
 
 ## Agent Start Contract
-- The canonical user command is: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`
+- The canonical user instruction is: Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.
 - Default executable navigator is `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`; run it before the first gate, after every suggested command, and after any gate failure.
 - Static gate order below is policy context. Agents must not start at `compile-gate`, infer default flags, or skip to review from the static list when `next-step` can inspect current task evidence.
-- Active profile is the default execution mode; explicit `depth=<1|2|3>` is a one-run override only.
+- Active profile selection comes from `live/config/profiles.json` and the `TASK.md` `Profile` column; do not present `depth=<1|2|3>` as normal user task-start guidance.
 - Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.
 - That same reply must list the first mandatory gates to run before implementation.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.

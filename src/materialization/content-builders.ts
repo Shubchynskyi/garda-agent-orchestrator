@@ -1,6 +1,11 @@
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolveBundleName } from '../core/constants';
 import {
+    buildDualCliActiveProfileGuidance,
+    buildNextStepNavigatorGuidance,
+    buildTaskStartNavigatorPrompt
+} from '../core/onboarding-contract';
+import {
     buildFreshMainAgentStartBannerSentence,
     START_BANNER_EXEMPTION_RULE
 } from '../core/orchestrator-start-banner';
@@ -543,7 +548,7 @@ export function buildRedirectManagedBlock(
         `Hard stop: read \`${canonicalFile}\` first and follow its routing links before responding to anything.`,
         `Hard stop: before any task execution, open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.`,
         'Do not implement tasks directly without orchestration preflight and required review gates.',
-        'Canonical task-start command: `Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.`',
+        `Canonical task-start command: ${buildTaskStartNavigatorPrompt()}`,
         buildFreshMainAgentStartBannerSentence(),
         'If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.',
         'Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.',
@@ -615,11 +620,11 @@ If the workspace already contains modified files before task-mode entry, stop an
 
 Required:
 1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
-2. Start every task with \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
+2. Start every task with ${buildTaskStartNavigatorPrompt()}
 3. ${buildFreshMainAgentStartBannerSentence()}
 4. Run \`${buildBundleNextStepSnippet()}\` as the default task loop in deployed workspaces, or \`${buildSourceNextStepSnippet()}\` in this source checkout; rerun the same command after every suggested command.
 5. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
-6. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
+6. ${buildDualCliActiveProfileGuidance(null)}
 7. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 8. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Garda.
 9. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
@@ -650,7 +655,7 @@ Canonical source of truth for agent workflow rules: \`${canonicalFile}\`.
 
 Hard stop: first open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 Do not implement tasks directly without orchestration preflight and required review gates.
-Canonical task-start command: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
+Canonical task-start command: ${buildTaskStartNavigatorPrompt()}
 ${buildFreshMainAgentStartBannerSentence()}
 If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
@@ -672,10 +677,10 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 ## Required Execution Contract
 1. Read \`${canonicalFile}\` and its routing links before making changes.
 2. Read \`TASK.md\` and select/create a task row before implementation.
-3. Execute task workflow only in orchestrator mode: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
+3. Execute task workflow only in orchestrator mode: ${buildTaskStartNavigatorPrompt()}
 4. ${buildFreshMainAgentStartBannerSentence()}
 5. Use \`${buildSourceNextStepSnippet()}\` in a self-hosted source checkout, or \`${buildBundleNextStepSnippet()}\` inside a materialized/deployed workspace, as the command navigator before every numbered gate below.
-6. Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
+6. ${buildDualCliActiveProfileGuidance(null)}
 7. If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 8. Enter task mode explicitly only when \`next-step\` tells you to do so: via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace; ${runtimeIdentityInstruction}.
 9. Record baseline downstream rules explicitly when \`next-step\` requests it: via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack ...\` inside a materialized/deployed workspace.
@@ -741,10 +746,10 @@ Before any code changes:
 - If an active provider bridge exists, open it too before implementation.
 - ${buildFreshMainAgentStartBannerSentence()}
 - ${START_BANNER_EXEMPTION_RULE}
-- Enter orchestrator mode with the canonical command: \`Execute task <task-id> from TASK.md strictly through all mandatory orchestrator gates.\`
-- Use \`${buildSourceNextStepSnippet()}\` in a source checkout, or \`${buildBundleNextStepSnippet()}\` in a deployed workspace, as the first command and repeat it after every suggested command.
+- Enter orchestrator mode with the canonical command: ${buildTaskStartNavigatorPrompt()}
+- ${buildNextStepNavigatorGuidance('node bin/garda.js')} In deployed workspaces use \`${buildBundleNextStepSnippet()}\`.
 - Do not start by guessing \`compile-gate\`, \`classify-change\`, or default config flags. Static gate order below is policy context; \`next-step\` is the executable navigator.
-- Use the active profile as the default execution mode; explicit \`depth=<1|2|3>\` is only a one-run override.
+- ${buildDualCliActiveProfileGuidance(null)}
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 - Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
