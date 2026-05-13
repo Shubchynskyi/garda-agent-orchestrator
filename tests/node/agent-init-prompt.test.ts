@@ -88,10 +88,24 @@ test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositori
     assert.match(content, /localized equivalent of `StylePolicy \(answer must be exactly one token: default or custom\):`/i);
     assert.match(content, /localized equivalent of `Choose style-policy for `30-code-style\.md`:`/i);
     assert.match(content, /answer tokens must remain exactly `default` and `custom`/i);
+    assert.match(content, /explain in `<assistant-language>` that this choice decides whether Garda writes only the default code-style priority rule now or also captures extra repository-specific style rules now/i);
+    assert.match(content, /concise example answer line in `<assistant-language>` that still shows the machine-safe final answer as exactly one token/i);
+    assert.match(content, /Example answer: default/i);
+    assert.match(content, /Example answer: custom/i);
     assert.match(content, /do not ask the style-policy question as the English literal `Choose style-policy for `30-code-style\.md`: default\|custom` unless `<assistant-language>` is English/i);
     assert.match(content, /Present the answer tokens visibly in the prompt as `default\|custom`\./i);
     assert.doesNotMatch(content, /Ask with this exact shape:/i);
     assert.match(content, /The user accepted the default policy for this repository: follow explicit project rules first, formatter\/linter\/static-analysis rules second/i);
+});
+
+test('AGENT_INIT_PROMPT explains ordinary document paths before confirmation', () => {
+    const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
+    assert.match(content, /explain in `<assistant-language>` that ordinary document paths identify planning, status, or changelog documents that may skip code\/test review while still being listed in preflight and doc-impact evidence/i);
+    assert.match(content, /confirm the proposed `ordinary_doc_paths` list/i);
+    assert.match(content, /concise example answer in `<assistant-language>`, such as `CHANGELOG\.md,docs\/plan\.md`/i);
+    assert.match(content, /empty answer means no ordinary document path exceptions should be persisted/i);
+    assert.match(content, /not a global ignore list/i);
+    assert.match(content, /`agent-init --ordinary-doc-paths` argument/i);
 });
 
 test('AGENT_INIT_PROMPT distinguishes optional packs from already available skills', () => {

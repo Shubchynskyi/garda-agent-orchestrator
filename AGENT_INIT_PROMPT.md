@@ -96,12 +96,14 @@ Initialize or refresh Garda project memory. Inspect the repository through the n
       - do not invent domain architecture, stack details, commands, or ownership boundaries that cannot be traced to repository evidence or explicit user answers;
       - if the stack is unknown or custom, record the unknown/custom fallback in `stack.md`, `commands.md`, and `module-map.md` instead of forcing the project into a known framework template.
     - Ask the user a mandatory code-style policy question in `<assistant-language>` before finalizing `30-code-style.md`:
+    - Before asking for the token, explain in `<assistant-language>` that this choice decides whether Garda writes only the default code-style priority rule now or also captures extra repository-specific style rules now.
     - Ask this mandatory question in a deterministic format:
       - In `<assistant-language>`, ask a localized equivalent of `StylePolicy (answer must be exactly one token: default or custom):`
       - In `<assistant-language>`, ask a localized equivalent of `Choose style-policy for `30-code-style.md`:`
       - The surrounding question text and option descriptions must follow `<assistant-language>`, but the answer tokens must remain exactly `default` and `custom`.
       - Do not ask the style-policy question as the English literal `Choose style-policy for `30-code-style.md`: default|custom` unless `<assistant-language>` is English.
       - Present the answer tokens visibly in the prompt as `default|custom`.
+      - Include a concise example answer line in `<assistant-language>` that still shows the machine-safe final answer as exactly one token, such as `Example answer: default` or `Example answer: custom`.
         - `default`: `explicit project rules` first, `formatter/linter/static-analysis rules` second, and `common best practices` only if both are absent; do not copy weak, inconsistent, or legacy code patterns.
         - `custom`: keep the above priority order but add project-specific style rules now.
       - In `<assistant-language>`, explain the options in deterministic order:
@@ -113,7 +115,9 @@ Initialize or refresh Garda project memory. Inspect the repository through the n
     - do not treat inconsistent or obviously low-quality existing code as automatic style source of truth.
     - tune `garda-agent-orchestrator/live/config/paths.json` when default path roots or trigger regexes do not fit this repository.
     - Discover likely ordinary document paths that should not trigger code/test review by default while still staying visible in evidence. Start with `CHANGELOG.md`, then add existing planning/status docs such as `docs/plan.md`, `docs/planning.md`, `docs/roadmap.md`, `PLAN.md`, `ROADMAP.md`, `TODO.md`, or `BACKLOG.md` only when they are ordinary project-planning documents.
+    - Before asking for confirmation, explain in `<assistant-language>` that ordinary document paths identify planning, status, or changelog documents that may skip code/test review while still being listed in preflight and doc-impact evidence.
     - Before persisting this list, ask the user in `<assistant-language>` to confirm the proposed `ordinary_doc_paths` list for `garda-agent-orchestrator/live/config/paths.json`.
+    - Include a concise example answer in `<assistant-language>`, such as `CHANGELOG.md,docs/plan.md`, and explain that an empty answer means no ordinary document path exceptions should be persisted.
     - Explain that this is not a global ignore list: matched files still appear in preflight/doc-impact evidence, and protected control-plane docs, runtime code, config/dependency/security/API/database surfaces, and mixed source changes still fail closed through the normal review gates.
     - If the user edits the proposal, validate every entry as a relative repository path or glob with no absolute paths, no `..` segments, and no repository-wide wildcard such as `**/*`.
     - Persist the confirmed list in `garda-agent-orchestrator/live/config/paths.json` as `ordinary_doc_paths`, and remember the same comma-separated list for the final `agent-init --ordinary-doc-paths` argument.

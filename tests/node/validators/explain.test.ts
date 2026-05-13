@@ -76,6 +76,8 @@ test('explainFailure renders ordinary doc paths pending remediation', () => {
     assert.ok(output.includes('ExplainFailure: ORDINARY_DOC_PATHS_PENDING'));
     assert.ok(output.includes('--ordinary-doc-paths'));
     assert.ok(output.includes('ordinary document paths'));
+    assert.ok(output.includes('auditable planning/changelog doc exceptions'));
+    assert.ok(output.includes('not a global ignore list'));
 });
 
 test('explainFailure renders executable project memory remediation command shape', () => {

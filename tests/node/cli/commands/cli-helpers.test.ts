@@ -831,6 +831,14 @@ test('buildCommandHelpText renders command-specific stats help', () => {
     assert.ok(text.includes('garda stats --json'));
 });
 
+test('buildCommandHelpText explains agent-init confirmation flags without changing tokens', () => {
+    const text = stripAnsi(buildCommandHelpText('agent-init'));
+    assert.ok(text.includes('default or custom'));
+    assert.ok(text.includes('--ordinary-doc-paths'));
+    assert.ok(text.includes('auditable planning/changelog doc exceptions'));
+    assert.ok(text.includes('not a global ignore list'));
+});
+
 test('COMMAND_SUMMARY has expected commands', () => {
     const names = COMMAND_SUMMARY.map((command) => command[0]);
     assert.ok(names.includes('setup'));

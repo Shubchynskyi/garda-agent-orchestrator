@@ -128,7 +128,7 @@ function getExplainDatabase(): readonly ExplainEntry[] {
         title: 'Ordinary document paths not confirmed',
         description: 'The agent-init flow has not confirmed which ordinary document paths may skip code/test review.',
         remediation: [
-            "Review the ordinary document paths proposed in AGENT_INIT_PROMPT.md.",
+            "Review the ordinary document paths proposed in AGENT_INIT_PROMPT.md after the agent explains they are auditable planning/changelog doc exceptions, not a global ignore list.",
             `Then run '${PRIMARY_CLI_NAME} agent-init --ordinary-doc-paths "<comma-separated paths>"'.`,
             "Use an empty value if no ordinary document path exceptions should be persisted."
         ]
