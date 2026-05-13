@@ -250,5 +250,69 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.required_reviews.code, true);
             assert.equal(result.required_reviews.db, false);
         });
+
+        it('surfaces task-mode workflow-config authorization in audit and closeout output', () => {
+            const plannedChangedFiles = ['garda-agent-orchestrator/live/config/workflow-config.json'];
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: plannedChangedFiles,
+                metrics: { changed_lines_total: 3 },
+                required_reviews: {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
+                task_id: TASK_ID,
+                orchestrator_work: true,
+                workflow_config_work: true,
+                planned_changed_files: plannedChangedFiles,
+                requested_depth: 2,
+                effective_depth: 2,
+                active_profile: 'standard'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                task_id: TASK_ID,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES'
+            });
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'IMPLEMENTATION_STARTED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' },
+                { event_type: 'REVIEW_GATE_PASSED' },
+                { event_type: 'DOC_IMPACT_ASSESSED' },
+                { event_type: 'COMPLETION_GATE_PASSED' }
+            ]);
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.implementation_summary.orchestrator_work, true);
+            assert.equal(result.final_closeout.implementation_summary.workflow_config_work, true);
+            assert.deepEqual(result.final_closeout.implementation_summary.planned_changed_files, plannedChangedFiles);
+
+            const expectedLine =
+                'orchestrator_work=true; workflow_config_work=true; ' +
+                'planned_changed_files=garda-agent-orchestrator/live/config/workflow-config.json';
+            assert.ok(formatTaskAuditSummaryText(result).includes(`TaskModeAuthorization: ${expectedLine}`));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(`Task-mode authorization: ${expectedLine}.`));
+        });
     });
 });

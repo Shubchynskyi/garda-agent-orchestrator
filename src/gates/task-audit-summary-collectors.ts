@@ -77,6 +77,9 @@ export interface FinalCloseoutImplementationSummary {
     requested_depth: number | null;
     effective_depth: number | null;
     path_mode: string | null;
+    orchestrator_work?: boolean;
+    workflow_config_work?: boolean;
+    planned_changed_files?: string[];
     review_verdicts: Record<string, string>;
     docs_updated: boolean;
     changed_files?: string[];

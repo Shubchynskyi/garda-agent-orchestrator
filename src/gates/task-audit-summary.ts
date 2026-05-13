@@ -908,6 +908,16 @@ function readProfileReviewDecisions(
     };
 }
 
+function readTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
+    const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
+        ? taskMode.planned_changed_files
+        : [];
+    return [...new Set(plannedChangedFiles
+        .map((entry) => toPosix(String(entry || '').trim()))
+        .filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right));
+}
+
 function buildRequiredReviewBlocker(reviewType: string, taskId: string, reviewsRoot: string): BlockerEntry | null {
     const gate = `${reviewType}-review`;
     const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
@@ -1592,6 +1602,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             requested_depth: parseOptionalNumber(taskMode?.requested_depth),
             effective_depth: parseOptionalNumber(taskMode?.effective_depth),
             path_mode: pathMode,
+            orchestrator_work: taskMode?.orchestrator_work === true,
+            workflow_config_work: taskMode?.workflow_config_work === true,
+            planned_changed_files: readTaskModePlannedChangedFiles(taskMode),
             review_verdicts: reviewVerdicts,
             docs_updated: docsSummary.decision === 'DOCS_UPDATED',
             changed_files: changedFiles,

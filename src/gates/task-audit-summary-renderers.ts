@@ -245,6 +245,21 @@ function getReviewAttemptSummaryLine(summary: ReviewAttemptSummary | null | unde
     return visibleSummaryLine || null;
 }
 
+function formatTaskModeAuthorizationSummary(
+    implementationSummary: FinalCloseoutArtifact['implementation_summary']
+): string {
+    const plannedChangedFiles = Array.isArray(implementationSummary.planned_changed_files)
+        ? implementationSummary.planned_changed_files
+        : [];
+    const base =
+        `orchestrator_work=${implementationSummary.orchestrator_work === true}; ` +
+        `workflow_config_work=${implementationSummary.workflow_config_work === true}`;
+    if (plannedChangedFiles.length === 0) {
+        return base;
+    }
+    return `${base}; planned_changed_files=${plannedChangedFiles.join(', ')}`;
+}
+
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
     const profileText = closeout.implementation_summary.active_profile
@@ -272,6 +287,7 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         `Task \`${closeout.task_id}\` completed in \`${profileText}\`, \`path mode=${pathModeText}\`. ` +
         `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
     );
+    lines.push(`Task-mode authorization: ${formatTaskModeAuthorizationSummary(closeout.implementation_summary)}.`);
 
     if (closeout.optional_skills?.visible_summary_line) {
         lines.push(closeout.optional_skills.visible_summary_line);
@@ -366,6 +382,8 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     if (summary.scope_category) {
         lines.push(`ScopeCategory: ${summary.scope_category}`);
     }
+
+    lines.push(`TaskModeAuthorization: ${formatTaskModeAuthorizationSummary(summary.final_closeout.implementation_summary)}`);
 
     const reviewAttemptSummaryLine = getReviewAttemptSummaryLine(summary.review_attempt_summary);
     if (reviewAttemptSummaryLine) {
