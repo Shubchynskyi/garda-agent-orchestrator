@@ -17,6 +17,8 @@ import {
 import {
     acquireSourceRoot,
     bold,
+    cyan,
+    dim,
     ensureDirectoryExists,
     getAgentInitPromptPath,
     getBundlePath,
@@ -42,6 +44,7 @@ import {
     type StatusSnapshot,
     tryNormalizeAssistantBrevity,
     tryNormalizeSourceOfTruth,
+    yellow,
     tryParseBooleanText
 } from './cli-helpers';
 import {
@@ -243,6 +246,14 @@ export function printSetupHandoff(snapshot: StatusSnapshot): void {
     console.log(buildSetupHandoffText(snapshot));
 }
 
+function formatSetupHandoffHeading(title: string): string {
+    return cyan(title);
+}
+
+function formatSetupHandoffLabel(label: string): string {
+    return dim(label);
+}
+
 export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
     const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate';
@@ -273,24 +284,30 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
         ''
     ];
     lines.push('');
-    lines.push('Agent Initialization');
-    lines.push('  Primary setup is complete.');
-    lines.push('  Next stage: launch your agent and give it the init prompt.');
+    lines.push(formatSetupHandoffHeading('Agent Initialization'));
+    lines.push(`  ${green('Primary setup is complete.')}`);
+    lines.push(`  ${yellow('Next stage: launch your agent and give it the init prompt.')}`);
     if (snapshot.activeAgentFiles) {
-        lines.push(`  Active agent files: ${snapshot.activeAgentFiles}`);
+        lines.push(`  ${formatSetupHandoffLabel('Active agent files:')} ${snapshot.activeAgentFiles}`);
     }
-    lines.push(`  1. Give your agent: "${initPromptPath}"`);
-    lines.push('  2. The prompt already tells the agent to validate language,');
-    lines.push('     explicitly confirm active agent files, update live project rules,');
-    lines.push('     ask about specialist skills, and then run the code-level agent-init gate.');
-    lines.push('  3. After the agent-init gate passes, start by picking a task row from TASK.md and telling the agent:');
-    lines.push('     Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.');
-    lines.push(`  4. ${buildSetupStartBannerSentence()}`);
-    lines.push(`  5. ${activeProfileLine}`);
-    lines.push('  6. Mandatory orchestrator flow:');
-    lines.push(`     ${gateFlow}`);
+    lines.push(`  ${formatSetupHandoffLabel('Give your agent:')} "${initPromptPath}"`);
+    lines.push(`  ${formatSetupHandoffLabel('Agent-init checks:')} validate language; confirm active agent files; update live project rules; ask about specialist skills; run the code-level agent-init gate.`);
+    lines.push('');
+    lines.push(formatSetupHandoffHeading('First Task Command'));
+    lines.push(`  ${yellow('After agent-init passes, pick a task row from TASK.md and tell the agent:')}`);
+    lines.push('  Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.');
+    lines.push('');
+    lines.push(formatSetupHandoffHeading('Active Profile'));
+    lines.push(`  ${formatSetupHandoffLabel('Start banner:')} ${buildSetupStartBannerSentence()}`);
+    lines.push(`  ${activeProfileLine}`);
+    lines.push('');
+    lines.push(formatSetupHandoffHeading('Mandatory Flow'));
+    lines.push('  Mandatory orchestrator flow:');
+    lines.push(`  ${gateFlow}`);
+    lines.push('');
+    lines.push(formatSetupHandoffHeading('Project Memory Refresh'));
     lines.push(`  ${projectMemoryRolloutSummary.summary_line}`);
-    lines.push(`  Project memory init/refresh prompt: ${projectMemoryRolloutSummary.refresh_handoff_prompt}`);
+    lines.push(`  ${formatSetupHandoffLabel('Project memory init/refresh prompt:')} ${projectMemoryRolloutSummary.refresh_handoff_prompt}`);
     return lines.join('\n');
 }
 

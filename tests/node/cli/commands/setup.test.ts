@@ -86,6 +86,39 @@ async function captureConsoleLogs(callback: () => Promise<void>): Promise<string
     }
 }
 
+function withColorEnv<T>(env: { NO_COLOR?: string | undefined; FORCE_COLOR?: string | undefined }, action: () => T): T {
+    const previousNoColor = process.env.NO_COLOR;
+    const previousForceColor = process.env.FORCE_COLOR;
+    try {
+        if (env.NO_COLOR === undefined) {
+            delete process.env.NO_COLOR;
+        } else {
+            process.env.NO_COLOR = env.NO_COLOR;
+        }
+        if (env.FORCE_COLOR === undefined) {
+            delete process.env.FORCE_COLOR;
+        } else {
+            process.env.FORCE_COLOR = env.FORCE_COLOR;
+        }
+        return action();
+    } finally {
+        if (previousNoColor === undefined) {
+            delete process.env.NO_COLOR;
+        } else {
+            process.env.NO_COLOR = previousNoColor;
+        }
+        if (previousForceColor === undefined) {
+            delete process.env.FORCE_COLOR;
+        } else {
+            process.env.FORCE_COLOR = previousForceColor;
+        }
+    }
+}
+
+function hasAnsi(text: string): boolean {
+    return /\u001b\[[0-9;]*m/.test(text);
+}
+
 test('SETUP_DEFINITIONS includes all expected flags', () => {
     assert.ok(SETUP_DEFINITIONS['--target-root']);
     assert.ok(SETUP_DEFINITIONS['--init-answers-path']);
@@ -881,6 +914,59 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Mandatory orchestrator flow:'));
     assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate'));
     assert.ok(text.includes('Project memory maintenance: update read_strategy=index_first'));
+    assert.ok(text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+});
+
+test('buildSetupHandoffText renders scannable plain human sections', () => {
+    const text = withColorEnv({ NO_COLOR: undefined, FORCE_COLOR: undefined }, () => buildSetupHandoffText({
+        bundlePath: '/workspace/garda-agent-orchestrator',
+        activeAgentFiles: 'AGENTS.md',
+        assistantLanguage: 'English',
+        assistantLanguageConfirmed: true,
+        mandatoryFullSuiteEnabled: true
+    } as unknown as StatusSnapshot));
+
+    assert.equal(hasAnsi(text), false);
+    assert.ok(text.includes('GARDA_AGENT_REPORT'));
+    assert.ok(text.includes('Agent Initialization'));
+    assert.ok(text.includes('First Task Command'));
+    assert.ok(text.includes('Active Profile'));
+    assert.ok(text.includes('Mandatory Flow'));
+    assert.ok(text.includes('Project Memory Refresh'));
+    assert.ok(text.includes('Give your agent:'));
+    assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
+    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+});
+
+test('buildSetupHandoffText colors human setup handoff when FORCE_COLOR is set', () => {
+    const text = withColorEnv({ NO_COLOR: undefined, FORCE_COLOR: '1' }, () => buildSetupHandoffText({
+        bundlePath: '/workspace/garda-agent-orchestrator',
+        activeAgentFiles: 'AGENTS.md',
+        assistantLanguage: 'English',
+        assistantLanguageConfirmed: true,
+        mandatoryFullSuiteEnabled: true
+    } as unknown as StatusSnapshot));
+
+    assert.equal(hasAnsi(text), true);
+    assert.ok(text.includes('\u001b[36mAgent Initialization\u001b[0m'));
+    assert.ok(text.includes('\u001b[32mPrimary setup is complete.\u001b[0m'));
+    assert.ok(text.includes('\u001b[33mNext stage: launch your agent and give it the init prompt.\u001b[0m'));
+    assert.ok(text.includes('Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.'));
+    assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
+});
+
+test('buildSetupHandoffText honors NO_COLOR over FORCE_COLOR', () => {
+    const text = withColorEnv({ NO_COLOR: '1', FORCE_COLOR: '1' }, () => buildSetupHandoffText({
+        bundlePath: '/workspace/garda-agent-orchestrator',
+        activeAgentFiles: 'AGENTS.md',
+        assistantLanguage: 'English',
+        assistantLanguageConfirmed: true,
+        mandatoryFullSuiteEnabled: true
+    } as unknown as StatusSnapshot));
+
+    assert.equal(hasAnsi(text), false);
+    assert.ok(text.includes('Primary setup is complete.'));
+    assert.ok(text.includes('Next stage: launch your agent and give it the init prompt.'));
     assert.ok(text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
 });
 

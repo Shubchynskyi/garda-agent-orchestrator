@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- reformatted the human `garda setup` agent-initialization handoff into scannable colored sections while preserving copy-paste-safe commands, prompts, machine-readable report content, and the existing `Give your agent:` anchor
 - stopped disabled full-suite validation from being presented as mandatory test-review evidence, while preserving required and stale-evidence checks when full-suite validation is enabled
 - allowed help-only CLI requests to print help from a source checkout when the deployed bundle directory is missing, while keeping stale bundle version and launcher parity failures blocked
 - made `SPLIT_REQUIRED` a permanent gate-owned latch for the task attempt, so later TASK.md status edits, scope-budget config changes, or smaller diffs cannot make the parent executable again unless gate-owned child/decomposed/DONE evidence or an explicit operator reset/discard clears the path
