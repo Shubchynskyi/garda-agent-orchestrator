@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
+import { WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE } from '../../../../src/cli/commands/gate-flows/task-mode-flow';
 import { runCompileGateCommand } from '../../../../src/cli/commands/gate-flows/compile-flow';
 import { runFullSuiteValidationCommand } from '../../../../src/cli/commands/gate-flows/full-suite-validation-flow';
 import { runCompletionGate } from '../../../../src/gates/completion';
@@ -60,7 +61,15 @@ function seedWorkflowConfigTaskQueue(repoRoot: string, taskId: string, status = 
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
         '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-        `| ${taskId} | ${status} | P1 | workflow | Update workflow-config policy changes | unassigned | 2026-03-28 | default | Explicitly owns workflow-config policy changes. |`
+        `| ${taskId} | ${status} | P1 | workflow | Update ${WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE} | unassigned | 2026-03-28 | default | Explicitly owns ${WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE}. |`
+    ].join('\n'), 'utf8');
+}
+
+function seedIncidentalWorkflowConfigMentionTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        `| ${taskId} | ${status} | P1 | workflow | Inspect workflow-config.json docs | unassigned | 2026-03-28 | default | Mentions workflow-config.json but does not own the protected policy contract. |`
     ].join('\n'), 'utf8');
 }
 
@@ -471,6 +480,39 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 taskSummary: 'Update app flow'
             });
             assert.equal(result.exitCode, 0);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects incidental workflow-config mentions without the exact ownership phrase', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-incidental-mention';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot);
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedIncidentalWorkflowConfigMentionTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+
+            assert.throws(
+                () => runEnterTaskMode({
+                    repoRoot,
+                    taskId,
+                    orchestratorWork: true,
+                    workflowConfigWork: true,
+                    plannedChangedFiles: ['garda-agent-orchestrator/live/config/workflow-config.json'],
+                    taskSummary: 'Update app flow'
+                }),
+                (error: unknown) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    assert.match(message, /requires trusted TASK\.md metadata/);
+                    assert.match(message, new RegExp(WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE));
+                    assert.doesNotMatch(message, /mention workflow-config\.json/);
+                    return true;
+                }
+            );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

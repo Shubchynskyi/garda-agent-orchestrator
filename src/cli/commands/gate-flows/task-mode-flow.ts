@@ -100,6 +100,8 @@ import {
 import { readRoutingDecision } from './routing-decision';
 import { readTaskQueueStatus, syncTaskQueueStatus } from './task-queue-sync';
 
+export const WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE = 'workflow-config policy changes';
+
 export interface EnterTaskModeCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
@@ -300,8 +302,7 @@ function taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata: ReturnType<type
         taskQueueMetadata.title,
         taskQueueMetadata.notes
     ].filter(Boolean).join(' ').toLowerCase();
-    return trustedTaskText.includes('workflow-config policy changes')
-        || trustedTaskText.includes('workflow config policy changes');
+    return trustedTaskText.includes(WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE);
 }
 
 function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: string, taskModePath = ''): string {
@@ -608,7 +609,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     if (workflowConfigWork && !taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata)) {
         throw new Error(
             'Task-mode --workflow-config-work requires trusted TASK.md metadata to explicitly own workflow-config policy changes. ' +
-            'Update the task row to mention workflow-config.json or workflow-config policy changes before entering task mode.'
+            `Update the task row Area, Title, or Notes to include the exact ownership phrase '${WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE}' before entering task mode.`
         );
     }
 
