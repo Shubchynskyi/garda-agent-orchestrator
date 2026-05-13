@@ -13,6 +13,9 @@ import {
     buildGateHelpText,
     buildTaskIdSyntaxRemediationMessage
 } from '../../../../src/cli/commands/gate-command-help';
+import {
+    getNodeHumanCommitCommand
+} from '../../../../src/materialization/command-constants';
 import { getAllShimmedGateNames } from '../../../../src/compat/shim-registry';
 import * as gateReviewHandlers from '../../../../src/cli/commands/gate-review-handlers';
 import {
@@ -3073,7 +3076,7 @@ describe('cli/commands/gates', () => {
         runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
         runGit(repoRoot, ['add', '.']);
 
-        const exitCode = await runHumanCommitCommand(['-m', 'test: initial commit'], { cwd: repoRoot });
+        const exitCode = await runHumanCommitCommand(['--operator-confirmed', 'yes', '-m', 'test: initial commit'], { cwd: repoRoot });
         const logResult = childProcess.spawnSync('git', ['log', '--oneline', '-1'], {
             cwd: repoRoot,
             windowsHide: true,
@@ -3087,6 +3090,64 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('rejects human-commit without explicit operator confirmation', async () => {
+        await assert.rejects(
+            () => runHumanCommitCommand(['-m', 'test: missing confirmation'], { cwd: process.cwd() }),
+            /requires explicit operator confirmation/
+        );
+    });
+
+    it('rejects stale human-commit operator confirmation timestamps', async () => {
+        const staleConfirmation = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+        await assert.rejects(
+            () => runHumanCommitCommand([
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', staleConfirmation,
+                '-m', 'test: stale confirmation'
+            ], { cwd: process.cwd() }),
+            /operator confirmation is stale/
+        );
+    });
+
+    it('rejects invalid human-commit operator confirmation timestamps', async () => {
+        await assert.rejects(
+            () => runHumanCommitCommand([
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', 'not-a-timestamp',
+                '-m', 'test: invalid confirmation timestamp'
+            ], { cwd: process.cwd() }),
+            /must be a valid ISO-8601 timestamp/
+        );
+    });
+
+    it('rejects future human-commit operator confirmation timestamps', async () => {
+        const futureConfirmation = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+        await assert.rejects(
+            () => runHumanCommitCommand([
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', futureConfirmation,
+                '-m', 'test: future confirmation timestamp'
+            ], { cwd: process.cwd() }),
+            /timestamp is in the future/
+        );
+    });
+
+    it('pins human-commit operator confirmation command surfaces', () => {
+        const expectedCommand = 'human-commit --operator-confirmed yes --message';
+        const helpOutput = stripAnsi(buildGateHelpText('human-commit', path.resolve('.')));
+        const cliReference = fs.readFileSync(path.resolve('docs/cli-reference.md'), 'utf8');
+        const templateCommands = fs.readFileSync(path.resolve('template/docs/agent-rules/40-commands.md'), 'utf8');
+        const liveCommands = fs.readFileSync(path.resolve('garda-agent-orchestrator/live/docs/agent-rules/40-commands.md'), 'utf8');
+
+        assert.ok(getNodeHumanCommitCommand().includes('human-commit --operator-confirmed yes --message "<message>"'));
+        assert.ok(helpOutput.includes('gate human-commit --operator-confirmed yes --message "<commit message>"'));
+        assert.ok(cliReference.includes('garda gate human-commit --operator-confirmed yes --message "<message>"'));
+        assert.ok(templateCommands.includes(`gate ${expectedCommand} "<message>"`));
+        assert.ok(templateCommands.includes('operator answers `Do you want me to commit now? (yes/no)` with yes'));
+        assert.ok(liveCommands.includes(`gate ${expectedCommand} "<message>"`));
+        assert.ok(liveCommands.includes('operator answers `Do you want me to commit now? (yes/no)` with yes'));
+    });
+
     it('runs documented human-commit command with repo root gate option', async () => {
         const repoRoot = createTempRepo();
         const parentCwd = path.dirname(repoRoot);
@@ -3097,6 +3158,8 @@ describe('cli/commands/gates', () => {
         runGit(repoRoot, ['add', '.']);
 
         const exitCode = await runHumanCommitCommand([
+            '--operator-confirmed', 'yes',
+            '--operator-confirmed-at-utc', new Date().toISOString(),
             '--message', 'test: documented human commit',
             '--repo-root', path.basename(repoRoot)
         ], { cwd: parentCwd });
@@ -3123,6 +3186,7 @@ describe('cli/commands/gates', () => {
         runGit(repoRoot, ['add', '.']);
 
         const exitCode = await runHumanCommitCommand([
+            '--operator-confirmed=yes',
             '--repo-root=' + path.basename(repoRoot),
             '--message', 'test: inline repo root human commit'
         ], { cwd: parentCwd });

@@ -49,12 +49,17 @@ export interface HumanCommitOptions {
     cwd?: string;
 }
 
+const OPERATOR_COMMIT_CONFIRMATION_MAX_AGE_MS = 10 * 60 * 1000;
+const OPERATOR_COMMIT_CONFIRMATION_MAX_FUTURE_SKEW_MS = 60 * 1000;
+
 function parseHumanCommitInvocation(
     gitArgs: unknown,
     options: HumanCommitOptions
 ): { commitArgs: string[]; cwd: string } {
     const invocationCwd = options.cwd || process.cwd();
     let cwd = invocationCwd;
+    let operatorConfirmed = false;
+    let operatorConfirmedAtUtc: string | null = null;
     const commitArgs: string[] = [];
     const rawArgs = gateHelpers.toStringArray(gitArgs).filter(function (item: string) {
         return String(item || '').trim() !== '';
@@ -79,14 +84,68 @@ function parseHumanCommitInvocation(
             cwd = path.resolve(invocationCwd, repoRoot);
             continue;
         }
+        if (argument === '--operator-confirmed') {
+            const confirmation = rawArgs[index + 1];
+            if (!confirmation) throw new Error('--operator-confirmed requires the exact value "yes".');
+            operatorConfirmed = parseOperatorCommitConfirmation(confirmation);
+            index += 1;
+            continue;
+        }
+        if (argument.startsWith('--operator-confirmed=')) {
+            operatorConfirmed = parseOperatorCommitConfirmation(argument.slice('--operator-confirmed='.length));
+            continue;
+        }
+        if (argument === '--operator-confirmed-at-utc') {
+            const confirmedAt = rawArgs[index + 1];
+            if (!confirmedAt) throw new Error('--operator-confirmed-at-utc requires an ISO-8601 timestamp.');
+            operatorConfirmedAtUtc = confirmedAt;
+            index += 1;
+            continue;
+        }
+        if (argument.startsWith('--operator-confirmed-at-utc=')) {
+            operatorConfirmedAtUtc = argument.slice('--operator-confirmed-at-utc='.length);
+            continue;
+        }
         commitArgs.push(argument);
     }
+
+    validateOperatorCommitConfirmation(operatorConfirmed, operatorConfirmedAtUtc);
 
     if (commitArgs.length === 0) {
         throw new Error('Provide git commit arguments, for example: -m "feat: message"');
     }
 
     return { commitArgs, cwd };
+}
+
+function parseOperatorCommitConfirmation(value: string): boolean {
+    if (value.trim().toLowerCase() !== 'yes') {
+        throw new Error('--operator-confirmed requires the exact value "yes".');
+    }
+    return true;
+}
+
+function validateOperatorCommitConfirmation(operatorConfirmed: boolean, operatorConfirmedAtUtc: string | null): void {
+    if (!operatorConfirmed) {
+        throw new Error('human-commit requires explicit operator confirmation. Ask the user "Do you want me to commit now? (yes/no)" and rerun only after a yes response with --operator-confirmed yes.');
+    }
+
+    if (!operatorConfirmedAtUtc) {
+        return;
+    }
+
+    const confirmedAtMs = Date.parse(operatorConfirmedAtUtc);
+    if (!Number.isFinite(confirmedAtMs)) {
+        throw new Error('--operator-confirmed-at-utc must be a valid ISO-8601 timestamp.');
+    }
+
+    const ageMs = Date.now() - confirmedAtMs;
+    if (ageMs > OPERATOR_COMMIT_CONFIRMATION_MAX_AGE_MS) {
+        throw new Error('human-commit operator confirmation is stale; ask the user for a fresh yes/no confirmation.');
+    }
+    if (ageMs < -OPERATOR_COMMIT_CONFIRMATION_MAX_FUTURE_SKEW_MS) {
+        throw new Error('human-commit operator confirmation timestamp is in the future.');
+    }
 }
 
 interface CommandAuditPayload {

@@ -547,7 +547,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Next step | `garda next-step "T-001"` or `garda gate next-step "T-001"` |
 | Log event | `garda gate log-task-event --task-id "T-001" --event-type "..."` |
 | Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
-| Human commit | `garda gate human-commit --message "<message>"` |
+| Human commit | `garda gate human-commit --operator-confirmed yes --message "<message>"` |
 
 Use `garda next-step "T-001"` as the task-loop command before and after gates; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 

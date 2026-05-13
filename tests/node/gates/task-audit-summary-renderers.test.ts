@@ -20,6 +20,8 @@ describe('buildCommitCommandSuggestion', () => {
         const result = buildCommitCommandSuggestion(changedFiles, metadata, true);
         assert.ok(result.template.includes('human-commit'), 'Template should use human-commit');
         assert.ok(result.suggestion.includes('human-commit'), 'Suggestion should use human-commit');
+        assert.ok(result.template.includes('--operator-confirmed yes'), 'Template should require operator confirmation');
+        assert.ok(result.suggestion.includes('--operator-confirmed yes'), 'Suggestion should require operator confirmation');
         assert.ok(!result.template.includes('git commit -m'), 'Template should not use bare git commit');
         assert.ok(!result.suggestion.includes('git commit -m'), 'Suggestion should not use bare git commit');
     });

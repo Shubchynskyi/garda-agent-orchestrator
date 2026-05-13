@@ -263,7 +263,7 @@ node garda-agent-orchestrator/bin/garda.js gate build-review-context --review-ty
 node garda-agent-orchestrator/bin/garda.js gate record-review-result --task-id "<task-id>" --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --review-output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-<review-type>-review-output.md" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>"
 node garda-agent-orchestrator/bin/garda.js gate record-review-result --task-id "<task-id>" --review-type "<code|db|security|refactor|api|test|performance|infra|dependency>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --review-output-stdin --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>"
 node garda-agent-orchestrator/bin/garda.js gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"
-node garda-agent-orchestrator/bin/garda.js gate human-commit --message "<message>"
+node garda-agent-orchestrator/bin/garda.js gate human-commit --operator-confirmed yes --message "<message>"
 ```
 
 Notes:
@@ -278,6 +278,7 @@ Notes:
 - In a dirty workspace, prefer `--use-staged` after staging task-related tracked files.
 - `--use-staged` includes untracked files by default, so new files are classified even before `git add`.
 - Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.
+- `human-commit` is valid only after the operator answers `Do you want me to commit now? (yes/no)` with yes; pass `--operator-confirmed yes` for that fresh confirmation and do not treat reset/revert as a normal continuation path after a mistaken commit.
 - For maximum precision, pass planned task file list via repeated `--changed-file`.
 - In a clean workspace, planned `--changed-file` preflight is only the initial scope hint before implementation. If `next-step` or `compile-gate` later reports scope drift after the real diff exists, treat that as expected planned-scope recovery: rerun the `next-step` command and follow its refresh sequence instead of hand-authoring recovery flags.
 - In a clean workspace, `classify-change` can auto-detect changed files from git without additional flags.

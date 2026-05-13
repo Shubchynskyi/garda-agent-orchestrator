@@ -156,7 +156,7 @@ export function buildCommitCommandSuggestion(
     commitGuardEnabled: boolean
 ): { template: string; suggestion: string } {
     const template = commitGuardEnabled
-        ? `${getNodeGateCommandPrefix()} human-commit --message "<type>(<scope>): <summary>"`
+        ? `${getNodeGateCommandPrefix()} human-commit --operator-confirmed yes --message "<type>(<scope>): <summary>"`
         : 'git commit -m "<type>(<scope>): <summary>"';
     const subject = inferCommitSubject(taskMetadata);
     if (subject === '<summary>') {
@@ -169,7 +169,7 @@ export function buildCommitCommandSuggestion(
     return {
         template,
         suggestion: commitGuardEnabled
-            ? `${getNodeGateCommandPrefix()} human-commit --message "${message}"`
+            ? `${getNodeGateCommandPrefix()} human-commit --operator-confirmed yes --message "${message}"`
             : `git commit -m "${message}"`
     };
 }
