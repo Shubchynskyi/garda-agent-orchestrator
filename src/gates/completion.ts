@@ -318,7 +318,9 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     }
 
     const workflowConfigBaseline = taskModeEvidence.workflow_config_file_hashes;
-    const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline);
+    const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline, {
+        allowProtectedManifestFallback: false
+    });
     const workflowConfigWorkViolations = getWorkflowConfigWorkViolations({
         changedFiles: [
             ...workflowConfigChanges.changed_files,

@@ -521,9 +521,21 @@ function hasWorkflowConfigHashEvidence(value: Record<string, string | null> | nu
         && Object.keys(value).some((relativePath) => isWorkflowConfigControlPlanePathShape(relativePath));
 }
 
+function hasPresentWorkflowConfigHashEvidence(value: Record<string, string | null> | null | undefined): boolean {
+    return !!value
+        && Object.entries(value).some(([relativePath, hash]) => (
+            isWorkflowConfigControlPlanePathShape(relativePath)
+            && typeof hash === 'string'
+            && hash.length > 0
+        ));
+}
+
 export function getCurrentWorkflowConfigChanges(
     repoRoot: string,
-    baselineFileHashes?: Record<string, string | null> | null
+    baselineFileHashes?: Record<string, string | null> | null,
+    options: {
+        allowProtectedManifestFallback?: boolean;
+    } = {}
 ): CurrentWorkflowConfigChanges {
     const currentFileHashes = getCurrentWorkflowConfigFileHashes(repoRoot);
     const workflowConfigControlPlanePaths = [
@@ -538,7 +550,7 @@ export function getCurrentWorkflowConfigChanges(
     let baselineSource: CurrentWorkflowConfigChanges['baseline_source'] = effectiveBaselineFileHashes
         ? 'task_mode'
         : null;
-    if (!effectiveBaselineFileHashes) {
+    if (!effectiveBaselineFileHashes && options.allowProtectedManifestFallback !== false) {
         const manifestState = readProtectedManifestWorkflowConfigHashes(repoRoot, workflowConfigControlPlanePaths);
         if (manifestState.status === 'present' && hasWorkflowConfigHashEvidence(manifestState.hashes)) {
             effectiveBaselineFileHashes = manifestState.hashes;
@@ -609,7 +621,7 @@ export function getWorkflowConfigWorkViolations(options: {
     const changedWorkflowConfigFiles = getWorkflowConfigChangedFiles(options.changedFiles, workflowConfigPathFilter);
     if (
         !hasWorkflowConfigHashEvidence(options.baselineFileHashes)
-        && hasWorkflowConfigHashEvidence(options.currentFileHashes)
+        && hasPresentWorkflowConfigHashEvidence(options.currentFileHashes)
     ) {
         return [
             `Workflow config baseline hashes are missing before ${options.phaseLabel}. ` +

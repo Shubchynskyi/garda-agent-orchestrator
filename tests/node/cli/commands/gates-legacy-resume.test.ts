@@ -28,6 +28,7 @@ import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
+import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config-work';
 import * as childProcess from 'node:child_process';
 
 function createTempRepo(): string {
@@ -830,6 +831,7 @@ describe('cli/commands/gates', () => {
             requested_depth: 2,
             effective_depth: 2,
             task_summary: 'Resume legacy task-mode artifact after upgrade',
+            workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
             provider: 'Codex',
             routed_to: 'AGENTS.md'
         }, null, 2) + '\n', 'utf8');
@@ -1010,6 +1012,7 @@ describe('cli/commands/gates', () => {
             requested_depth: 2,
             effective_depth: 2,
             task_summary: 'Resume legacy provider-bridge task-mode artifact after upgrade',
+            workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
             provider: 'Codex',
             routed_to: '.antigravity/agents/orchestrator.md'
         }, null, 2) + '\n', 'utf8');
@@ -1190,6 +1193,7 @@ describe('cli/commands/gates', () => {
             requested_depth: 2,
             effective_depth: 2,
             task_summary: 'Resume legacy provider-bridge task-mode artifact from a custom path after upgrade',
+            workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
             provider: 'Codex',
             routed_to: '.antigravity/agents/orchestrator.md'
         }, null, 2) + '\n', 'utf8');

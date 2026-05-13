@@ -1221,7 +1221,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         }
         if (!exceptionMessage) {
             workflowConfigBaselineForCompile = taskModeEvidence.workflow_config_file_hashes;
-            const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile);
+            const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile, {
+                allowProtectedManifestFallback: false
+            });
             workflowConfigBaselineForCompile = workflowConfigChanges.baseline_file_hashes;
             const workflowConfigViolations = getWorkflowConfigWorkViolations({
                 changedFiles: mergePathLists(
@@ -1453,7 +1455,9 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             }
         }
         if (!exceptionMessage) {
-            const postCompileWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile);
+            const postCompileWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile, {
+                allowProtectedManifestFallback: false
+            });
             const postCompileWorkflowConfigViolations = getWorkflowConfigWorkViolations({
                 changedFiles: postCompileWorkflowConfigChanges.changed_files,
                 taskModeEvidence,

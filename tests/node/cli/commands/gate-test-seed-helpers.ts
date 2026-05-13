@@ -28,6 +28,8 @@ import {
     computeReviewContextReuseHash
 } from '../../../../src/gates/review-reuse';
 import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
+import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
+import { getWorkflowConfigPreTaskBaselineState } from '../../../../src/gates/workflow-config-work';
 import {
     resolveReviewerRoutingPolicy
 } from '../../../../src/gates/reviewer-routing';
@@ -215,6 +217,22 @@ export function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeComm
             fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
         }
     }
+    const manifestPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json');
+    if (!fs.existsSync(manifestPath)) {
+        const hasGit = fs.existsSync(path.join(repoRoot, '.git'));
+        const workflowConfigBaseline = hasGit
+            ? getWorkflowConfigPreTaskBaselineState(repoRoot)
+            : { changed_files: [], compatibility_baseline_files: [] };
+        if (
+            !hasGit
+            || (
+                workflowConfigBaseline.changed_files.length === 0
+                && workflowConfigBaseline.compatibility_baseline_files.length === 0
+            )
+        ) {
+            writeProtectedControlPlaneManifest(repoRoot);
+        }
+    }
     return runEnterTaskModeCommand(resolvedOptions);
 }
 
@@ -352,6 +370,10 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
         windowsHide: true
     });
     if (head.status !== 0) {
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        if (fs.existsSync(workflowConfigPath)) {
+            runGitBestEffort(repoRoot, ['add', '--', 'garda-agent-orchestrator/live/config/workflow-config.json']);
+        }
         runGitBestEffort(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
     }
 

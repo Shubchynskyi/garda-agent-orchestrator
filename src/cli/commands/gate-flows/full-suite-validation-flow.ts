@@ -444,7 +444,9 @@ export async function runFullSuiteValidationCommand(
 
     const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
     let workflowConfigBaseline = taskModeEvidence.workflow_config_file_hashes;
-    const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline);
+    const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline, {
+        allowProtectedManifestFallback: false
+    });
     workflowConfigBaseline = workflowConfigChanges.baseline_file_hashes;
     const workflowConfigViolations = getWorkflowConfigWorkViolations({
         changedFiles: workflowConfigChanges.changed_files,
@@ -575,7 +577,9 @@ export async function runFullSuiteValidationCommand(
         result.warnings.push(...generatedLockCleanup.map(formatGeneratedLockCleanupObservation));
     }
     result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);
-    const postWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline);
+    const postWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline, {
+        allowProtectedManifestFallback: false
+    });
     const postWorkflowConfigViolations = getWorkflowConfigWorkViolations({
         changedFiles: postWorkflowConfigChanges.changed_files,
         taskModeEvidence,

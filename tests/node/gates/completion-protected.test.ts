@@ -7,6 +7,7 @@ import {
     runCompletionGate
 } from '../../../src/gates/completion';
 import { computeProtectedSnapshotDigest, fileSha256, normalizePath } from '../../../src/gates/helpers';
+import { getCurrentWorkflowConfigFileHashes } from '../../../src/gates/workflow-config-work';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 describe('gates/completion — protected control-plane', () => {
     describe('runCompletionGate protected control-plane diff gate', () => {
@@ -103,6 +104,7 @@ describe('gates/completion — protected control-plane', () => {
                 provider: 'Codex',
                 canonical_source_of_truth: 'Codex',
                 execution_provider_source: 'provider_entrypoint',
+                workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
                 reviewer_subagent_launch_status: 'launchable',
                 reviewer_subagent_launch_route: 'AGENTS.md',
                 runtime_identity_status: 'resolved',

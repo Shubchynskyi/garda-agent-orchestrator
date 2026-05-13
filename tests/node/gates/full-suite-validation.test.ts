@@ -16,8 +16,44 @@ import {
     formatFullSuiteValidationResult,
     loadFullSuiteValidationConfig
 } from '../../../src/gates/full-suite-validation';
+import { getCurrentWorkflowConfigFileHashes } from '../../../src/gates/workflow-config-work';
+import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
 import { countTextChars } from '../../../src/gate-runtime/text-utils';
 import { runCliWithCapturedOutput } from '../cli/commands/gate-test-helpers';
+
+function writeFullSuitePreflight(
+    repoRoot: string,
+    preflightPath: string,
+    preflight: Record<string, unknown>
+): void {
+    fs.writeFileSync(preflightPath, JSON.stringify(preflight), 'utf8');
+    const taskId = String(preflight.task_id || '').trim();
+    if (taskId) {
+        writeFullSuiteTaskModeBaseline(repoRoot, taskId);
+    }
+}
+
+function writeFullSuiteTaskModeBaseline(repoRoot: string, taskId: string): void {
+    const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    fs.mkdirSync(reviewsDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(reviewsDir, `${taskId}-task-mode.json`),
+        `${JSON.stringify(buildTaskModeArtifact({
+            taskId,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: `Full-suite validation fixture for ${taskId}`,
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            workflowConfigFileHashes: getCurrentWorkflowConfigFileHashes(repoRoot)
+        }), null, 2)}\n`,
+        'utf8'
+    );
+}
 
 describe('gates/full-suite-validation', () => {
     describe('loadFullSuiteValidationConfig', () => {
@@ -329,10 +365,10 @@ describe('gates/full-suite-validation', () => {
             fs.mkdirSync(reviewsDir, { recursive: true });
             fs.mkdirSync(eventsDir, { recursive: true });
             const preflightPath = path.join(reviewsDir, 'T-SKIP-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-SKIP',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -388,10 +424,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-WARN-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-WARN',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -451,10 +487,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-PASS-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-PASS',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -475,6 +511,51 @@ describe('gates/full-suite-validation', () => {
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
             assert.match(timeline, /"output_telemetry":\{/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('rejects mutable preflight workflow-config hashes without task-mode baseline evidence', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-preflight-baseline-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'pass.js');
+            fs.writeFileSync(helperScript, 'process.stdout.write("all good\\n"); process.exit(0);', 'utf8');
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-PREFLIGHT-BASELINE-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-PREFLIGHT-BASELINE',
+                changed_files: ['src/changed.ts'],
+                triggers: {
+                    workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(tempDir)
+                }
+            }), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-PREFLIGHT-BASELINE',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-PREFLIGHT-BASELINE-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.ok(artifact.violations.some((line: string) => line.includes('baseline hashes are missing')));
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -517,10 +598,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-ENV-PASS-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-ENV-PASS',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const previousBundleName = process.env.GARDA_BUNDLE_NAME;
             const previousExecutionProvider = process.env.GARDA_EXECUTION_PROVIDER;
@@ -588,10 +669,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-ENV-FAIL-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-ENV-FAIL',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const previousBundleName = process.env.GARDA_BUNDLE_NAME;
             process.env.GARDA_BUNDLE_NAME = 'garda-agent-orchestrator';
@@ -654,10 +735,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-LARGE-PASS-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-LARGE-PASS',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -719,10 +800,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-LARGE-FAIL-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-LARGE-FAIL',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -777,10 +858,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-PASS-AGGREGATE-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-PASS-AGGREGATE',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const fsModule = require('node:fs') as typeof import('node:fs');
             const originalAppendFileSync = fsModule.appendFileSync;
@@ -845,10 +926,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-UNCONFIGURED-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-UNCONFIGURED',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -910,10 +991,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-LOCK-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-TIMEOUT-LOCK',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -942,10 +1023,10 @@ describe('gates/full-suite-validation', () => {
             fs.writeFileSync(blockedEventsPath, 'blocked', 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-EMIT-FAIL-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-EMIT-FAIL',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const result = await runCliWithCapturedOutput([
                 'gate', 'full-suite-validation',
@@ -993,10 +1074,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-PROMOTE-RECOVER-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-PROMOTE-RECOVER',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const artifactPath = path.join(reviewsDir, 'T-PROMOTE-RECOVER-full-suite-validation.json');
             const pendingArtifactPath = `${artifactPath}.pending`;
@@ -1106,10 +1187,10 @@ describe('gates/full-suite-validation', () => {
             }), 'utf8');
 
             const preflightPath = path.join(reviewsDir, 'T-STALE-PENDING-preflight.json');
-            fs.writeFileSync(preflightPath, JSON.stringify({
+            writeFullSuitePreflight(tempDir, preflightPath, {
                 task_id: 'T-STALE-PENDING',
                 changed_files: ['src/changed.ts']
-            }), 'utf8');
+            });
 
             const artifactPath = path.join(reviewsDir, 'T-STALE-PENDING-full-suite-validation.json');
             const pendingArtifactPath = `${artifactPath}.pending`;

@@ -30,6 +30,7 @@ import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
 import { runCompletionGate } from '../../../../src/gates/completion';
+import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
 import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
@@ -1833,6 +1834,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(rulePackPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
 
         fs.writeFileSync(extraRulePath, '# Project specific rule\n\nUpdated content.\n', 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
         const refreshedPreflightPath = runExplicitPreflight(
             repoRoot,
             taskId,

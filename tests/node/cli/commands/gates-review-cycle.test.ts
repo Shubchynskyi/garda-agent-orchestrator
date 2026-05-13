@@ -13,6 +13,7 @@ import {
     runRequiredReviewsCheckCommand
 } from '../../../../src/cli/commands/gates';
 import { formatCompletionGateResult, runCompletionGate } from '../../../../src/gates/completion';
+import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import { serializeTaskPlan, validateTaskPlan } from '../../../../src/schemas/task-plan';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import { buildScopedDiff } from '../../../../src/gates/build-scoped-diff';
@@ -24,6 +25,7 @@ import {
 } from '../../../../src/gates/review-reuse';
 import { resolveRuntimeReviewerIdentity } from '../../../../src/gates/reviewer-routing';
 import { getTaskModeEvidence } from '../../../../src/gates/task-mode';
+import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config-work';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { ensureSkillsHeadlinesCurrent } from '../../../../src/runtime/skill-headlines';
 import { writeOptionalSkillSelectionArtifact } from '../../../../src/runtime/optional-skill-selection';
@@ -300,6 +302,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
@@ -507,6 +510,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
             requested_depth: 2,
             effective_depth: 2,
             task_summary: 'Restart a coherent cycle from a legacy task-mode artifact after upgrade',
+            workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
             provider: 'Codex',
             routed_to: 'AGENTS.md'
         }, null, 2) + '\n', 'utf8');
@@ -571,6 +575,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         seedRemediationRepoBase(repoRoot);
         writeReviewCapabilitiesConfig(repoRoot);
         const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-legacy-coherent-floor');
+        writeProtectedControlPlaneManifest(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Codex');
@@ -588,6 +593,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
             requested_depth: 2,
             effective_depth: 2,
             task_summary: 'Restart the review cycle after a coherent restart from a legacy task-mode artifact',
+            workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(repoRoot),
             provider: 'Codex',
             routed_to: 'AGENTS.md'
         }, null, 2) + '\n', 'utf8');
