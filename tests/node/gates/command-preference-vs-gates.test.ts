@@ -168,6 +168,27 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
                 '40-commands.md must forbid raw-shell fan-out for generated-artifact validation flows'
             );
         });
+
+        it('documents bounded manual validation logging for noisy ad-hoc commands', () => {
+            const content = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
+            assert.ok(
+                content.includes('### Manual Validation Logs'),
+                '40-commands.md must document the manual validation log pattern'
+            );
+            assert.ok(
+                content.includes('ManualValidationLogPath') &&
+                content.includes('$taskId = "<task-id>"') &&
+                content.includes('garda-agent-orchestrator/runtime/manual-validation/$taskId') &&
+                content.includes('task_id="<task-id>"') &&
+                content.includes('tail -n 80 "$log_path"'),
+                '40-commands.md must include PowerShell and POSIX bounded-tail examples'
+            );
+            assert.ok(
+                content.includes('does not replace `compile-gate`, `full-suite-validation`, or') &&
+                content.includes('preserve the original exit code'),
+                '40-commands.md must keep manual validation separate from gate-owned evidence'
+            );
+        });
     });
 
     describe('40-commands.md (template)', () => {
@@ -202,6 +223,26 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
             assert.ok(
                 content.includes('raw shell sidecars') && content.includes('build:node-foundation'),
                 'template 40-commands.md must forbid raw-shell fan-out for generated-artifact validation flows'
+            );
+        });
+
+        it('documents bounded manual validation logging for noisy ad-hoc commands', () => {
+            assert.ok(
+                content.includes('### Manual Validation Logs'),
+                'template 40-commands.md must document the manual validation log pattern'
+            );
+            assert.ok(
+                content.includes('ManualValidationLogPath') &&
+                content.includes('$taskId = "<task-id>"') &&
+                content.includes('garda-agent-orchestrator/runtime/manual-validation/$taskId') &&
+                content.includes('task_id="<task-id>"') &&
+                content.includes('tail -n 80 "$log_path"'),
+                'template 40-commands.md must include PowerShell and POSIX bounded-tail examples'
+            );
+            assert.ok(
+                content.includes('does not replace `compile-gate`, `full-suite-validation`, or') &&
+                content.includes('preserve the original exit code'),
+                'template 40-commands.md must keep manual validation separate from gate-owned evidence'
             );
         });
     });

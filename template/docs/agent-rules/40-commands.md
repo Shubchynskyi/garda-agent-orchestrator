@@ -26,6 +26,47 @@ node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "T-042" -
 # compile-gate internally runs `npm run build`; that is allowed because it is gate-driven, not ad-hoc.
 ```
 
+### Manual Validation Logs
+Manual validation outside the gate pipeline must keep the agent transcript bounded.
+Use this pattern only for focused debug or split-repair validation before returning
+to `next-step`; it does not replace `compile-gate`, `full-suite-validation`, or
+any gate-owned artifact.
+
+PowerShell:
+```powershell
+$taskId = "<task-id>"
+$logDir = "garda-agent-orchestrator/runtime/manual-validation/$taskId"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$logPath = Join-Path $logDir "npm-test.log"
+& npm test *> $logPath
+$exitCode = $LASTEXITCODE
+"ManualValidationExitCode: $exitCode"
+"ManualValidationLogPath: $logPath"
+Get-Content -Path $logPath -Tail 80
+exit $exitCode
+```
+
+POSIX shell:
+```bash
+task_id="<task-id>"
+log_dir="garda-agent-orchestrator/runtime/manual-validation/$task_id"
+mkdir -p "$log_dir"
+log_path="$log_dir/npm-test.log"
+npm test >"$log_path" 2>&1
+status=$?
+printf 'ManualValidationExitCode: %s\n' "$status"
+printf 'ManualValidationLogPath: %s\n' "$log_path"
+tail -n 80 "$log_path"
+exit "$status"
+```
+
+Rules:
+- Print only the exit code, full log path, and a bounded tail or summary in chat.
+- Keep full stdout/stderr in the task-owned runtime log for audit.
+- Do not use this pattern to hide failures; preserve the original exit code.
+- Do not use this pattern for mandatory lifecycle gates, which already own output
+  filtering and evidence materialization.
+
 ## Project Commands (Required)
 Replace these defaults with repository-specific commands when the real project differs.
 
