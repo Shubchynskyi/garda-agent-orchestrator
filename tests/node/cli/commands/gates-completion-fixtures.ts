@@ -24,6 +24,7 @@ import {
 } from '../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
+import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -88,6 +89,7 @@ function createTempRepo(): string {
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
     seedProjectMemoryOffWorkflowConfig(root);
+    writeProtectedControlPlaneManifest(root);
     return root;
 }
 

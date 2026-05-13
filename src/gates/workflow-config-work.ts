@@ -10,24 +10,39 @@ import {
     isWorkflowConfigControlPlanePathShape,
     normalizePath,
     resolveProtectedControlPlaneManifestPath,
-    toPlainRecord
+    toPlainRecord,
+    computeProtectedSnapshotDigest
 } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
+import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../core/constants';
+import {
+    buildDefaultWorkflowConfig,
+    isExactLegacyProjectMemoryGeneratedDefault
+} from '../core/workflow-config';
 
 export interface WorkflowConfigWorkEvidence {
     workflow_config_work?: boolean | null;
     orchestrator_work?: boolean | null;
     workflow_config_file_hashes?: Record<string, string | null> | null;
+    identity_backfilled_from_legacy?: boolean | null;
 }
 
 export interface CurrentWorkflowConfigChanges {
     changed_files: string[];
     current_file_hashes: Record<string, string | null>;
+    baseline_file_hashes: Record<string, string | null> | null;
+    baseline_source: 'task_mode' | 'protected_manifest' | null;
     scan_error: string | null;
 }
 
 export interface WorkflowConfigPreTaskBaselineState {
     changed_files: string[];
+    compatibility_baseline_files: string[];
+}
+
+interface ProtectedManifestWorkflowConfigHashes {
+    status: 'missing' | 'present' | 'invalid';
+    hashes: Record<string, string | null>;
 }
 
 export function getWorkflowConfigControlPlanePaths(repoRoot: string): string[] {
@@ -67,31 +82,49 @@ function normalizeSha256(value: unknown): string | null {
     return /^[a-f0-9]{64}$/.test(text) ? text : null;
 }
 
+function isValidSha256(value: unknown): boolean {
+    return normalizeSha256(value) !== null;
+}
+
 function readProtectedManifestWorkflowConfigHashes(
     repoRoot: string,
     workflowConfigPaths: readonly string[]
-): Record<string, string | null> | null {
+): ProtectedManifestWorkflowConfigHashes {
     const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
-    if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
-        return null;
+    if (!fs.existsSync(manifestPath)) {
+        return { status: 'missing', hashes: {} };
     }
 
     try {
+        if (!fs.statSync(manifestPath).isFile()) {
+            return { status: 'invalid', hashes: {} };
+        }
         const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-        const snapshot = toPlainRecord(toPlainRecord(parsed)?.protected_snapshot);
+        const parsedRecord = toPlainRecord(parsed);
+        const snapshot = toPlainRecord(parsedRecord?.protected_snapshot);
         if (!snapshot) {
-            return null;
+            return { status: 'invalid', hashes: {} };
+        }
+        const hasDigest = parsedRecord
+            ? Object.prototype.hasOwnProperty.call(parsedRecord, 'protected_snapshot_sha256')
+            : false;
+        const expectedDigest = hasDigest ? normalizeSha256(parsedRecord?.protected_snapshot_sha256) : null;
+        if (hasDigest && (!expectedDigest || computeProtectedSnapshotDigest(snapshot as Record<string, string>) !== expectedDigest)) {
+            return { status: 'invalid', hashes: {} };
         }
         const manifestHashes: Record<string, string | null> = {};
         for (const relativePath of workflowConfigPaths) {
             if (!Object.prototype.hasOwnProperty.call(snapshot, relativePath)) {
                 continue;
             }
+            if (!isValidSha256(snapshot[relativePath])) {
+                return { status: 'invalid', hashes: {} };
+            }
             manifestHashes[relativePath] = normalizeSha256(snapshot[relativePath]);
         }
-        return manifestHashes;
+        return { status: 'present', hashes: manifestHashes };
     } catch {
-        return null;
+        return { status: 'invalid', hashes: {} };
     }
 }
 
@@ -114,7 +147,10 @@ function readGitHeadFileSha256(repoRoot: string, relativePath: string): string |
     }
 }
 
-function hasGitIndexOrWorktreeStatus(repoRoot: string, relativePath: string): boolean {
+function readGitIndexOrWorktreeStatus(repoRoot: string, relativePath: string): string[] | null {
+    const normalizedRelativePath = normalizePath(relativePath);
+    const targetPath = path.join(repoRoot, ...normalizedRelativePath.split('/'));
+    const targetExists = fs.existsSync(targetPath);
     try {
         const result = spawnSyncWithTimeout('git', [
             '-C',
@@ -131,15 +167,259 @@ function hasGitIndexOrWorktreeStatus(repoRoot: string, relativePath: string): bo
             timeoutMs: DEFAULT_GIT_TIMEOUT_MS
         });
         if (result.status !== 0 || result.timedOut || result.error) {
-            return false;
+            return null;
         }
         return String(result.stdout || '')
             .split(/\r?\n/)
             .map((line) => line.trimEnd())
-            .filter(Boolean)
-            .length > 0;
+            .filter((line) => {
+                if (!line) {
+                    return false;
+                }
+                const statusPath = normalizePath(line.slice(3).trim().replace(/^"|"$/g, ''));
+                if (statusPath === normalizedRelativePath) {
+                    return true;
+                }
+                const statusPathWithSlash = statusPath.endsWith('/') ? statusPath : `${statusPath}/`;
+                return targetExists && normalizedRelativePath.startsWith(statusPathWithSlash);
+            });
     } catch {
+        return null;
+    }
+}
+
+function isIgnoredOnlyGitStatus(statusLines: readonly string[]): boolean {
+    return statusLines.length > 0 && statusLines.every((line) => line.startsWith('!! '));
+}
+
+const SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE = buildDefaultWorkflowConfig();
+const SAFE_FULL_SUITE_COMPATIBILITY_COMMANDS = new Set([
+    UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
+    'npm test'
+]);
+const COMPATIBILITY_TOP_LEVEL_KEYS = [
+    'full_suite_validation',
+    'project_memory_maintenance',
+    'review_cycle_guard',
+    'review_execution_policy',
+    'scope_budget_guard'
+];
+const COMPATIBILITY_LEGACY_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
+    (key) => key !== 'review_execution_policy'
+);
+const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
+    'command',
+    'enabled',
+    'green_summary_max_lines',
+    'out_of_scope_failure_policy',
+    'red_failure_chunk_lines',
+    'timeout_ms'
+];
+const COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS = ['mode'];
+const COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS = [
+    'action',
+    'enabled',
+    'max_changed_lines',
+    'max_files',
+    'max_required_reviews',
+    'max_review_tokens',
+    'profiles'
+];
+const COMPATIBILITY_REVIEW_CYCLE_GUARD_KEYS = [
+    'action',
+    'auto_split_enabled',
+    'enabled',
+    'excluded_review_types',
+    'max_failed_non_test_reviews',
+    'max_total_non_test_reviews'
+];
+const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
+    'enabled',
+    'impact_artifact_retention_days',
+    'max_compact_summary_chars',
+    'mode',
+    'read_strategy',
+    'require_user_approval_for_writes',
+    'run_before_final_closeout'
+];
+
+function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+    const actualKeys = Object.keys(record).sort();
+    const sortedExpectedKeys = [...expectedKeys].sort();
+    return actualKeys.length === sortedExpectedKeys.length
+        && sortedExpectedKeys.every((key, index) => actualKeys[index] === key);
+}
+
+function hasOwnKey(record: Record<string, unknown>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function getPositiveInteger(value: unknown): number | null {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : null;
+}
+
+function numberAtMost(record: Record<string, unknown>, key: string, limit: unknown): boolean {
+    const actual = getPositiveInteger(record[key]);
+    const maximum = getPositiveInteger(limit);
+    return actual !== null && maximum !== null && actual <= maximum;
+}
+
+function numberEquals(record: Record<string, unknown>, key: string, expected: unknown): boolean {
+    const actual = getPositiveInteger(record[key]);
+    const expectedNumber = getPositiveInteger(expected);
+    return actual !== null && expectedNumber !== null && actual === expectedNumber;
+}
+
+function normalizeStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return [...new Set(value.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean))].sort();
+}
+
+function includesEvery(actual: readonly string[], expected: readonly string[]): boolean {
+    const actualSet = new Set(actual);
+    return expected.every((entry) => actualSet.has(entry));
+}
+
+function isSubsetOf(actual: readonly string[], allowed: readonly string[]): boolean {
+    const allowedSet = new Set(allowed);
+    return actual.every((entry) => allowedSet.has(entry));
+}
+
+function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string, unknown>): boolean {
+    if (
+        !hasExactOwnKeys(SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE as unknown as Record<string, unknown>, COMPATIBILITY_TOP_LEVEL_KEYS)
+        || (
+            !hasExactOwnKeys(config, COMPATIBILITY_TOP_LEVEL_KEYS)
+            && !hasExactOwnKeys(config, COMPATIBILITY_LEGACY_TOP_LEVEL_KEYS)
+        )
+    ) {
         return false;
+    }
+
+    const fullSuiteValidation = toPlainRecord(config.full_suite_validation);
+    if (!fullSuiteValidation) {
+        return false;
+    }
+    const outOfScopeFailurePolicy = String(
+        fullSuiteValidation.out_of_scope_failure_policy || ''
+    ).trim().toUpperCase();
+    const command = String(fullSuiteValidation.command || '').trim();
+    const defaultFullSuiteValidation = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.full_suite_validation as unknown as Record<string, unknown>;
+    if (
+        !hasExactOwnKeys(defaultFullSuiteValidation, COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS)
+        || !hasExactOwnKeys(fullSuiteValidation, COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS)
+        || typeof fullSuiteValidation.enabled !== 'boolean'
+        || outOfScopeFailurePolicy !== 'AUDIT_AND_BLOCK'
+        || !numberEquals(fullSuiteValidation, 'timeout_ms', defaultFullSuiteValidation.timeout_ms)
+        || !numberEquals(fullSuiteValidation, 'green_summary_max_lines', defaultFullSuiteValidation.green_summary_max_lines)
+        || !numberEquals(fullSuiteValidation, 'red_failure_chunk_lines', defaultFullSuiteValidation.red_failure_chunk_lines)
+    ) {
+        return false;
+    }
+    if (!SAFE_FULL_SUITE_COMPATIBILITY_COMMANDS.has(command)) {
+        return false;
+    }
+    if (fullSuiteValidation.enabled === true && command !== 'npm test') {
+        return false;
+    }
+
+    if (hasOwnKey(config, 'review_execution_policy')) {
+        const reviewExecutionPolicy = toPlainRecord(config.review_execution_policy);
+        const reviewExecutionMode = String(reviewExecutionPolicy?.mode || '').trim().toLowerCase();
+        const defaultReviewExecutionPolicy = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.review_execution_policy as unknown as Record<string, unknown>;
+        if (
+            !reviewExecutionPolicy
+            || !hasExactOwnKeys(defaultReviewExecutionPolicy, COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS)
+            || !hasExactOwnKeys(reviewExecutionPolicy, COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS)
+            || !['code_first_optional', 'strict_sequential'].includes(reviewExecutionMode)
+        ) {
+            return false;
+        }
+    }
+
+    const scopeBudgetGuard = toPlainRecord(config.scope_budget_guard);
+    const defaultScopeBudgetGuard = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.scope_budget_guard as unknown as Record<string, unknown>;
+    if (
+        !scopeBudgetGuard
+        || !hasExactOwnKeys(defaultScopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)
+        || !hasExactOwnKeys(scopeBudgetGuard, COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS)
+        || scopeBudgetGuard.enabled !== true
+        || String(scopeBudgetGuard.action || '').trim().toUpperCase() !== 'BLOCK_FOR_SPLIT'
+        || !includesEvery(
+            normalizeStringList(scopeBudgetGuard.profiles),
+            normalizeStringList(defaultScopeBudgetGuard.profiles)
+        )
+        || !numberAtMost(scopeBudgetGuard, 'max_files', defaultScopeBudgetGuard.max_files)
+        || !numberAtMost(scopeBudgetGuard, 'max_changed_lines', defaultScopeBudgetGuard.max_changed_lines)
+        || !numberAtMost(scopeBudgetGuard, 'max_required_reviews', defaultScopeBudgetGuard.max_required_reviews)
+        || !numberAtMost(scopeBudgetGuard, 'max_review_tokens', defaultScopeBudgetGuard.max_review_tokens)
+    ) {
+        return false;
+    }
+
+    const reviewCycleGuard = toPlainRecord(config.review_cycle_guard);
+    const defaultReviewCycleGuard = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.review_cycle_guard as unknown as Record<string, unknown>;
+    if (
+        !reviewCycleGuard
+        || !hasExactOwnKeys(defaultReviewCycleGuard, COMPATIBILITY_REVIEW_CYCLE_GUARD_KEYS)
+        || !hasExactOwnKeys(reviewCycleGuard, COMPATIBILITY_REVIEW_CYCLE_GUARD_KEYS)
+        || reviewCycleGuard.enabled !== true
+        || String(reviewCycleGuard.action || '').trim().toUpperCase() !== 'BLOCK_FOR_OPERATOR_DECISION'
+        || !numberAtMost(reviewCycleGuard, 'max_failed_non_test_reviews', defaultReviewCycleGuard.max_failed_non_test_reviews)
+        || !numberAtMost(reviewCycleGuard, 'max_total_non_test_reviews', defaultReviewCycleGuard.max_total_non_test_reviews)
+        || !isSubsetOf(
+            normalizeStringList(reviewCycleGuard.excluded_review_types),
+            normalizeStringList(defaultReviewCycleGuard.excluded_review_types)
+        )
+        || reviewCycleGuard.auto_split_enabled !== defaultReviewCycleGuard.auto_split_enabled
+    ) {
+        return false;
+    }
+
+    const projectMemoryMaintenance = toPlainRecord(config.project_memory_maintenance);
+    const defaultProjectMemoryMaintenance = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.project_memory_maintenance as unknown as Record<string, unknown>;
+    const hasCurrentProjectMemoryMaintenance = !!projectMemoryMaintenance
+        && projectMemoryMaintenance.enabled === true
+        && String(projectMemoryMaintenance.mode || '').trim().toLowerCase() === 'update';
+    const hasLegacyProjectMemoryMaintenance = isExactLegacyProjectMemoryGeneratedDefault(projectMemoryMaintenance);
+    if (
+        !projectMemoryMaintenance
+        || !hasExactOwnKeys(defaultProjectMemoryMaintenance, COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS)
+        || !hasExactOwnKeys(projectMemoryMaintenance, COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS)
+        || (!hasCurrentProjectMemoryMaintenance && !hasLegacyProjectMemoryMaintenance)
+        || projectMemoryMaintenance.run_before_final_closeout !== true
+        || projectMemoryMaintenance.require_user_approval_for_writes !== true
+        || !numberEquals(
+            projectMemoryMaintenance,
+            'max_compact_summary_chars',
+            defaultProjectMemoryMaintenance.max_compact_summary_chars
+        )
+        || String(projectMemoryMaintenance.read_strategy || '').trim().toLowerCase()
+            !== String(defaultProjectMemoryMaintenance.read_strategy || '').trim().toLowerCase()
+        || !numberEquals(
+            projectMemoryMaintenance,
+            'impact_artifact_retention_days',
+            defaultProjectMemoryMaintenance.impact_artifact_retention_days
+        )
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
+function hasUnsafeIgnoredWorkflowConfigCompatibilityBaseline(repoRoot: string, relativePath: string): boolean {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(repoRoot, ...relativePath.split('/')), 'utf8'));
+        const config = toPlainRecord(parsed);
+        if (!config) {
+            return true;
+        }
+        return !isSafeIgnoredWorkflowConfigCompatibilityBaseline(config);
+    } catch {
+        return true;
     }
 }
 
@@ -151,17 +431,33 @@ export function getWorkflowConfigPreTaskBaselineState(
         ...getWorkflowConfigControlPlanePaths(repoRoot),
         ...Object.keys(currentFileHashes)
     ])].sort();
-    const manifestHashes = readProtectedManifestWorkflowConfigHashes(repoRoot, workflowConfigPaths);
+    const manifestState = readProtectedManifestWorkflowConfigHashes(repoRoot, workflowConfigPaths);
+    const manifestHashes = manifestState.hashes;
     const changedFiles = new Set<string>();
+    const compatibilityBaselineFiles = new Set<string>();
 
     for (const relativePath of workflowConfigPaths) {
         const currentHash = Object.prototype.hasOwnProperty.call(currentFileHashes, relativePath)
             ? currentFileHashes[relativePath]
             : null;
+        if (manifestState.status === 'invalid') {
+            changedFiles.add(relativePath);
+            continue;
+        }
         const gitHeadHash = readGitHeadFileSha256(repoRoot, relativePath);
-        const hasManifestHash = !!manifestHashes
+        const hasManifestHash = manifestState.status === 'present'
             && Object.prototype.hasOwnProperty.call(manifestHashes, relativePath);
         const manifestHash = hasManifestHash ? manifestHashes[relativePath] : undefined;
+        const gitStatusLines = gitHeadHash === undefined && !hasManifestHash
+            ? readGitIndexOrWorktreeStatus(repoRoot, relativePath)
+            : [];
+        if (gitStatusLines === null && currentHash !== null) {
+            changedFiles.add(relativePath);
+            continue;
+        }
+        if (gitStatusLines === null) {
+            continue;
+        }
 
         if (gitHeadHash !== undefined && gitHeadHash !== currentHash) {
             changedFiles.add(relativePath);
@@ -172,17 +468,28 @@ export function getWorkflowConfigPreTaskBaselineState(
         if (
             gitHeadHash === undefined
             && !hasManifestHash
-            && (
-                currentHash !== null
-                || hasGitIndexOrWorktreeStatus(repoRoot, relativePath)
-            )
+            && currentHash !== null
+            && isIgnoredOnlyGitStatus(gitStatusLines)
+        ) {
+            if (hasUnsafeIgnoredWorkflowConfigCompatibilityBaseline(repoRoot, relativePath)) {
+                changedFiles.add(relativePath);
+                continue;
+            }
+            compatibilityBaselineFiles.add(relativePath);
+            continue;
+        }
+        if (
+            gitHeadHash === undefined
+            && !hasManifestHash
+            && gitStatusLines.length > 0
         ) {
             changedFiles.add(relativePath);
         }
     }
 
     return {
-        changed_files: [...changedFiles].sort()
+        changed_files: [...changedFiles].sort(),
+        compatibility_baseline_files: [...compatibilityBaselineFiles].sort()
     };
 }
 
@@ -196,9 +503,12 @@ function getWorkflowConfigChangedFilesFromBaseline(
     const changedFiles: string[] = [];
     const allPaths = new Set([...Object.keys(baselineFileHashes), ...Object.keys(currentFileHashes)]);
     for (const relativePath of allPaths) {
+        const baselineHash = Object.prototype.hasOwnProperty.call(baselineFileHashes, relativePath)
+            ? baselineFileHashes[relativePath]
+            : null;
         if (
             isWorkflowConfigControlPlanePathShape(relativePath)
-            && baselineFileHashes[relativePath] !== currentFileHashes[relativePath]
+            && baselineHash !== currentFileHashes[relativePath]
         ) {
             changedFiles.push(relativePath);
         }
@@ -216,14 +526,27 @@ export function getCurrentWorkflowConfigChanges(
     baselineFileHashes?: Record<string, string | null> | null
 ): CurrentWorkflowConfigChanges {
     const currentFileHashes = getCurrentWorkflowConfigFileHashes(repoRoot);
-    const baselineChangedFiles = getWorkflowConfigChangedFilesFromBaseline(currentFileHashes, baselineFileHashes);
-    const hasBaselineFileHashes = !!baselineFileHashes && Object.keys(baselineFileHashes).length > 0;
     const workflowConfigControlPlanePaths = [
         ...new Set([
             ...Object.keys(currentFileHashes),
             ...Object.keys(baselineFileHashes || {})
         ])
     ];
+    let effectiveBaselineFileHashes = hasWorkflowConfigHashEvidence(baselineFileHashes)
+        ? baselineFileHashes || null
+        : null;
+    let baselineSource: CurrentWorkflowConfigChanges['baseline_source'] = effectiveBaselineFileHashes
+        ? 'task_mode'
+        : null;
+    if (!effectiveBaselineFileHashes) {
+        const manifestState = readProtectedManifestWorkflowConfigHashes(repoRoot, workflowConfigControlPlanePaths);
+        if (manifestState.status === 'present' && hasWorkflowConfigHashEvidence(manifestState.hashes)) {
+            effectiveBaselineFileHashes = manifestState.hashes;
+            baselineSource = 'protected_manifest';
+        }
+    }
+    const baselineChangedFiles = getWorkflowConfigChangedFilesFromBaseline(currentFileHashes, effectiveBaselineFileHashes);
+    const hasBaselineFileHashes = !!effectiveBaselineFileHashes && Object.keys(effectiveBaselineFileHashes).length > 0;
     try {
         const snapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], { noCache: true });
         return {
@@ -232,6 +555,8 @@ export function getCurrentWorkflowConfigChanges(
                 ...baselineChangedFiles
             ], workflowConfigControlPlanePaths),
             current_file_hashes: currentFileHashes,
+            baseline_file_hashes: effectiveBaselineFileHashes,
+            baseline_source: baselineSource,
             scan_error: null
         };
     } catch (error: unknown) {
@@ -241,6 +566,8 @@ export function getCurrentWorkflowConfigChanges(
                 workflowConfigControlPlanePaths
             ),
             current_file_hashes: currentFileHashes,
+            baseline_file_hashes: effectiveBaselineFileHashes,
+            baseline_source: baselineSource,
             scan_error: error instanceof Error ? error.message : String(error)
         };
     }

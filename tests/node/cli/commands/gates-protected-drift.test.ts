@@ -27,6 +27,7 @@ import {
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+import { computeProtectedSnapshotDigest, writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import * as childProcess from 'node:child_process';
 
 function createReviewerRoutingFixture(
@@ -88,6 +89,7 @@ function createTempRepo(): string {
         JSON.stringify(workflowConfig, null, 2) + '\n',
         'utf8'
     );
+    writeProtectedControlPlaneManifest(root);
     return root;
 }
 
@@ -181,8 +183,16 @@ function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] 
         const contents = fs.readFileSync(path.join(rulesRoot, ruleFile), 'utf8');
         protectedSnapshot[relativePath] = crypto.createHash('sha256').update(contents).digest('hex');
     }
+    const workflowConfigPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'workflow-config.json');
+    if (fs.existsSync(workflowConfigPath)) {
+        const contents = fs.readFileSync(workflowConfigPath, 'utf8');
+        protectedSnapshot['garda-agent-orchestrator/live/config/workflow-config.json'] = crypto
+            .createHash('sha256')
+            .update(contents)
+            .digest('hex');
+    }
     for (const changedFile of changedFiles) {
-        protectedSnapshot[changedFile] = 'stale-manifest-hash';
+        protectedSnapshot[changedFile] = '0'.repeat(64);
     }
     fs.writeFileSync(manifestPath, JSON.stringify({
         schema_version: 1,
@@ -192,6 +202,7 @@ function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] 
         orchestrator_root: getOrchestratorRoot(repoRoot).replace(/\\/g, '/'),
         protected_roots: ['garda-agent-orchestrator/live/docs/agent-rules/'],
         protected_snapshot: protectedSnapshot,
+        protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
         is_source_checkout: false
     }, null, 2), 'utf8');
 }
@@ -851,6 +862,7 @@ describe('cli/commands/gates', () => {
             .createHash('sha256')
             .update(fs.readFileSync(extraProtectedPath, 'utf8'))
             .digest('hex');
+        manifest.protected_snapshot_sha256 = computeProtectedSnapshotDigest(manifest.protected_snapshot);
         fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
         runEnterTaskMode({

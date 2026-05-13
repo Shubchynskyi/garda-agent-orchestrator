@@ -97,6 +97,7 @@ export interface TaskModeArtifact {
     runtime_profile_source: 'built_in' | 'user' | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
     workflow_config_file_hashes: Record<string, string | null> | null;
+    workflow_config_compatibility_baseline_files: string[];
 }
 
 export interface BuildTaskModeArtifactOptions {
@@ -133,6 +134,7 @@ export interface BuildTaskModeArtifactOptions {
     runtimeProfileSource?: 'built_in' | 'user' | null;
     dirtyWorkspaceBaseline?: DirtyWorkspaceBaseline | null;
     workflowConfigFileHashes?: Record<string, string | null> | null;
+    workflowConfigCompatibilityBaselineFiles?: string[] | null;
 }
 
 export interface TaskModeEvidenceResult {
@@ -180,6 +182,14 @@ export interface TaskModeEvidenceResult {
     runtime_profile_source: string | null;
     dirty_workspace_baseline: DirtyWorkspaceBaseline | null;
     workflow_config_file_hashes: Record<string, string | null> | null;
+    workflow_config_compatibility_baseline_files: string[];
+}
+
+function normalizePathList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return [...new Set(value.map((entry) => String(entry || '').trim().replace(/\\/g, '/')).filter(Boolean))].sort();
 }
 
 function isStartBannerRequiredForArtifact(artifactObject: Record<string, unknown>): boolean {
@@ -507,7 +517,8 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         runtime_active_profile: String(options.runtimeActiveProfile || '').trim() || null,
         runtime_profile_source: options.runtimeProfileSource || null,
         dirty_workspace_baseline: dirtyWorkspaceBaseline,
-        workflow_config_file_hashes: normalizeWorkflowConfigFileHashes(options.workflowConfigFileHashes || null)
+        workflow_config_file_hashes: normalizeWorkflowConfigFileHashes(options.workflowConfigFileHashes || null),
+        workflow_config_compatibility_baseline_files: normalizePathList(options.workflowConfigCompatibilityBaselineFiles)
     };
 }
 
@@ -556,7 +567,8 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         runtime_active_profile: null,
         runtime_profile_source: null,
         dirty_workspace_baseline: null,
-        workflow_config_file_hashes: null
+        workflow_config_file_hashes: null,
+        workflow_config_compatibility_baseline_files: []
     };
 
     if (!taskId) {
@@ -654,6 +666,9 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     result.runtime_profile_source = String(artifactObject.runtime_profile_source || '').trim() || null;
     result.dirty_workspace_baseline = normalizeDirtyWorkspaceBaseline(artifactObject.dirty_workspace_baseline);
     result.workflow_config_file_hashes = normalizeWorkflowConfigFileHashes(artifactObject.workflow_config_file_hashes);
+    result.workflow_config_compatibility_baseline_files = normalizePathList(
+        artifactObject.workflow_config_compatibility_baseline_files
+    );
 
     const requestedDepth = artifactObject.requested_depth;
     if (typeof requestedDepth === 'number' && Number.isInteger(requestedDepth)) {

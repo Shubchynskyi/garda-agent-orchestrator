@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -8,10 +9,12 @@ import { runCompileGateCommand } from '../../../../src/cli/commands/gate-flows/c
 import { runFullSuiteValidationCommand } from '../../../../src/cli/commands/gate-flows/full-suite-validation-flow';
 import { runCompletionGate } from '../../../../src/gates/completion';
 import { isWorkflowConfigControlPlanePath, writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
+import { getTaskModeEvidence } from '../../../../src/gates/task-mode';
 import {
     getCurrentWorkflowConfigChanges,
     getCurrentWorkflowConfigFileHashes,
     getWorkflowConfigControlPlanePaths,
+    getWorkflowConfigPreTaskBaselineState,
     getWorkflowConfigWorkViolations
 } from '../../../../src/gates/workflow-config-work';
 import {
@@ -53,6 +56,14 @@ function writeBaselineAgentEntrypoint(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# baseline\n', 'utf8');
 }
 
+function seedWorkflowConfigTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        `| ${taskId} | ${status} | P1 | workflow | Update workflow-config policy changes | unassigned | 2026-03-28 | default | Explicitly owns workflow-config policy changes. |`
+    ].join('\n'), 'utf8');
+}
+
 function prepareTaskRepo(
     taskId: string,
     options: {
@@ -65,7 +76,11 @@ function prepareTaskRepo(
     const taskSummary = 'Update app flow';
     writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: options.ignoreBundle === true });
     writeBaselineAgentEntrypoint(repoRoot);
-    seedTaskQueue(repoRoot, taskId);
+    if (options.workflowConfigWork === true) {
+        seedWorkflowConfigTaskQueue(repoRoot, taskId);
+    } else {
+        seedTaskQueue(repoRoot, taskId);
+    }
     seedInitAnswers(repoRoot);
     initializeGitRepo(repoRoot);
     if (options.ignoreBundle === true) {
@@ -77,6 +92,9 @@ function prepareTaskRepo(
         taskId,
         orchestratorWork: options.orchestratorWork === true,
         workflowConfigWork: options.workflowConfigWork === true,
+        plannedChangedFiles: options.workflowConfigWork === true
+            ? ['garda-agent-orchestrator/live/config/workflow-config.json']
+            : [],
         taskSummary
     });
     const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
@@ -89,10 +107,188 @@ function prepareTaskRepo(
 function weakenOutOfScopePolicy(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
-        full_suite_validation: { out_of_scope_failure_policy: string };
+        full_suite_validation: { enabled?: boolean; out_of_scope_failure_policy: string };
     };
     config.full_suite_validation.out_of_scope_failure_policy = 'AUDIT_AND_WARN';
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenFullSuiteCommand(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        full_suite_validation: { enabled?: boolean; command?: string };
+    };
+    config.full_suite_validation.command = 'true';
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function enableFullSuitePolicy(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        full_suite_validation: { enabled?: boolean };
+    };
+    config.full_suite_validation.enabled = true;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function enableProjectMemoryMaintenancePolicy(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        project_memory_maintenance: {
+            enabled?: boolean;
+            mode?: string;
+            run_before_final_closeout?: boolean;
+            require_user_approval_for_writes?: boolean;
+        };
+    };
+    config.project_memory_maintenance.enabled = true;
+    config.project_memory_maintenance.mode = 'update';
+    config.project_memory_maintenance.run_before_final_closeout = true;
+    config.project_memory_maintenance.require_user_approval_for_writes = true;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenProjectMemoryMaintenance(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        project_memory_maintenance: { enabled?: boolean };
+    };
+    config.project_memory_maintenance.enabled = false;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenProjectMemoryApproval(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        project_memory_maintenance: { require_user_approval_for_writes?: boolean };
+    };
+    config.project_memory_maintenance.require_user_approval_for_writes = false;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenProjectMemoryRetention(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        project_memory_maintenance: { impact_artifact_retention_days?: number };
+    };
+    config.project_memory_maintenance.impact_artifact_retention_days = 1;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenScopeBudgetGuard(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        scope_budget_guard: { max_changed_lines?: number };
+    };
+    config.scope_budget_guard.max_changed_lines = 999999;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenReviewCycleExcludedReviews(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        review_cycle_guard: { excluded_review_types?: string[] };
+    };
+    config.review_cycle_guard.excluded_review_types = ['test', 'code', 'security'];
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenReviewExecutionPolicy(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        review_execution_policy: { mode?: string };
+    };
+    config.review_execution_policy.mode = 'test_after_code';
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function addUnknownTopLevelWorkflowConfigKey(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    config.future_policy_toggle = { enabled: false };
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function addUnknownWorkflowConfigSectionKey(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        full_suite_validation: Record<string, unknown>;
+    };
+    config.full_suite_validation.future_policy_toggle = false;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function removeReviewExecutionPolicy(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    delete config.review_execution_policy;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function corruptProtectedControlPlaneManifest(repoRoot: string): void {
+    const manifestPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'protected-control-plane-manifest.json'
+    );
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, '{ invalid json\n', 'utf8');
+}
+
+function writeTamperedProtectedControlPlaneManifest(repoRoot: string): void {
+    const manifestPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'protected-control-plane-manifest.json'
+    );
+    const configPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'live',
+        'config',
+        'workflow-config.json'
+    );
+    const currentHash = crypto.createHash('sha256')
+        .update(fs.readFileSync(configPath))
+        .digest('hex');
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify({
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        protected_snapshot: {
+            'garda-agent-orchestrator/live/config/workflow-config.json': currentHash
+        },
+        protected_snapshot_sha256: '0'.repeat(64)
+    }, null, 2) + '\n', 'utf8');
+}
+
+function writeLegacyDigestlessProtectedControlPlaneManifest(repoRoot: string): void {
+    const manifestPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'protected-control-plane-manifest.json'
+    );
+    const configPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'live',
+        'config',
+        'workflow-config.json'
+    );
+    const currentHash = crypto.createHash('sha256')
+        .update(fs.readFileSync(configPath))
+        .digest('hex');
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, JSON.stringify({
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        protected_snapshot: {
+            'garda-agent-orchestrator/live/config/workflow-config.json': currentHash
+        }
+    }, null, 2) + '\n', 'utf8');
 }
 
 function weakenBundleRootOutOfScopePolicy(repoRoot: string): void {
@@ -238,6 +434,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             writeBaselineAgentEntrypoint(repoRoot);
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
             initializeGitRepo(repoRoot);
 
             assert.throws(
@@ -261,7 +458,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
         try {
             writeIgnoredRuntimePolicy(repoRoot);
             writeBaselineAgentEntrypoint(repoRoot);
-            seedTaskQueue(repoRoot, taskId);
+            seedWorkflowConfigTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             initializeGitRepo(repoRoot);
 
@@ -270,6 +467,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 taskId,
                 orchestratorWork: true,
                 workflowConfigWork: true,
+                plannedChangedFiles: ['garda-agent-orchestrator/live/config/workflow-config.json'],
                 taskSummary: 'Update app flow'
             });
             assert.equal(result.exitCode, 0);
@@ -287,6 +485,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             writeBaselineAgentEntrypoint(repoRoot);
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
             initializeGitRepo(repoRoot);
             weakenOutOfScopePolicy(repoRoot);
 
@@ -314,6 +513,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             writeBaselineAgentEntrypoint(repoRoot);
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
             initializeGitRepo(repoRoot);
             writeProtectedControlPlaneManifest(repoRoot);
             weakenOutOfScopePolicy(repoRoot);
@@ -328,6 +528,498 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 }),
                 /already contains workflow config changes before task-mode entry/
             );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('allows ignored pre-existing materialized workflow-config when no trusted baseline exists yet', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-baseline';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            initializeGitRepo(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.changed_files, []);
+            assert.ok(baselineState.compatibility_baseline_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+
+            const result = runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Start after workflow-config baseline upgrade'
+            });
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.includes('WorkflowConfigCompatibilityBaselineCount: 1'));
+
+            const evidence = getTaskModeEvidence(repoRoot, taskId);
+            assert.deepEqual(evidence.workflow_config_compatibility_baseline_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('allows ignored pre-existing legacy generated workflow-config when no trusted baseline exists yet', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-generated-legacy-baseline';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.changed_files, []);
+            assert.ok(baselineState.compatibility_baseline_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+
+            const result = runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Start after legacy generated workflow-config baseline upgrade'
+            });
+            assert.equal(result.exitCode, 0);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('allows ignored pre-existing legacy materialized workflow-config without review execution policy', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-legacy-review-policy';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            initializeGitRepo(repoRoot);
+            removeReviewExecutionPolicy(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.changed_files, []);
+            assert.ok(baselineState.compatibility_baseline_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when protected manifest is invalid', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-invalid-manifest';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            initializeGitRepo(repoRoot);
+            corruptProtectedControlPlaneManifest(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.ok(baselineState.changed_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+
+            assert.throws(
+                () => runEnterTaskMode({
+                    repoRoot,
+                    taskId,
+                    taskSummary: 'Start after invalid protected manifest'
+                }),
+                /already contains workflow config changes before task-mode entry/
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks deleted materialized workflow-config when protected manifest is invalid', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-deleted-invalid-manifest';
+        const repoRoot = createTempRepo();
+        const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            fs.rmSync(configPath);
+            corruptProtectedControlPlaneManifest(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.ok(baselineState.changed_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+
+            assert.throws(
+                () => runEnterTaskMode({
+                    repoRoot,
+                    taskId,
+                    taskSummary: 'Start after deleted workflow-config with invalid manifest'
+                }),
+                /already contains workflow config changes before task-mode entry/
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when protected manifest digest is tampered', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-tampered-manifest';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenScopeBudgetGuard(repoRoot);
+            writeTamperedProtectedControlPlaneManifest(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.ok(baselineState.changed_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps protected-manifest fallback baseline frozen after manifest refresh', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            initializeGitRepo(repoRoot);
+            writeProtectedControlPlaneManifest(repoRoot);
+
+            const initialChanges = getCurrentWorkflowConfigChanges(repoRoot, null);
+            assert.equal(initialChanges.baseline_source, 'protected_manifest');
+            assert.ok(initialChanges.baseline_file_hashes);
+            assert.deepEqual(initialChanges.changed_files, []);
+
+            weakenOutOfScopePolicy(repoRoot);
+            writeProtectedControlPlaneManifest(repoRoot);
+
+            const unfrozenChanges = getCurrentWorkflowConfigChanges(repoRoot, null);
+            assert.deepEqual(unfrozenChanges.changed_files, []);
+
+            const frozenChanges = getCurrentWorkflowConfigChanges(repoRoot, initialChanges.baseline_file_hashes);
+            assert.deepEqual(frozenChanges.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('allows legacy protected manifest without digest when workflow-config hash matches', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-legacy-digestless-manifest';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenScopeBudgetGuard(repoRoot);
+            writeLegacyDigestlessProtectedControlPlaneManifest(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, []);
+
+            const result = runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Start after legacy digestless manifest'
+            });
+            assert.equal(result.exitCode, 0);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fails closed when no git status baseline is available for materialized workflow-config', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+
+        try {
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.ok(baselineState.changed_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks legacy identity-backfilled checks when workflow-config baseline hashes are missing', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenScopeBudgetGuard(repoRoot);
+
+            const changes = getCurrentWorkflowConfigChanges(repoRoot, null);
+            assert.equal(changes.baseline_source, null);
+            assert.deepEqual(changes.baseline_file_hashes, null);
+
+            const violations = getWorkflowConfigWorkViolations({
+                changedFiles: changes.changed_files,
+                taskModeEvidence: {
+                    identity_backfilled_from_legacy: true,
+                    workflow_config_work: false,
+                    orchestrator_work: false,
+                    workflow_config_file_hashes: null
+                },
+                phaseLabel: 'compile gate',
+                baselineFileHashes: changes.baseline_file_hashes,
+                currentFileHashes: changes.current_file_hashes
+            });
+
+            assert.match(
+                violations.join('\n'),
+                /Workflow config baseline hashes are missing before compile gate/
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when compatibility baseline is unsafe', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-unsafe-baseline';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenScopeBudgetGuard(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+
+            assert.throws(
+                () => runEnterTaskMode({
+                    repoRoot,
+                    taskId,
+                    taskSummary: 'Start after unsafe workflow-config baseline upgrade'
+                }),
+                /already contains workflow config changes before task-mode entry/
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when full-suite command is weakened', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-command-unsafe';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenFullSuiteCommand(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when project memory maintenance is disabled', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-project-memory-disabled';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            weakenProjectMemoryMaintenance(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when project memory approval is disabled', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-project-memory-approval';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenProjectMemoryApproval(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when project memory retention is reduced', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-project-memory-retention';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenProjectMemoryRetention(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when review-cycle exclusions are weakened', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-review-cycle-unsafe';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenReviewCycleExcludedReviews(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when review execution policy is weakened', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-review-policy-unsafe';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenReviewExecutionPolicy(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config with an unknown top-level policy key', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-unknown-top-level';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            initializeGitRepo(repoRoot);
+            addUnknownTopLevelWorkflowConfigKey(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config with an unknown section policy key', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-unknown-section';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            initializeGitRepo(repoRoot);
+            addUnknownWorkflowConfigSectionKey(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
@@ -422,6 +1114,35 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 }),
                 /garda-agent-orchestrator\/live\/config\/workflow-config\.json/
             );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('honors protected-manifest fallback baseline during preflight classification', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-preflight-manifest-baseline';
+        const repoRoot = prepareTaskRepo(taskId, {
+            orchestratorWork: true,
+            ignoreBundle: true
+        });
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const taskModePath = path.join(reviewsRoot, `${taskId}-task-mode.json`);
+
+        try {
+            const taskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+            delete taskModeArtifact.workflow_config_file_hashes;
+            fs.writeFileSync(taskModePath, JSON.stringify(taskModeArtifact, null, 2) + '\n', 'utf8');
+            const appPath = editAppFile(repoRoot);
+
+            const result = runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Update app flow with legacy task-mode evidence',
+                changedFiles: [appPath, 'garda-agent-orchestrator/live/config/workflow-config.json'],
+                emitMetrics: false
+            });
+            const payload = JSON.parse(result.outputText);
+            assert.deepEqual(payload.triggers.changed_workflow_config_files, []);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

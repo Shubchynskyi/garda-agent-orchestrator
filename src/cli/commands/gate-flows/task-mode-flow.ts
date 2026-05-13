@@ -699,7 +699,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         runtimeActiveProfile,
         runtimeProfileSource,
         dirtyWorkspaceBaseline,
-        workflowConfigFileHashes
+        workflowConfigFileHashes,
+        workflowConfigCompatibilityBaselineFiles: workflowConfigPreTaskBaseline.compatibility_baseline_files
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
 
@@ -728,7 +729,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         runtime_profile_source: taskModeArtifact.runtime_profile_source,
         dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
         dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
-        workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length
+        workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length,
+        workflow_config_compatibility_baseline_count: taskModeArtifact.workflow_config_compatibility_baseline_files.length
     }, parseBooleanOption(options.emitMetrics, true));
 
     try {
@@ -775,7 +777,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 runtime_profile_source: taskModeArtifact.runtime_profile_source,
                 dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
                 dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
-                workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length
+                workflow_config_file_hash_count: Object.keys(taskModeArtifact.workflow_config_file_hashes || {}).length,
+                workflow_config_compatibility_baseline_count: taskModeArtifact.workflow_config_compatibility_baseline_files.length
             }
         );
     } catch (error: unknown) {
@@ -804,7 +807,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         plan_path: taskModeArtifact.plan?.plan_path ?? null,
         plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
         dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
-        dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null
+        dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
+        workflow_config_compatibility_baseline_count: taskModeArtifact.workflow_config_compatibility_baseline_files.length
     });
 
     const previousStatus = readTaskQueueStatus(repoRoot, taskModeArtifact.task_id);
@@ -850,7 +854,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 : []),
             ...(plannedChangedFiles.length > 0 ? [`PlannedChangedFilesCount: ${plannedChangedFiles.length}`] : []),
             ...(protectedPlannedFiles.length > 0 ? [`PlannedProtectedFilesCount: ${protectedPlannedFiles.length}`] : []),
-            `DirtyWorkspaceBaselineCount: ${taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0}`
+            `DirtyWorkspaceBaselineCount: ${taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0}`,
+            `WorkflowConfigCompatibilityBaselineCount: ${taskModeArtifact.workflow_config_compatibility_baseline_files.length}`
         ],
         exitCode: 0
     };

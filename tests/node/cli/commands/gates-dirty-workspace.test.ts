@@ -13,6 +13,7 @@ import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { computeProtectedSnapshotDigest } from '../../../../src/gates/helpers';
 import * as childProcess from 'node:child_process';
 import {
     getReviewsRoot,
@@ -46,8 +47,16 @@ function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] 
         const contents = fs.readFileSync(path.join(repoRoot, 'AGENTS.md'), 'utf8');
         protectedSnapshot['AGENTS.md'] = crypto.createHash('sha256').update(contents).digest('hex');
     }
+    const workflowConfigPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'workflow-config.json');
+    if (fs.existsSync(workflowConfigPath)) {
+        const contents = fs.readFileSync(workflowConfigPath, 'utf8');
+        protectedSnapshot['garda-agent-orchestrator/live/config/workflow-config.json'] = crypto
+            .createHash('sha256')
+            .update(contents)
+            .digest('hex');
+    }
     for (const changedFile of changedFiles) {
-        protectedSnapshot[changedFile] = 'stale-manifest-hash';
+        protectedSnapshot[changedFile] = '0'.repeat(64);
     }
     fs.writeFileSync(manifestPath, JSON.stringify({
         schema_version: 1,
@@ -57,6 +66,7 @@ function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] 
         orchestrator_root: getOrchestratorRoot(repoRoot).replace(/\\/g, '/'),
         protected_roots: ['garda-agent-orchestrator/live/docs/agent-rules/'],
         protected_snapshot: protectedSnapshot,
+        protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
         is_source_checkout: false
     }, null, 2), 'utf8');
 }

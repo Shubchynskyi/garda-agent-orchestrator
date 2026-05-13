@@ -326,7 +326,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         ],
         taskModeEvidence,
         phaseLabel: 'completion gate',
-        baselineFileHashes: workflowConfigBaseline,
+        baselineFileHashes: workflowConfigChanges.baseline_file_hashes,
         currentFileHashes: workflowConfigChanges.current_file_hashes
     });
     errors.push(...workflowConfigWorkViolations);

@@ -27,6 +27,7 @@ import {
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import * as childProcess from 'node:child_process';
 
 function createTempRepo(): string {
@@ -48,6 +49,7 @@ function createTempRepo(): string {
         JSON.stringify(workflowConfig, null, 2) + '\n',
         'utf8'
     );
+    writeProtectedControlPlaneManifest(root);
     return root;
 }
 
@@ -128,6 +130,7 @@ function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]
         if (!fs.existsSync(routedFilePath)) {
             fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
         }
+        writeProtectedControlPlaneManifest(repoRoot);
     }
     return runEnterTaskModeCommand(resolvedOptions);
 }
@@ -816,6 +819,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
         fs.writeFileSync(taskModePath, JSON.stringify({
             timestamp_utc: '2026-04-16T09:00:00.000Z',
             event_source: 'enter-task-mode',
@@ -995,6 +999,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
         fs.writeFileSync(taskModePath, JSON.stringify({
             timestamp_utc: '2026-04-16T09:00:00.000Z',
             event_source: 'enter-task-mode',
@@ -1174,6 +1179,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, '.antigravity', 'agents', 'orchestrator.md'), '# antigravity bridge\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        writeProtectedControlPlaneManifest(repoRoot);
         fs.writeFileSync(customTaskModePath, JSON.stringify({
             timestamp_utc: '2026-04-16T09:00:00.000Z',
             event_source: 'enter-task-mode',

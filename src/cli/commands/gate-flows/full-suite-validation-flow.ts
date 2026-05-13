@@ -443,13 +443,14 @@ export async function runFullSuiteValidationCommand(
     };
 
     const taskModeEvidence = getTaskModeEvidence(repoRoot, taskId);
-    const workflowConfigBaseline = taskModeEvidence.workflow_config_file_hashes;
+    let workflowConfigBaseline = taskModeEvidence.workflow_config_file_hashes;
     const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline);
+    workflowConfigBaseline = workflowConfigChanges.baseline_file_hashes;
     const workflowConfigViolations = getWorkflowConfigWorkViolations({
         changedFiles: workflowConfigChanges.changed_files,
         taskModeEvidence,
         phaseLabel: 'full-suite validation',
-        baselineFileHashes: workflowConfigBaseline,
+        baselineFileHashes: workflowConfigChanges.baseline_file_hashes,
         currentFileHashes: workflowConfigChanges.current_file_hashes
     });
     if (workflowConfigViolations.length > 0) {
@@ -579,7 +580,7 @@ export async function runFullSuiteValidationCommand(
         changedFiles: postWorkflowConfigChanges.changed_files,
         taskModeEvidence,
         phaseLabel: 'full-suite validation output validation',
-        baselineFileHashes: workflowConfigBaseline,
+        baselineFileHashes: postWorkflowConfigChanges.baseline_file_hashes,
         currentFileHashes: postWorkflowConfigChanges.current_file_hashes
     });
     if (postWorkflowConfigViolations.length > 0) {

@@ -696,7 +696,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         );
         const changedWorkflowConfigFiles = mergePathLists(
             workflowConfigChanges.changed_files,
-            taskModeEvidence.workflow_config_file_hashes
+            workflowConfigChanges.baseline_file_hashes
                 ? []
                 : getWorkflowConfigChangedFiles(result.changed_files, getWorkflowConfigControlPlanePaths(repoRoot))
         );
@@ -715,7 +715,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 changedFiles: changedWorkflowConfigFiles,
                 taskModeEvidence,
                 phaseLabel: 'preflight classification',
-                baselineFileHashes: taskModeEvidence.workflow_config_file_hashes,
+                baselineFileHashes: workflowConfigChanges.baseline_file_hashes,
                 currentFileHashes: workflowConfigChanges.current_file_hashes
             }));
         }
@@ -1222,16 +1222,17 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (!exceptionMessage) {
             workflowConfigBaselineForCompile = taskModeEvidence.workflow_config_file_hashes;
             const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile);
+            workflowConfigBaselineForCompile = workflowConfigChanges.baseline_file_hashes;
             const workflowConfigViolations = getWorkflowConfigWorkViolations({
                 changedFiles: mergePathLists(
                     workflowConfigChanges.changed_files,
-                    workflowConfigBaselineForCompile
+                    workflowConfigChanges.baseline_file_hashes
                         ? []
                         : getWorkflowConfigChangedFiles(preflightChangedFiles, getWorkflowConfigControlPlanePaths(repoRoot))
                 ),
                 taskModeEvidence,
                 phaseLabel: 'compile gate',
-                baselineFileHashes: workflowConfigBaselineForCompile,
+                baselineFileHashes: workflowConfigChanges.baseline_file_hashes,
                 currentFileHashes: workflowConfigChanges.current_file_hashes
             });
             if (workflowConfigViolations.length > 0) {
@@ -1457,7 +1458,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                 changedFiles: postCompileWorkflowConfigChanges.changed_files,
                 taskModeEvidence,
                 phaseLabel: 'compile output validation',
-                baselineFileHashes: workflowConfigBaselineForCompile,
+                baselineFileHashes: postCompileWorkflowConfigChanges.baseline_file_hashes,
                 currentFileHashes: postCompileWorkflowConfigChanges.current_file_hashes
             });
             if (postCompileWorkflowConfigViolations.length > 0) {

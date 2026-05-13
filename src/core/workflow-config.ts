@@ -137,7 +137,7 @@ function readWorkflowConfigTemplate(bundleRoot: string): WorkflowConfigData {
     }
 }
 
-function isExactLegacyProjectMemoryGeneratedDefault(input: unknown): boolean {
+export function isExactLegacyProjectMemoryGeneratedDefault(input: unknown): boolean {
     if (!isPlainObject(input)) {
         return false;
     }
