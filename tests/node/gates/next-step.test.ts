@@ -1469,6 +1469,158 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('Status: SPLIT_REQUIRED'));
     });
 
+    it('restores split-required latch after a parent status reset and budget config increase', () => {
+        const repoRoot = makeTempRepo();
+        const config = buildDefaultWorkflowConfig();
+        config.full_suite_validation.enabled = false;
+        config.full_suite_validation.command = 'npm test';
+        config.review_execution_policy = { mode: 'code_first_optional' };
+        config.scope_budget_guard.max_files = 999999;
+        config.scope_budget_guard.max_changed_lines = 999999;
+        config.scope_budget_guard.max_required_reviews = 999999;
+        config.scope_budget_guard.max_review_tokens = 999999;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), config);
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/scope-budget | Add decomposition guard | gpt-5.4 | 2026-05-03 | strict | Latch artifact still exists after a reset attempt. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedSplitRequiredLatchEvidence(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('permanent for this task attempt'));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
+        assert.ok(text.includes('Status: SPLIT_REQUIRED'));
+    });
+
+    it('restores split-required latch after a parent status is changed to done', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | DONE | P1 | workflow/scope-budget | Add decomposition guard | gpt-5.4 | 2026-05-03 | strict | Latch artifact still exists after a terminal status edit. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedSplitRequiredLatchEvidence(repoRoot, TASK_ID);
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('permanent for this task attempt'));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
+    });
+
+    it('does not let a hand-edited decomposed status bypass split-required clear evidence', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-649 | DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-650` through `T-651`; do not continue the parent. |',
+            '| T-650 | DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-651 | DONE | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-649');
+
+        const result = resolveNextStep({ taskId: 'T-649', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-649.jsonl'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.notEqual(result.status, 'DONE');
+        assert.equal(result.next_gate, null);
+        assert.ok(result.reason.includes('stayed permanent after later status/config/scope drift'));
+        assert.ok(taskMd.includes('| T-649 | DECOMPOSED |'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
+        assert.equal(events.includes('"event_type":"DECOMPOSED_PARENT_COMPLETED"'), false);
+    });
+
+    it('preserves done status after gate-owned split-required child completion', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-652 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-653` through `T-654`; do not continue the parent. |',
+            '| T-653 | DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-654 | DONE | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-652');
+        const decomposedResult = resolveNextStep({ taskId: 'T-652', repoRoot });
+        const doneResult = resolveNextStep({ taskId: 'T-652', repoRoot });
+        const stableDoneResult = resolveNextStep({ taskId: 'T-652', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-652.jsonl'), 'utf8');
+
+        assert.equal(decomposedResult.status, 'DECOMPOSED');
+        assert.equal(doneResult.status, 'DONE');
+        assert.equal(stableDoneResult.status, 'DONE');
+        assert.equal(stableDoneResult.next_gate, null);
+        assert.ok(taskMd.includes('| T-652 | DONE |'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
+        assert.ok(events.includes('"event_type":"DECOMPOSED_PARENT_COMPLETED"'));
+        assert.equal((events.match(/"event_type":"SPLIT_REQUIRED_RESTORED"/g) || []).length, 0);
+    });
+
+    it('transitions a reset split-required parent to decomposed when child tasks are linked', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-646 | TODO | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-647` through `T-648`; do not continue the parent. |',
+            '| T-647 | DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-648 | TODO | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-646');
+
+        const result = resolveNextStep({ taskId: 'T-646', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-646.jsonl'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-648"'));
+        assert.ok(result.reason.includes('stayed permanent after later status/config/scope drift'));
+        assert.ok(taskMd.includes('| T-646 | DECOMPOSED |'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_RESTORED"'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
+    });
+
     it('does not clear split-required latch for unrelated task mentions in parent notes', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [

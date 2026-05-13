@@ -473,6 +473,31 @@ describe('runTaskResetCommand — TASK_RESET_DISABLED', () => {
         }
     });
 
+    it('leaves split-required parents unchanged when disabled reset is attempted', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            taskStatus: 'SPLIT_REQUIRED',
+            hasEventsFile: true,
+            hasReviewArtifact: true,
+            hasAggregateLines: true,
+            taskResetEnabled: false
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
+            assert.equal(result.artifacts.length, 0);
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+            assert.ok(fs.existsSync(preflightPath), 'review artifact should remain');
+            assert.ok(taskMd.includes('| T-001 | SPLIT_REQUIRED |'), 'TASK.md status should remain SPLIT_REQUIRED');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
     it('blocks confirmed reset mutations when enabled by manual config edit without audit', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
             hasEventsFile: true,

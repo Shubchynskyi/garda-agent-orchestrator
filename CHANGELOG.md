@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made `SPLIT_REQUIRED` a permanent gate-owned latch for the task attempt, so later TASK.md status edits, scope-budget config changes, or smaller diffs cannot make the parent executable again unless gate-owned child/decomposed/DONE evidence or an explicit operator reset/discard clears the path
 - made confirmed `garda gate task-reset` mutations disabled by default behind audited `workflow set --task-reset-enabled true`, while preserving dry-run inspection and documenting the new workflow config surface
 - stopped `full-suite-validation` from leaking gate-owned `GARDA_BUNDLE_NAME` into repository test subprocesses so bundle auto-discovery tests match direct `npm test`, while real full-suite failures still fail the gate
 - routed `next-step` back to failed-review remediation after a current required review records FAIL, preventing `code_first_optional` from launching other review lanes until the failed review has fresh PASS evidence

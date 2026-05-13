@@ -931,6 +931,86 @@ function readSplitRequiredLatchEvidence(params: {
     };
 }
 
+function hasSplitRequiredClearedEvidence(params: {
+    eventsRoot: string;
+    taskId: string;
+    latchEvidence: SplitRequiredLatchEvidence;
+}): boolean {
+    if (!params.latchEvidence.valid || !params.latchEvidence.artifact_sha256) {
+        return false;
+    }
+
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(path.join(params.eventsRoot, `${params.taskId}.jsonl`), timelineErrors);
+    const normalizedArtifactPath = normalizePath(params.latchEvidence.artifact_path);
+    const latchEvent = [...timeline].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'SPLIT_REQUIRED_LATCHED'
+            && String(details.status || '') === SPLIT_REQUIRED_STATUS
+            && String(details.guard_kind || '') === String(params.latchEvidence.guard_kind || '')
+            && String(details.artifact_sha256 || '').toLowerCase() === params.latchEvidence.artifact_sha256
+            && normalizePath(String(details.artifact_path || '')) === normalizedArtifactPath;
+    });
+    if (!latchEvent) {
+        return false;
+    }
+
+    return timeline.some((event) => {
+        const details = event.details || {};
+        return event.sequence > latchEvent.sequence
+            && event.event_type === 'SPLIT_REQUIRED_CLEARED'
+            && String(details.previous_status || '') === SPLIT_REQUIRED_STATUS
+            && String(details.new_status || '') === 'DECOMPOSED'
+            && String(details.reason || '') === 'child_tasks_linked';
+    });
+}
+
+function hasCompletedDecomposedParentAfterSplitRequiredClear(params: {
+    eventsRoot: string;
+    taskId: string;
+    latchEvidence: SplitRequiredLatchEvidence;
+}): boolean {
+    if (!params.latchEvidence.valid || !params.latchEvidence.artifact_sha256) {
+        return false;
+    }
+
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(path.join(params.eventsRoot, `${params.taskId}.jsonl`), timelineErrors);
+    const normalizedArtifactPath = normalizePath(params.latchEvidence.artifact_path);
+    const latchEvent = [...timeline].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'SPLIT_REQUIRED_LATCHED'
+            && String(details.status || '') === SPLIT_REQUIRED_STATUS
+            && String(details.guard_kind || '') === String(params.latchEvidence.guard_kind || '')
+            && String(details.artifact_sha256 || '').toLowerCase() === params.latchEvidence.artifact_sha256
+            && normalizePath(String(details.artifact_path || '')) === normalizedArtifactPath;
+    });
+    if (!latchEvent) {
+        return false;
+    }
+
+    const clearEvent = timeline.find((event) => {
+        const details = event.details || {};
+        return event.sequence > latchEvent.sequence
+            && event.event_type === 'SPLIT_REQUIRED_CLEARED'
+            && String(details.previous_status || '') === SPLIT_REQUIRED_STATUS
+            && String(details.new_status || '') === 'DECOMPOSED'
+            && String(details.reason || '') === 'child_tasks_linked';
+    });
+    if (!clearEvent) {
+        return false;
+    }
+
+    return timeline.some((event) => {
+        const details = event.details || {};
+        return event.sequence > clearEvent.sequence
+            && event.event_type === 'DECOMPOSED_PARENT_COMPLETED'
+            && String(details.previous_status || '') === 'DECOMPOSED'
+            && String(details.new_status || '') === 'DONE'
+            && String(details.reason || '') === 'explicit_children_done';
+    });
+}
+
 function sanitizeScopeBudgetGuardSummary(evaluation: ScopeBudgetGuardEvaluation): string {
     if (evaluation.violations.length === 0) {
         return evaluation.summary_line;
@@ -1166,6 +1246,49 @@ function transitionSplitRequiredParentToDecomposed(params: {
                 previous_status: syncResult.previous_status || SPLIT_REQUIRED_STATUS,
                 new_status: 'DECOMPOSED',
                 reason: 'child_tasks_linked'
+            },
+            { actor: 'orchestrator' }
+        );
+    }
+    return syncResult;
+}
+
+function restoreSplitRequiredParentFromPermanentLatch(params: {
+    repoRoot: string;
+    eventsRoot: string;
+    taskId: string;
+    latchEvidence: SplitRequiredLatchEvidence;
+}): TaskQueueStatusSyncResult {
+    const syncResult = syncTaskQueueStatusDetailed(params.repoRoot, params.taskId, SPLIT_REQUIRED_STATUS);
+    if (syncResult.outcome === 'updated') {
+        appendMandatoryTaskEvent(
+            getOrchestratorRootFromEventsRoot(params.eventsRoot),
+            params.taskId,
+            'STATUS_CHANGED',
+            'INFO',
+            `Task status changed: ${syncResult.previous_status || 'UNKNOWN'} -> ${SPLIT_REQUIRED_STATUS}.`,
+            {
+                previous_status: syncResult.previous_status || 'UNKNOWN',
+                new_status: SPLIT_REQUIRED_STATUS,
+                reason: 'split_required_permanent_latch_restored',
+                guard_kind: params.latchEvidence.guard_kind,
+                artifact_path: params.latchEvidence.artifact_path,
+                artifact_sha256: params.latchEvidence.artifact_sha256
+            },
+            { actor: 'orchestrator' }
+        );
+        appendMandatoryTaskEvent(
+            getOrchestratorRootFromEventsRoot(params.eventsRoot),
+            params.taskId,
+            'SPLIT_REQUIRED_RESTORED',
+            'BLOCKED',
+            'Permanent split-required latch restored the parent task status.',
+            {
+                previous_status: syncResult.previous_status || 'UNKNOWN',
+                new_status: SPLIT_REQUIRED_STATUS,
+                guard_kind: params.latchEvidence.guard_kind,
+                artifact_path: params.latchEvidence.artifact_path,
+                artifact_sha256: params.latchEvidence.artifact_sha256
             },
             { actor: 'orchestrator' }
         );
@@ -5954,7 +6077,136 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (isTaskQueueSplitRequiredStatus(taskEntry?.status || null)) {
+    const taskQueueStatus = taskEntry?.status || null;
+    const splitRequiredStatusInTaskQueue = isTaskQueueSplitRequiredStatus(taskQueueStatus);
+    const permanentSplitRequiredLatchEvidence = splitRequiredStatusInTaskQueue
+        ? null
+        : readSplitRequiredLatchEvidence({ reviewsRoot, eventsRoot, taskId });
+    const decomposedStatusHasClearedLatchEvidence =
+        isTaskQueueDecomposedStatus(taskQueueStatus)
+        && permanentSplitRequiredLatchEvidence?.valid === true
+        && hasSplitRequiredClearedEvidence({
+            eventsRoot,
+            taskId,
+            latchEvidence: permanentSplitRequiredLatchEvidence
+        });
+    const doneStatusHasCompletedClearedLatchEvidence =
+        isTaskQueueDoneStatus(taskQueueStatus)
+        && permanentSplitRequiredLatchEvidence?.valid === true
+        && hasCompletedDecomposedParentAfterSplitRequiredClear({
+            eventsRoot,
+            taskId,
+            latchEvidence: permanentSplitRequiredLatchEvidence
+        });
+    if (
+        !splitRequiredStatusInTaskQueue
+        && !decomposedStatusHasClearedLatchEvidence
+        && !doneStatusHasCompletedClearedLatchEvidence
+        && permanentSplitRequiredLatchEvidence?.valid
+    ) {
+        const restoreResult = restoreSplitRequiredParentFromPermanentLatch({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            latchEvidence: permanentSplitRequiredLatchEvidence
+        });
+        if (!isSuccessfulSplitRequiredStatusSync(restoreResult)) {
+            return buildResult({
+                ...resultBase,
+                status: 'SPLIT_REQUIRED',
+                nextGate: 'split-required-latch',
+                title: 'Split-required latch is active.',
+                reason:
+                    `A valid split-required latch already exists for ${formatNextStepInlineValue(taskId)}, ` +
+                    'but the gate could not restore TASK.md to SPLIT_REQUIRED after detecting later status/config/scope drift. ' +
+                    `Status sync outcome: ${formatNextStepInlineValue(restoreResult.outcome)}${restoreResult.error_message ? ` (${restoreResult.error_message})` : ''}. ` +
+                    'Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
+                commands: [],
+                missingArtifacts: [],
+                presentArtifacts: coreArtifacts.present,
+                finalReport: null
+            });
+        }
+
+        const childRoute = resolveNextUnfinishedChildRoute(
+            taskEntries,
+            taskId,
+            new Set<string>(),
+            extractExplicitLinkedChildTaskIds
+        );
+        const hasChildren = hasLinkedChildTasks(taskEntries, taskId);
+        if (hasChildren) {
+            const syncResult = transitionSplitRequiredParentToDecomposed({ repoRoot, eventsRoot, taskId });
+            if (syncResult.outcome !== 'updated' && syncResult.outcome !== 'already_synced') {
+                return buildResult({
+                    ...resultBase,
+                    status: 'SPLIT_REQUIRED',
+                    nextGate: 'split-required-latch',
+                    title: 'Split-required latch is active.',
+                    reason:
+                        'A valid split-required latch is permanent for this task attempt, but the gate could not transition the parent to DECOMPOSED after detecting linked child tasks. ' +
+                        `Status sync outcome: ${formatNextStepInlineValue(syncResult.outcome)}${syncResult.error_message ? ` (${syncResult.error_message})` : ''}. ` +
+                        'Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
+                    commands: [],
+                    missingArtifacts: [],
+                    presentArtifacts: coreArtifacts.present,
+                    finalReport: null
+                });
+            }
+            if (childRoute) {
+                const chain = [taskId, ...childRoute.chain].join(' -> ');
+                return buildResult({
+                    ...resultBase,
+                    status: 'DECOMPOSED',
+                    nextGate: 'child-task',
+                    title: 'Split-required latch cleared; continue with the next child.',
+                    reason:
+                        'A valid split-required latch stayed permanent after later status/config/scope drift. Linked child tasks were detected, so the gate restored the parent latch and transitioned the parent to DECOMPOSED. ' +
+                        `Parent tasks in this state are not executable lifecycle scopes. Continue through child chain ${chain}; ` +
+                        `next unfinished child status is ${formatNextStepInlineValue(childRoute.status || 'unknown')}.`,
+                    commands: [
+                        buildCommand(
+                            'Continue child task',
+                            `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
+                        )
+                    ],
+                    missingArtifacts: [],
+                    presentArtifacts: coreArtifacts.present,
+                    finalReport: null
+                });
+            }
+            return buildResult({
+                ...resultBase,
+                status: 'DECOMPOSED',
+                nextGate: null,
+                title: 'Split-required latch cleared; no unfinished child remains.',
+                reason:
+                    'A valid split-required latch stayed permanent after later status/config/scope drift. Linked child tasks were detected, so the gate restored the parent latch and transitioned the parent to DECOMPOSED. ' +
+                    'No unfinished child task could be resolved from its notes. Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
+                commands: [],
+                missingArtifacts: [],
+                presentArtifacts: coreArtifacts.present,
+                finalReport: null
+            });
+        }
+
+        return buildResult({
+            ...resultBase,
+            status: 'SPLIT_REQUIRED',
+            nextGate: 'split-required-latch',
+            title: 'Split-required latch is active.',
+            reason:
+                `A valid split-required latch already exists for ${formatNextStepInlineValue(taskId)}. ` +
+                'The latch is permanent for this task attempt, so later status/config/scope changes cannot make the parent executable again. ' +
+                'Create and link child tasks so the gate can transition the parent to DECOMPOSED, or use an explicit operator task-reset/discard command to clear the latch.',
+            commands: [],
+            missingArtifacts: [],
+            presentArtifacts: coreArtifacts.present,
+            finalReport: null
+        });
+    }
+
+    if (splitRequiredStatusInTaskQueue) {
         const latchEvidence = readSplitRequiredLatchEvidence({ reviewsRoot, eventsRoot, taskId });
         if (!latchEvidence.valid) {
             return buildResult({
