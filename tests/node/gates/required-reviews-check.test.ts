@@ -113,6 +113,72 @@ describe('gates/required-reviews-check', () => {
 
             assert.ok(result.violations.some((violation) => violation.includes('Task timeline missing or unreadable')));
         });
+
+        it('does not create review read-barrier directories for missing synthetic receipt paths', () => {
+            const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-required-review-synthetic-'));
+            const blockedRoot = path.join(tempRoot, 'blocked-root');
+            fs.writeFileSync(blockedRoot, 'not a directory', 'utf8');
+            const artifactPath = path.join(blockedRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-105-code.md');
+            try {
+                const result = validateReviewArtifactGateEligibility({
+                    resolvedTaskId: 'T-105',
+                    reviewKey: 'code',
+                    required: true,
+                    skippedByOverride: false,
+                    preflightPath: artifactPath.replace(/T-105-code\.md$/, 'T-105-preflight.json'),
+                    preflightSha256: 'abc123',
+                    reviewArtifact: {
+                        path: artifactPath,
+                        content: [
+                            '# Review',
+                            '',
+                            'Validated the synthetic review artifact path without touching the filesystem outside the test-owned root.',
+                            '',
+                            '## Findings by Severity',
+                            'none',
+                            '',
+                            '## Residual Risks',
+                            'none',
+                            '',
+                            '## Verdict',
+                            'REVIEW PASSED'
+                        ].join('\n'),
+                        reviewContextPath: artifactPath.replace(/\.md$/, '-review-context.json'),
+                        reviewContext: {
+                            schema_version: 2,
+                            task_id: 'T-105',
+                            review_type: 'code',
+                            preflight_path: artifactPath.replace(/T-105-code\.md$/, 'T-105-preflight.json'),
+                            preflight_sha256: 'abc123',
+                            tree_state: {
+                                tree_state_sha256: 'c'.repeat(64)
+                            },
+                            reviewer_routing: {
+                                source_of_truth: 'Codex',
+                                canonical_source_of_truth: 'Codex',
+                                execution_provider: 'Codex',
+                                execution_provider_source: 'provider_entrypoint',
+                                identity_status: 'resolved',
+                                actual_execution_mode: 'delegated_subagent',
+                                reviewer_session_id: 'agent:T-105'
+                            }
+                        },
+                        reviewContextSha256: 'ctx',
+                        artifactSha256: 'artifact'
+                    },
+                    sourceOfTruth: 'Codex',
+                    canonicalSourceOfTruth: 'Codex',
+                    executionProvider: 'Codex',
+                    executionProviderSource: 'provider_entrypoint'
+                });
+                assert.ok(
+                    result.violations.some((violation) => violation.includes("Verifiable review receipt missing for 'code'")),
+                    'synthetic missing receipt should still fail closed without creating lock directories'
+                );
+            } finally {
+                fs.rmSync(tempRoot, { recursive: true, force: true });
+            }
+        });
     });
 
     describe('resolveExpectedReviewVerdicts', () => {

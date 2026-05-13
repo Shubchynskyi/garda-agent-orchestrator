@@ -45,6 +45,7 @@ import {
     tryNormalizeSourceOfTruth,
     tryParseBooleanText
 } from '../../../../src/cli/commands/cli-helpers';
+import { dispatchCliCommand } from '../../../../src/cli/commands/command-dispatch';
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
@@ -1010,12 +1011,36 @@ test('runCliMain with --no-color sets NO_COLOR and disables supportsColor', asyn
     }
 });
 
-async function captureRunCliMain(argv: string[]): Promise<string> {
+function createSourceCheckoutWithoutDeployedBundle(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-help-parity-'));
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'index.ts'), 'export {};\n', 'utf8');
+    fs.writeFileSync(path.join(root, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator', version: '1.0.0' }), 'utf8');
+    fs.writeFileSync(path.join(root, 'VERSION'), '1.0.0\n', 'utf8');
+    return root;
+}
+
+function createSourceCheckoutWithVersionMismatchedDeployedBundle(): string {
+    const root = createSourceCheckoutWithoutDeployedBundle();
+    const bundleRoot = path.join(root, 'garda-agent-orchestrator');
+    fs.mkdirSync(path.join(bundleRoot, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(bundleRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+    fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '0.9.0\n', 'utf8');
+    return root;
+}
+
+async function captureRunCliMain(argv: string[], options: { cwd?: string } = {}): Promise<string> {
     const { runCliMain } = await import('../../../../src/cli/main');
     const savedNoColor = process.env.NO_COLOR;
+    const savedCwd = process.cwd();
     const captured: string[] = [];
     const originalLog = console.log;
     try {
+        if (options.cwd) {
+            process.chdir(options.cwd);
+        }
         process.env.NO_COLOR = '1';
         console.log = (...args: unknown[]): void => {
             captured.push(args.map((arg) => String(arg)).join(' '));
@@ -1023,6 +1048,9 @@ async function captureRunCliMain(argv: string[]): Promise<string> {
         await runCliMain(argv);
     } finally {
         console.log = originalLog;
+        if (process.cwd() !== savedCwd) {
+            process.chdir(savedCwd);
+        }
         if (savedNoColor === undefined) { delete process.env.NO_COLOR; } else { process.env.NO_COLOR = savedNoColor; }
     }
     return captured.join('\n');
@@ -1145,5 +1173,61 @@ test('runCliMain prints gate help through overview and per-gate aliases', async 
         assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print per-gate help`);
         assert.ok(text.includes('gate task-events-summary'), `${argv.join(' ')} should include per-gate usage`);
         assert.ok(text.includes('--task-id "<task-id>"'), `${argv.join(' ')} should include task-id syntax`);
+    }
+});
+
+test('runCliMain prints help-only commands without requiring deployed bundle parity', async () => {
+    const sourceCheckoutRoot = createSourceCheckoutWithoutDeployedBundle();
+    const savedBundleName = process.env.GARDA_BUNDLE_NAME;
+    try {
+        process.env.GARDA_BUNDLE_NAME = 'custom-garda-bundle';
+        const helpCases: Array<{ argv: string[]; expected: string }> = [
+            { argv: ['profile', '--help'], expected: 'garda profile' },
+            { argv: ['gate', '--help'], expected: 'gate <gate-name>' },
+            { argv: ['gate', 'task-events-summary', '--help'], expected: 'gate task-events-summary' }
+        ];
+        for (const helpCase of helpCases) {
+            const text = await captureRunCliMain(helpCase.argv, { cwd: sourceCheckoutRoot });
+            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${helpCase.argv.join(' ')} should print command help`);
+            assert.ok(text.includes(helpCase.expected), `${helpCase.argv.join(' ')} should include expected usage`);
+            assert.ok(!text.includes('PARITY_BLOCKED'), `${helpCase.argv.join(' ')} should not run parity blocking`);
+        }
+    } finally {
+        if (savedBundleName === undefined) {
+            delete process.env.GARDA_BUNDLE_NAME;
+        } else {
+            process.env.GARDA_BUNDLE_NAME = savedBundleName;
+        }
+        fs.rmSync(sourceCheckoutRoot, { recursive: true, force: true });
+    }
+});
+
+test('dispatchCliCommand still blocks help-only commands when deployed bundle version mismatches source', async () => {
+    const sourceCheckoutRoot = createSourceCheckoutWithVersionMismatchedDeployedBundle();
+    const savedCwd = process.cwd();
+    try {
+        process.chdir(sourceCheckoutRoot);
+        await assert.rejects(
+            () => dispatchCliCommand({
+                commandName: 'profile',
+                commandArgv: ['--help'],
+                packageJson: { name: 'garda-agent-orchestrator', version: '1.0.0' },
+                packageRoot: sourceCheckoutRoot,
+                globalFlags: { offline: false, forceNetwork: false }
+            }),
+            (error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                assert.ok(message.includes('PARITY_BLOCKED'));
+                assert.ok(message.includes("Deployed bundle version '0.9.0' does not match source checkout version '1.0.0'."));
+                assert.ok(message.includes('GARDA_COMMAND_HELP'));
+                assert.ok(message.includes('garda profile'));
+                return true;
+            }
+        );
+    } finally {
+        if (process.cwd() !== savedCwd) {
+            process.chdir(savedCwd);
+        }
+        fs.rmSync(sourceCheckoutRoot, { recursive: true, force: true });
     }
 });

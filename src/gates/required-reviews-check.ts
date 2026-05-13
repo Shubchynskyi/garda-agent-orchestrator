@@ -224,19 +224,39 @@ function readReviewReceiptSnapshot(options: {
     receipt: ReviewReceipt | null;
     receiptReadError: string | null;
 } {
+    const readArtifactSha256IfAvailable = (): string | null => {
+        if (options.reviewArtifact.artifactSha256) {
+            return options.reviewArtifact.artifactSha256;
+        }
+        if (!options.artifactPath) {
+            return null;
+        }
+        try {
+            if (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile()) {
+                return null;
+            }
+            return fileSha256(options.artifactPath);
+        } catch {
+            return null;
+        }
+    };
+    if (options.reviewArtifact.receipt || options.reviewArtifact.receiptReadError) {
+        return {
+            artifactSha256: readArtifactSha256IfAvailable(),
+            receipt: options.reviewArtifact.receipt ?? null,
+            receiptReadError: options.reviewArtifact.receiptReadError ?? null
+        };
+    }
+    if (!fs.existsSync(options.receiptPath)) {
+        return {
+            artifactSha256: readArtifactSha256IfAvailable(),
+            receipt: null,
+            receiptReadError: null
+        };
+    }
     const reviewsRoot = path.dirname(path.resolve(options.receiptPath));
     return withReviewArtifactReadBarrier(reviewsRoot, () => {
-        let artifactSha256 = options.reviewArtifact.artifactSha256 ?? null;
-        if (!artifactSha256 && options.artifactPath) {
-            artifactSha256 = fileSha256(options.artifactPath);
-        }
-        if (options.reviewArtifact.receipt || options.reviewArtifact.receiptReadError) {
-            return {
-                artifactSha256,
-                receipt: options.reviewArtifact.receipt ?? null,
-                receiptReadError: options.reviewArtifact.receiptReadError ?? null
-            };
-        }
+        const artifactSha256 = readArtifactSha256IfAvailable();
         if (!fs.existsSync(options.receiptPath) || !fs.statSync(options.receiptPath).isFile()) {
             return {
                 artifactSha256,

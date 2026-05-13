@@ -75,6 +75,16 @@ function hasHelpFlag(commandArgv: string[]): boolean {
     return commandArgv.some((argument) => isHelpFlag(argument));
 }
 
+function isHelpOnlyRequest(commandArgv: string[]): boolean {
+    return isHelpSubcommand(commandArgv) || hasHelpFlag(commandArgv);
+}
+
+function isMissingDeployedBundleOnlyParityBlock(violations: readonly string[]): boolean {
+    return violations.length > 0
+        && violations.every((violation) => violation.startsWith('Bundle invariant violation: '))
+        && violations.some((violation) => /^Bundle invariant violation: Bundle directory '[^']+' is missing\.$/.test(violation));
+}
+
 function printHelpCommand(commandArgv: string[], packageJson: PackageJsonLike): boolean {
     const commandHelpName = String(commandArgv[0] || '').trim();
     if (!commandHelpName) {
@@ -109,6 +119,7 @@ function printCommandHelpIfRequested(commandName: string, commandArgv: string[])
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
     const { commandName, commandArgv, packageJson, packageRoot, globalFlags } = options;
     const isIntrospection = commandArgv.some((arg) => arg === '--help' || arg === '-h' || arg === '--version' || arg === '-v');
+    const isHelpOnly = isHelpOnlyRequest(commandArgv);
     const isNextStepNavigatorCommand = commandName === 'next-step'
         || (commandName === 'gate' && String(commandArgv[0] || '').trim() === 'next-step');
 
@@ -122,7 +133,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
     if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow'].includes(commandName)) {
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
-        if (parityResult.isStale) {
+        if (parityResult.isStale && !(isHelpOnly && isMissingDeployedBundleOnlyParityBlock(parityResult.violations))) {
             const helpText = commandName === 'gate' || commandName === 'next-step'
                 ? (() => {
                     const gateName = commandName === 'next-step'
