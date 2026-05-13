@@ -5,6 +5,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
+import {
+    runDocImpactGateCommand,
+    runRequiredReviewsCheckCommand
+} from '../../../../src/cli/commands/gates';
 import { WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE } from '../../../../src/cli/commands/gate-flows/task-mode-flow';
 import { runCompileGateCommand } from '../../../../src/cli/commands/gate-flows/compile-flow';
 import { runFullSuiteValidationCommand } from '../../../../src/cli/commands/gate-flows/full-suite-validation-flow';
@@ -30,6 +34,8 @@ import {
     runShellSmokeForTask,
     seedInitAnswers,
     seedTaskQueue,
+    writeCleanReviewArtifact,
+    writeCompilePassEvidence,
     writePreflight
 } from './gate-test-helpers';
 
@@ -1280,6 +1286,59 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             assert.ok(result.violations.some((violation: string) => (
                 /without task-mode --workflow-config-work/.test(violation)
             )), JSON.stringify(result.violations, null, 2));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks late workflow-config edits before completion when workflow-config flag is missing', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-late-completion';
+        const repoRoot = prepareTaskRepo(taskId, { orchestratorWork: true });
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+
+        try {
+            const appPath = editAppFile(repoRoot);
+            runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Update app flow',
+                changedFiles: [appPath],
+                outputPath: preflightPath,
+                emitMetrics: false
+            });
+            assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+            writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+            writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+            assert.equal(runRequiredReviewsCheckCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                emitMetrics: false
+            }).exitCode, 0);
+            assert.equal(runDocImpactGateCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                rationale: 'No documentation updates are required for this workflow-config regression fixture.',
+                emitMetrics: false
+            }).exitCode, 0);
+            weakenOutOfScopePolicy(repoRoot);
+
+            const result = runCompletionGate({
+                repoRoot,
+                taskId,
+                preflightPath
+            });
+            const violations = result.violations.join('\n');
+
+            assert.equal(result.outcome, 'FAIL');
+            assert.match(violations, /without task-mode --workflow-config-work/);
+            assert.doesNotMatch(violations, /missing COMPILE_GATE_PASSED/);
+            assert.doesNotMatch(violations, /missing REVIEW_GATE_PASSED/);
+            assert.doesNotMatch(violations, /Compile gate evidence .*missing/i);
+            assert.doesNotMatch(violations, /Review gate evidence .*missing/i);
+            assert.doesNotMatch(violations, /Doc impact evidence .*missing/i);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
