@@ -7,6 +7,7 @@ import {
     mergeWorkflowConfigWithTemplate,
     readWorkflowConfigForMerge,
     buildDefaultWorkflowConfig,
+    buildWorkflowConfigReviewCycleLimitDiagnostic,
     type WorkflowConfigReadStatus,
     type WorkflowConfigData
 } from '../core/workflow-config';
@@ -120,16 +121,23 @@ function buildWorkflowConfigMergeStatus(
     targetRoot: string,
     workflowConfigPath: string,
     readStatus: WorkflowConfigReadStatus,
+    existingConfig: Record<string, unknown> | null,
     materializedConfig: Record<string, unknown>
 ): string {
     const relativePath = path.relative(targetRoot, workflowConfigPath).replace(/\\/g, '/');
     const enabledDiagnostic = getFullSuiteEnabledDiagnostic(materializedConfig);
     const projectMemoryDiagnostic = getProjectMemoryMaintenanceDiagnostic(materializedConfig);
+    const reviewCycleDiagnostic = buildWorkflowConfigReviewCycleLimitDiagnostic(
+        readStatus,
+        existingConfig,
+        materializedConfig
+    );
     const suffix = [
         `path=${relativePath}`,
         `full_suite_validation.enabled=${enabledDiagnostic}`,
         `project_memory_maintenance.enabled=${projectMemoryDiagnostic.enabled}`,
-        `project_memory_maintenance.mode=${projectMemoryDiagnostic.mode}`
+        `project_memory_maintenance.mode=${projectMemoryDiagnostic.mode}`,
+        reviewCycleDiagnostic
     ].join(' ');
     if (readStatus === 'present') {
         return `existing_values_preserved_and_missing_keys_filled ${suffix}`;
@@ -454,7 +462,7 @@ export function runInit(options: RunInitOptions) {
             }
 
             configMergeStatuses[configName] = configName === 'workflow-config'
-                ? buildWorkflowConfigMergeStatus(targetRoot, destConfigPath, workflowConfigReadStatus, materializedConfig)
+                ? buildWorkflowConfigMergeStatus(targetRoot, destConfigPath, workflowConfigReadStatus, existingConfig, materializedConfig)
                 : replaceWithCanonicalTemplate
                     ? (hadExistingConfig
                         ? 'canonical_template_reapplied_existing_values_replaced'

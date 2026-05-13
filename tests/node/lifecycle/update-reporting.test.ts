@@ -4,11 +4,13 @@ import assert from 'node:assert/strict';
 import { buildUpdateReportLines, buildUpdateResult } from '../../../src/lifecycle/update-reporting';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../src/core/project-memory-rollout';
 
+const WORKFLOW_CONFIG_MERGE_STATUS = 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template';
+
 function makeStageResult(overrides: Record<string, unknown> = {}) {
     return {
         installStatus: 'PASS',
         materializationStatus: 'PASS',
-        workflowConfigMergeStatus: 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update',
+        workflowConfigMergeStatus: WORKFLOW_CONFIG_MERGE_STATUS,
         projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',
         projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
         contractMigrationStatus: 'SKIPPED_NO_RUNNER',
@@ -90,7 +92,7 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('BundleVersion: 2.0.0'));
         assert.ok(text.includes('Install: PASS'));
         assert.ok(text.includes('Materialization: PASS'));
-        assert.ok(text.includes('WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'));
+        assert.ok(text.includes(`WorkflowConfigMerge: ${WORKFLOW_CONFIG_MERGE_STATUS}`));
         assert.ok(text.includes('## ProjectMemory'));
         assert.ok(text.includes('Maintenance: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'));
         assert.ok(text.includes(`RefreshHandoffPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
@@ -238,7 +240,7 @@ describe('buildUpdateResult', () => {
         assert.equal(result.resolvedPackageIntegrity, 'sha512-result');
         assert.equal(result.installStatus, 'PASS');
         assert.equal(result.manifestValidationStatus, 'PASS');
-        assert.equal(result.workflowConfigMergeStatus, 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update');
+        assert.equal(result.workflowConfigMergeStatus, WORKFLOW_CONFIG_MERGE_STATUS);
         assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
         assert.equal(result.projectMemoryRefreshHandoffPrompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
         assert.equal(result.updateReportPath, 'report-path');

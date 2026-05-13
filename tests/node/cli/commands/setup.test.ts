@@ -463,9 +463,11 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
         const initReport = readInitReport(workspaceRoot);
         const refreshText = refreshOutput.join('\n');
         assert.ok(refreshText.includes(`WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json full_suite_validation.enabled=true`));
+        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'));
         assert.ok(initReport.includes('Workflow config merge status: existing_values_preserved_and_missing_keys_filled'));
         assert.ok(initReport.includes(`path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json`));
         assert.ok(initReport.includes('full_suite_validation.enabled=true'));
+        assert.ok(initReport.includes('review_cycle_guard.max_total_non_test_reviews=30'));
         assert.ok(refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
         assert.ok(refreshText.includes(`ProjectMemoryRefreshHandoff: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
         assert.ok(initReport.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
@@ -536,6 +538,130 @@ test('handleSetup migrates exact legacy generated project-memory maintenance def
     }
 });
 
+test('handleSetup migrates exact legacy review-cycle guard default during refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-review-cycle-legacy-default-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: false
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const refreshOutput = await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
+        assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, false);
+
+        const initReport = readInitReport(workspaceRoot);
+        const refreshText = refreshOutput.join('\n');
+        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=migrated_from_old_default'));
+        assert.ok(initReport.includes('review_cycle_guard.max_failed_non_test_reviews=15'));
+        assert.ok(initReport.includes('review_cycle_guard.max_total_non_test_reviews=30'));
+        assert.ok(initReport.includes('review_cycle_guard.limit_status=migrated_from_old_default'));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup preserves custom review-cycle guard limits during refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-review-cycle-custom-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        fs.writeFileSync(
+            workflowConfigPath,
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:full',
+                    timeout_ms: 123456,
+                    green_summary_max_lines: 7,
+                    red_failure_chunk_lines: 42,
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 12,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: true
+                }
+            }, null, 2),
+            'utf8'
+        );
+
+        const refreshOutput = await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 12);
+        assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 15);
+        assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
+
+        const initReport = readInitReport(workspaceRoot);
+        const refreshText = refreshOutput.join('\n');
+        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=12 review_cycle_guard.max_total_non_test_reviews=15 review_cycle_guard.limit_status=custom_preserved'));
+        assert.ok(initReport.includes('review_cycle_guard.max_failed_non_test_reviews=12'));
+        assert.ok(initReport.includes('review_cycle_guard.max_total_non_test_reviews=15'));
+        assert.ok(initReport.includes('review_cycle_guard.limit_status=custom_preserved'));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('handleSetup reports workflow-config template fallback when preserved refresh finds a missing live config', async () => {
     const repoRoot = findRepoRoot(__dirname);
     const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
@@ -565,9 +691,12 @@ test('handleSetup reports workflow-config template fallback when preserved refre
 
         const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.equal(workflowConfig.full_suite_validation.enabled, false);
+        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
         const initReport = readInitReport(workspaceRoot);
         const refreshText = refreshOutput.join('\n');
         assert.ok(refreshText.includes(`WorkflowConfigMerge: live_config_missing_template_applied path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json full_suite_validation.enabled=false`));
+        assert.ok(refreshText.includes('review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied'));
         assert.ok(initReport.includes('Workflow config merge status: live_config_missing_template_applied'));
         assert.ok(initReport.includes(`path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json`));
         assert.ok(initReport.includes('full_suite_validation.enabled=false'));
@@ -675,6 +804,8 @@ test('handleSetup materializes code_first_optional review_execution_policy for a
         assert.deepEqual(workflowConfig.review_execution_policy, {
             mode: 'code_first_optional'
         });
+        assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

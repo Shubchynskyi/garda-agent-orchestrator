@@ -388,7 +388,7 @@ garda workflow show --target-root "." --json
 garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test"
 garda workflow set --target-root "." --review-execution-policy strict_sequential
 garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000
-garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15
+garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30
 garda workflow set --target-root "." --review-cycle-auto-split-enabled true
 garda workflow set --target-root "." --task-reset-enabled true
 garda workflow explain --target-root "."
@@ -405,7 +405,7 @@ Notes:
 - `max_required_reviews` means required review lanes from the current preflight, not completed review attempts.
 - `max_review_tokens` is a heuristic review forecast, not a measured tokenizer count; use `garda workflow explain` to show the effective workflow guard settings, behavior, and unblock options.
 - Review cycle guard settings can be changed with `--review-cycle-enabled true|false`, `--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY`, `--review-cycle-max-failed-non-test-reviews N`, `--review-cycle-max-total-non-test-reviews N`, `--review-cycle-excluded-review-types test`, and `--review-cycle-auto-split-enabled true|false`.
-- The default review cycle guard is enabled, uses `BLOCK_FOR_OPERATOR_DECISION`, blocks when failed non-test reviews exceed `15` or total non-test review attempts exceed `15`, and excludes `test` review from counting.
+- The default review cycle guard is enabled, uses `BLOCK_FOR_OPERATOR_DECISION`, blocks when failed non-test reviews exceed `15` or total non-test review attempts exceed `30`, and excludes `test` review from counting.
 - Review cycle attempts are counted from review invocation and recorded-review timeline evidence with deduplication only when both reviewer identity and review context hash match; `test` is excluded because reaching test review means upstream code-oriented review gates already allowed the task forward.
 - When `review_cycle_guard.action=BLOCK_FOR_OPERATOR_DECISION`, `next-step` blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise chooses the recovery path.
 - When `review_cycle_guard.auto_split_enabled=false` (default), `next-step` tells the agent to wait for operator direction after a blocking review-cycle violation.

@@ -9,6 +9,8 @@ import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project
 
 type UpdateCommandModule = typeof import('../../../../src/cli/commands/update-command');
 
+const WORKFLOW_CONFIG_MERGE_STATUS = 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied';
+
 function makeCacheModule(resolvedPath: string, exportsValue: Record<string, unknown>): NodeJS.Module {
     return {
         id: resolvedPath,
@@ -68,7 +70,7 @@ function makeTempBundleFixture(): { workspaceRoot: string; bundleUpdateModulePat
             '    return {',
             "        previousVersion: '1.0.0',",
             "        updatedVersion: '1.1.0',",
-            "        workflowConfigMergeStatus: 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update',",
+            `        workflowConfigMergeStatus: ${JSON.stringify(WORKFLOW_CONFIG_MERGE_STATUS)},`,
             "        projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',",
             `        projectMemoryRefreshHandoffPrompt: ${JSON.stringify(PROJECT_MEMORY_INIT_REFRESH_PROMPT)},`,
             "        rollbackSnapshotPath: 'garda-agent-orchestrator/runtime/update-rollbacks/update-1',",
@@ -189,7 +191,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                 return {
                     previousVersion: 'stale-version',
                     updatedVersion: '0.0.1',
-                    workflowConfigMergeStatus: 'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update',
+                    workflowConfigMergeStatus: WORKFLOW_CONFIG_MERGE_STATUS,
                     projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',
                     projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
                     rollbackSnapshotPath: 'stale-snapshot',
@@ -258,7 +260,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
             assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-output'), true);
             assert.equal(
-                plainTextLines.includes('WorkflowConfigMergeStatus: live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'),
+                plainTextLines.includes(`WorkflowConfigMergeStatus: ${WORKFLOW_CONFIG_MERGE_STATUS}`),
                 true
             );
             assert.equal(plainTextLines.includes('ProjectMemoryMaintenanceSummaryLine: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'), true);
@@ -298,7 +300,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.equal(parsed.resolvedPackageIntegrity, 'sha512-output');
             assert.equal(
                 parsed.workflowConfigMergeStatus,
-                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
+                WORKFLOW_CONFIG_MERGE_STATUS
             );
             assert.equal(parsed.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
             assert.equal(parsed.projectMemoryRefreshHandoffPrompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
@@ -397,7 +399,7 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
             assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
             assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-check'), true);
             assert.equal(
-                plainTextLines.includes('WorkflowConfigMergeStatus: live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'),
+                plainTextLines.includes(`WorkflowConfigMergeStatus: ${WORKFLOW_CONFIG_MERGE_STATUS}`),
                 true
             );
             assert.equal(plainTextLines.includes('ProjectMemoryMaintenanceSummaryLine: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'), true);
@@ -418,7 +420,7 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
             const parsed = JSON.parse(jsonLines.join('\n'));
             assert.equal(
                 parsed.workflowConfigMergeStatus,
-                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
+                WORKFLOW_CONFIG_MERGE_STATUS
             );
             assert.equal(parsed.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
             assert.equal(parsed.projectMemoryRefreshHandoffPrompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);

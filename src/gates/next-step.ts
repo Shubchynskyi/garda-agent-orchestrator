@@ -263,6 +263,8 @@ export interface NextStepReviewCycleBlock {
     wait_for_operator: boolean;
     auto_split_enabled: boolean;
     reason: string;
+    max_failed_non_test_reviews: number;
+    max_total_non_test_reviews: number;
     total_non_test_review_count: number;
     failed_non_test_review_count: number;
     counts_by_review_type: Record<string, { total: number; failed: number; passed: number; pending: number }>;
@@ -5005,6 +5007,8 @@ function buildReviewCycleOperatorBlock(
         wait_for_operator: !autoSplitEnabled,
         auto_split_enabled: autoSplitEnabled,
         reason,
+        max_failed_non_test_reviews: evaluation.max_failed_non_test_reviews,
+        max_total_non_test_reviews: evaluation.max_total_non_test_reviews,
         total_non_test_review_count: evaluation.total_non_test_review_count,
         failed_non_test_review_count: evaluation.failed_non_test_review_count,
         counts_by_review_type: countsByReviewType,
@@ -7629,6 +7633,10 @@ export function formatNextStepText(result: NextStepResult): string {
             `ReviewCycleCounts: total_non_test_reviews=${block.total_non_test_review_count}; ` +
             `failed_non_test_reviews=${block.failed_non_test_review_count}; ` +
             `excluded_review_types=${formatNextStepInlineList(block.excluded_review_types)}`
+        );
+        lines.push(
+            `ReviewCycleLimits: max_total_non_test_reviews=${block.max_total_non_test_reviews}; ` +
+            `max_failed_non_test_reviews=${block.max_failed_non_test_reviews}`
         );
         const countEntries = Object.entries(block.counts_by_review_type);
         lines.push('ReviewCycleCountsByType:');

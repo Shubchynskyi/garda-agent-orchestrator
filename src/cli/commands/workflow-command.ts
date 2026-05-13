@@ -817,6 +817,7 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
             'Estimated review tokens are a heuristic forecast from review type base cost plus changed file and changed line costs; they are not measured model tokenizer output.',
             'When scope_budget_guard.action is BLOCK_FOR_SPLIT, next-step blocks ordinary continuation and asks the operator to split or decompose the task.',
             'Review cycle guard: stops runaway non-test review cycles after the configured failed or total review-attempt thresholds are exceeded.',
+            'The fresh default review-cycle limits are 15 failed non-test reviews and 30 total non-test reviews; the guard triggers only when a count is greater than its configured limit.',
             'Review cycle attempts are deduplicated only when review type, reviewer identity, and review context hash all match; otherwise each timeline event is counted separately.',
             'Review cycle guard excluded_review_types are not counted; the default excludes test reviews because reaching test review means code-facing review lanes have already been handled.',
             'When review_cycle_guard.action is BLOCK_FOR_OPERATOR_DECISION, next-step blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise decides the recovery path.',

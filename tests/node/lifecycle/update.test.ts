@@ -636,7 +636,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
@@ -705,7 +705,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=check'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=check review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
             assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: check read_strategy=index_first max_compact_summary_chars=9000 require_user_approval_for_writes=true');
 
@@ -756,7 +756,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
             assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
 
@@ -807,7 +807,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=false project_memory_maintenance.mode=off'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=false project_memory_maintenance.mode=off review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
             assert.equal(result.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: disabled read_strategy=index_first max_compact_summary_chars=9000 require_user_approval_for_writes=true');
 
@@ -895,7 +895,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
             );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
@@ -930,7 +930,7 @@ describe('runUpdate', () => {
             assert.equal(result.materializationStatus, 'PASS');
             assert.equal(
                 result.workflowConfigMergeStatus,
-                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update'
+                'live_config_missing_template_applied path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=false project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=template_default_applied'
             );
 
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
@@ -943,6 +943,108 @@ describe('runUpdate', () => {
                 out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
             });
             assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
+            assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+            assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('migrates exact legacy review-cycle guard defaults during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    review_cycle_guard: {
+                        enabled: true,
+                        action: 'BLOCK_FOR_OPERATOR_DECISION',
+                        max_failed_non_test_reviews: 15,
+                        max_total_non_test_reviews: 15,
+                        excluded_review_types: ['test'],
+                        auto_split_enabled: false
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(
+                result.workflowConfigMergeStatus,
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=migrated_from_old_default'
+            );
+
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
+            assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
+            assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, false);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves custom review-cycle guard limits during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    review_cycle_guard: {
+                        enabled: true,
+                        action: 'BLOCK_FOR_OPERATOR_DECISION',
+                        max_failed_non_test_reviews: 12,
+                        max_total_non_test_reviews: 15,
+                        excluded_review_types: ['test'],
+                        auto_split_enabled: true
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(
+                result.workflowConfigMergeStatus,
+                'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=12 review_cycle_guard.max_total_non_test_reviews=15 review_cycle_guard.limit_status=custom_preserved'
+            );
+
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 12);
+            assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 15);
+            assert.equal(workflowConfig.review_cycle_guard.auto_split_enabled, true);
         } finally {
             removePathRecursive(projectRoot);
         }

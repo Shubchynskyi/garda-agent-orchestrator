@@ -13,6 +13,7 @@ import {
 } from './scope-budget-guard';
 import {
     DEFAULT_REVIEW_CYCLE_GUARD_CONFIG,
+    normalizeReviewCycleGuardConfig,
     type ReviewCycleGuardConfig
 } from './review-cycle-guard';
 
@@ -113,6 +114,15 @@ const LEGACY_PROJECT_MEMORY_MAINTENANCE_GENERATED_DEFAULT: ProjectMemoryMaintena
     impact_artifact_retention_days: 30
 });
 
+const LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT: ReviewCycleGuardConfig = Object.freeze({
+    enabled: true,
+    action: 'BLOCK_FOR_OPERATOR_DECISION',
+    max_failed_non_test_reviews: 15,
+    max_total_non_test_reviews: 15,
+    excluded_review_types: ['test'],
+    auto_split_enabled: false
+});
+
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {
     return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG);
 }
@@ -161,6 +171,31 @@ export function isExactLegacyProjectMemoryGeneratedDefault(input: unknown): bool
     return expectedKeys.every((key, index) => actualKeys[index] === key && input[key] === expected[key]);
 }
 
+export function isExactLegacyReviewCycleGuardGeneratedDefault(input: unknown): boolean {
+    if (!isPlainObject(input)) {
+        return false;
+    }
+
+    const expected = LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT as unknown as Record<string, unknown>;
+    const actualKeys = Object.keys(input).sort();
+    const expectedKeys = Object.keys(expected).sort();
+    if (actualKeys.length !== expectedKeys.length) {
+        return false;
+    }
+    if (!expectedKeys.every((key, index) => actualKeys[index] === key)) {
+        return false;
+    }
+
+    return input.enabled === expected.enabled
+        && input.action === expected.action
+        && input.max_failed_non_test_reviews === expected.max_failed_non_test_reviews
+        && input.max_total_non_test_reviews === expected.max_total_non_test_reviews
+        && Array.isArray(input.excluded_review_types)
+        && input.excluded_review_types.length === 1
+        && input.excluded_review_types[0] === 'test'
+        && input.auto_split_enabled === expected.auto_split_enabled;
+}
+
 function migrateLegacyProjectMemoryGeneratedDefault(
     existingConfig: Record<string, unknown> | null
 ): Record<string, unknown> | null {
@@ -181,12 +216,59 @@ function migrateLegacyProjectMemoryGeneratedDefault(
     return migrated;
 }
 
+function migrateLegacyReviewCycleGuardGeneratedDefault(
+    existingConfig: Record<string, unknown> | null
+): Record<string, unknown> | null {
+    if (!isPlainObject(existingConfig)) {
+        return existingConfig;
+    }
+
+    const reviewCycleKey = findOwnCaseInsensitiveKey(existingConfig, 'review_cycle_guard');
+    if (
+        reviewCycleKey === undefined
+        || !isExactLegacyReviewCycleGuardGeneratedDefault(existingConfig[reviewCycleKey])
+    ) {
+        return existingConfig;
+    }
+
+    const migrated = cloneJsonValue(existingConfig);
+    delete migrated[reviewCycleKey];
+    return migrated;
+}
+
+export function buildWorkflowConfigReviewCycleLimitDiagnostic(
+    readStatus: WorkflowConfigReadStatus,
+    existingConfig: Record<string, unknown> | null,
+    materializedConfig: Record<string, unknown>
+): string {
+    const reviewCycleGuard = normalizeReviewCycleGuardConfig(materializedConfig.review_cycle_guard);
+    let limitStatus = 'template_default_applied';
+    if (readStatus === 'present' && isPlainObject(existingConfig)) {
+        const reviewCycleKey = findOwnCaseInsensitiveKey(existingConfig, 'review_cycle_guard');
+        if (reviewCycleKey === undefined) {
+            limitStatus = 'missing_keys_filled_from_template';
+        } else if (isExactLegacyReviewCycleGuardGeneratedDefault(existingConfig[reviewCycleKey])) {
+            limitStatus = 'migrated_from_old_default';
+        } else {
+            limitStatus = 'custom_preserved';
+        }
+    }
+
+    return [
+        `review_cycle_guard.max_failed_non_test_reviews=${reviewCycleGuard.max_failed_non_test_reviews}`,
+        `review_cycle_guard.max_total_non_test_reviews=${reviewCycleGuard.max_total_non_test_reviews}`,
+        `review_cycle_guard.limit_status=${limitStatus}`
+    ].join(' ');
+}
+
 export function mergeWorkflowConfigWithTemplate(
     templateConfig: WorkflowConfigData,
     existingConfig: Record<string, unknown> | null,
     options: WorkflowConfigMergeOptions = {}
 ): Record<string, unknown> {
-    const existingConfigForMerge = migrateLegacyProjectMemoryGeneratedDefault(existingConfig);
+    const existingConfigForMerge = migrateLegacyReviewCycleGuardGeneratedDefault(
+        migrateLegacyProjectMemoryGeneratedDefault(existingConfig)
+    );
     const nextConfig = mergeConfig(templateConfig, existingConfigForMerge);
     const existingConfigOmittedReviewExecutionPolicy = isPlainObject(existingConfig)
         && !hasOwnCaseInsensitiveKey(existingConfig, 'review_execution_policy');

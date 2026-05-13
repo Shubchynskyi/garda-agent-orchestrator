@@ -3269,8 +3269,11 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
         assert.ok(result.reason.includes('total_non_test_review_count=4>1'));
         assert.equal(result.reason.includes('timeline_integrity'), false);
+        assert.equal(result.review_cycle_block?.max_total_non_test_reviews, 1);
+        assert.equal(result.review_cycle_block?.max_failed_non_test_reviews, 15);
         assert.equal(result.review_cycle_block?.latest_failed_review?.review_type, 'security');
         assert.equal(result.review_cycle_block?.latest_failed_review?.summary, 'latest failure after total threshold');
+        assert.ok(formatNextStepText(result).includes('ReviewCycleLimits: max_total_non_test_reviews=1; max_failed_non_test_reviews=15'));
     });
 
     it('counts failed review records by reading review artifact verdict when timeline outcome only confirms recording success', () => {

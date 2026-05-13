@@ -32,6 +32,8 @@ export interface ReviewCycleGuardEvaluation {
     active: boolean;
     action: ReviewCycleGuardAction;
     auto_split_enabled: boolean;
+    max_failed_non_test_reviews: number;
+    max_total_non_test_reviews: number;
     total_non_test_review_count: number;
     failed_non_test_review_count: number;
     counts_by_review_type: Record<string, { total: number; failed: number; passed: number; pending: number }>;
@@ -45,7 +47,7 @@ export const DEFAULT_REVIEW_CYCLE_GUARD_CONFIG: ReviewCycleGuardConfig = Object.
     enabled: true,
     action: 'BLOCK_FOR_OPERATOR_DECISION',
     max_failed_non_test_reviews: 15,
-    max_total_non_test_reviews: 15,
+    max_total_non_test_reviews: 30,
     excluded_review_types: ['test'],
     auto_split_enabled: false
 });
@@ -157,6 +159,8 @@ export function evaluateReviewCycleGuard(
         active,
         action: config.action,
         auto_split_enabled: config.auto_split_enabled,
+        max_failed_non_test_reviews: config.max_failed_non_test_reviews,
+        max_total_non_test_reviews: config.max_total_non_test_reviews,
         total_non_test_review_count: totalNonTestReviewCount,
         failed_non_test_review_count: failedNonTestReviewCount,
         counts_by_review_type: countsByReviewType,

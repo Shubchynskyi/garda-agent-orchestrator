@@ -515,7 +515,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             `${PRIMARY_CLI_NAME} workflow set --review-execution-policy strict_sequential`,
             `${PRIMARY_CLI_NAME} workflow set --scope-budget-enabled true --scope-budget-max-changed-lines 1200`,
             `${PRIMARY_CLI_NAME} workflow set --scope-budget-max-review-tokens 50000`,
-            `${PRIMARY_CLI_NAME} workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15`,
+            `${PRIMARY_CLI_NAME} workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30`,
             `${PRIMARY_CLI_NAME} workflow set --review-cycle-auto-split-enabled true`,
             `${PRIMARY_CLI_NAME} workflow set --project-memory-enabled true --project-memory-mode update`,
             `${PRIMARY_CLI_NAME} workflow set --task-reset-enabled true`
@@ -525,7 +525,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             'Review execution policy modes: parallel_all, test_after_code, code_first_optional, strict_sequential.',
             'Scope budget guard actions: BLOCK_FOR_SPLIT, WARN_ONLY.',
             'Scope budget guard can block oversized tasks before compile/review loops.',
-            'Review cycle guard can block runaway non-test review attempts; test review is excluded by default.',
+            'Review cycle guard can block runaway non-test review attempts; fresh defaults allow 15 failed non-test reviews and 30 total non-test reviews, with test review excluded by default.',
             'Review cycle auto split is disabled by default and can be enabled with --review-cycle-auto-split-enabled true.',
             'Project memory maintenance defaults to update mode; use off, check, update, or strict mode for explicit repo-local policy.',
             'Task reset mutations are disabled by default and can be enabled with --task-reset-enabled true.'

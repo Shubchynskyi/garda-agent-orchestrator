@@ -71,6 +71,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('FullSuiteCommand: npm test'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
+        assert.ok(output.includes('max_failed_non_test_reviews=15 max_total_non_test_reviews=30'));
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
         assert.ok(output.includes('Task reset: disabled'));
         assert.ok(output.includes('TaskResetEnabled: false'));
@@ -206,6 +207,7 @@ test('workflow help describes project-memory update as the default policy', () =
     const helpText = buildGuardedCommandHelpText('workflow');
 
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
+    assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
     assert.ok(helpText.includes('workflow set --project-memory-enabled true --project-memory-mode update'));
     assert.ok(helpText.includes('workflow set --task-reset-enabled true'));
     assert.ok(helpText.includes('Task reset mutations are disabled by default'));
@@ -232,6 +234,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(explainOutput.includes('Topic: workflow-guards'));
         assert.ok(explainOutput.includes('before compile/review loops'));
         assert.ok(explainOutput.includes('Review cycle guard: stops runaway non-test review cycles'));
+        assert.ok(explainOutput.includes('15 failed non-test reviews and 30 total non-test reviews'));
         assert.ok(explainOutput.includes('BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(explainOutput.includes('auto_split_enabled is true'));
         assert.ok(explainOutput.includes('WARN_ONLY'));
@@ -264,11 +267,14 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.scope, 'repo-local');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');
+        assert.equal(parsed.review_cycle_guard.max_failed_non_test_reviews, 15);
+        assert.equal(parsed.review_cycle_guard.max_total_non_test_reviews, 30);
         assert.equal(parsed.project_memory_maintenance.enabled, true);
         assert.equal(parsed.project_memory_maintenance.mode, 'update');
         assert.equal(parsed.task_reset.enabled, false);
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
+        assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=false');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
         assert.equal(parsed.task_reset_summary_line, 'Task reset: disabled');
     } finally {
