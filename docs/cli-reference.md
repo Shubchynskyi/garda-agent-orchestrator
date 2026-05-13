@@ -367,6 +367,7 @@ Safe aliases for the guarded task reset gate. They route directly to `garda gate
 
 ```text
 garda task-reset T-137 --reopen --dry-run
+garda workflow set --target-root "." --task-reset-enabled true
 garda task-reset T-137 --discard --confirm
 garda task reset T-137 --reopen --confirm
 ```
@@ -374,6 +375,7 @@ garda task reset T-137 --reopen --confirm
 Notes:
 - `task-reset` and `task reset` are aliases that route to the `garda gate task-reset` command.
 - They route through `garda gate task-reset --task-id "<task-id>" --reopen --dry-run/--confirm --repo-root "."` or `--discard --confirm`.
+- Confirmed task-reset mutations are disabled by default. `--dry-run` remains available for inspection, but `--confirm` requires an audited opt-in via `garda workflow set --task-reset-enabled true`; manual JSON edits to `task_reset.enabled=true` are rejected unless matching workflow-set audit evidence exists.
 - Task-reset-shaped near-misses (e.g., `garda taskreset`, `garda resettask`) fail early with remediation guidance before the bootstrap directory creation process.
 
 ### `garda workflow`
@@ -388,12 +390,13 @@ garda workflow set --target-root "." --review-execution-policy strict_sequential
 garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000
 garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 15
 garda workflow set --target-root "." --review-cycle-auto-split-enabled true
+garda workflow set --target-root "." --task-reset-enabled true
 garda workflow explain --target-root "."
 ```
 
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
-- The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, and `review_cycle_guard` settings in `live/config/workflow-config.json`.
+- The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, and `task_reset` settings in `live/config/workflow-config.json`.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
 - Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.
 - Existing repos that still omit `review_execution_policy` stay on the legacy compatibility path (`test` waits for all required upstream reviews, other review types remain independent) until an operator explicitly sets one of the supported modes.
@@ -408,6 +411,7 @@ Notes:
 - When `review_cycle_guard.auto_split_enabled=false` (default), `next-step` tells the agent to wait for operator direction after a blocking review-cycle violation.
 - When `review_cycle_guard.auto_split_enabled=true`, `next-step` emits a dedicated auto-split prompt artifact for the agent from the bundled template at `template/docs/prompts/review-cycle-auto-split.md`. The template is materialized into `runtime/reviews/<task-id>-review-cycle-auto-split-prompt.md` only when a blocking review-cycle violation actually happens. The prompt tells the agent to move the parent into a blocked/split state through supported task controls or explicit backlog editing, decide whether a reviewed committable diff should be committed, create maximally small numeric child tasks, and then execute those child tasks sequentially. It must not auto-commit unfinished or unreviewed work, and it must not mark the parent `DONE` merely because split work exists.
 - `WARN_ONLY` does not block the next gate, but `next-step` prints the review-cycle violation under `Warnings` so the operator still sees the over-budget review cycle.
+- Task reset mutations are controlled by `task_reset.enabled`, default to `false`, and can be changed with `--task-reset-enabled true|false`. Enabling task reset through `workflow set` records the audit evidence required by confirmed `garda gate task-reset` mutations.
 
 ### `garda templates`
 

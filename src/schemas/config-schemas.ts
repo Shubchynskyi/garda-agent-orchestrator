@@ -254,7 +254,7 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'garda-agent-orchestrator/workflow-config.schema.json',
     title: 'Workflow Configuration',
-    description: 'Optional workflow settings including post-task full-suite validation and project-memory maintenance.',
+    description: 'Optional workflow settings including post-task full-suite validation, project-memory maintenance, and guarded task reset.',
     type: 'object',
     properties: {
         full_suite_validation: {
@@ -382,6 +382,18 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                 'read_strategy',
                 'impact_artifact_retention_days'
             ],
+            additionalProperties: false
+        },
+        task_reset: {
+            type: 'object',
+            description: 'Guarded task-reset availability. Real reset mutations are disabled by default and require audited repo-local opt-in.',
+            properties: {
+                enabled: {
+                    type: 'boolean',
+                    description: 'Enable confirmed task-reset mutations for this repository.'
+                }
+            },
+            required: ['enabled'],
             additionalProperties: false
         }
     },

@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { createHash } from 'node:crypto';
 
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import { handleWorkflow } from '../../../src/cli/commands/workflow-command';
 import {
     resolveTaskResetScope,
     runTaskResetCommand
@@ -21,6 +24,16 @@ function cleanup(dir: string): void {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
 }
 
+function captureConsole<T>(run: () => T): T {
+    const originalConsoleLog = console.log;
+    console.log = () => undefined;
+    try {
+        return run();
+    } finally {
+        console.log = originalConsoleLog;
+    }
+}
+
 interface FakeRepoOptions {
     taskId?: string;
     taskStatus?: string;
@@ -28,6 +41,9 @@ interface FakeRepoOptions {
     hasAggregateLines?: boolean;
     hasReviewArtifact?: boolean;
     hasReviewTempDir?: boolean;
+    taskResetEnabled?: boolean;
+    writeWorkflowConfig?: boolean;
+    writeTaskResetAudit?: boolean;
 }
 
 function buildFakeRepo(options: FakeRepoOptions = {}): {
@@ -42,7 +58,10 @@ function buildFakeRepo(options: FakeRepoOptions = {}): {
         hasEventsFile = false,
         hasAggregateLines = false,
         hasReviewArtifact = false,
-        hasReviewTempDir = false
+        hasReviewTempDir = false,
+        taskResetEnabled = true,
+        writeWorkflowConfig = true,
+        writeTaskResetAudit = taskResetEnabled
     } = options;
 
     const repoRoot = makeTmpDir();
@@ -67,6 +86,32 @@ function buildFakeRepo(options: FakeRepoOptions = {}): {
     // Fake MANIFEST.md and VERSION to satisfy joinOrchestratorPath heuristics
     fs.writeFileSync(path.join(bundleDir, 'MANIFEST.md'), '# MANIFEST\n', 'utf8');
     fs.writeFileSync(path.join(bundleDir, 'VERSION'), '1.0.0\n', 'utf8');
+    if (writeWorkflowConfig) {
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(configDir, { recursive: true });
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.task_reset.enabled = taskResetEnabled;
+        const configText = JSON.stringify(workflowConfig, null, 2) + '\n';
+        fs.writeFileSync(
+            path.join(configDir, 'workflow-config.json'),
+            configText,
+            'utf8'
+        );
+        if (writeTaskResetAudit) {
+            const auditPath = path.join(bundleDir, 'runtime', 'workflow-config-audit.jsonl');
+            fs.appendFileSync(auditPath, JSON.stringify({
+                schema_version: 1,
+                event_source: 'workflow-config-set',
+                timestamp_utc: '2026-05-13T00:00:00.000Z',
+                actor: 'operator_command',
+                command: 'workflow set',
+                config_path: path.normalize(path.join(configDir, 'workflow-config.json')).replace(/\\/g, '/'),
+                changed_fields: ['task_reset.enabled'],
+                before_sha256: createHash('sha256').update('before', 'utf8').digest('hex'),
+                after_sha256: createHash('sha256').update(configText, 'utf8').digest('hex')
+            }) + '\n', 'utf8');
+        }
+    }
 
     if (hasEventsFile) {
         fs.writeFileSync(
@@ -386,6 +431,116 @@ describe('runTaskResetCommand — DRY_RUN', () => {
         try {
             runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, dryRun: true, discard: true });
             assert.ok(!fs.existsSync(resetReportPath), 'reset report should NOT be written in dry-run');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// runTaskResetCommand — TASK_RESET_DISABLED
+// ---------------------------------------------------------------------------
+
+describe('runTaskResetCommand — TASK_RESET_DISABLED', () => {
+    it('blocks confirmed reset mutations when workflow config disables task reset', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            hasReviewArtifact: true,
+            hasAggregateLines: true,
+            taskResetEnabled: false
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+        const resetReportPath = path.join(reviewsRoot, `${taskId}-reset-report.json`);
+        const aggregatePath = path.join(eventsRoot, 'all-tasks.jsonl');
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
+            assert.equal(result.targetStatus, 'DONE');
+            assert.equal(result.artifacts.length, 0);
+            assert.equal(result.aggregateLinesRemoved, 0);
+            assert.ok(result.outputLines.some((l) => l.includes('TaskResetEnabled: false')));
+            assert.ok(!result.outputLines.some((l) => l.includes('ArtifactsFound:')));
+            assert.ok(result.outputLines.some((l) => l.includes('--task-reset-enabled true')));
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+            assert.ok(fs.existsSync(preflightPath), 'review artifact should remain');
+            assert.ok(!fs.existsSync(resetReportPath), 'reset report should not be written');
+            assert.ok(fs.readFileSync(aggregatePath, 'utf8').includes(`"${taskId}"`), 'aggregate log should remain intact');
+            assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('IN_PROGRESS'), 'TASK.md status should remain unchanged');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('blocks confirmed reset mutations when enabled by manual config edit without audit', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: true,
+            writeTaskResetAudit: false
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
+            assert.ok(result.outputLines.some((l) => l.includes('no matching audited workflow set record')));
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('blocks confirmed reset mutations when workflow config is missing', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            writeWorkflowConfig: false
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, reopen: true });
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
+            assert.ok(result.outputLines.some((l) => l.includes('workflow-config.json is missing')));
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('allows dry-run while task reset mutations are disabled', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: false
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, dryRun: true, discard: true });
+            assert.equal(result.outcome, 'DRY_RUN');
+            assert.equal(result.exitCode, 0);
+            assert.ok(fs.existsSync(eventsFile), 'dry-run should not delete files');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('allows confirmed reset mutations after workflow set writes audited task-reset opt-in', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: false
+        });
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            captureConsole(() => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--task-reset-enabled', 'true'
+            ], { name: 'garda-agent-orchestrator', version: '1.0.0' }));
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.equal(result.exitCode, 0);
+            assert.ok(!fs.existsSync(eventsFile), 'events file should be deleted after audited opt-in');
         } finally {
             cleanup(repoRoot);
         }

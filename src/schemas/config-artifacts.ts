@@ -588,7 +588,7 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance'] as const;
+    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -667,6 +667,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         if (raw.project_memory_maintenance !== undefined) {
             normalized.project_memory_maintenance = validateProjectMemoryMaintenanceSection(raw.project_memory_maintenance);
         }
+        if (raw.task_reset !== undefined) {
+            normalized.task_reset = validateTaskResetSection(raw.task_reset);
+        }
         return normalized;
     }
 
@@ -699,7 +702,35 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     if (raw.project_memory_maintenance !== undefined) {
         normalized.project_memory_maintenance = validateProjectMemoryMaintenanceSection(raw.project_memory_maintenance);
     }
+    if (raw.task_reset !== undefined) {
+        normalized.task_reset = validateTaskResetSection(raw.task_reset);
+    }
     return normalized;
+}
+
+function validateTaskResetSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.task_reset');
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        ['enabled'],
+        'workflow-config.task_reset'
+    );
+    assertNoUnknownKeys(
+        section,
+        ['enabled'],
+        'workflow-config.task_reset'
+    );
+
+    const defaults = buildDefaultWorkflowConfig().task_reset as unknown as Record<string, unknown>;
+    const normalizedInput = {
+        ...defaults,
+        ...section
+    };
+    normalizedInput.enabled = normalizeBooleanLike(
+        normalizedInput.enabled,
+        'workflow-config.task_reset.enabled'
+    );
+    return normalizedInput;
 }
 
 function validateProjectMemoryMaintenanceSection(input: unknown): Record<string, unknown> {

@@ -31,6 +31,9 @@ function createBundleRoot(
             review_execution_policy: {
                 mode: 'code_first_optional'
             },
+            task_reset: {
+                enabled: false
+            },
             ...workflowOverrides
         }, null, 2),
         'utf8'
@@ -69,6 +72,8 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
+        assert.ok(output.includes('Task reset: disabled'));
+        assert.ok(output.includes('TaskResetEnabled: false'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -172,11 +177,38 @@ test('workflow set updates project memory maintenance settings deterministically
     }
 });
 
+test('workflow set updates task reset availability with audit record', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--task-reset-enabled', 'true'
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.equal(result.task_reset.enabled, true);
+        assert.ok(result.changed_fields.includes('task_reset.enabled'));
+        assert.ok(result.audit_path);
+        assert.ok(output.includes('Task reset: enabled'));
+        assert.ok(output.includes('TaskResetEnabled: true'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.task_reset.enabled, true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow help describes project-memory update as the default policy', () => {
     const helpText = buildGuardedCommandHelpText('workflow');
 
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
     assert.ok(helpText.includes('workflow set --project-memory-enabled true --project-memory-mode update'));
+    assert.ok(helpText.includes('workflow set --task-reset-enabled true'));
+    assert.ok(helpText.includes('Task reset mutations are disabled by default'));
     assert.ok(!helpText.includes('Project memory maintenance is disabled by default'));
 });
 
@@ -191,6 +223,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(validateOutput.includes('Action: validate'));
         assert.ok(validateOutput.includes('Status: PASS'));
         assert.ok(validateOutput.includes('Project memory maintenance: update'));
+        assert.ok(validateOutput.includes('Task reset: disabled'));
 
         const explainOutput = captureConsole(() => handleWorkflow([
             'explain',
@@ -202,6 +235,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(explainOutput.includes('BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(explainOutput.includes('auto_split_enabled is true'));
         assert.ok(explainOutput.includes('WARN_ONLY'));
+        assert.ok(explainOutput.includes('Task reset: confirmed reset mutations are disabled by default'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -232,9 +266,11 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');
         assert.equal(parsed.project_memory_maintenance.enabled, true);
         assert.equal(parsed.project_memory_maintenance.mode, 'update');
+        assert.equal(parsed.task_reset.enabled, false);
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
+        assert.equal(parsed.task_reset_summary_line, 'Task reset: disabled');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -257,6 +293,7 @@ test('workflow set --json returns valid JSON for machine-readable automation', (
         assert.equal(parsed.status, 'CHANGED');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.review_execution_policy.mode, 'strict_sequential');
+        assert.equal(parsed.task_reset.enabled, false);
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
         assert.ok(parsed.changed_fields.includes('full_suite_validation.enabled'));
@@ -265,6 +302,7 @@ test('workflow set --json returns valid JSON for machine-readable automation', (
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.full_suite_validation.enabled, true);
         assert.equal(parsedConfig.review_execution_policy.mode, 'strict_sequential');
+        assert.equal(parsedConfig.task_reset.enabled, false);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

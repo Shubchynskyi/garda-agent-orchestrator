@@ -21,6 +21,7 @@ import {
     type ProjectMemoryMaintenanceConfig,
     type ProjectMemoryMaintenanceMode,
     type ProjectMemoryReadStrategy,
+    type TaskResetConfig,
     type WorkflowConfigData
 } from '../../core/workflow-config';
 import { buildProjectMemoryMaintenanceSummaryLine } from '../../core/project-memory-rollout';
@@ -54,6 +55,7 @@ type WorkflowFileConfigData = {
     scope_budget_guard?: WorkflowConfigData['scope_budget_guard'];
     review_cycle_guard?: WorkflowConfigData['review_cycle_guard'];
     project_memory_maintenance?: WorkflowConfigData['project_memory_maintenance'];
+    task_reset?: WorkflowConfigData['task_reset'];
     [key: string]: unknown;
 };
 
@@ -89,11 +91,13 @@ interface WorkflowCommandResultBase {
     scope_budget_guard: ScopeBudgetGuardConfig;
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
+    task_reset: TaskResetConfig;
     visible_summary_line: string;
     review_execution_policy_summary_line: string;
     scope_budget_guard_summary_line: string;
     review_cycle_guard_summary_line: string;
     project_memory_maintenance_summary_line: string;
+    task_reset_summary_line: string;
 }
 
 interface WorkflowShowResult extends WorkflowCommandResultBase {
@@ -153,7 +157,8 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--project-memory-require-user-approval-for-writes': { key: 'projectMemoryRequireUserApprovalForWrites', type: 'string' },
     '--project-memory-max-compact-summary-chars': { key: 'projectMemoryMaxCompactSummaryChars', type: 'string' },
     '--project-memory-read-strategy': { key: 'projectMemoryReadStrategy', type: 'string' },
-    '--project-memory-impact-artifact-retention-days': { key: 'projectMemoryImpactArtifactRetentionDays', type: 'string' }
+    '--project-memory-impact-artifact-retention-days': { key: 'projectMemoryImpactArtifactRetentionDays', type: 'string' },
+    '--task-reset-enabled': { key: 'taskResetEnabled', type: 'string' }
 };
 
 function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoots {
@@ -179,6 +184,10 @@ function cloneProjectMemoryMaintenanceConfig(
     return JSON.parse(JSON.stringify(config)) as ProjectMemoryMaintenanceConfig;
 }
 
+function cloneTaskResetConfig(config: TaskResetConfig): TaskResetConfig {
+    return JSON.parse(JSON.stringify(config)) as TaskResetConfig;
+}
+
 function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFileConfigData {
     const defaultConfig = buildDefaultWorkflowConfig() as WorkflowConfigData;
     return {
@@ -188,7 +197,8 @@ function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFi
         review_cycle_guard: normalizeReviewCycleGuardConfig(config.review_cycle_guard ?? defaultConfig.review_cycle_guard),
         project_memory_maintenance: cloneProjectMemoryMaintenanceConfig(
             config.project_memory_maintenance ?? defaultConfig.project_memory_maintenance
-        )
+        ),
+        task_reset: cloneTaskResetConfig(config.task_reset ?? defaultConfig.task_reset)
     };
 }
 
@@ -200,7 +210,8 @@ function readWorkflowConfigState(configPath: string, bundleRoot: string): Workfl
             config: normalizeWorkflowFileConfig({
                 full_suite_validation: defaultConfig.full_suite_validation,
                 scope_budget_guard: defaultConfig.scope_budget_guard,
-                project_memory_maintenance: defaultConfig.project_memory_maintenance
+                project_memory_maintenance: defaultConfig.project_memory_maintenance,
+                task_reset: defaultConfig.task_reset
             }),
             exists: false,
             missingReviewExecutionPolicyMode: hasMaterializedWorkflowConfigBaseline(bundleRoot)
@@ -270,6 +281,10 @@ function buildReviewCycleGuardLine(config: ReviewCycleGuardConfig): string {
     return `Review cycle guard: ${config.enabled ? config.action : 'disabled'} max_failed_non_test_reviews=${config.max_failed_non_test_reviews} max_total_non_test_reviews=${config.max_total_non_test_reviews} excluded=${config.excluded_review_types.join(',')} auto_split_enabled=${config.auto_split_enabled}`;
 }
 
+function buildTaskResetLine(config: TaskResetConfig): string {
+    return `Task reset: ${config.enabled ? 'enabled' : 'disabled'}`;
+}
+
 function buildWorkflowShowResult(
     roots: WorkflowCommandRoots,
     state: WorkflowConfigState
@@ -279,6 +294,9 @@ function buildWorkflowShowResult(
     const reviewCycleGuard = normalizeReviewCycleGuardConfig(state.config.review_cycle_guard);
     const projectMemoryMaintenance = cloneProjectMemoryMaintenanceConfig(
         state.config.project_memory_maintenance ?? buildDefaultWorkflowConfig().project_memory_maintenance
+    );
+    const taskReset = cloneTaskResetConfig(
+        state.config.task_reset ?? buildDefaultWorkflowConfig().task_reset
     );
     return {
         action: 'show',
@@ -292,11 +310,13 @@ function buildWorkflowShowResult(
         scope_budget_guard: scopeBudgetGuard,
         review_cycle_guard: reviewCycleGuard,
         project_memory_maintenance: projectMemoryMaintenance,
+        task_reset: taskReset,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
         review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
         scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard),
         review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard),
-        project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceSummaryLine(projectMemoryMaintenance)
+        project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceSummaryLine(projectMemoryMaintenance),
+        task_reset_summary_line: buildTaskResetLine(taskReset)
     };
 }
 
@@ -310,6 +330,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     const scopeBudgetGuard = result.scope_budget_guard;
     const reviewCycleGuard = result.review_cycle_guard;
     const projectMemoryMaintenance = result.project_memory_maintenance;
+    const taskReset = result.task_reset;
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
     lines.push(`Action: ${result.action}`);
@@ -323,6 +344,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(result.scope_budget_guard_summary_line);
     lines.push(result.review_cycle_guard_summary_line);
     lines.push(result.project_memory_maintenance_summary_line);
+    lines.push(result.task_reset_summary_line);
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
@@ -353,11 +375,13 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ProjectMemoryMaintenanceMaxCompactSummaryChars: ${projectMemoryMaintenance.max_compact_summary_chars}`);
     lines.push(`ProjectMemoryMaintenanceReadStrategy: ${projectMemoryMaintenance.read_strategy}`);
     lines.push(`ProjectMemoryMaintenanceImpactArtifactRetentionDays: ${projectMemoryMaintenance.impact_artifact_retention_days}`);
+    lines.push(`TaskResetEnabled: ${taskReset.enabled}`);
     lines.push('Tip: run "workflow set --full-suite-enabled true|false" to change the repo-local mode.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}>" to change review launch ordering.`);
     lines.push('Tip: run "workflow set --scope-budget-enabled true|false" to change the scope budget guard.');
     lines.push('Tip: run "workflow set --review-cycle-enabled true|false" to change the review cycle guard.');
     lines.push('Tip: run "workflow set --project-memory-enabled true|false" to change project memory maintenance checks.');
+    lines.push('Tip: run "workflow set --task-reset-enabled true|false" to change confirmed task-reset availability.');
     return lines.join('\n');
 }
 
@@ -685,13 +709,23 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.project_memory_maintenance = nextProjectMemoryMaintenance;
 
+    const nextTaskReset = cloneTaskResetConfig(
+        nextConfig.task_reset ?? buildDefaultWorkflowConfig().task_reset
+    );
+    if (typeof options.taskResetEnabled === 'string') {
+        nextTaskReset.enabled = parseBooleanText(options.taskResetEnabled, '--task-reset-enabled');
+        changedFields.push('task_reset.enabled');
+    }
+    nextConfig.task_reset = nextTaskReset;
+
     if (changedFields.length === 0) {
         throw new Error(
             "Workflow setting flags are required for 'workflow set'. "
             + 'Use --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --review-execution-policy, '
-            + '--scope-budget-* flags, --review-cycle-* flags, or --project-memory-* flags.'
+            + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
+            + 'or --task-reset-enabled.'
         );
     }
 
@@ -700,7 +734,8 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             full_suite_validation: state.config.full_suite_validation,
             scope_budget_guard: state.config.scope_budget_guard,
             review_cycle_guard: state.config.review_cycle_guard,
-            project_memory_maintenance: state.config.project_memory_maintenance
+            project_memory_maintenance: state.config.project_memory_maintenance,
+            task_reset: state.config.task_reset
         }) as WorkflowFileConfigData),
         null,
         2
@@ -763,6 +798,7 @@ function handleValidate(options: ParsedOptionsRecord): WorkflowValidateResult {
         console.log(result.scope_budget_guard_summary_line);
         console.log(result.review_cycle_guard_summary_line);
         console.log(result.project_memory_maintenance_summary_line);
+        console.log(result.task_reset_summary_line);
     }
     return result;
 }
@@ -786,7 +822,9 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
             'When review_cycle_guard.action is BLOCK_FOR_OPERATOR_DECISION, next-step blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise decides the recovery path.',
             'When review_cycle_guard.auto_split_enabled is false, next-step tells the agent to wait for operator direction after a blocking review-cycle violation.',
             'When review_cycle_guard.auto_split_enabled is true, next-step emits a dedicated auto-split prompt artifact for the agent instead of waiting for operator input.',
-            'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.'
+            'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.',
+            'Task reset: confirmed reset mutations are disabled by default and require audited opt-in with workflow set --task-reset-enabled true.',
+            'Task reset dry-run remains available while disabled because it only reports reset scope and does not mutate task status or artifacts.'
         ]
     };
     if (options.json === true) {
@@ -797,6 +835,7 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
         console.log('Topic: workflow-guards');
         console.log(result.scope_budget_guard_summary_line);
         console.log(result.review_cycle_guard_summary_line);
+        console.log(result.task_reset_summary_line);
         for (const line of result.explanation) {
             console.log(`- ${line}`);
         }

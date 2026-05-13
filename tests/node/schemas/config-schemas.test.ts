@@ -223,7 +223,7 @@ test('workflow-config schema allows future full_suite_validation knobs', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
-test('workflow-config schema accepts project memory maintenance defaults', () => {
+test('workflow-config schema accepts project memory maintenance and task reset defaults', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     const result = validateAgainstSchema(data, workflowConfigSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
@@ -236,6 +236,9 @@ test('workflow-config schema accepts project memory maintenance defaults', () =>
         read_strategy: 'index_first',
         impact_artifact_retention_days: 30
     });
+    assert.deepEqual(data.task_reset, {
+        enabled: false
+    });
 });
 
 test('workflow-config schema rejects invalid project memory maintenance mode', () => {
@@ -245,6 +248,15 @@ test('workflow-config schema rejects invalid project memory maintenance mode', (
     const result = validateAgainstSchema(clone, workflowConfigSchema);
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((error) => error.path.includes('project_memory_maintenance.mode')));
+});
+
+test('workflow-config schema rejects unknown task reset keys', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (clone.task_reset as Record<string, unknown>).force = true;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.path.includes('task_reset.force')));
 });
 
 test('template garda.config.json validates against root schema', () => {

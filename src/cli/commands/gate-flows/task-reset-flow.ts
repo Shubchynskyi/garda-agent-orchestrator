@@ -1,13 +1,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { writeFileAtomically } from '../../../core/filesystem';
+import { buildDefaultWorkflowConfig } from '../../../core/workflow-config';
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
 import { withFilesystemLock } from '../../../gate-runtime/task-events-locking';
 import { KNOWN_SUFFIXES, removeEntries } from '../../../gate-runtime/reviews-index';
 import { reconcileTimelineSummaryForTask } from '../../../gate-runtime/timeline-summary';
 import * as gateHelpers from '../../../gates/helpers';
 import { resolveReviewScratchRoots } from '../../../gates/review-scratch-paths';
+import { validateWorkflowConfig } from '../../../schemas/config-artifacts';
 import { readTaskQueueStatus, syncTaskQueueStatusDetailed } from './task-queue-sync';
 
 export type TaskResetOutcome =
@@ -15,6 +18,7 @@ export type TaskResetOutcome =
     | 'ALREADY_RESET'
     | 'TARGET_STATUS_REQUIRED'
     | 'CONFIRMATION_REQUIRED'
+    | 'TASK_RESET_DISABLED'
     | 'DRY_RUN';
 
 export type TaskResetTargetStatus = 'TODO' | 'DONE';
@@ -38,6 +42,20 @@ export interface TaskResetScope {
     aggregateLineCount: number;
     previousStatus: string | null;
     hasAnyArtifacts: boolean;
+}
+
+interface TaskResetAvailability {
+    enabled: boolean;
+    configPath: string;
+    disabledReason: string | null;
+}
+
+interface WorkflowConfigAuditRecord {
+    event_source?: unknown;
+    command?: unknown;
+    changed_fields?: unknown;
+    before_sha256?: unknown;
+    after_sha256?: unknown;
 }
 
 export interface TaskResetCommandResult {
@@ -171,6 +189,117 @@ function resolveReviewsRoot(repoRoot: string, reviewsRootOption: string | undefi
     return reviewsRootOption
         ? path.resolve(String(reviewsRootOption))
         : gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sha256Text(text: string): string {
+    return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function normalizeSha256(value: unknown): string | null {
+    const text = String(value || '').trim().toLowerCase();
+    return /^[a-f0-9]{64}$/.test(text) ? text : null;
+}
+
+function recordChangedTaskResetEnabled(record: WorkflowConfigAuditRecord): boolean {
+    return Array.isArray(record.changed_fields)
+        && record.changed_fields.some((field) => String(field || '').trim() === 'task_reset.enabled');
+}
+
+function readWorkflowConfigAuditRecords(auditPath: string): WorkflowConfigAuditRecord[] {
+    if (!fileExists(auditPath)) {
+        return [];
+    }
+
+    const records: WorkflowConfigAuditRecord[] = [];
+    for (const line of fs.readFileSync(auditPath, 'utf8').split(/\r?\n/)) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const parsed = JSON.parse(line) as unknown;
+            if (isPlainRecord(parsed)) {
+                records.push(parsed as WorkflowConfigAuditRecord);
+            }
+        } catch {
+            // Ignore malformed legacy audit rows; they cannot authorize reset.
+        }
+    }
+    return records;
+}
+
+function hasAuditedTaskResetEnablement(repoRoot: string, currentConfigSha256: string): boolean {
+    const auditPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'workflow-config-audit.jsonl'));
+    const recordsByAfterHash = new Map<string, WorkflowConfigAuditRecord>();
+    for (const record of readWorkflowConfigAuditRecords(auditPath)) {
+        if (String(record.event_source || '') !== 'workflow-config-set') {
+            continue;
+        }
+        if (String(record.command || '') !== 'workflow set') {
+            continue;
+        }
+        const afterSha256 = normalizeSha256(record.after_sha256);
+        if (afterSha256) {
+            recordsByAfterHash.set(afterSha256, record);
+        }
+    }
+
+    const visited = new Set<string>();
+    let cursor: string | null = currentConfigSha256;
+    while (cursor && !visited.has(cursor)) {
+        visited.add(cursor);
+        const record = recordsByAfterHash.get(cursor);
+        if (!record) {
+            return false;
+        }
+        if (recordChangedTaskResetEnabled(record)) {
+            return true;
+        }
+        cursor = normalizeSha256(record.before_sha256);
+    }
+    return false;
+}
+
+function resolveTaskResetAvailability(repoRoot: string): TaskResetAvailability {
+    const configPath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('live', 'config', 'workflow-config.json'));
+    if (!fileExists(configPath)) {
+        return {
+            enabled: false,
+            configPath,
+            disabledReason: 'workflow-config.json is missing'
+        };
+    }
+
+    try {
+        const configText = fs.readFileSync(configPath, 'utf8');
+        const parsed = JSON.parse(configText) as unknown;
+        const validated = validateWorkflowConfig(parsed);
+        const defaultTaskReset = buildDefaultWorkflowConfig().task_reset as unknown as Record<string, unknown>;
+        const taskReset = isPlainRecord(validated.task_reset)
+            ? validated.task_reset
+            : defaultTaskReset;
+        if (taskReset.enabled === true && !hasAuditedTaskResetEnablement(repoRoot, sha256Text(configText))) {
+            return {
+                enabled: false,
+                configPath,
+                disabledReason: 'workflow-config.task_reset.enabled is true but no matching audited workflow set record was found'
+            };
+        }
+        return {
+            enabled: taskReset.enabled === true,
+            configPath,
+            disabledReason: taskReset.enabled === true ? null : 'workflow-config.task_reset.enabled is false'
+        };
+    } catch (error: unknown) {
+        return {
+            enabled: false,
+            configPath,
+            disabledReason: `workflow-config.json is invalid: ${error instanceof Error ? error.message : String(error)}`
+        };
+    }
 }
 
 function normalizeTargetStatus(value: unknown): TaskResetTargetStatus | null {
@@ -309,6 +438,10 @@ function buildOutputLines(
     if (outcome === 'ALREADY_RESET') {
         lines.push(`Note: Task already ${targetStatus ?? 'at target status'} with no remaining artifacts.`);
     }
+    if (outcome === 'TASK_RESET_DISABLED') {
+        lines.push('TaskResetEnabled: false');
+        lines.push('Action: Enable confirmed reset mutations with audited command: workflow set --task-reset-enabled true.');
+    }
     if (artifacts.length > 0) {
         lines.push(`ArtifactsFound: ${artifacts.length}`);
     }
@@ -339,14 +472,41 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
     const repoRoot = resolveRepoRoot(options.repoRoot);
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
-
-    assertTaskExistsInTaskMd(repoRoot, taskId);
-
-    const scope = resolveTaskResetScope({ taskId, repoRoot, eventsRoot, reviewsRoot });
-
     const dryRun = Boolean(options.dryRun);
     const confirm = Boolean(options.confirm);
     const targetStatus = resolveTaskResetTargetStatus(options);
+
+    assertTaskExistsInTaskMd(repoRoot, taskId);
+
+    if (!dryRun && confirm && targetStatus) {
+        const taskResetAvailability = resolveTaskResetAvailability(repoRoot);
+        if (!taskResetAvailability.enabled) {
+            const outputLines = buildOutputLines(
+                'TASK_RESET_DISABLED', taskId, null,
+                targetStatus, false, [], 0,
+                null, null
+            );
+            outputLines.push(`ConfigPath: ${gateHelpers.normalizePath(taskResetAvailability.configPath)}`);
+            if (taskResetAvailability.disabledReason) {
+                outputLines.push(`Reason: ${taskResetAvailability.disabledReason}`);
+            }
+            return {
+                outcome: 'TASK_RESET_DISABLED',
+                taskId,
+                previousStatus: null,
+                targetStatus,
+                dryRun: false,
+                artifacts: [],
+                aggregateLinesRemoved: 0,
+                resetReportPath: null,
+                statusSyncOutcome: null,
+                outputLines,
+                exitCode: 1
+            };
+        }
+    }
+
+    const scope = resolveTaskResetScope({ taskId, repoRoot, eventsRoot, reviewsRoot });
 
     if (!targetStatus) {
         const outputLines = buildOutputLines(

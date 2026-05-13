@@ -202,10 +202,17 @@ const COMPATIBILITY_TOP_LEVEL_KEYS = [
     'project_memory_maintenance',
     'review_cycle_guard',
     'review_execution_policy',
-    'scope_budget_guard'
+    'scope_budget_guard',
+    'task_reset'
 ];
-const COMPATIBILITY_LEGACY_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
+const COMPATIBILITY_PRE_TASK_RESET_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
+    (key) => key !== 'task_reset'
+);
+const COMPATIBILITY_LEGACY_REVIEW_POLICY_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
     (key) => key !== 'review_execution_policy'
+);
+const COMPATIBILITY_LEGACY_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
+    (key) => key !== 'review_execution_policy' && key !== 'task_reset'
 );
 const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
     'command',
@@ -242,6 +249,7 @@ const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
     'require_user_approval_for_writes',
     'run_before_final_closeout'
 ];
+const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
 
 function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
     const actualKeys = Object.keys(record).sort();
@@ -292,6 +300,8 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
         !hasExactOwnKeys(SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE as unknown as Record<string, unknown>, COMPATIBILITY_TOP_LEVEL_KEYS)
         || (
             !hasExactOwnKeys(config, COMPATIBILITY_TOP_LEVEL_KEYS)
+            && !hasExactOwnKeys(config, COMPATIBILITY_PRE_TASK_RESET_TOP_LEVEL_KEYS)
+            && !hasExactOwnKeys(config, COMPATIBILITY_LEGACY_REVIEW_POLICY_TOP_LEVEL_KEYS)
             && !hasExactOwnKeys(config, COMPATIBILITY_LEGACY_TOP_LEVEL_KEYS)
         )
     ) {
@@ -405,6 +415,19 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
         )
     ) {
         return false;
+    }
+
+    if (hasOwnKey(config, 'task_reset')) {
+        const taskReset = toPlainRecord(config.task_reset);
+        const defaultTaskReset = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.task_reset as unknown as Record<string, unknown>;
+        if (
+            !taskReset
+            || !hasExactOwnKeys(defaultTaskReset, COMPATIBILITY_TASK_RESET_KEYS)
+            || !hasExactOwnKeys(taskReset, COMPATIBILITY_TASK_RESET_KEYS)
+            || taskReset.enabled !== false
+        ) {
+            return false;
+        }
     }
 
     return true;

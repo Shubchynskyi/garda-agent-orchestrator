@@ -83,6 +83,9 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
             max_compact_summary_chars: '9000',
             read_strategy: 'INDEX_FIRST',
             impact_artifact_retention_days: '45'
+        },
+        task_reset: {
+            enabled: 'yes'
         }
     });
 
@@ -111,6 +114,32 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
     assert.equal(projectMemory.max_compact_summary_chars, 9000);
     assert.equal(projectMemory.read_strategy, 'index_first');
     assert.equal(projectMemory.impact_artifact_retention_days, 45);
+
+    const taskReset = normalized.task_reset as Record<string, unknown>;
+    assert.equal(taskReset.enabled, true);
+});
+
+test('validateWorkflowConfig rejects unknown task reset keys', () => {
+    assert.throws(
+        () => validateWorkflowConfig({
+            full_suite_validation: {
+                enabled: false,
+                command: 'npm test',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            },
+            task_reset: {
+                enabled: false,
+                force: true
+            }
+        }),
+        /workflow-config\.task_reset\.force is not allowed/
+    );
 });
 
 test('validateWorkflowConfig rejects invalid project memory maintenance values', () => {

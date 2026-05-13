@@ -43,12 +43,18 @@ export interface ProjectMemoryMaintenanceConfig {
     [key: string]: unknown;
 }
 
+export interface TaskResetConfig {
+    enabled: boolean;
+    [key: string]: unknown;
+}
+
 export interface WorkflowConfigData {
     full_suite_validation: FullSuiteValidationConfig;
     review_execution_policy: ReviewExecutionPolicyConfig;
     scope_budget_guard: ScopeBudgetGuardConfig;
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
+    task_reset: TaskResetConfig;
     [key: string]: unknown;
 }
 
@@ -91,6 +97,9 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         max_compact_summary_chars: 12000,
         read_strategy: 'index_first',
         impact_artifact_retention_days: 30
+    }),
+    task_reset: Object.freeze({
+        enabled: false
     })
 });
 

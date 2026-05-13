@@ -39,5 +39,8 @@
     "max_compact_summary_chars": 12000,
     "read_strategy": "index_first",
     "impact_artifact_retention_days": 30
+  },
+  "task_reset": {
+    "enabled": false
   }
 }

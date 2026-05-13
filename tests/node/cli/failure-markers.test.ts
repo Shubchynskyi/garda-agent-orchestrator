@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
     EXIT_GENERAL_FAILURE,
     EXIT_VALIDATION_FAILURE,
@@ -76,8 +77,40 @@ function writeTaskResetFixture(targetRoot: string, taskStatus = 'IN_PROGRESS'): 
     const bundleDir = path.join(targetRoot, 'garda-agent-orchestrator');
     fs.mkdirSync(path.join(bundleDir, 'runtime', 'task-events'), { recursive: true });
     fs.mkdirSync(path.join(bundleDir, 'runtime', 'reviews'), { recursive: true });
+    fs.mkdirSync(path.join(bundleDir, 'live', 'config'), { recursive: true });
     fs.writeFileSync(path.join(bundleDir, 'MANIFEST.md'), '# MANIFEST\n', 'utf8');
     fs.writeFileSync(path.join(bundleDir, 'VERSION'), '1.0.0\n', 'utf8');
+    const workflowConfig = {
+        full_suite_validation: {
+            enabled: false,
+            command: '__FULL_SUITE_COMMAND_UNCONFIGURED__',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        task_reset: {
+            enabled: true
+        }
+    };
+    const workflowConfigText = JSON.stringify(workflowConfig, null, 2) + '\n';
+    const workflowConfigPath = path.join(bundleDir, 'live', 'config', 'workflow-config.json');
+    fs.writeFileSync(workflowConfigPath, workflowConfigText, 'utf8');
+    fs.writeFileSync(
+        path.join(bundleDir, 'runtime', 'workflow-config-audit.jsonl'),
+        JSON.stringify({
+            schema_version: 1,
+            event_source: 'workflow-config-set',
+            timestamp_utc: '2026-05-13T00:00:00.000Z',
+            actor: 'operator_command',
+            command: 'workflow set',
+            config_path: workflowConfigPath.replace(/\\/g, '/'),
+            changed_fields: ['task_reset.enabled'],
+            before_sha256: createHash('sha256').update('before', 'utf8').digest('hex'),
+            after_sha256: createHash('sha256').update(workflowConfigText, 'utf8').digest('hex')
+        }) + '\n',
+        'utf8'
+    );
 }
 
 test('bootstrap with invalid flag produces GARDA_BOOTSTRAP_FAILED with EXIT_USAGE_ERROR', () => {
