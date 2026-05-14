@@ -5160,8 +5160,12 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('opaque handoff artifact'));
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('new clean-context delegated reviewer'));
+        assert.ok(result.reason.includes('provider-native/internal agent or subagent tool'));
+        assert.ok(result.reason.includes('not a shell command or hand-written artifact'));
         assert.ok(result.reason.includes('do not reuse an existing reviewer session'));
         assert.ok(result.reason.includes('fork_context=false'));
+        assert.ok(result.reason.includes('If the current provider session cannot launch a fresh delegated reviewer, stop and report that blocker'));
+        assert.ok(result.reason.includes('instead of fabricating routing, launch, review, receipt, or telemetry evidence'));
         assert.ok(result.reason.includes('Reviewer readiness chain: preflight scope=current -> review context=current'));
         assert.ok(result.reason.includes('routing=missing current-cycle telemetry'));
         assert.ok(result.reason.includes('launch artifact=blocked until routing'));

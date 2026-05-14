@@ -871,7 +871,8 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
             : '';
         throw new Error(
             `Review context cannot be built for review '${reviewType}' because delegated reviewer launch is not attested. ` +
-            `${launchReason}${launchRemediation} Re-enter task mode, rerun handshake-diagnostics, and then rerun build-review-context.`
+            `${launchReason}${launchRemediation} ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ` +
+            'Re-enter task mode, rerun handshake-diagnostics, and then rerun build-review-context.'
         );
     }
 

@@ -2477,8 +2477,9 @@ describe('gates/build-review-context', () => {
             }, null, 2), 'utf8');
             const outputPath = path.join(orchestratorRoot, 'runtime', 'reviews', 'T-901-launch-blocked-code-review-context.json');
 
-            assert.throws(
-                () => buildReviewContext({
+            let blockedLaunchError: Error | null = null;
+            try {
+                buildReviewContext({
                     reviewType: 'code',
                     depth: 2,
                     preflightPath,
@@ -2486,9 +2487,16 @@ describe('gates/build-review-context', () => {
                     scopedDiffMetadataPath: '',
                     outputPath,
                     repoRoot
-                }),
-                /delegated reviewer launch is not attested/i
-            );
+                });
+            } catch (error) {
+                blockedLaunchError = error as Error;
+            }
+            assert.ok(blockedLaunchError);
+            assert.match(blockedLaunchError.message, /delegated reviewer launch is not attested/i);
+            assert.match(blockedLaunchError.message, /provider-native\/internal agent or subagent tool/i);
+            assert.match(blockedLaunchError.message, /not a shell command or hand-written artifact/i);
+            assert.match(blockedLaunchError.message, /stop and report that blocker/i);
+            assert.match(blockedLaunchError.message, /instead of fabricating routing, launch, review, receipt, or telemetry evidence/i);
 
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { getRepoRoot } from '../../../scripts/node-foundation/build';
@@ -53,11 +54,11 @@ test('dist directory does not contain stale JS files from renamed or deleted sou
 });
 
 test('regression: renamed source module leaving an obsolete generated JS file is caught', () => {
-    const repoRoot = getRepoRoot();
-    const distSrcDir = path.join(repoRoot, 'dist', 'src');
-    const srcDir = path.join(repoRoot, 'src');
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-stale-dist-regression-'));
+    const distSrcDir = path.join(tempRoot, 'dist', 'src');
+    const srcDir = path.join(tempRoot, 'src');
 
-    // Mock a stale file by creating one temporarily in dist/src and ensuring our logic catches it
+    // Keep the regression fixture isolated from the real dist tree because the full suite runs files concurrently.
     const fakeStaleRelativePath = path.join('core', 'stale-regression-test-fake.js');
     const fakeStalePath = path.join(distSrcDir, fakeStaleRelativePath);
 
@@ -83,8 +84,6 @@ test('regression: renamed source module leaving an obsolete generated JS file is
             'The stale checking logic must catch a deliberately placed obsolete JS file'
         );
     } finally {
-        if (fs.existsSync(fakeStalePath)) {
-            fs.rmSync(fakeStalePath);
-        }
+        fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
