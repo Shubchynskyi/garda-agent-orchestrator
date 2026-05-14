@@ -38,6 +38,7 @@ const ALL_REVIEW_FLAGS = Object.freeze({
 let tempRoots: string[] = [];
 const PROVIDER_ENV_KEYS = Object.freeze([
     'GARDA_EXECUTION_PROVIDER',
+    'QWEN_CODE',
     'CODEX_THREAD_ID',
     'CODEX_HOME',
     'CLAUDE_CODE_SSE_PORT',
@@ -1116,6 +1117,33 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--provider "Codex"'));
         assert.ok(!result.commands[0].command.includes('<'));
         assert.ok(!result.commands[0].command.includes('--provider "Claude"'));
+    });
+
+    it('detects Qwen shell marker before Codex home fallback', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {
+            SourceOfTruth: 'Qwen'
+        });
+
+        const result = withProviderEnv({ QWEN_CODE: '1', CODEX_HOME: '/tmp/codex-home' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.commands[0].command.includes('--provider "Qwen"'));
+        assert.ok(!result.commands[0].command.includes('--provider "Codex"'));
+    });
+
+    it('keeps explicit GARDA_EXECUTION_PROVIDER authoritative over provider markers', () => {
+        const repoRoot = makeTempRepo();
+
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex', QWEN_CODE: '1' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.commands[0].command.includes('--provider "Codex"'));
+        assert.ok(!result.commands[0].command.includes('--provider "Qwen"'));
     });
 
     it('does not fabricate a provider when execution provider is unavailable', () => {

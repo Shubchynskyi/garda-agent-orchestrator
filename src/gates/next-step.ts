@@ -5133,6 +5133,9 @@ function resolveProviderFromEnvironment(): string | null {
     if (explicitProvider) {
         return explicitProvider;
     }
+    if (process.env.QWEN_CODE) {
+        return 'Qwen';
+    }
     if (process.env.CODEX_THREAD_ID || process.env.CODEX_HOME) {
         return 'Codex';
     }
