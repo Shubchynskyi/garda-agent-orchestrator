@@ -133,6 +133,10 @@ Notes:
 - Before the first preflight, `next-step` reuses task-mode `planned_changed_files` to print concrete `classify-change --changed-file` arguments; agents should not invent placeholder paths.
 - After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
 - If preflight scope touches protected orchestrator control-plane files without `--orchestrator-work`, restart task mode with the exact command printed by `next-step` or by the failed preflight gate before continuing.
+- Review navigation uses the launch batch, not only the legacy single-review field. Human output can include `ReviewLaunchableBatch`, `BlockedReviewLanes`, and `ReviewFailedCurrent`; JSON includes `review.launchable_review_types`, `review.blocked_review_lanes`, and `review.failed_review_type`.
+- `NextReview` / `review.next_review_type` remain compatibility fields for older single-lane consumers. When a launch batch contains multiple independent lanes, agents may launch those reviewers in parallel only after `next-step` says they are launchable.
+- `BlockedReviewLanes` names dependency reasons such as upstream review types or `full-suite-validation`. When full-suite validation is enabled, the `test` reviewer must wait for current full-suite PASS evidence even under a parallel-capable review policy; unrelated non-test lanes can remain launchable.
+- A failed current-cycle review takes remediation priority over downstream launch work. Fix and rerun or validly reuse the failed review as PASS before treating blocked downstream lanes as ready.
 - For mandatory reviews, `next-step`, rule packs, orchestration skills, review contexts, and provider bridges expect a newly spawned clean-context reviewer for the current review context; do not reuse an existing reviewer session, and close or release the reviewer sub-agent after `record-review-result` or `record-review-receipt` persists the receipt.
 
 ### `garda debug env`
@@ -421,6 +425,7 @@ Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
 - The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, and `task_reset` settings in `live/config/workflow-config.json`.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
+- `parallel_all` can make code, security, refactor, API, and other specialist lanes independent, but enabled full-suite validation still gates `test` review launch until current full-suite PASS evidence exists.
 - Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.
 - Existing repos that still omit `review_execution_policy` stay on the legacy compatibility path (`test` waits for all required upstream reviews, other review types remain independent) until an operator explicitly sets one of the supported modes.
 - Scope budget guard settings can be changed with `--scope-budget-enabled true|false`, `--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY`, `--scope-budget-profiles strict,balanced`, `--scope-budget-max-files N`, `--scope-budget-max-changed-lines N`, `--scope-budget-max-required-reviews N`, and `--scope-budget-max-review-tokens N`.

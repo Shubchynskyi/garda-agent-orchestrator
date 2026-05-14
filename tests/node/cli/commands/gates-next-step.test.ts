@@ -65,6 +65,9 @@ describe('cli/commands/gates next-step', () => {
         assert.ok(output.includes('--as-json'));
         assert.ok(output.includes('--events-root'));
         assert.ok(output.includes('--reviews-root'));
+        assert.ok(output.includes('review launchable batch'));
+        assert.ok(output.includes('blocked lanes'));
+        assert.ok(output.includes('legacy NextReview compatibility'));
     });
 
     it('prints JSON next-step output from the public gate command', async () => {

@@ -417,6 +417,8 @@ test('next-step help remains discoverable when parity blocks the caller workspac
         assert.ok(combined.includes('GARDA_COMMAND_HELP'));
         assert.ok(combined.includes('next-step'));
         assert.ok(combined.includes('Default task-loop navigator'));
+        assert.ok(combined.includes('review launchable batch'));
+        assert.ok(combined.includes('legacy NextReview compatibility'));
         assert.ok(combined.includes('Fix'));
         assert.ok(!combined.includes('Cannot read properties of undefined'));
     } finally {

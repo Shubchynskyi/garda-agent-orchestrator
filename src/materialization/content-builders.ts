@@ -25,6 +25,9 @@ import {
 import { getManagedGitignoreEntries, getManagedGitignoreCleanupEntries } from './common';
 import { getNodeBundleCliCommand, getNodeGateCommandPrefix, getNodeHumanCommitCommand } from './command-constants';
 
+const REVIEW_LAUNCH_NAVIGATION_INSTRUCTION =
+    'Use next-step review navigation output before reviewer launch: `ReviewLaunchableBatch` / `launchable_review_types` list lanes that may be launched now, `BlockedReviewLanes` / `blocked_review_lanes` list dependency reasons, `NextReview` remains legacy single-lane compatibility, failed current reviews take remediation priority, and enabled full-suite validation blocks `test` review until current full-suite PASS evidence exists.';
+
 function getDelegationRequiredProviderLaunchLines(): readonly string[] {
     return Object.freeze(
         getProviderEntries()
@@ -632,13 +635,14 @@ Required:
 11. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 12. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 13. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
-14. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
-15. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
-16. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
-17. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
-18. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
-19. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
-20. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
+14. ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
+15. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
+16. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
+17. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+18. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
+19. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+20. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
+21. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
 
 ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 
@@ -703,6 +707,7 @@ ${getDelegationRequiredProviderLaunchLines().join('\n')}
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Dependency order is a launch-time contract even on delegation-capable platforms: do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge for the current cycle.
+- ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
 - Each review receipt must include \`reviewer_execution_mode\` (\`delegated_subagent\`) and \`reviewer_identity\` (\`agent:...\`). Receipts that do not preserve this delegated reviewer contract cannot satisfy a fresh mandatory review cycle.
 
 ## Skill Routing
@@ -779,6 +784,7 @@ Hard stops:
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.
 - Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
+- ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
 - Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
 - Do not hand-edit active \`TASK.md\` lifecycle statuses (\`IN_PROGRESS\`, \`IN_REVIEW\`, \`DONE\`, \`BLOCKED\`) as a substitute for gates; completion finalization owns \`DONE\`, review-gate owns \`IN_REVIEW\`, task-mode owns \`IN_PROGRESS\`, and explicit operator \`task-reset\` owns reset/discard.
 - Do not mark \`DONE\` without \`COMPLETION_GATE_PASSED\`.

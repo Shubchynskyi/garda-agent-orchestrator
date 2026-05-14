@@ -370,7 +370,7 @@ function buildLifecycleGateHelpEntries(
             ], true)
         },
         'next-step': {
-            ...createGateHelpEntry('Default task-loop navigator: show the single next orchestrator command, effective full-suite config, and review policy context.', [
+            ...createGateHelpEntry('Default task-loop navigator: show the single next orchestrator command, effective full-suite config, review launchable batch, blocked lanes, and legacy NextReview compatibility.', [
                 `${cliPrefix} next-step "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate next-step "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
                 `${cliPrefix} gate next-step --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,

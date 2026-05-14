@@ -435,6 +435,10 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('dependent downstream reviewer'));
         assert.ok(result!.includes('upstream PASS artifact and receipt'));
         assert.ok(result!.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+        assert.ok(result!.includes('ReviewLaunchableBatch'));
+        assert.ok(result!.includes('BlockedReviewLanes'));
+        assert.ok(result!.includes('`NextReview` remains legacy single-lane compatibility'));
+        assert.ok(result!.includes('full-suite validation blocks `test` review'));
         assert.ok(result!.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
         assert.ok(result!.includes('build:node-foundation'));
     });
@@ -500,6 +504,9 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result!.includes('dependent downstream reviewer'));
         assert.ok(result!.includes('upstream PASS artifact and receipt'));
         assert.ok(result!.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+        assert.ok(result!.includes('ReviewLaunchableBatch'));
+        assert.ok(result!.includes('BlockedReviewLanes'));
+        assert.ok(result!.includes('`NextReview` remains legacy single-lane compatibility'));
         assert.ok(result!.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
         assert.ok(result!.includes('build:node-foundation'));
     });
@@ -594,6 +601,10 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         const result = buildSharedStartTaskWorkflowContent('AGENTS.md');
         assert.ok(result.includes('Do not spawn or pre-launch a dependent downstream reviewer'));
         assert.ok(result.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+        assert.ok(result.includes('ReviewLaunchableBatch'));
+        assert.ok(result.includes('BlockedReviewLanes'));
+        assert.ok(result.includes('failed current reviews take remediation priority'));
+        assert.ok(result.includes('full-suite validation blocks `test` review'));
         assert.ok(result.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
         assert.ok(result.includes('build:node-foundation'));
     });

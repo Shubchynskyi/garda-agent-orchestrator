@@ -45,6 +45,8 @@ describe('runInstall — provider bridges and start-task router', () => {
             assert.ok(orchestratorBridge.includes('dependent downstream reviewer'));
             assert.ok(orchestratorBridge.includes('upstream PASS artifact and receipt'));
             assert.ok(orchestratorBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(orchestratorBridge.includes('ReviewLaunchableBatch'));
+            assert.ok(orchestratorBridge.includes('BlockedReviewLanes'));
             assert.ok(apiBridge.includes('api-contract-review'));
             assert.ok(infraBridge.includes('devops-k8s'));
         } finally {
@@ -83,6 +85,8 @@ describe('runInstall — provider bridges and start-task router', () => {
             assert.ok(workflow.includes('shared start-task router'));
             assert.ok(workflow.includes('Do not spawn or pre-launch a dependent downstream reviewer'));
             assert.ok(workflow.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(workflow.includes('ReviewLaunchableBatch'));
+            assert.ok(workflow.includes('BlockedReviewLanes'));
             assert.ok(entrypoint.includes('.agents/workflows/start-task.md'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
@@ -212,10 +216,15 @@ describe('runInstall — provider bridges and start-task router', () => {
             assert.ok(refreshedBridge.includes('dependent downstream reviewer'));
             assert.ok(refreshedBridge.includes('upstream PASS artifact and receipt'));
             assert.ok(refreshedBridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(refreshedBridge.includes('ReviewLaunchableBatch'));
+            assert.ok(refreshedBridge.includes('BlockedReviewLanes'));
             assert.ok(refreshedBridge.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
             assert.ok(refreshedBridge.includes('build:node-foundation'));
             assert.ok(refreshedWorkflow.includes('Do not spawn or pre-launch a dependent downstream reviewer'));
             assert.ok(refreshedWorkflow.includes('Parallel reviewer fan-out is allowed only between independent review types'));
+            assert.ok(refreshedWorkflow.includes('ReviewLaunchableBatch'));
+            assert.ok(refreshedWorkflow.includes('BlockedReviewLanes'));
+            assert.ok(refreshedWorkflow.includes('failed current reviews take remediation priority'));
             assert.ok(refreshedWorkflow.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
             assert.ok(refreshedWorkflow.includes('build:node-foundation'));
         } finally {
