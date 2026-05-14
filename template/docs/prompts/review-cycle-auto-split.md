@@ -3,6 +3,8 @@
 GuardReason: {{GUARD_REASON}}
 Counts: total_non_test_reviews={{TOTAL_NON_TEST_REVIEWS}}; failed_non_test_reviews={{FAILED_NON_TEST_REVIEWS}}; excluded_review_types={{EXCLUDED_REVIEW_TYPES}}
 LatestFailedReview: {{LATEST_FAILED_REVIEW}}
+SuggestedChildTaskIds: {{SUGGESTED_CHILD_TASK_IDS}}
+SuggestedReviewerFollowUpTaskId: {{SUGGESTED_FOLLOWUP_TASK_ID}}
 
 ## Instructions
 1. Treat the current parent task as blocked by the review-cycle guard; do not continue compile, review, or full-suite gates on the parent as if the block did not exist.
@@ -15,7 +17,7 @@ LatestFailedReview: {{LATEST_FAILED_REVIEW}}
 8. If the repair/validation lane needs file edits to make compile/tests pass, those edits remain unfinished implementation diff. Do not commit them, do not treat the workspace as a trusted clean baseline, and do not create linked child tasks yet; the first ordinary linked child must own that diff and execute through normal `next-step` review, doc-impact, full-suite, and completion gates before any implementation commit.
 9. If compile/tests pass without repair edits, create ordinary linked child tasks, record the validation result in the parent notes or child-task plan, then rerun `next-step` on the parent so the gate transitions it to `DECOMPOSED`. If repository policy or operator instructions prohibit checkpoint commits, stop and ask the operator to authorize either a checkpoint commit or an equivalent workflow-owned patch/checkpoint artifact that also restores a clean workspace.
 10. Do not run new compile, review, full-suite, or completion gates on the parent merely to make an unfinished diff committable after this guard has fired.
-11. Split the remaining parent objective into maximally small child tasks with normal numeric task IDs, not suffix IDs such as T-379-1.
+11. Split the remaining parent objective into maximally small child tasks with parent-derived suffix task IDs. Allocate the next non-conflicting numeric suffix from `TASK.md`, starting from examples such as {{SUGGESTED_CHILD_TASK_IDS}}; do not consume unrelated global task numbers.
 12. Execute the ordinary child tasks sequentially through next-step and mandatory gates only after the repair/validation lane has produced a passing compile/test result.
 
 ## Constraints
@@ -31,6 +33,7 @@ LatestFailedReview: {{LATEST_FAILED_REVIEW}}
 - Do not start a child task on an unscoped dirty workspace. Prefer a clean workspace after the split checkpoint; use staged or explicit changed-file scope only for deliberate child-owned edits made after the checkpoint.
 - Do not mark the parent DONE merely because child tasks were created.
 - Do not leave the parent as ordinary `BLOCKED` when decomposition is the intended path. The supported route is `SPLIT_REQUIRED` until child tasks are linked, then gate-owned transition to `DECOMPOSED` so `next-step` routes to child tasks instead of stale parent recovery.
+- Reviewer deferred follow-up tasks created from this parent should use deterministic parent-derived follow-up IDs such as {{SUGGESTED_FOLLOWUP_TASK_ID}}, choosing the next available `-F<n>` suffix from `TASK.md` when collisions exist.
 - Preserve the original review-cycle block reason and counts in child-task notes or closeout where relevant.
 - Keep test reviews excluded from the non-test review-cycle count unless workflow config changes explicitly.
 - If splitting cannot proceed cleanly, stop and report the blocker to the operator.

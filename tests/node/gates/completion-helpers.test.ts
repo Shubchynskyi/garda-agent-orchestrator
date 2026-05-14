@@ -43,7 +43,40 @@ describe('gates/completion — helpers and formatters', () => {
                 assert.equal(result.status, 'FAILED');
                 assert.equal(result.checked_count, 1);
                 assert.match(result.violations[0], /must be materialized as a separate TASK\.md follow-up/);
+                assert.match(result.violations[0], /Suggested follow-up task id: T-371-F1/);
                 assert.match(result.violations[0], /T-371-code\.md/);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        it('suggests the next parent-derived follow-up id when earlier F suffixes exist', () => {
+            const tempDir = fs.mkdtempSync(path.join(process.cwd(), 'tmp-deferred-followups-'));
+            try {
+                fs.writeFileSync(path.join(tempDir, 'TASK.md'), [
+                    '# TASK.md',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
+                    '| T-371-F1 | 🟦 TODO | P2 | workflow | Existing follow-up | gpt-5.4 | 2026-05-08 | balanced | Existing parent-derived follow-up. |',
+                    '| t-371-f2 | 🟦 TODO | P2 | workflow | Existing lower-case follow-up | gpt-5.4 | 2026-05-08 | balanced | Existing parent-derived follow-up. |'
+                ].join('\n') + '\n', 'utf8');
+
+                const result = validateStrictDeferredReviewFollowups({
+                    repoRoot: tempDir,
+                    taskId: 'T-371',
+                    activeProfile: 'strict',
+                    reviewFindings: [{
+                        reviewType: 'code',
+                        artifactPath: path.join(tempDir, 'garda-agent-orchestrator/runtime/reviews/T-371-code.md'),
+                        findings: ['Add another deferred follow-up regression.']
+                    }]
+                });
+
+                assert.equal(result.status, 'FAILED');
+                assert.match(result.violations[0], /Suggested follow-up task id: T-371-F3/);
             } finally {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }
@@ -59,7 +92,7 @@ describe('gates/completion — helpers and formatters', () => {
                     '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
                     '|---|---|---|---|---|---|---|---|---|',
                     '| T-371 | 🟨 IN_PROGRESS | P1 | workflow | Parent | gpt-5.4 | 2026-05-08 | strict | Active task. |',
-                    '| T-999 | 🟦 TODO | P2 | workflow | Materialized deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact garda-agent-orchestrator/runtime/reviews/T-371-code.md. Original finding: Add a regression for deferred finding follow-up dedupe. |'
+                    '| T-371-F1 | 🟦 TODO | P2 | workflow | Materialized deferred review follow-up | gpt-5.4 | 2026-05-08 | balanced | Deferred from T-371 code review artifact garda-agent-orchestrator/runtime/reviews/T-371-code.md. Original finding: Add a regression for deferred finding follow-up dedupe. |'
                 ].join('\n') + '\n', 'utf8');
 
                 const result = validateStrictDeferredReviewFollowups({

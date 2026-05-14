@@ -148,6 +148,9 @@ import {
     isTaskIdReferenceBoundary
 } from '../core/task-ids';
 import {
+    allocateParentDerivedTaskIds
+} from '../core/task-id-allocation';
+import {
     buildGateChainLaunchDecision,
     formatGateChainLaunchDecision
 } from '../core/dependent-validation-chains';
@@ -4929,13 +4932,28 @@ function buildReviewCycleAutoSplitPromptContent(
     evaluation: ReviewCycleGuardEvaluation,
     latestFailedReview: NextStepReviewCycleLatestFailedReview | null
 ): string {
+    const taskEntries = readTaskQueueEntries(repoRoot);
+    const suggestedChildTaskIds = allocateParentDerivedTaskIds({
+        parentTaskId: taskId,
+        existingTaskIds: taskEntries.keys(),
+        kind: 'child',
+        count: 3
+    });
+    const suggestedFollowupTaskId = allocateParentDerivedTaskIds({
+        parentTaskId: taskId,
+        existingTaskIds: [...taskEntries.keys(), ...suggestedChildTaskIds],
+        kind: 'followup',
+        count: 1
+    })[0];
     const replacements: Record<string, string> = {
         TASK_ID: taskId,
         GUARD_REASON: formatNextStepInlineValue(sanitizeReviewCycleAutoSplitSummary(evaluation)),
         TOTAL_NON_TEST_REVIEWS: String(evaluation.total_non_test_review_count),
         FAILED_NON_TEST_REVIEWS: String(evaluation.failed_non_test_review_count),
         EXCLUDED_REVIEW_TYPES: formatNextStepInlineList(evaluation.excluded_review_types),
-        LATEST_FAILED_REVIEW: formatLatestFailedReviewForTemplate(latestFailedReview)
+        LATEST_FAILED_REVIEW: formatLatestFailedReviewForTemplate(latestFailedReview),
+        SUGGESTED_CHILD_TASK_IDS: suggestedChildTaskIds.map((childTaskId) => `\`${childTaskId}\``).join(', '),
+        SUGGESTED_FOLLOWUP_TASK_ID: `\`${suggestedFollowupTaskId}\``
     };
     const template = readReviewCycleAutoSplitTemplate(repoRoot);
     return `${template.replace(/\{\{([A-Z0-9_]+)}}/g, (match, key: string) => replacements[key] ?? match).trimEnd()}\n`;
@@ -4962,7 +4980,7 @@ function materializeReviewCycleAutoSplitPrompt(
         instructions: [
             'move_parent_to_decomposed_state',
             'commit_only_completed_reviewed_work_if_required',
-            'create_maximally_small_numeric_child_tasks',
+            'create_maximally_small_parent_derived_child_tasks',
             'execute_child_tasks_sequentially'
         ],
         constraints: [

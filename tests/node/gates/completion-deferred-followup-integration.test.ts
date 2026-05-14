@@ -163,6 +163,7 @@ function runDeferredFollowupIntegrationScenario(options: {
         assert.equal(missing.deferred_followup_evidence.status, 'FAILED');
         assert.equal(missing.deferred_followup_evidence.checked_count, 1);
         assert.ok(missing.violations.some((violation: string) => violation.includes('must be materialized as a separate TASK.md follow-up')));
+        assert.ok(missing.violations.some((violation: string) => violation.includes(`Suggested follow-up task id: ${options.taskId}-F1`)));
 
         fs.appendFileSync(
             path.join(repoRoot, 'TASK.md'),
@@ -171,7 +172,7 @@ function runDeferredFollowupIntegrationScenario(options: {
                 '## Active Queue',
                 '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
                 '|---|---|---|---|---|---|---|---|---|',
-                `| ${options.taskId}-followup | TODO | P2 | ${options.followupArea} | ${options.followupTitle} | unassigned | 2026-03-28 | balanced | Deferred from ${options.taskId} ${options.reviewType} review artifact ${options.taskId}-${options.reviewType}.md. Original finding: ${options.deferredFinding} |`
+                `| ${options.taskId}-F1 | TODO | P2 | ${options.followupArea} | ${options.followupTitle} | unassigned | 2026-03-28 | balanced | Deferred from ${options.taskId} ${options.reviewType} review artifact ${options.taskId}-${options.reviewType}.md. Original finding: ${options.deferredFinding} |`
             ].join('\n'),
             'utf8'
         );

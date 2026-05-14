@@ -126,13 +126,17 @@ function makeTempRepo(): string {
             'GuardReason: {{GUARD_REASON}}',
             'Counts: total_non_test_reviews={{TOTAL_NON_TEST_REVIEWS}}; failed_non_test_reviews={{FAILED_NON_TEST_REVIEWS}}; excluded_review_types={{EXCLUDED_REVIEW_TYPES}}',
             'LatestFailedReview: {{LATEST_FAILED_REVIEW}}',
+            'SuggestedChildTaskIds: {{SUGGESTED_CHILD_TASK_IDS}}',
+            'SuggestedReviewerFollowUpTaskId: {{SUGGESTED_FOLLOWUP_TASK_ID}}',
             '',
             '## Instructions',
-            '1. Treat the parent as SPLIT_REQUIRED, create linked child tasks, then rerun next-step so the gate moves it to DECOMPOSED.',
+            '1. Treat the parent as SPLIT_REQUIRED, create linked parent-derived suffix task IDs, then rerun next-step so the gate moves it to DECOMPOSED.',
+            '2. Allocate child ids from {{SUGGESTED_CHILD_TASK_IDS}}.',
             '',
             '## Constraints',
             '- Do not mark the parent DONE merely because child tasks were created.',
             '- Do not hand-edit the parent status to bypass SPLIT_REQUIRED.',
+            '- Reviewer follow-ups use {{SUGGESTED_FOLLOWUP_TASK_ID}} style ids.',
             ''
         ].join('\n'),
         'utf8'
@@ -1593,6 +1597,55 @@ describe('gates/next-step', () => {
         assert.equal((events.match(/"event_type":"SPLIT_REQUIRED_RESTORED"/g) || []).length, 0);
     });
 
+    it('finalizes split-required parents through parent-derived suffixed child tasks', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-506 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-506-1` and `T-506-2`; do not continue the parent. |',
+            '| T-506-1 | DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-506-2 | DONE | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-506');
+
+        const decomposedResult = resolveNextStep({ taskId: 'T-506', repoRoot });
+        const doneResult = resolveNextStep({ taskId: 'T-506', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), 'T-506.jsonl'), 'utf8');
+
+        assert.equal(decomposedResult.status, 'DECOMPOSED');
+        assert.equal(doneResult.status, 'DONE');
+        assert.ok(taskMd.includes('| T-506 | DONE |'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
+        assert.ok(events.includes('"event_type":"DECOMPOSED_PARENT_COMPLETED"'));
+    });
+
+    it('finalizes nested decomposed parents when parent-derived leaf children are already done', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-700 | 🟪 DECOMPOSED | P1 | workflow | Root parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-700-1` through normal gates. |',
+            '| T-700-1 | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-700-1-1` and `T-700-1-2` through normal gates. |',
+            '| T-700-1-1 | 🟩 DONE | P1 | workflow | First leaf | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-700-1-2 | 🟩 DONE | P1 | workflow | Second leaf | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-700', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DONE');
+        assert.equal(result.next_gate, null);
+        assert.ok(taskMd.includes('| T-700 | 🟩 DONE |'));
+        assert.ok(taskMd.includes('| T-700-1 | 🟩 DONE |'));
+    });
+
     it('transitions a reset split-required parent to decomposed when child tasks are linked', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -2943,6 +2996,10 @@ describe('gates/next-step', () => {
         assert.ok(promptText.includes('GuardReason: "Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
         assert.equal(promptText.includes('failed_non_test_review_count=2>1'), false);
         assert.ok(promptText.includes('summary="second code failure"'));
+        assert.ok(promptText.includes(`SuggestedChildTaskIds: \`${TASK_ID}-1\`, \`${TASK_ID}-2\`, \`${TASK_ID}-3\``));
+        assert.ok(promptText.includes(`SuggestedReviewerFollowUpTaskId: \`${TASK_ID}-F1\``));
+        assert.ok(promptText.includes('parent-derived suffix task IDs'));
+        assert.equal(promptText.includes('normal numeric task IDs'), false);
         assert.ok(promptText.includes('DECOMPOSED'));
         assert.ok(text.includes('Status: SPLIT_REQUIRED'));
         assert.ok(text.includes('NextGate: split-required-latch'));
@@ -2955,6 +3012,60 @@ describe('gates/next-step', () => {
         assert.equal(fs.existsSync(latchPath), true);
         const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as Record<string, unknown>;
         assert.equal(latch.guard_kind, 'review_cycle');
+    });
+
+    it('auto-split prompt suggests the next available parent-derived child and follow-up ids', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test'],
+                    auto_split_enabled: true
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'TASK.md'), [
+            `| ${TASK_ID}-1 | 🟦 TODO | P1 | workflow | Existing child | gpt-5.4 | 2026-05-05 | strict | Existing split child. |`,
+            `| ${TASK_ID}-F1 | 🟦 TODO | P2 | workflow | Existing follow-up | gpt-5.4 | 2026-05-05 | balanced | Existing reviewer follow-up. |`
+        ].join('\n') + '\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-code-0',
+            review_context_sha256: sha256Text('auto-split-code-context-0'),
+            summary: 'first code failure'
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+            review_type: 'code',
+            reviewer_identity: 'agent:auto-split-code-1',
+            review_context_sha256: sha256Text('auto-split-code-context-1'),
+            summary: 'second code failure'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const promptPath = path.join(repoRoot, result.review_cycle_block?.auto_split_prompt?.artifact_path || '');
+        const promptText = fs.readFileSync(promptPath, 'utf8');
+
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.ok(promptText.includes(`SuggestedChildTaskIds: \`${TASK_ID}-2\`, \`${TASK_ID}-3\`, \`${TASK_ID}-4\``));
+        assert.ok(promptText.includes(`SuggestedReviewerFollowUpTaskId: \`${TASK_ID}-F2\``));
     });
 
     it('blocks next-step when failed non-test review attempts exceed review cycle guard failed limit', () => {

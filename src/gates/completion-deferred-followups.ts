@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { allocateNextParentDerivedTaskId } from '../core/task-id-allocation';
 import { normalizePath } from './helpers';
 
 export interface DeferredReviewFindingInput {
@@ -196,6 +197,7 @@ export function validateStrictDeferredReviewFollowups(options: {
     }
 
     const taskRows = parseTaskQueueRows(fs.readFileSync(taskPath, 'utf8'));
+    const existingTaskIds = taskRows.map((row) => row.taskId);
     const violations: string[] = [];
     let matchedCount = 0;
     for (const finding of flattenedFindings) {
@@ -209,9 +211,16 @@ export function validateStrictDeferredReviewFollowups(options: {
             matchedCount += 1;
             continue;
         }
+        const suggestedTaskId = allocateNextParentDerivedTaskId({
+            parentTaskId: options.taskId,
+            existingTaskIds,
+            kind: 'followup'
+        });
+        existingTaskIds.push(suggestedTaskId);
         violations.push(
             `Strict profile deferred finding from ${finding.reviewType} review '${normalizePath(finding.artifactPath)}' ` +
             `must be materialized as a separate TASK.md follow-up before final closeout. ` +
+            `Suggested follow-up task id: ${suggestedTaskId}. ` +
             `Follow-up notes must preserve parent task '${options.taskId}', review type '${finding.reviewType}', ` +
             `source artifact '${normalizePath(finding.artifactPath)}', and original finding text: ${finding.findingText}`
         );
