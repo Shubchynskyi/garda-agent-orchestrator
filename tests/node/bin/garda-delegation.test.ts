@@ -7,8 +7,11 @@ import * as path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import {
+    buildDelegationTrustEvidence,
     getDelegationExitCode,
-    getDelegationForwardSignals
+    getDelegationForwardSignals,
+    resolveDelegationStartDirs,
+    resolveDelegatedLauncherTrustEvidence
 } from '../../../src/bin/garda';
 
 function writeFile(filePath: string, content: string): void {
@@ -27,6 +30,15 @@ delegateToLocalCli(process.argv[2], process.argv.slice(3)).catch((error) => {
 });
 `);
     return harnessPath;
+}
+
+function writePackageRoot(root: string, options?: { sourceCheckout?: boolean }): void {
+    writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2));
+    writeFile(path.join(root, 'VERSION'), '1.0.0\n');
+    writeFile(path.join(root, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
+    if (options?.sourceCheckout) {
+        writeFile(path.join(root, 'tests', 'node', '.keep'), '');
+    }
 }
 
 function spawnHarness(
@@ -217,4 +229,220 @@ setInterval(() => {}, 1000);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
+});
+
+test('delegation start-dir dedupe preserves case-distinct paths for case-sensitive filesystems', () => {
+    const cwd = path.resolve('/tmp/repo');
+    const targetRoot = path.resolve('/tmp/Repo');
+
+    const startDirs = resolveDelegationStartDirs(['status', '--target-root', targetRoot], cwd);
+
+    assert.deepEqual(startDirs.map((entry) => entry.startDir), [targetRoot, cwd]);
+    assert.deepEqual(startDirs.map((entry) => entry.source), ['target_root', 'cwd']);
+});
+
+test('delegation trust model treats self-hosted source checkout as trusted without launcher delegation', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-self-hosted-'));
+    try {
+        const sourceRoot = path.join(tempRoot, 'source');
+        writePackageRoot(sourceRoot, { sourceCheckout: true });
+        const currentScriptPath = path.join(sourceRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence([], sourceRoot, currentScriptPath, sourceRoot);
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'source_checkout');
+        assert.equal(evidence.current_runtime.package_installed_under_node_modules, false);
+        assert.equal(evidence.current_runtime.recognized_package_name, true);
+        assert.equal(evidence.delegated_runtime, null);
+        assert.equal(evidence.implementation_delegation.decision, 'not_required');
+        assert.equal(evidence.implementation_delegation.trust_level, 'trusted_self_hosted');
+        assert.equal(evidence.mandatory_review_delegation.decision, 'allowed');
+        assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model does not trust unrecognized current runtime identity', () => {
+    const evidence = buildDelegationTrustEvidence(
+        {
+            package_root: path.resolve('/tmp/unrecognized-source'),
+            runtime_kind: 'source_checkout',
+            package_installed_under_node_modules: false,
+            recognized_package_name: false
+        },
+        {
+            cli_path: path.resolve('/tmp/source/bin/garda.js'),
+            root: path.resolve('/tmp/source'),
+            runtime_kind: 'source_checkout',
+            reason: 'target_root_source_checkout'
+        }
+    );
+
+    assert.equal(evidence.delegated_runtime, null);
+    assert.equal(evidence.implementation_delegation.decision, 'not_required');
+    assert.equal(evidence.implementation_delegation.trust_level, 'unknown');
+    assert.match(evidence.implementation_delegation.reason, /package name is not recognized/);
+    assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+    assert.equal(evidence.mandatory_review_delegation.trust_level, 'unknown');
+    assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+});
+
+test('delegation trust model fails closed for recognized package with unknown runtime kind', () => {
+    const evidence = buildDelegationTrustEvidence(
+        {
+            package_root: path.resolve('/tmp/spoofed-garda-shape'),
+            runtime_kind: 'unknown',
+            package_installed_under_node_modules: false,
+            recognized_package_name: true
+        },
+        {
+            cli_path: path.resolve('/tmp/source/bin/garda.js'),
+            root: path.resolve('/tmp/source'),
+            runtime_kind: 'source_checkout',
+            reason: 'target_root_source_checkout'
+        }
+    );
+
+    assert.equal(evidence.delegated_runtime, null);
+    assert.equal(evidence.implementation_delegation.decision, 'blocked');
+    assert.equal(evidence.implementation_delegation.trust_level, 'unknown');
+    assert.match(evidence.implementation_delegation.reason, /runtime kind is unknown/);
+    assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+    assert.equal(evidence.mandatory_review_delegation.trust_level, 'unknown');
+    assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+});
+
+test('delegation trust model allows installed package to delegate to trusted target-root source checkout', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-source-target-'));
+    try {
+        const installedRoot = path.join(tempRoot, 'consumer', 'node_modules', 'garda-agent-orchestrator');
+        const sourceRoot = path.join(tempRoot, 'source');
+        writePackageRoot(installedRoot);
+        writePackageRoot(sourceRoot, { sourceCheckout: true });
+        const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence(
+            ['status', '--target-root', sourceRoot],
+            path.join(tempRoot, 'consumer'),
+            currentScriptPath,
+            installedRoot
+        );
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'packaged_npm');
+        assert.equal(evidence.delegated_runtime?.cli_path, path.join(sourceRoot, 'bin', 'garda.js'));
+        assert.equal(evidence.delegated_runtime?.runtime_kind, 'source_checkout');
+        assert.equal(evidence.delegated_runtime?.reason, 'target_root_source_checkout');
+        assert.equal(evidence.implementation_delegation.decision, 'allowed');
+        assert.equal(evidence.implementation_delegation.trust_level, 'trusted_local_workspace');
+        assert.equal(evidence.mandatory_review_delegation.decision, 'allowed');
+        assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model allows installed package to delegate to trusted deployed bundle target', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-bundle-target-'));
+    try {
+        const workspaceRoot = path.join(tempRoot, 'workspace');
+        const installedRoot = path.join(workspaceRoot, 'node_modules', 'garda-agent-orchestrator');
+        const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        writePackageRoot(installedRoot);
+        writePackageRoot(bundleRoot);
+        const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence(
+            ['status', '--target-root', workspaceRoot],
+            workspaceRoot,
+            currentScriptPath,
+            installedRoot
+        );
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'packaged_npm');
+        assert.equal(evidence.delegated_runtime?.cli_path, path.join(bundleRoot, 'bin', 'garda.js'));
+        assert.equal(evidence.delegated_runtime?.runtime_kind, 'deployed_bundle');
+        assert.equal(evidence.delegated_runtime?.reason, 'target_root_deployed_bundle');
+        assert.equal(evidence.implementation_delegation.decision, 'allowed');
+        assert.equal(evidence.implementation_delegation.trust_level, 'trusted_local_workspace');
+        assert.equal(evidence.mandatory_review_delegation.decision, 'allowed');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model classifies direct deployed bundle roots as bundle targets', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-direct-bundle-'));
+    const previousBundleName = process.env.GARDA_BUNDLE_NAME;
+    try {
+        const workspaceRoot = path.join(tempRoot, 'workspace');
+        const installedRoot = path.join(workspaceRoot, 'node_modules', 'garda-agent-orchestrator');
+        const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+        const alternateBundleRoot = path.join(workspaceRoot, 'alternate-garda-bundle');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        writePackageRoot(installedRoot);
+        writePackageRoot(bundleRoot);
+        writePackageRoot(alternateBundleRoot);
+        const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
+
+        const targetEvidence = resolveDelegatedLauncherTrustEvidence(
+            ['status', '--target-root', bundleRoot],
+            workspaceRoot,
+            currentScriptPath,
+            installedRoot
+        );
+        const cwdEvidence = resolveDelegatedLauncherTrustEvidence(
+            ['status'],
+            bundleRoot,
+            currentScriptPath,
+            installedRoot
+        );
+
+        assert.equal(targetEvidence.delegated_runtime?.cli_path, path.join(bundleRoot, 'bin', 'garda.js'));
+        assert.equal(targetEvidence.delegated_runtime?.runtime_kind, 'deployed_bundle');
+        assert.equal(targetEvidence.delegated_runtime?.reason, 'target_root_deployed_bundle');
+        assert.equal(cwdEvidence.delegated_runtime?.cli_path, path.join(bundleRoot, 'bin', 'garda.js'));
+        assert.equal(cwdEvidence.delegated_runtime?.runtime_kind, 'deployed_bundle');
+        assert.equal(cwdEvidence.delegated_runtime?.reason, 'cwd_deployed_bundle');
+
+        process.env.GARDA_BUNDLE_NAME = 'non-default-garda-bundle';
+        const explicitTargetEvidence = resolveDelegatedLauncherTrustEvidence(
+            ['status', '--target-root', alternateBundleRoot],
+            workspaceRoot,
+            currentScriptPath,
+            installedRoot
+        );
+
+        assert.equal(explicitTargetEvidence.delegated_runtime?.cli_path, path.join(alternateBundleRoot, 'bin', 'garda.js'));
+        assert.equal(explicitTargetEvidence.delegated_runtime?.runtime_kind, 'deployed_bundle');
+        assert.equal(explicitTargetEvidence.delegated_runtime?.reason, 'target_root_deployed_bundle');
+    } finally {
+        if (previousBundleName === undefined) {
+            delete process.env.GARDA_BUNDLE_NAME;
+        } else {
+            process.env.GARDA_BUNDLE_NAME = previousBundleName;
+        }
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model blocks installed package when no trusted runtime target exists', () => {
+    const evidence = buildDelegationTrustEvidence(
+        {
+            package_root: path.resolve('/tmp/consumer/node_modules/garda-agent-orchestrator'),
+            runtime_kind: 'packaged_npm',
+            package_installed_under_node_modules: true,
+            recognized_package_name: true
+        },
+        null
+    );
+
+    assert.equal(evidence.delegated_runtime, null);
+    assert.equal(evidence.implementation_delegation.decision, 'blocked');
+    assert.equal(evidence.implementation_delegation.trust_level, 'unknown');
+    assert.match(evidence.implementation_delegation.reason, /could not resolve a trusted local source checkout or deployed bundle target/);
+    assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+    assert.equal(evidence.mandatory_review_delegation.trust_level, 'unknown');
+    assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
 });
