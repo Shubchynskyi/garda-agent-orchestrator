@@ -70,6 +70,9 @@ import {
 } from '../core/task-queue-status-contract';
 export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
 
+const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no tracked committable changes are present.';
+const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
+
 export interface TaskAuditSummaryOptions {
     taskId: string;
     repoRoot: string;
@@ -908,6 +911,34 @@ function readProfileReviewDecisions(
     };
 }
 
+function isLocalControlPlaneCommitPath(filePath: string): boolean {
+    const normalized = toPosix(String(filePath || '').trim()).replace(/^\.\//, '');
+    if (!normalized) {
+        return false;
+    }
+    return normalized === 'TASK.md'
+        || normalized.startsWith('garda-agent-orchestrator/runtime/')
+        || normalized === 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
+}
+
+function resolveTrackedCommittableChangedFiles(repoRoot: string): string[] | null {
+    try {
+        const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, [], {
+            noCache: true,
+            readOnly: true
+        });
+        const changedFiles = Array.isArray(currentWorkspaceSnapshot.changed_files)
+            ? currentWorkspaceSnapshot.changed_files
+            : [];
+        return changedFiles
+            .map((changedFile) => toPosix(String(changedFile || '').trim()))
+            .filter((changedFile) => changedFile && !isLocalControlPlaneCommitPath(changedFile))
+            .sort((left, right) => left.localeCompare(right));
+    } catch {
+        return null;
+    }
+}
+
 function readTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files
@@ -1492,17 +1523,19 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
 
     const commitGuardEnabled = workspaceStatusSnapshot.enforceNoAutoCommit === true;
     const commitCommand = buildCommitCommandSuggestion(changedFiles, taskMetadata, commitGuardEnabled);
-    let isCleanWorktree: boolean;
-    try {
-        const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, []);
-        isCleanWorktree = currentWorkspaceSnapshot.changed_files_count === 0;
-    } catch (e) {
-        // Fallback for tests or non-git workspaces
-        isCleanWorktree = false;
-    }
-    const commitQuestionText = isCleanWorktree
-        ? 'Worktree is already clean; no further commit necessary.'
-        : 'Do you want me to commit now? (yes/no)';
+    const trackedCommittableChangedFiles = resolveTrackedCommittableChangedFiles(repoRoot);
+    const commitRequired = trackedCommittableChangedFiles == null
+        ? changedFiles.some((changedFile) => !isLocalControlPlaneCommitPath(changedFile))
+        : trackedCommittableChangedFiles.length > 0;
+    const commitCommandTemplate = commitRequired
+        ? commitCommand.template
+        : 'No commit command required.';
+    const commitCommandSuggestion = commitRequired
+        ? commitCommand.suggestion
+        : NO_COMMIT_REQUIRED_MESSAGE;
+    const commitQuestionText = commitRequired
+        ? 'Do you want me to commit now? (yes/no)'
+        : NO_COMMIT_CONFIRMATION_MESSAGE;
     
     const {
         reviewVerdicts,
@@ -1559,12 +1592,12 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         required_order: [
             'review integrity attestation',
             'implementation summary',
-            commitCommand.suggestion,
-            commitQuestionText
+            commitCommandSuggestion,
+            ...(commitRequired ? [commitQuestionText] : [])
         ],
         implementation_summary_requirements: implementationSummaryRequirements,
-        commit_command_template: commitCommand.template,
-        commit_command_suggestion: commitCommand.suggestion,
+        commit_command_template: commitCommandTemplate,
+        commit_command_suggestion: commitCommandSuggestion,
         commit_question: commitQuestionText
     };
     let closeoutScopeSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null = null;
@@ -1640,8 +1673,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                 : null,
             latest_update_notice: workspaceStatusSnapshot.latestUpdateNotice
         },
-        commit_command_template: commitCommand.template,
-        commit_command_suggestion: commitCommand.suggestion,
+        commit_command_template: commitCommandTemplate,
+        commit_command_suggestion: commitCommandSuggestion,
         commit_question: finalReportContract.commit_question
     };
 

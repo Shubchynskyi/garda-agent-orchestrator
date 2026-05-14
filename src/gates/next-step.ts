@@ -5511,12 +5511,17 @@ function buildFinalReportOrder(summary: TaskAuditSummaryResult, commitCommandSug
     const implementationSummary = requirements.length > 0
         ? `implementation summary (include ${requirements.join(', ')})`
         : 'implementation summary';
-    return [
-        'review integrity attestation',
-        implementationSummary,
-        commitCommandSuggestion,
-        commitQuestion
-    ];
+    const contractOrder = summary.final_report_contract.required_order.length > 0
+        ? summary.final_report_contract.required_order
+        : [
+            'review integrity attestation',
+            'implementation summary',
+            commitCommandSuggestion,
+            ...(commitQuestion ? [commitQuestion] : [])
+        ];
+    return contractOrder
+        .map((entry) => entry === 'implementation summary' ? implementationSummary : entry)
+        .filter((entry) => String(entry || '').trim().length > 0);
 }
 
 function finalCloseoutMatchesCurrentCycle(

@@ -445,6 +445,119 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_report_contract.required_order[0], 'review integrity attestation');
             assert.equal(result.final_report_contract.required_order[2], 'git commit -m "<type>(<scope>): <summary>"');
         });
+
+        it('keeps commit guidance when tracked worktree changes are still committable', () => {
+            const sourceFile = path.join(tmpDir, 'src', 'gates', 'task-audit-summary.ts');
+            fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
+            fs.writeFileSync(sourceFile, 'export const before = true;\n', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P2 | ux/final-chat-commit-guidance-regression | Enforce final chat commit guidance | gpt-5.4 | 2026-04-15 | balanced | |'
+            ].join('\n'), 'utf8');
+            initGitRepo(tmpDir);
+            fs.writeFileSync(sourceFile, 'export const after = true;\n', 'utf8');
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 8 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.match(result.final_report_contract.commit_command_suggestion, /^git commit -m "/);
+            assert.equal(result.final_report_contract.commit_question, 'Do you want me to commit now? (yes/no)');
+            assert.equal(result.final_report_contract.required_order.length, 4);
+            assert.equal(result.final_report_contract.required_order[3], 'Do you want me to commit now? (yes/no)');
+        });
+
+        it('suppresses commit suggestions when the tracked worktree is already clean', () => {
+            const sourceFile = path.join(tmpDir, 'src', 'gates', 'task-audit-summary.ts');
+            fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
+            fs.writeFileSync(sourceFile, 'export const clean = true;\n', 'utf8');
+            initGitRepo(tmpDir);
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 8 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const renderedMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+
+            assert.equal(result.final_report_contract.commit_command_template, 'No commit command required.');
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'No commit required: no tracked committable changes are present.');
+            assert.equal(result.final_report_contract.commit_question, 'No commit confirmation required.');
+            assert.deepEqual(result.final_report_contract.required_order, [
+                'review integrity attestation',
+                'implementation summary',
+                'No commit required: no tracked committable changes are present.'
+            ]);
+            assert.ok(!renderedMarkdown.includes('git commit -m "'));
+            assert.ok(renderedMarkdown.includes('Commit guidance:'));
+            assert.ok(renderedMarkdown.includes('No commit required: no tracked committable changes are present.'));
+        });
+
+        it('suppresses commit suggestions when only ignored runtime control-plane files changed', () => {
+            initGitRepo(tmpDir);
+            fs.writeFileSync(path.join(reviewsDir, 'local-only.md'), 'ignored local artifact\n', 'utf8');
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['garda-agent-orchestrator/runtime/reviews/local-only.md'],
+                metrics: { changed_lines_total: 1 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'No commit required: no tracked committable changes are present.');
+            assert.equal(result.final_report_contract.required_order.length, 3);
+            assert.ok(!result.final_report_contract.required_order.join('\n').includes('git commit -m "'));
+            assert.ok(!result.final_report_contract.required_order.join('\n').includes('Do you want me to commit now?'));
+        });
     });
 
     describe('final closeout materialization', () => {
@@ -1628,7 +1741,7 @@ describe('gates/task-audit-summary', () => {
     });
 
     describe('commit guidance based on worktree state', () => {
-        it('suppresses commit question when the worktree is already clean', () => {
+        it('suppresses commit command and question when the worktree is already clean', () => {
             // Setup a clean git repo in tmpDir
             const execSync = require('node:child_process').execSync;
             execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
@@ -1650,17 +1763,21 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            // The commit question should adapt to the clean worktree
             assert.equal(
                 result.final_closeout.commit_question,
-                'Worktree is already clean; no further commit necessary.'
+                'No commit confirmation required.'
             );
             assert.equal(
                 result.final_report_contract.commit_question,
-                'Worktree is already clean; no further commit necessary.'
+                'No commit confirmation required.'
             );
-            // The command suggestion should remain in the contract
+            assert.equal(
+                result.final_report_contract.commit_command_suggestion,
+                'No commit required: no tracked committable changes are present.'
+            );
             assert.ok(result.final_report_contract.required_order.includes(result.final_report_contract.commit_command_suggestion));
+            assert.ok(!result.final_report_contract.required_order.join('\n').includes('git commit -m "'));
+            assert.ok(!result.final_report_contract.required_order.join('\n').includes('Do you want me to commit now?'));
         });
     });
 

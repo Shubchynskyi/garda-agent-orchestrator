@@ -260,6 +260,13 @@ function formatTaskModeAuthorizationSummary(
     return `${base}; planned_changed_files=${plannedChangedFiles.join(', ')}`;
 }
 
+function isCommitCommandSuggestion(value: string): boolean {
+    const trimmed = String(value || '').trim();
+    return /^git\s+commit\s+-m\s+"/u.test(trimmed)
+        || /\bgarda(?:\.js)?\s+gate\s+human-commit\b/u.test(trimmed)
+        || /\bhuman-commit\s+--operator-confirmed\s+yes\b/u.test(trimmed);
+}
+
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
     const profileText = closeout.implementation_summary.active_profile
@@ -337,12 +344,20 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     }));
 
     lines.push('');
-    lines.push('Suggested commit command:');
-    lines.push('```bash');
-    lines.push(closeout.commit_command_suggestion);
-    lines.push('```');
-    lines.push('');
-    lines.push(closeout.commit_question);
+    if (isCommitCommandSuggestion(closeout.commit_command_suggestion)) {
+        lines.push('Suggested commit command:');
+        lines.push('```bash');
+        lines.push(closeout.commit_command_suggestion);
+        lines.push('```');
+        lines.push('');
+        lines.push(closeout.commit_question);
+    } else {
+        lines.push('Commit guidance:');
+        lines.push(closeout.commit_command_suggestion);
+        if (closeout.commit_question) {
+            lines.push(closeout.commit_question);
+        }
+    }
 
     return lines.join('\n');
 }

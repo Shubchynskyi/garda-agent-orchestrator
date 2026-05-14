@@ -6560,6 +6560,35 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('  none'));
     });
 
+    it('surfaces no-commit final report guidance after final closeout is materialized on a clean tracked worktree', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'DONE', result.reason);
+        assert.equal(result.next_gate, null);
+        assert.equal(result.commands.length, 0);
+        assert.deepEqual(result.final_report?.required_order, [
+            'review integrity attestation',
+            'implementation summary (include path mode, review verdicts, docs updated)',
+            'No commit required: no tracked committable changes are present.'
+        ]);
+        assert.equal(result.final_report?.commit_command_suggestion, 'No commit required: no tracked committable changes are present.');
+        assert.equal(result.final_report?.commit_question, 'No commit confirmation required.');
+        assert.ok(text.includes('3. No commit required: no tracked committable changes are present.'));
+        assert.ok(!text.includes('git commit -m "'));
+        assert.ok(!text.includes('Do you want me to commit now? (yes/no)'));
+    });
+
     it('surfaces final report readiness after independent review attestation and canonical materialization', () => {
         const repoRoot = makeTempRepo();
         seedCompletedTaskWithIndependentCodeReview(repoRoot, TASK_ID);
