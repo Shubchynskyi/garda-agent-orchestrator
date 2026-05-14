@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+
+## 1.1.0
 - made final closeout and `next-step` commit guidance suppress commit commands and confirmation questions when no tracked committable changes remain, while preserving guarded commit prompts for real tracked diffs
 - added launcher delegation trust evidence that distinguishes self-hosted source checkouts, deployed bundles, packaged npm runtimes, and unknown runtimes, with fail-closed handling for unrecognized or ambiguous local runtime identity
 - made `next-step` runtime provider detection keep explicit `GARDA_EXECUTION_PROVIDER` authoritative while recognizing `QWEN_CODE` before Codex fallback markers such as `CODEX_HOME`

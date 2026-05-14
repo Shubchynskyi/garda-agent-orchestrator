@@ -1,0 +1,20 @@
+{
+  "messages": [
+    {
+      "version": "1.0.0",
+      "title": "First public Garda release",
+      "body": [
+        "Visible release history was reset to the Garda 1.0.0 baseline.",
+        "The public project line now uses the Garda name."
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "title": "Project memory refresh",
+      "body": [
+        "Project memory mode was updated in 1.1.0.",
+        "Before starting task work, let your agent execute the project-memory refresh prompt so local project memory is current for the new workflow."
+      ]
+    }
+  ]
+}

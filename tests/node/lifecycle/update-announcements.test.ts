@@ -70,6 +70,35 @@ test('collectUpdateAnnouncements returns unseen registry messages and release no
     }
 });
 
+test('release 1.1.0 registry announces project memory refresh', () => {
+    const repoRoot = process.cwd();
+    const bundleRoot = makeTempBundleRoot();
+    const liveConfigDir = path.join(bundleRoot, 'live', 'config');
+    try {
+        fs.copyFileSync(
+            path.join(repoRoot, 'template', 'config', 'update-messages.json'),
+            path.join(liveConfigDir, 'update-messages.json')
+        );
+        fs.writeFileSync(
+            path.join(bundleRoot, 'CHANGELOG.md'),
+            [
+                '# Changelog',
+                '',
+                '## 1.1.0',
+                '- release note'
+            ].join('\n'),
+            'utf8'
+        );
+
+        const result = collectUpdateAnnouncements(bundleRoot, '1.0.0', '1.1.0');
+        const message = result.updateMessages.find((entry) => entry.version === '1.1.0');
+        assert.equal(message?.title, 'Project memory refresh');
+        assert.ok(message?.body.some((line) => line.includes('project-memory refresh prompt')));
+    } finally {
+        cleanupBundleRoot(bundleRoot);
+    }
+});
+
 test('buildUpdateResult and buildUpdateReportLines include announcement payload', () => {
     const announcements = {
         updateMessages: [
