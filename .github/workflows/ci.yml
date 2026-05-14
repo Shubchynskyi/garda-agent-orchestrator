@@ -69,8 +69,10 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Run tests
-        run: npm test
+      - name: Run Linux full suite with color enabled
+        env:
+          FORCE_COLOR: '1'
+        run: npm run build:node-foundation && npm test
 
   # ── 3. Release validation matrix (version parity + build + quality + pack smoke)
   validate-release:

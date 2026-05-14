@@ -341,20 +341,30 @@ function parseJsonStdout(result: ReturnType<typeof runCliJson>, message: string)
 }
 
 test('status --json emits valid JSON to stdout', () => {
-    const result = runCliJson(['status', '--target-root', REPO_ROOT, '--json']);
-    assert.equal(result.status, 0, `status --json exited non-zero: ${result.stderr}`);
-    const parsed = JSON.parse(result.stdout);
-    assert.equal(typeof parsed.readyForTasks, 'boolean');
-    assert.equal(typeof parsed.bundlePresent, 'boolean');
-    assert.ok('targetRoot' in parsed);
+    const fixture = createDeployedWorkspaceFixture();
+    try {
+        const result = runCliJson(['status', '--target-root', fixture.workspaceRoot, '--json']);
+        assert.equal(result.status, 0, `status --json exited non-zero: ${result.stderr}`);
+        const parsed = JSON.parse(result.stdout);
+        assert.equal(typeof parsed.readyForTasks, 'boolean');
+        assert.equal(typeof parsed.bundlePresent, 'boolean');
+        assert.equal(parsed.targetRoot, path.resolve(fixture.workspaceRoot));
+    } finally {
+        fixture.cleanup();
+    }
 });
 
 test('status --json output does not include banner text', () => {
-    const result = runCliJson(['status', '--target-root', REPO_ROOT, '--json']);
-    assert.equal(result.status, 0);
-    assert.ok(!result.stdout.includes('Workspace status'), 'JSON mode must suppress banner');
-    const trimmed = result.stdout.trim();
-    assert.ok(trimmed.startsWith('{'), 'stdout must start with JSON object');
+    const fixture = createDeployedWorkspaceFixture();
+    try {
+        const result = runCliJson(['status', '--target-root', fixture.workspaceRoot, '--json']);
+        assert.equal(result.status, 0);
+        assert.ok(!result.stdout.includes('Workspace status'), 'JSON mode must suppress banner');
+        const trimmed = result.stdout.trim();
+        assert.ok(trimmed.startsWith('{'), 'stdout must start with JSON object');
+    } finally {
+        fixture.cleanup();
+    }
 });
 
 test('doctor --json emits valid JSON to stdout', () => {

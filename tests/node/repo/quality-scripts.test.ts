@@ -74,3 +74,12 @@ test('release validation CI covers Windows quality script execution', () => {
     assert.match(ciWorkflow, /os:\s+- ubuntu-latest\s+- windows-latest/);
     assert.match(ciWorkflow, /run: npm run validate:release/);
 });
+
+test('Linux unit CI lane runs the full node foundation suite with ANSI enabled', () => {
+    const ciWorkflow = readTextRepoFile('.github/workflows/ci.yml');
+
+    assert.match(ciWorkflow, /test:\s+name: Unit Tests \/ Node \$\{\{ matrix\.node-version \}\}/);
+    assert.match(ciWorkflow, /runs-on: ubuntu-latest/);
+    assert.match(ciWorkflow, /FORCE_COLOR:\s+'1'/);
+    assert.match(ciWorkflow, /run: npm run build:node-foundation && npm test/);
+});
