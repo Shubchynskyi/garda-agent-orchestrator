@@ -4942,9 +4942,83 @@ describe('gates/next-step', () => {
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'implementation');
         assert.equal(result.review.next_review_type, 'security');
+        assert.equal(result.review.failed_review_type, 'security');
         assert.match(result.title, /Fix failed 'security' review findings/);
         assert.match(result.reason, /Dependent reviews currently blocked by this failure: test/);
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+
+        const text = formatNextStepText(result);
+        assert.match(text, /ReviewFailedCurrent: security/);
+    });
+
+    it('exposes parallel_all launch batches without collapsing JSON or human output to one lane', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true, security: true, refactor: true, test: true },
+            { reviewPolicyMode: 'parallel_all' }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.review.next_review_type, 'code');
+        assert.deepEqual(result.review.launchable_review_types, ['code', 'security', 'refactor', 'test']);
+        assert.deepEqual(result.review.blocked_review_lanes, []);
+        assert.match(text, /NextReview: code/);
+        assert.match(text, /ReviewLaunchableBatch: code, security, refactor, test/);
+    });
+
+    it('exposes blocked review lanes with dependency reasons while preserving single next review compatibility', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true, security: true, api: true, test: true },
+            { reviewPolicyMode: 'code_first_optional' }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.review.next_review_type, 'code');
+        assert.deepEqual(result.review.launchable_review_types, ['code', 'security']);
+        assert.deepEqual(result.review.blocked_review_lanes, [
+            {
+                review_type: 'api',
+                blocked_by: ['code'],
+                reason: 'Waiting for current-cycle code review artifacts and receipts to pass.'
+            },
+            {
+                review_type: 'test',
+                blocked_by: ['code', 'security', 'api'],
+                reason: 'Waiting for current-cycle code, security, api review artifacts and receipts to pass.'
+            }
+        ]);
+        assert.match(text, /NextReview: code/);
+        assert.match(text, /ReviewLaunchableBatch: code, security/);
+        assert.match(text, /BlockedReviewLanes: api blocked by code; test blocked by code, security, api/);
+    });
+
+    it('keeps a single-review launch batch compatible with legacy NextReview consumers', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.review.next_review_type, 'code');
+        assert.deepEqual(result.review.launchable_review_types, ['code']);
+        assert.deepEqual(result.review.blocked_review_lanes, []);
+        assert.match(text, /NextReview: code/);
+        assert.match(text, /ReviewLaunchableBatch: code/);
     });
 
     it('blocks completion while a current failed code review remains even when independent lanes passed', () => {

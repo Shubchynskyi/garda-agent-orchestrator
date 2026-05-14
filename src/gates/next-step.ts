@@ -7,7 +7,8 @@ import {
     computeReviewLaunchPlan,
     getReviewExecutionDependencies,
     resolveReviewExecutionPolicyModeFromPreflight,
-    type EffectiveReviewExecutionPolicyMode
+    type EffectiveReviewExecutionPolicyMode,
+    type ReviewLaunchPlan
 } from '../core/review-execution-policy';
 import {
     appendMandatoryTaskEvent,
@@ -225,11 +226,20 @@ export interface NextStepReviewSummary {
     required_reviews: string[];
     review_execution_policy_mode: EffectiveReviewExecutionPolicyMode;
     review_execution_policy_source: 'preflight' | 'workflow_config_fallback';
+    launchable_review_types: string[];
+    blocked_review_lanes: NextStepBlockedReviewLane[];
+    failed_review_type: string | null;
     next_review_type: string | null;
     blocked_review_dependencies: string[];
     ordinary_doc_review_skips: { path: string; pattern: string }[];
     trust: ReviewTrustSummary | null;
     trust_note: string | null;
+}
+
+export interface NextStepBlockedReviewLane {
+    review_type: string;
+    blocked_by: string[];
+    reason: string;
 }
 
 export interface NextStepFinalReportSummary {
@@ -3254,7 +3264,7 @@ function readReviewTrust(
     return buildReviewTrustSummary(entries, scopeCategory, requiredReviewTypes.length);
 }
 
-function getNextReviewType(
+function getReviewLaunchPlan(
     repoRoot: string,
     requiredReviewTypes: string[],
     policyMode: EffectiveReviewExecutionPolicyMode,
@@ -3262,7 +3272,7 @@ function getNextReviewType(
     reviewStates: ReviewArtifactState[],
     eventsRoot: string,
     taskId: string
-): { reviewType: string | null; blockedDependencies: string[] } {
+): ReviewLaunchPlan {
     const passedReviews = new Set(
         reviewStates
             .filter((state) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state))
@@ -3279,10 +3289,17 @@ function getNextReviewType(
                 && reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state)
         }))
     });
-    return {
-        reviewType: launchPlan.next_review_type,
-        blockedDependencies: launchPlan.blocked_review_dependencies
-    };
+    return launchPlan;
+}
+
+function toNextStepBlockedReviewLanes(launchPlan: ReviewLaunchPlan): NextStepBlockedReviewLane[] {
+    return launchPlan.blocked_review_lanes.map((lane) => ({
+        review_type: lane.review_type,
+        blocked_by: lane.blocked_by,
+        reason: lane.blocked_by.length > 0
+            ? `Waiting for current-cycle ${lane.blocked_by.join(', ')} review artifacts and receipts to pass.`
+            : 'Waiting for review launch dependencies to clear.'
+    }));
 }
 
 function reviewStateHasSatisfiedEvidence(
@@ -5980,6 +5997,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 required_reviews: [],
                 review_execution_policy_mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
                 review_execution_policy_source: 'workflow_config_fallback',
+                launchable_review_types: [],
+                blocked_review_lanes: [],
+                failed_review_type: null,
                 next_review_type: null,
                 blocked_review_dependencies: [],
                 ordinary_doc_review_skips: [],
@@ -6019,7 +6039,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
     ));
-    const nextReview = getNextReviewType(
+    const reviewLaunchPlan = getReviewLaunchPlan(
         repoRoot,
         requiredReviewTypes,
         reviewPolicy.mode,
@@ -6033,8 +6053,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         required_reviews: requiredReviewTypes,
         review_execution_policy_mode: reviewPolicy.mode,
         review_execution_policy_source: reviewPolicy.source,
-        next_review_type: nextReview.reviewType,
-        blocked_review_dependencies: nextReview.blockedDependencies,
+        launchable_review_types: reviewLaunchPlan.launchable_review_types,
+        blocked_review_lanes: toNextStepBlockedReviewLanes(reviewLaunchPlan),
+        failed_review_type: reviewLaunchPlan.failed_review_type,
+        next_review_type: reviewLaunchPlan.next_review_type,
+        blocked_review_dependencies: reviewLaunchPlan.blocked_review_dependencies,
         ordinary_doc_review_skips: getOrdinaryDocReviewSkips(preflight),
         trust: reviewTrust,
         trust_note: reviewTrust?.visible_summary_line || (
@@ -6728,8 +6751,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const failedCurrentReviewStateForPreflight = nextReview.reviewType
-        ? reviewStates.find((candidate) => candidate.reviewType === nextReview.reviewType && candidate.failed)
+    const failedCurrentReviewStateForPreflight = reviewLaunchPlan.next_review_type
+        ? reviewStates.find((candidate) => (
+            candidate.reviewType === reviewLaunchPlan.next_review_type && candidate.failed
+        ))
         : undefined;
     const effectivePreflightWorkspaceReadiness = failedCurrentReviewStateForPreflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
@@ -7048,7 +7073,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
-    if (fullSuiteConfig.enabled && nextReview.reviewType === 'test') {
+    if (fullSuiteConfig.enabled && reviewLaunchPlan.next_review_type === 'test') {
         if (fullSuiteGateStatus === 'FAIL') {
             return buildResult({
                 ...resultBase,
@@ -7088,8 +7113,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
     }
 
-    if (nextReview.reviewType) {
-        const reviewType = nextReview.reviewType;
+    if (reviewLaunchPlan.next_review_type) {
+        const reviewType = reviewLaunchPlan.next_review_type;
         const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
         const currentReviewReuseRecorded = state
             ? state.reusedExistingReview && timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state)
@@ -7106,7 +7131,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         const currentReviewContextPrepared = state
             ? timelineHasReviewContextPreparedAfterCompile(eventsRoot, taskId, reviewType, state.contextPath)
             : false;
-        const dependencies = nextReview.blockedDependencies;
+        const dependencies = reviewLaunchPlan.blocked_review_dependencies;
         const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
         const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
         const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
@@ -7748,6 +7773,18 @@ export function formatNextStepText(result: NextStepResult): string {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);
     } else {
         lines.push('RequiredReviews: none');
+    }
+    if (result.review.launchable_review_types.length > 0) {
+        lines.push(`ReviewLaunchableBatch: ${result.review.launchable_review_types.join(', ')}`);
+    }
+    if (result.review.blocked_review_lanes.length > 0) {
+        const blockedLanes = result.review.blocked_review_lanes
+            .map((lane) => `${lane.review_type} blocked by ${lane.blocked_by.join(', ') || 'unknown'}`)
+            .join('; ');
+        lines.push(`BlockedReviewLanes: ${blockedLanes}`);
+    }
+    if (result.review.failed_review_type) {
+        lines.push(`ReviewFailedCurrent: ${result.review.failed_review_type}`);
     }
     if (result.review.ordinary_doc_review_skips.length > 0 && result.review.required_reviews.length === 0) {
         const skipped = result.review.ordinary_doc_review_skips
