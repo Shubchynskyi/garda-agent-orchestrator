@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 
 import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
+    computeReviewLaunchPlan,
     getReviewExecutionDependencies,
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
@@ -3267,36 +3268,20 @@ function getNextReviewType(
             .filter((state) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state))
             .map((state) => state.reviewType)
     );
-    for (const reviewType of requiredReviewTypes) {
-        if (passedReviews.has(reviewType)) {
-            continue;
-        }
-        const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
-        const blockedDependencies = getReviewExecutionDependencies(reviewType, requiredReviews, policyMode)
-            .filter((dependency) => !passedReviews.has(dependency));
-        if (blockedDependencies.length > 0) {
-            return {
-                reviewType,
-                blockedDependencies
-            };
-        }
-        if (
-            state?.failed
-            && reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state)
-        ) {
-            return {
-                reviewType,
-                blockedDependencies
-            };
-        }
-        return {
-            reviewType,
-            blockedDependencies: []
-        };
-    }
+    const launchPlan = computeReviewLaunchPlan({
+        requiredReviewTypes,
+        requiredReviews,
+        policyMode,
+        reviewStates: reviewStates.map((state) => ({
+            review_type: state.reviewType,
+            satisfied: passedReviews.has(state.reviewType),
+            failed_current: state.failed
+                && reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state)
+        }))
+    });
     return {
-        reviewType: null,
-        blockedDependencies: []
+        reviewType: launchPlan.next_review_type,
+        blockedDependencies: launchPlan.blocked_review_dependencies
     };
 }
 

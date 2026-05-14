@@ -4929,6 +4929,24 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
+    it('wires review launch planning through next-step for failed current review plus blocked downstream lane', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security', { verdict: 'fail' });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'security');
+        assert.match(result.title, /Fix failed 'security' review findings/);
+        assert.match(result.reason, /Dependent reviews currently blocked by this failure: test/);
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
     it('blocks completion while a current failed code review remains even when independent lanes passed', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

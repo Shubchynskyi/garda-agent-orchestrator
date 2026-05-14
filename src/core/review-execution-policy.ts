@@ -25,6 +25,25 @@ export interface ResolvedReviewExecutionPolicyConfig {
     configured: boolean;
 }
 
+export interface ReviewLaunchEvidenceState {
+    review_type: string;
+    satisfied: boolean;
+    failed_current?: boolean;
+}
+
+export interface ReviewLaunchBlockedLane {
+    review_type: string;
+    blocked_by: string[];
+}
+
+export interface ReviewLaunchPlan {
+    launchable_review_types: string[];
+    blocked_review_lanes: ReviewLaunchBlockedLane[];
+    failed_review_type: string | null;
+    next_review_type: string | null;
+    blocked_review_dependencies: string[];
+}
+
 export const DEFAULT_REVIEW_EXECUTION_POLICY_MODE: ReviewExecutionPolicyMode = 'code_first_optional';
 
 const REVIEW_TYPES_THAT_WAIT_FOR_CODE = new Set([
@@ -158,6 +177,77 @@ export function getReviewExecutionPreparationBatches(
     }
 
     return batches;
+}
+
+export function computeReviewLaunchPlan(params: {
+    requiredReviewTypes: readonly string[];
+    requiredReviews: Record<string, boolean>;
+    policyMode: EffectiveReviewExecutionPolicyMode;
+    reviewStates: readonly ReviewLaunchEvidenceState[];
+}): ReviewLaunchPlan {
+    const requiredReviewTypes = params.requiredReviewTypes.map(normalizeReviewType);
+    const stateByType = new Map(
+        params.reviewStates.map((state) => [normalizeReviewType(state.review_type), state])
+    );
+    const satisfiedReviews = new Set(
+        requiredReviewTypes.filter((reviewType) => stateByType.get(reviewType)?.satisfied === true)
+    );
+    const failedReviewType = requiredReviewTypes.find((reviewType) => {
+        const state = stateByType.get(reviewType);
+        return state?.failed_current === true && !satisfiedReviews.has(reviewType);
+    }) || null;
+    const blockedReviewLanes: ReviewLaunchBlockedLane[] = [];
+    const launchableReviewTypes: string[] = [];
+
+    for (const reviewType of requiredReviewTypes) {
+        if (satisfiedReviews.has(reviewType)) {
+            continue;
+        }
+        const blockedBy = getReviewExecutionDependencies(reviewType, params.requiredReviews, params.policyMode)
+            .filter((dependency) => !satisfiedReviews.has(normalizeReviewType(dependency)))
+            .map(normalizeReviewType);
+        if (blockedBy.length > 0) {
+            blockedReviewLanes.push({
+                review_type: reviewType,
+                blocked_by: blockedBy
+            });
+            continue;
+        }
+        if (!failedReviewType) {
+            launchableReviewTypes.push(reviewType);
+        }
+    }
+
+    if (failedReviewType) {
+        return {
+            launchable_review_types: [],
+            blocked_review_lanes: blockedReviewLanes,
+            failed_review_type: failedReviewType,
+            next_review_type: failedReviewType,
+            blocked_review_dependencies:
+                blockedReviewLanes.find((lane) => lane.review_type === failedReviewType)?.blocked_by || []
+        };
+    }
+
+    const [nextLaunchableReviewType] = launchableReviewTypes;
+    if (nextLaunchableReviewType) {
+        return {
+            launchable_review_types: launchableReviewTypes,
+            blocked_review_lanes: blockedReviewLanes,
+            failed_review_type: null,
+            next_review_type: nextLaunchableReviewType,
+            blocked_review_dependencies: []
+        };
+    }
+
+    const [firstBlockedLane] = blockedReviewLanes;
+    return {
+        launchable_review_types: [],
+        blocked_review_lanes: blockedReviewLanes,
+        failed_review_type: null,
+        next_review_type: firstBlockedLane?.review_type || null,
+        blocked_review_dependencies: firstBlockedLane?.blocked_by || []
+    };
 }
 
 function hasOwnCaseInsensitiveKey(record: Record<string, unknown>, expectedKey: string): boolean {
