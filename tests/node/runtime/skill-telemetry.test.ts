@@ -9,6 +9,7 @@ import {
     SKILL_TELEMETRY_EVENT_TYPES,
     buildSkillTelemetryDetails,
     emitSkillTelemetryEvent,
+    emitSkillTelemetryEventAsync,
     emitSkillSuggestedEvent,
     emitSkillSelectedEvent,
     emitSkillReferenceLoadedEvent
@@ -79,16 +80,60 @@ test('emitSkillTelemetryEvent returns null for missing taskId', () => {
     assert.equal(result, null);
 });
 
-test('emitSkillTelemetryEvent does not throw on invalid bundleRoot', () => {
-    // Non-blocking: must not throw even if the filesystem path is garbage.
+test('emitSkillTelemetryEvent returns null for invalid bundleRoot without creating runtime artifacts', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skill-telemetry-invalid-'));
+    try {
+        const invalidRoot = path.join(tempDir, 'missing-root');
+
+        const result = emitSkillTelemetryEvent(
+            invalidRoot,
+            'T-TEL',
+            'SKILL_SUGGESTED',
+            'msg',
+            { skillId: 'test-skill' }
+        );
+
+        assert.equal(result, null);
+        assert.equal(fs.existsSync(path.join(invalidRoot, 'runtime')), false);
+        assert.equal(fs.existsSync(path.join(invalidRoot, 'runtime', 'task-events', 'T-TEL.jsonl')), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('emitSkillTelemetryEvent ignores Windows-shaped invalid roots without creating repo-local artifacts', () => {
+    const windowsShapedInvalidRoot = 'Z:\\nonexistent\\path\\that\\definitely\\does\\not\\exist';
     const result = emitSkillTelemetryEvent(
-        'Z:\\nonexistent\\path\\that\\definitely\\does\\not\\exist',
+        windowsShapedInvalidRoot,
         'T-TEL',
         'SKILL_SUGGESTED',
         'msg',
         { skillId: 'test-skill' }
     );
+
     assert.equal(result, null);
+    assert.equal(fs.existsSync(path.join(windowsShapedInvalidRoot, 'runtime')), false);
+});
+
+test('emitSkillTelemetryEventAsync returns null for invalid bundleRoot without creating runtime artifacts', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skill-telemetry-invalid-'));
+    try {
+        const invalidRoot = path.join(tempDir, 'missing-root');
+
+        const result = await emitSkillTelemetryEventAsync(
+            invalidRoot,
+            'T-TEL-ASYNC',
+            'SKILL_SELECTED',
+            'msg',
+            { skillId: 'test-skill' }
+        );
+
+        assert.equal(result, null);
+        assert.equal(fs.existsSync(path.join(invalidRoot, 'runtime')), false);
+        assert.equal(fs.existsSync(path.join(invalidRoot, 'runtime', 'task-events', 'T-TEL-ASYNC.jsonl')), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 test('emitSkillTelemetryEvent writes valid integrity-chained event', () => {

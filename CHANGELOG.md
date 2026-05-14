@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- stopped skill telemetry from creating `runtime/task-events` artifacts for invalid or missing bundle roots while preserving non-blocking telemetry behavior for valid roots
 - made `next-step` fail closed when `TASK.md` says `DONE` but current lifecycle evidence is not terminal-clean, routing operators to audited task reset/reopen recovery instead of hiding failed gates or missing final closeout
 - reformatted the human `garda setup` agent-initialization handoff into scannable colored sections while preserving copy-paste-safe commands, prompts, machine-readable report content, and the existing `Give your agent:` anchor
 - stopped disabled full-suite validation from being presented as mandatory test-review evidence, while preserving required and stale-evidence checks when full-suite validation is enabled

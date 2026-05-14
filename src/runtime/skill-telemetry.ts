@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+
 import { appendTaskEvent, appendTaskEventAsync } from '../gate-runtime/task-events';
 
 export const SKILL_TELEMETRY_EVENT_TYPES = Object.freeze({
@@ -73,6 +75,19 @@ export function buildSkillTelemetryDetails(options: SkillTelemetryDetailOptions)
     return details;
 }
 
+function resolveExistingSkillTelemetryRoot(bundleRoot: string | null | undefined): string | null {
+    const candidate = bundleRoot ? String(bundleRoot).trim() : '';
+    if (!candidate) {
+        return null;
+    }
+
+    try {
+        return fs.statSync(candidate).isDirectory() ? candidate : null;
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Core emit helper. Wraps appendTaskEvent with non-blocking semantics:
  * errors are caught and logged to stderr, never propagated.
@@ -85,7 +100,8 @@ export function emitSkillTelemetryEvent(
     detailOptions: SkillTelemetryDetailOptions = {},
     appendOptions?: SkillTelemetryAppendOptions
 ): SkillTelemetryResult {
-    if (!bundleRoot || !taskId) {
+    const telemetryRoot = resolveExistingSkillTelemetryRoot(bundleRoot);
+    if (!telemetryRoot || !taskId) {
         return null;
     }
 
@@ -93,7 +109,7 @@ export function emitSkillTelemetryEvent(
 
     try {
         return appendTaskEvent(
-            bundleRoot,
+            telemetryRoot,
             taskId,
             eventType,
             'INFO',
@@ -122,7 +138,8 @@ export async function emitSkillTelemetryEventAsync(
     detailOptions: SkillTelemetryDetailOptions = {},
     appendOptions?: SkillTelemetryAppendOptions
 ): Promise<SkillTelemetryResult> {
-    if (!bundleRoot || !taskId) {
+    const telemetryRoot = resolveExistingSkillTelemetryRoot(bundleRoot);
+    if (!telemetryRoot || !taskId) {
         return null;
     }
 
@@ -130,7 +147,7 @@ export async function emitSkillTelemetryEventAsync(
 
     try {
         return await appendTaskEventAsync(
-            bundleRoot,
+            telemetryRoot,
             taskId,
             eventType,
             'INFO',
