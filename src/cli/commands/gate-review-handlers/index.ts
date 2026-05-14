@@ -708,6 +708,8 @@ function normalizeReviewNoteText(entry: string): string {
         .toLowerCase();
 }
 
+const PASS_REVIEW_COMMAND_HEADING_PATTERN = /^commands?(?:\s+(?:run|ran|i ran))?\s*:/u;
+
 function isCommandOnlyValidationNote(normalizedEntry: string): boolean {
     if (!normalizedEntry || normalizedEntry.length > 180) {
         return false;
@@ -725,7 +727,7 @@ function isGenericPassValidationBoundaryNote(
     if (!normalizedEntry || normalizedEntry === 'none') {
         return true;
     }
-    if (/^commands?(?:\s+(?:run|ran|i ran))?\s*:/u.test(normalizedEntry)) {
+    if (PASS_REVIEW_COMMAND_HEADING_PATTERN.test(normalizedEntry)) {
         return true;
     }
     if (filterStandaloneCommandNotes && isCommandOnlyValidationNote(normalizedEntry)) {
@@ -770,7 +772,7 @@ function filterGenericPassValidationBoundaryEntries(
     let commandBlockActive = false;
     for (const entry of entries) {
         const normalizedEntry = normalizeReviewNoteText(entry);
-        if (/^commands?(?:\s+(?:run|ran|i ran))?\s*:/u.test(normalizedEntry)) {
+        if (PASS_REVIEW_COMMAND_HEADING_PATTERN.test(normalizedEntry)) {
             commandBlockActive = true;
             continue;
         }
