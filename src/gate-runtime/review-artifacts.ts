@@ -35,6 +35,7 @@ export interface ReviewArtifactLockOptions {
     lockStaleMs?: unknown;
     allowForeignHostStaleRecovery?: unknown;
     requireIndexUpdate?: unknown;
+    excludeCompletionFinalizationLocks?: unknown;
 }
 
 export interface ReviewArtifactLockTelemetry {
@@ -287,6 +288,9 @@ export function cleanupStaleReviewArtifactLocks(
     const warnings: string[] = [];
 
     for (const target of resolveReviewArtifactLockTargets(orchestratorRoot)) {
+        if (options.excludeCompletionFinalizationLocks === true && target.artifactType === 'completion-gate') {
+            continue;
+        }
         const inspection = inspectFilesystemLock(target.lockPath, {
             staleMs,
             allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery

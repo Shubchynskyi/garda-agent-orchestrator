@@ -120,6 +120,7 @@ If you want persistent commands, install globally.
 | `garda update git` | Apply or preview an update from a git repo or local clone |
 | `garda rollback` | Roll back to a specific version or restore from the latest rollback snapshot |
 | `garda cleanup` | Remove retained runtime artifacts or edit review-artifact retention policy |
+| `garda repair` | Inspect or rebuild runtime indexes, protected manifests, and stale lock state |
 | `garda uninstall` | Remove orchestrator with keep/delete choices |
 | `garda skills` | List, suggest, add, remove, and validate optional built-in skill packs |
 | `garda profile` | List, switch, create, delete, and validate workspace profiles |

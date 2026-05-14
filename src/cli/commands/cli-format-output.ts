@@ -408,6 +408,7 @@ export type CommandHelpName =
     | 'doctor'
     | 'debug'
     | 'cleanup'
+    | 'repair'
     | 'gc'
     | 'clean';
 
@@ -624,6 +625,27 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             'The policy subcommand is the human-facing review-artifact storage policy editor/viewer.'
         ])
     }),
+    repair: Object.freeze({
+        summary: 'Inspect and rebuild derived runtime indexes, protected manifests, and stale lock state.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} repair [inspect] [--target-root PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} repair rebuild-indexes [--target-root PATH] [--confirm] [--json]`,
+            `${PRIMARY_CLI_NAME} repair protected-manifest [--target-root PATH] [--confirm] [--json]`,
+            `${PRIMARY_CLI_NAME} repair locks [--target-root PATH] [--cleanup-stale] [--confirm] [--json]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} repair inspect`,
+            `${PRIMARY_CLI_NAME} repair rebuild-indexes`,
+            `${PRIMARY_CLI_NAME} repair rebuild-indexes --confirm`,
+            `${PRIMARY_CLI_NAME} repair locks --cleanup-stale`,
+            `${PRIMARY_CLI_NAME} repair protected-manifest --confirm`
+        ]),
+        hints: Object.freeze([
+            'inspect is read-only and names canonical versus derived runtime state.',
+            'rebuild-indexes and protected-manifest are dry-run by default; pass --confirm to write.',
+            'locks reports task-event, review-artifact, and completion-finalization locks; cleanup only removes proven-stale task-event/review-artifact locks after --cleanup-stale --confirm.'
+        ])
+    }),
     gc: Object.freeze({
         summary: 'Extended cleanup with dry-run default, allowlist, stale locks, and isolation sandbox cleanup.',
         usage: Object.freeze([
@@ -670,9 +692,10 @@ function styleHelpToken(token: string): string {
         || normalized.endsWith('garda.js')
         || [
             'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'bootstrap', 'install', 'init', 'reinit',
-            'update', 'rollback', 'uninstall', 'cleanup', 'gc', 'clean', 'verify', 'check-update', 'skills',
+            'update', 'rollback', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
             'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
+            'inspect', 'rebuild-indexes', 'protected-manifest', 'locks',
             'events'
         ].includes(normalized)
     ) {
@@ -794,6 +817,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
             '  cleanup       Remove stale runtime artifacts and manage review-artifact storage policy.',
+            '  repair        Inspect and rebuild runtime indexes, protected manifests, and stale lock state.',
             '  gc            Extended cleanup with dry-run default, allowlist, stale locks, and isolation sandbox (alias: clean).',
             '  verify        Validate deployment consistency and rule contracts.',
             '  check-update  Compare current deployment with a newer npm package or local source.',

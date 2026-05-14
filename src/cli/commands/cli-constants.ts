@@ -55,6 +55,7 @@ export const COMMAND_SUMMARY = Object.freeze<readonly CommandSummaryEntry[]>([
     ['rollback', 'Rollback to a specific or previous version'],
     ['uninstall', 'Remove orchestrator'],
     ['cleanup', 'Remove retained runtime artifacts and manage review-artifact storage policy'],
+    ['repair', 'Inspect and rebuild runtime indexes, protected manifests, and stale locks'],
     ['gc', 'Extended cleanup with dry-run default and alias clean'],
     ['verify', 'Verify workspace layout'],
     ['check-update', 'Check for available updates'],

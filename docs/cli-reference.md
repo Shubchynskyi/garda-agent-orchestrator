@@ -346,6 +346,29 @@ Notes:
 - `cleanup policy edit` is the dialog-first editor for retention mode, compression threshold, and receipt preservation. `cleanup policy --edit` is an alias.
 - `cleanup policy reset` restores the bundled default policy template. `cleanup policy --reset` is an alias.
 
+### `garda repair`
+
+Inspect and repair rebuildable runtime control-plane state without hand-editing files.
+
+```text
+garda repair inspect --target-root "."
+garda repair inspect --target-root "." --json
+garda repair rebuild-indexes --target-root "."
+garda repair rebuild-indexes --target-root "." --confirm
+garda repair protected-manifest --target-root "."
+garda repair protected-manifest --target-root "." --confirm
+garda repair locks --target-root "."
+garda repair locks --target-root "." --cleanup-stale
+garda repair locks --target-root "." --cleanup-stale --confirm
+```
+
+Notes:
+- `repair inspect` is read-only. It names canonical state (`runtime/task-events/<task-id>.jsonl`, review artifacts, protected manifest) separately from rebuildable derived indexes (`.timeline-summary.json`, `reviews-index.json`).
+- `repair rebuild-indexes` is dry-run by default. With `--confirm`, it rebuilds `.timeline-summary.json` from canonical per-task event logs and rebuilds `runtime/reviews/reviews-index.json` from review artifact files.
+- `repair protected-manifest` is dry-run by default. With `--confirm`, it refreshes the trusted protected control-plane manifest from the current workspace snapshot.
+- `repair locks` inspects task-event, review-artifact, and completion-finalization lock classes. Cleanup is dry-run unless both `--cleanup-stale` and `--confirm` are provided.
+- Completion-finalization locks are inspected only; they are not deleted by `repair locks` because they protect task finalization.
+
 ### `garda gc`
 
 Extended cleanup helper with dry-run default, category filters, and `clean` alias support.

@@ -173,6 +173,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'update',
     'rollback',
     'cleanup',
+    'repair',
     'gc',
     'clean',
     'skills',

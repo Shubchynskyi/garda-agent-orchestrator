@@ -57,7 +57,7 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
         const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
         return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
     }
-    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile'].includes(commandName)) {
+    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair'].includes(commandName)) {
         return '.';
     }
     return resolveTargetOrBundleParityRoot(commandArgv);
@@ -130,7 +130,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow'].includes(commandName)) {
+    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'repair'].includes(commandName)) {
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale && !(isHelpOnly && isMissingDeployedBundleOnlyParityBlock(parityResult.violations))) {
@@ -272,6 +272,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         case 'cleanup': {
             const { handleCleanup } = await import('./workspace-maintenance-command');
             await Promise.resolve(handleCleanup(commandArgv, packageJson));
+            return;
+        }
+        case 'repair': {
+            const { handleRepair } = await import('./repair-command');
+            handleRepair(commandArgv, packageJson);
             return;
         }
         case 'gc':
